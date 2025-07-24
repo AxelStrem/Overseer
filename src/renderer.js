@@ -1,0 +1,411 @@
+export class OverseerRenderer {
+    constructor() {
+        this.contentDisplay = document.getElementById('content-display')
+        this.tabContainer = document.getElementById('tab-container')
+    }
+
+    renderDocument(document) {
+        console.log('Rendering document:', document)
+        
+        // Clear previous content
+        this.contentDisplay.innerHTML = ''
+        this.tabContainer.innerHTML = ''
+
+        if (Array.isArray(document)) {
+            // Document is an array of root nodes
+            for (const node of document) {
+                this.renderNode(node, this.contentDisplay)
+            }
+        } else if (document && typeof document === 'object') {
+            // Single root node
+            this.renderNode(document, this.contentDisplay)
+        } else {
+            this.contentDisplay.innerHTML = '<p>No content to display</p>'
+        }
+    }
+
+    renderNode(node, container) {
+        if (!node || typeof node !== 'object') {
+            console.warn('Invalid node:', node)
+            return
+        }
+
+        const element = this.createNodeElement(node)
+        
+        if (element) {
+            container.appendChild(element)
+            
+            // Render children
+            if (node.children && Array.isArray(node.children)) {
+                for (const child of node.children) {
+                    this.renderNode(child, element)
+                }
+            }
+        }
+    }
+
+    createNodeElement(node) {
+        const nodeType = node.node_type || node.type || 'div'
+        
+        switch (nodeType.toLowerCase()) {
+            case 'tab':
+                return this.createTabElement(node)
+            case 'div':
+                return this.createDivElement(node)
+            case 'list':
+                return this.createListElement(node)
+            case 'string':
+                return this.createStringElement(node)
+            case 'text':
+                return this.createTextElement(node)
+            case 'int':
+            case 'float':
+                return this.createNumberElement(node)
+            case 'date':
+                return this.createDateElement(node)
+            case 'bool':
+                return this.createBooleanElement(node)
+            case 'button':
+                return this.createButtonElement(node)
+            case 'checkbox':
+                return this.createCheckboxElement(node)
+            case 'chart':
+                return this.createChartElement(node)
+            default:
+                console.warn('Unknown node type:', nodeType)
+                return this.createDivElement(node)
+        }
+    }
+
+    createTabElement(node) {
+        const tabButton = document.createElement('button')
+        tabButton.className = 'tab-button'
+        tabButton.textContent = node.name || 'Tab'
+        
+        const tabContent = document.createElement('div')
+        tabContent.className = 'tab-content'
+        tabContent.style.display = 'none'
+        
+        // Add tab button to tab container
+        this.tabContainer.appendChild(tabButton)
+        
+        // Tab click handler
+        tabButton.addEventListener('click', () => {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.style.display = 'none'
+            })
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active')
+            })
+            
+            // Show this tab's content
+            tabContent.style.display = 'block'
+            tabButton.classList.add('active')
+        })
+        
+        // Make first tab active by default
+        if (this.tabContainer.children.length === 1) {
+            tabButton.classList.add('active')
+            tabContent.style.display = 'block'
+        }
+        
+        this.applyNodeStyles(tabContent, node)
+        return tabContent
+    }
+
+    createDivElement(node) {
+        const div = document.createElement('div')
+        div.className = 'overseer-div'
+        
+        if (node.name) {
+            div.setAttribute('data-name', node.name)
+        }
+        
+        // Check if this is a hidden div (template)
+        if (node.parameters && node.parameters.hidden === 'true') {
+            div.style.display = 'none'
+        }
+        
+        this.applyNodeStyles(div, node)
+        return div
+    }
+
+    createListElement(node) {
+        const list = document.createElement('div')
+        list.className = 'overseer-list'
+        
+        if (node.name) {
+            const header = document.createElement('h3')
+            header.textContent = node.name
+            list.appendChild(header)
+        }
+        
+        // Apply list layout
+        const layout = node.parameters?.layout || 'vertical'
+        list.classList.add(`layout-${layout}`)
+        
+        this.applyNodeStyles(list, node)
+        return list
+    }
+
+    createStringElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field string-field'
+        
+        if (node.name) {
+            const label = document.createElement('label')
+            label.textContent = node.name
+            container.appendChild(label)
+        }
+        
+        const value = document.createElement('span')
+        value.className = 'field-value'
+        value.textContent = this.getNodeValue(node) || ''
+        
+        // Make it editable on double-click
+        value.addEventListener('dblclick', () => {
+            this.makeFieldEditable(value, node)
+        })
+        
+        container.appendChild(value)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    createTextElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field text-field'
+        
+        if (node.name) {
+            const label = document.createElement('label')
+            label.textContent = node.name
+            container.appendChild(label)
+        }
+        
+        const value = document.createElement('div')
+        value.className = 'field-value text-content'
+        
+        // Support markdown rendering (basic for now)
+        const textContent = this.getNodeValue(node) || ''
+        value.innerHTML = this.renderMarkdown(textContent)
+        
+        // Make it editable on double-click
+        value.addEventListener('dblclick', () => {
+            this.makeFieldEditable(value, node, true)
+        })
+        
+        container.appendChild(value)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    createNumberElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field number-field'
+        
+        if (node.name) {
+            const label = document.createElement('label')
+            label.textContent = node.name
+            container.appendChild(label)
+        }
+        
+        const value = document.createElement('span')
+        value.className = 'field-value'
+        value.textContent = this.getNodeValue(node) || '0'
+        
+        // Make it editable on double-click
+        value.addEventListener('dblclick', () => {
+            this.makeFieldEditable(value, node)
+        })
+        
+        container.appendChild(value)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    createDateElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field date-field'
+        
+        if (node.name) {
+            const label = document.createElement('label')
+            label.textContent = node.name
+            container.appendChild(label)
+        }
+        
+        const value = document.createElement('span')
+        value.className = 'field-value'
+        value.textContent = this.getNodeValue(node) || ''
+        
+        container.appendChild(value)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    createBooleanElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field boolean-field'
+        
+        if (node.name) {
+            const label = document.createElement('label')
+            label.textContent = node.name
+            container.appendChild(label)
+        }
+        
+        const checkbox = document.createElement('input')
+        checkbox.type = 'checkbox'
+        checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
+        
+        container.appendChild(checkbox)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    createButtonElement(node) {
+        const button = document.createElement('button')
+        button.className = 'overseer-button'
+        button.textContent = node.name || 'Button'
+        
+        // TODO: Add action handling
+        button.addEventListener('click', () => {
+            console.log('Button clicked:', node.name)
+        })
+        
+        this.applyNodeStyles(button, node)
+        return button
+    }
+
+    createCheckboxElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field checkbox-field'
+        
+        const label = document.createElement('label')
+        const checkbox = document.createElement('input')
+        checkbox.type = 'checkbox'
+        checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
+        
+        label.appendChild(checkbox)
+        label.appendChild(document.createTextNode(node.name || 'Checkbox'))
+        
+        // TODO: Add action handling
+        checkbox.addEventListener('change', () => {
+            console.log('Checkbox changed:', node.name, checkbox.checked)
+        })
+        
+        container.appendChild(label)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    createChartElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-chart'
+        
+        const canvas = document.createElement('canvas')
+        container.appendChild(canvas)
+        
+        // TODO: Implement chart rendering with Chart.js
+        canvas.width = 400
+        canvas.height = 200
+        
+        const ctx = canvas.getContext('2d')
+        ctx.fillStyle = '#f0f0f0'
+        ctx.fillRect(0, 0, 400, 200)
+        ctx.fillStyle = '#333'
+        ctx.font = '16px Arial'
+        ctx.fillText('Chart: ' + (node.name || 'Unnamed'), 10, 30)
+        ctx.fillText('(Chart.js integration pending)', 10, 60)
+        
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    applyNodeStyles(element, node) {
+        if (!node.parameters) return
+        
+        // Apply basic styling parameters
+        const params = node.parameters
+        
+        if (params.background) {
+            element.style.backgroundColor = params.background
+        }
+        
+        if (params.border) {
+            element.style.border = params.border
+        }
+        
+        if (params['horizontal-size']) {
+            element.style.width = params['horizontal-size']
+        }
+        
+        // Add more style mappings as needed
+    }
+
+    getNodeValue(node) {
+        if (!node.value) return null
+        
+        if (typeof node.value === 'string') {
+            return node.value
+        }
+        
+        if (typeof node.value === 'object') {
+            // Handle different value types
+            if (node.value.String !== undefined) return node.value.String
+            if (node.value.Integer !== undefined) return node.value.Integer.toString()
+            if (node.value.Float !== undefined) return node.value.Float.toString()
+            if (node.value.Boolean !== undefined) return node.value.Boolean.toString()
+            if (node.value.Date !== undefined) return node.value.Date
+            if (node.value.Formula !== undefined) return node.value.Formula
+        }
+        
+        return node.value.toString()
+    }
+
+    makeFieldEditable(element, node, isMultiline = false) {
+        const currentValue = element.textContent
+        
+        const input = document.createElement(isMultiline ? 'textarea' : 'input')
+        input.value = currentValue
+        input.className = 'field-editor'
+        
+        if (isMultiline) {
+            input.rows = 3
+        }
+        
+        // Replace the element with the input
+        element.style.display = 'none'
+        element.parentNode.insertBefore(input, element.nextSibling)
+        input.focus()
+        input.select()
+        
+        const finishEditing = () => {
+            const newValue = input.value
+            element.textContent = newValue
+            element.style.display = 'inline'
+            input.remove()
+            
+            // TODO: Update the node value and save changes
+            console.log('Field updated:', node.name, newValue)
+        }
+        
+        input.addEventListener('blur', finishEditing)
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !isMultiline) {
+                finishEditing()
+            }
+            if (e.key === 'Escape') {
+                element.style.display = 'inline'
+                input.remove()
+            }
+        })
+    }
+
+    renderMarkdown(text) {
+        // Basic markdown rendering (replace with proper library later)
+        return text
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/\n/g, '<br>')
+    }
+}

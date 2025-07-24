@@ -75,31 +75,34 @@ Comment: Yes, as long as we'll be able to perform some graphical operations such
 
 Some additional information
 Example A1.
-This is an example of what the code might look like. This is just to describe the language capabilities, the syntax is not important
+This is an example of what the code might look like using our finalized Overseer syntax:
 
-<tab Tasks>
-  <div _ hidden=true> # unnamed div does not affect hierarchy, just to hide contents
-    <div Task background=[Priority>20?Red:White]> #template for all tasks
-        <string Header></Header>
-        <text Description></Description> # text field allows markdown
-        <int Priority>0</Priority>
-        <date Created></Created>
-        <date Due></Due>
-    </Task>
-  </_>
-  <list Data entry=../Task> # list will provide CRUD capabilities in the UI, as well as sorting, filtering etc
-    <div 0 base=../../Task>
-    <string Header>Test task</Header> #other fields are copied from template
-    </0>
-  </Data>
-</Tasks>
+```overseer
+tab Tasks {
+  div (hidden=true) { // unnamed div does not affect hierarchy, just to hide contents
+    div Task (background=$(Priority>20?Red:White)) { // template for all tasks
+      string Header = ""
+      text Description = "" // text field allows markdown
+      int Priority = 0
+      date Created = today()
+      date Due = ""
+    }
+  }
+  
+  list Data (entry=../Task) { // list will provide CRUD capabilities in the UI, as well as sorting, filtering etc
+    div task1 (base=../../Task) {
+      Header = "Test task" // other fields are copied from template
+    }
+  }
+}
+```
 
 
 BRAINSTORM ITERATION 2:
 
 Q: Formula syntax: In your Excel-like references [tasks.5.description], how would you handle dynamic references, aggregations, etc. Would you support something like [tasks.where(Priority>10).count()]?
-A: Yes, we absolutely need this functionality. I think it should be implemeted as a part of <list> type. Let's rewrite the [task.5.description] with the XML-like syntax we used in the example above: it will become Task/Data/5/Description. Now we can call the <list> methods like this: Task/Data.where(Priority>10).count()
-To get the one with the highest priority we can do Task/Data.sort_decreasing(Priority)[0] or Task/Data.find_max(Priority)
+A: Yes, we absolutely need this functionality. I think it should be implemented as a part of list type. Let's rewrite the [task.5.description] with our finalized syntax: it will become Task/Data/5/Description. Now we can call the list methods like this: $(Task/Data.where(Priority>10).count())
+To get the one with the highest priority we can do $(Task/Data.sort_decreasing(Priority)[0]) or $(Task/Data.find_max(Priority))
 
 Q: Template inheritance: In your example, can templates inherit from other templates?
 A: Yes, they can, but I think this won't be a big deal because templates can just be a syntactic sugar for default initialization
@@ -108,7 +111,7 @@ Q: Data types: You show <string>, <text>, <int>, <date> - are you planning other
 A: Yes, <enum>s are definitely needed, the rest we'll add later on little by little
 
 Q: File organization: Since you want "everything in one place," how would you handle a file getting very large (hundreds of tasks)?
-A: I only meant that I don't want to split logic, data and styles/themes in order to keep the language minimalistic; It makes perfect sense to split the files though, we can just combine the file system with our hierarchy: for example to access the tasks from another file in the same directory we'd prefix an extra ../ to the path: ../tasks.xml/Tasks/Data
+A: I only meant that I don't want to split logic, data and styles/themes in order to keep the language minimalistic; It makes perfect sense to split the files though, we can just combine the file system with our hierarchy: for example to access the tasks from another file in the same directory we'd prefix an extra ../ to the path: ../tasks.os/Tasks/Data
 We'll leave it to the user to design their logic so that the files won't get too big, for example old finished tasks can be removed from the active list automatically and stored in separate files grouped by month
 
 Q: Real-time updates: For automatic sync without manual refresh, you'd need
@@ -131,8 +134,10 @@ A: For now let's assume that our users are very tech savvy and their code will b
 
 Q: Computed fields: Should some fields be entirely computed (never stored, always calculated)? Like "DaysUntilDue" = Due - Today?
 A: Yes, but the way it should work is by using a formula inside of the field value:
-<int DaysUntilDue>[../Due - $Today]</DaysUntilDue>
-And the way to avoid it being stored for each task is to simply keep in in the template, without redefining this field for specific tasks
+```overseer
+int DaysUntilDue = $(../Due - today())
+```
+And the way to avoid it being stored for each task is to simply keep it in the template, without redefining this field for specific tasks
 
 Q: Actions/triggers: Beyond display, do you want the ability to define actions? Like "when task is marked complete, increment statistics.tasksCompleted"?
 A: Excellent question, yes, we absolutely need this functionality. It's okay if these actions can only happen when the client is running.
@@ -142,12 +147,14 @@ A: Let's not make this a part of the core functionality, we'll be able to add so
 
 ADDITIONAL INFORMATION:
 One of the reasons for keeping the data, the styling, and the logic in the same hierarchy is for that hierarchy to work simultaneously for both data access and visualization:
-<div DiaryContent horizontal-size=30% border=Right>
-...
-</div>
-<text DiaryPage background=LightGray>
-... # markdown text here gets placed in the right 70% of the area, kind of like HTML divs
-</text>
+```overseer
+div DiaryContent (horizontal-size=30%, border=Right) {
+  // content
+}
+text DiaryPage (background=LightGray) {
+  // markdown text here gets placed in the right 70% of the area, kind of like HTML divs
+}
+```
 
 BRAINSTORM ITERATION 3:
 
@@ -156,19 +163,22 @@ A: This is a very good observation, minimizing cognitive overhead is precisely t
 
 Q: Trigger syntax: How would you define these?
 A: Let's add them inside of the relevant hierarchy like this:
-<div Task>
-  #... other Task fields
-  <trigger _ condition=[../DaysTillDue < 2]>
-    <action _ type=Set target=../Priority>[../BasePriority+10]</_>
-  </_>
-  <checkbox Completed>
-    <action _ type=Add target=../../Statistics/TasksCompleted>1</_>
-  </Completed>
-  <button Bump>
-    <string _>Bump priority</_> #button title
-    <action _ type=Set target=../Priority>[../Priority+1]</_>
-  </Bump>
-</Task>
+```overseer
+div Task {
+  // ... other Task fields
+  trigger (condition=$(../DaysTillDue < 2)) {
+    action Set (target=../Priority) = $(../BasePriority + 10)
+  }
+  
+  checkbox Completed {
+    action Add (target=../../Statistics/TasksCompleted) = 1
+  }
+  
+  button Bump "Bump priority" {
+    action Set (target=../Priority) = $(../Priority + 1)
+  }
+}
+```
 this way we can add actions not only to triggers, but also to checkboxes, buttons, etc
 
 Q: Action scope: Should actions be able to:
@@ -179,7 +189,7 @@ A: Let's limit other file access just to the project hierarchy, i.e. let them mo
 Actions should definitely be able to create new items, but as for notifications let's not add that for now.
 
 Q: Layout types: Do we need grid layouts for complex arrangements?
-A: right now we have <list> type that will provide layout options for tables. User should be able to select vertical or horizontal layout, and there should be a way to make it align the corresponding fields inside of its elements so that they would form a grid. For now this should be the only grid functionality we need.
+A: right now we have list type that will provide layout options for tables. User should be able to select vertical or horizontal layout, and there should be a way to make it align the corresponding fields inside of its elements so that they would form a grid. For now this should be the only grid functionality we need.
 
 Q: What about responsive design for mobile?
 A: we can keep mobile functionality to the bare minimum, as long as buttons and checkboxed can be accessed through touch screen it's fine
@@ -189,11 +199,11 @@ A: Yes we've already mentioned tabs, we definitely need them, the functionality 
 For accordions and drop-down lists let's simply add a way to hover a div on top of everything, then we can hide it in code and show when the relevant button is pressed. Then we can implement the rest as templates in our language.
 
 Q: How would you define form inputs for adding new items?
-A: All <string> and <text> fields should be mutable by default unless opposite is specified in the header. In the UI when user double clicks on a string or text, it switches to edit mode, displaying unformatted markdown text and/or formulas, same as in Excel. With this we won't need any additional node types for form inputs.
+A: All string and text fields should be mutable by default unless opposite is specified in the header. In the UI when user double clicks on a string or text, it switches to edit mode, displaying unformatted markdown text and/or formulas, same as in Excel. With this we won't need any additional node types for form inputs.
 For adding new items to a list we can just append a default template to the list and let the user modify the fields.
 
 Q: Global variables: You mentioned $Today - what other globals might be useful?
-A: For our prototype build let's just have $Today, what's more important is to provide the means to control when these global variables are evaluated, e.g. for the Task it should be evaluated when the task is added, so that it would turn into a constant date for a specific task. Also it's probably better to just have it as a today() function and remove the concept of global variables completely
+A: For our prototype build let's just have today() function, what's more important is to provide the means to control when these global variables are evaluated, e.g. for the Task it should be evaluated when the task is added, so that it would turn into a constant date for a specific task. Also it's probably better to just have it as a today() function and remove the concept of global variables completely
 
 Q: How are we going to deal with cross-file dependencies?
 A: At this stage let's assume that all code will be well-formed, with no broken references and circular dependencies, just like we did for formulas
@@ -228,3 +238,16 @@ Syntax finalization:
 - Clear distinction between formulas $(), array indexing [0], and parameters ()
 
 Status: Syntax is now solidified and ready for implementation documentation.
+
+BRAINSTORM ITERATION 5:
+
+Tech stack decision: Tauri (Rust + Web frontend)
+- Desktop: Tauri native app with web UI
+- Mobile: Tauri Mobile for Android (and later iOS)
+- Frontend: HTML/CSS/JavaScript with Chart.js for visualization
+- Backend: Rust for file parsing, formula evaluation, and business logic
+- Cross-platform single codebase
+- Native performance with web UI flexibility
+- Great opportunity to learn Rust coming from C++/C background
+
+Next steps: Set up basic Tauri project structure and begin implementation
