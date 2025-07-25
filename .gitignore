@@ -5,6 +5,9 @@ node_modules/
 # Tauri build outputs
 src-tauri/target/
 
+# WebView2 runtime (large files, not tracked)
+src-tauri/webview2/
+
 # Large installer files
 *.cab
 *.msi
