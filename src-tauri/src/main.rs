@@ -1,5 +1,5 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::command;
 
@@ -7,6 +7,7 @@ mod types;
 mod parser;
 mod evaluator;
 mod file_ops;
+mod file_ops_new;
 
 use types::*;
 use file_ops::FileOperations;
@@ -43,13 +44,41 @@ async fn find_overseer_files(_directory: String) -> Result<Vec<String>> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    // Set WebView2 fixed version path
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", 
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("webview2")
+            .join("Microsoft.WebView2.FixedVersionRuntime.138.0.3351.95.x64"));
+    
+    std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", 
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("webview2")
+            .join("Microsoft.WebView2.FixedVersionRuntime.138.0.3351.95.x64"));
+
+    match tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             load_overseer_file,
             save_overseer_file,
             parse_overseer_content,
             find_overseer_files
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!()) {
+        Ok(_) => {},
+        Err(e) => {
+            eprintln!("Failed to start Overseer application: {}", e);
+            eprintln!("This might be due to WebView2 runtime issues.");
+            eprintln!("Please try:");
+            eprintln!("1. Installing the latest WebView2 runtime from Microsoft");
+            eprintln!("2. Running as administrator");
+            eprintln!("3. Temporarily disabling antivirus/Windows Defender");
+            eprintln!("4. Running from the development environment with `npm run tauri dev`");
+            std::process::exit(1);
+        }
+    }
 }

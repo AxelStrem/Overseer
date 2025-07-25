@@ -73,7 +73,7 @@
         "providerShortName": null,
         "signingIdentity": null
       },
-      "resources": [],
+      "resources": ["webview2/**"],
       "shortDescription": "",
       "targets": "all",
       "windows": {
