@@ -76,26 +76,45 @@ class OverseerApp {
         try {
             this.setStatus('Loading file...')
             
+            // Add visible debugging to the status bar
+            this.setStatus('DEBUG: Starting file load...')
+            
             // Read file content
             const content = await invoke('load_overseer_file', { path: filePath })
+            this.setStatus(`DEBUG: File content loaded, length: ${content?.length || 'unknown'}`)
             
             // Parse the content
-            const document = await invoke('parse_overseer_content', { content })
+            const overseerDocument = await invoke('parse_overseer_content', { content })
+            this.setStatus(`DEBUG: Document parsed, type: ${typeof overseerDocument}, length: ${overseerDocument?.length || 'unknown'}`)
             
             this.currentFile = filePath
-            this.currentDocument = document
+            this.currentDocument = overseerDocument
             
             // Update UI
             document.getElementById('file-path').textContent = filePath
             document.getElementById('save-file-btn').disabled = false
             
-            // Render the document
-            this.renderer.renderDocument(document)
+            // Add visible debug info before rendering
+            const contentDisplay = document.getElementById('content-display')
+            contentDisplay.innerHTML = `<div style="background: yellow; padding: 10px; margin: 10px;">
+                <h3>DEBUG: About to render document</h3>
+                <p>Document type: ${typeof overseerDocument}</p>
+                <p>Is array: ${Array.isArray(overseerDocument)}</p>
+                <p>Length: ${overseerDocument?.length || 'N/A'}</p>
+                <p>Content preview: ${JSON.stringify(overseerDocument).substring(0, 200)}...</p>
+            </div>`
             
+            this.setStatus('DEBUG: About to call renderer...')
+            
+            // Render the document
+            this.renderer.renderDocument(overseerDocument)
+            
+            this.setStatus('DEBUG: Renderer called, switching to editor screen...')
             this.showEditorScreen()
-            this.setStatus('File loaded successfully')
+            this.setStatus('File loaded successfully - DEBUG VERSION')
             
         } catch (error) {
+            this.setStatus(`DEBUG: Error occurred - ${error.message}`)
             this.showError('Failed to load file', error)
         }
     }

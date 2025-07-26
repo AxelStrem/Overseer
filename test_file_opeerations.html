@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<!-- saved from url=(0024)https://tauri.localhost/ -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overseer</title>
+
+  <script type="module" crossorigin="" src="https://tauri.localhost/assets/index-BwtHtZYa.js"></script>
+  <link rel="stylesheet" crossorigin="" href="https://tauri.localhost/assets/index-VNigjcFF.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Overseer</h1>
+            <div class="toolbar">
+                <button id="open-file-btn">Open File</button>
+                <button id="new-file-btn">New File</button>
+                <button id="save-file-btn">Save</button>
+                <span id="file-path">E:\Source\Repos\Overseer\test_file_operations.os</span>
+            </div>
+        </header>
+
+        <main>
+            <div id="content-area">
+                <div id="welcome-screen" class="screen">
+                    <h2>Welcome to Overseer</h2>
+                    <p>A minimalistic personal data management framework</p>
+                    <div class="welcome-actions">
+                        <button class="primary" id="welcome-open-btn">Open Existing File</button>
+                        <button class="secondary" id="welcome-new-btn">Create New File</button>
+                    </div>
+                </div>
+
+                <div id="editor-screen" class="screen active">
+                    <div class="editor-layout">
+                        <div id="file-tree" class="sidebar">
+                            <h3>Files</h3>
+                            <div id="file-list"></div>
+                        </div>
+                        
+                        <div id="main-content">
+                            <div id="tab-container"></div>
+                            <div id="content-display"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="error-screen" class="screen">
+                    <h2>Error</h2>
+                    <p id="error-message"></p>
+                    <button id="error-back-btn">Back</button>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <div id="status-bar">
+                <span id="status-message">File loaded successfully</span>
+                <span id="status-info"></span>
+            </div>
+        </footer>
+    </div>
+
+
+
+
+</body></html>

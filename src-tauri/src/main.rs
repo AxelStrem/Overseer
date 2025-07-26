@@ -44,14 +44,14 @@ async fn find_overseer_files(_directory: String) -> Result<Vec<String>> {
 }
 
 fn main() {
-    // Set WebView2 fixed version path
-    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", 
-        std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("webview2")
-            .join("Microsoft.WebView2.FixedVersionRuntime.138.0.3351.95.x64"));
+    // Set WebView2 fixed version path with debug cache folder
+    let debug_cache_folder = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("webview2_debug");
+    
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &debug_cache_folder);
     
     std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", 
         std::env::current_exe()

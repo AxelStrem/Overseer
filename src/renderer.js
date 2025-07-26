@@ -4,48 +4,90 @@ export class OverseerRenderer {
         this.tabContainer = document.getElementById('tab-container')
     }
 
-    renderDocument(document) {
-        console.log('Rendering document:', document)
+    renderDocument(overseerDocument) {
+        console.log('Rendering document:', overseerDocument)
+        console.log('Document type:', typeof overseerDocument)
+        console.log('Document is array:', Array.isArray(overseerDocument))
+        console.log('Document length:', overseerDocument?.length)
         
         // Clear previous content
         this.contentDisplay.innerHTML = ''
         this.tabContainer.innerHTML = ''
 
-        if (Array.isArray(document)) {
-            // Document is an array of root nodes
-            for (const node of document) {
-                this.renderNode(node, this.contentDisplay)
-            }
-        } else if (document && typeof document === 'object') {
-            // Single root node
-            this.renderNode(document, this.contentDisplay)
-        } else {
-            this.contentDisplay.innerHTML = '<p>No content to display</p>'
+        // Add visible debugging info
+        const debugInfo = document.createElement('div')
+        debugInfo.style.cssText = 'background: #f0f0f0; padding: 10px; margin: 10px; border: 1px solid #ccc; font-family: monospace; white-space: pre-wrap;'
+        debugInfo.textContent = `DEBUG INFO:
+Document type: ${typeof overseerDocument}
+Is array: ${Array.isArray(overseerDocument)}
+Document length: ${overseerDocument?.length || 'N/A'}
+Document content: ${JSON.stringify(overseerDocument, null, 2)}`
+        this.contentDisplay.appendChild(debugInfo)
+
+        if (!overseerDocument) {
+            console.error('Document is null or undefined')
+            this.contentDisplay.innerHTML += '<p>No document provided</p>'
+            return
         }
+
+        if (Array.isArray(overseerDocument)) {
+            console.log('Processing array document with', overseerDocument.length, 'nodes')
+            
+            if (overseerDocument.length === 0) {
+                this.contentDisplay.innerHTML += '<p>Document is empty (no nodes parsed)</p>'
+                return
+            }
+            
+            // Document is an array of root nodes
+            for (let i = 0; i < overseerDocument.length; i++) {
+                console.log(`Rendering node ${i}:`, overseerDocument[i])
+                this.renderNode(overseerDocument[i], this.contentDisplay)
+            }
+        } else if (overseerDocument && typeof overseerDocument === 'object') {
+            console.log('Processing single root node:', overseerDocument)
+            // Single root node
+            this.renderNode(overseerDocument, this.contentDisplay)
+        } else {
+            console.warn('Unexpected document format:', overseerDocument)
+            this.contentDisplay.innerHTML += '<p>Unexpected document format</p>'
+        }
+        
+        console.log('Content display after rendering:', this.contentDisplay.innerHTML)
     }
 
     renderNode(node, container) {
+        console.log('renderNode called with:', node, 'container:', container)
+        
         if (!node || typeof node !== 'object') {
             console.warn('Invalid node:', node)
             return
         }
 
         const element = this.createNodeElement(node)
+        console.log('Created element:', element)
         
         if (element) {
             container.appendChild(element)
+            console.log('Appended element to container')
             
             // Render children
             if (node.children && Array.isArray(node.children)) {
+                console.log('Rendering', node.children.length, 'children for node:', node)
                 for (const child of node.children) {
                     this.renderNode(child, element)
                 }
+            } else {
+                console.log('No children for node:', node)
             }
+        } else {
+            console.warn('Failed to create element for node:', node)
         }
     }
 
     createNodeElement(node) {
-        const nodeType = node.node_type || node.type || 'div'
+        // Handle both possible node structures
+        const nodeType = node.node_type || node.type || node.name || 'div'
+        console.log('Creating element for node type:', nodeType, 'from node:', node)
         
         switch (nodeType.toLowerCase()) {
             case 'tab':
