@@ -36,8 +36,13 @@ impl OverseerNode {
             _ => false,
         };
         
+        // If a name is provided, use it. Otherwise, default the name to the node's type.
+        // This is crucial for matching override fields in templates where the override
+        // node is unnamed (e.g., `StepTasks { ... }`).
+        let final_name = name.unwrap_or_else(|| node_type.clone());
+
         Self {
-            name: name.unwrap_or_default(),
+            name: final_name,
             node_type,
             template: None,
             parameters: HashMap::new(),

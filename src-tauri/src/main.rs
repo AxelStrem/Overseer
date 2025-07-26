@@ -16,16 +16,11 @@ use parser::parse_document;
 
 #[command]
 async fn load_overseer_file(path: String) -> Result<String> {
-    println!("DEBUG: load_overseer_file called with path: {}", path);
-    
     match FileOperations::read_file(&path).await {
         Ok(content) => {
-            println!("DEBUG: File read successful! Content length: {}", content.len());
-            println!("DEBUG: Content preview: {}", &content[..content.len().min(200)]);
             Ok(content)
         },
         Err(e) => {
-            println!("DEBUG: File read error: {:?}", e);
             Err(OverseerError::IoError(format!("Failed to read file: {}", e)))
         }
     }
@@ -41,27 +36,12 @@ async fn save_overseer_file(path: String, content: String) -> Result<()> {
 
 #[command]
 async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
-    println!("DEBUG: parse_overseer_content called");
-    println!("DEBUG: Content length: {}", content.len());
-    println!("DEBUG: Content preview: {}", &content[..content.len().min(200)]);
-    
     match parse_document(&content) {
         Ok((remaining, mut nodes)) => {
-            println!("DEBUG: Parse successful! Nodes count: {}", nodes.len());
-            println!("DEBUG: Remaining input: {:?}", remaining);
-
-            // After parsing, resolve all templates to create the final, "hydrated" AST.
-            println!("DEBUG: Resolving templates...");
             resolver::resolve_document(&mut nodes);
-            println!("DEBUG: Template resolution complete.");
-
-            for (i, node) in nodes.iter().enumerate() {
-                println!("DEBUG: Resolved Node {}: {:?}", i, node);
-            }
             Ok(nodes)
         },
         Err(e) => {
-            println!("DEBUG: Parse error: {:?}", e);
             Err(OverseerError::ParseError(format!("Parse error: {}", e)))
         }
     }

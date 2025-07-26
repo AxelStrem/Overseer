@@ -146,17 +146,29 @@ fn parse_value_assignment(input: &str) -> IResult<&str, OverseerValue> {
 
 /// Parse a block { ... }
 fn parse_block(input: &str) -> IResult<&str, Vec<OverseerNode>> {
-    delimited(
-        preceded(multispace0, char('{')),
-        preceded(
-            skip_comments_and_whitespace,
-            many0(preceded(
-                skip_comments_and_whitespace,
-                alt((parse_list_item, parse_node)),
-            )),
-        ),
-        preceded(skip_comments_and_whitespace, char('}')),
-    )(input)
+    let (mut input, _) = preceded(multispace0, char('{'))(input)?;
+    let mut children = Vec::new();
+
+    loop {
+        let (next_input, _) = skip_comments_and_whitespace(input)?;
+        // Check for end of block
+        if let Ok((after, _)) = preceded(multispace0::<&str, ()>, char('}'))(next_input) {
+            input = after;
+            break;
+        }
+        // Try to parse a list item or node
+        match alt((parse_list_item, parse_node))(next_input) {
+            Ok((after, node)) => {
+                children.push(node);
+                input = after;
+            }
+            Err(_) => {
+                // Could not parse, skip one character and continue (to avoid infinite loop)
+                input = &next_input[1..];
+            }
+        }
+    }
+    Ok((input, children))
 }
 
 /// Parse a list item starting with -

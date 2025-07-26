@@ -1,3 +1,6 @@
+// Set this to false to disable all debug info in the rendered UI
+const DEBUG_MODE = false;
+
 export class OverseerRenderer {
     constructor() {
         this.contentDisplay = document.getElementById('content-display')
@@ -15,14 +18,12 @@ export class OverseerRenderer {
         this.tabContainer.innerHTML = ''
 
         // Add visible debugging info
-        const debugInfo = document.createElement('div')
-        debugInfo.style.cssText = 'background: #f0f0f0; padding: 10px; margin: 10px; border: 1px solid #ccc; font-family: monospace; white-space: pre-wrap; color: #000;'
-        debugInfo.textContent = `DEBUG INFO:
-Document type: ${typeof overseerDocument}
-Is array: ${Array.isArray(overseerDocument)}
-Document length: ${overseerDocument?.length || 'N/A'}
-Document content: ${JSON.stringify(overseerDocument, null, 2)}`
-        this.contentDisplay.appendChild(debugInfo)
+        if (DEBUG_MODE) {
+            const debugInfo = document.createElement('div')
+            debugInfo.style.cssText = 'background: #f0f0f0; padding: 10px; margin: 10px; border: 1px solid #ccc; font-family: monospace; white-space: pre-wrap; color: #000;'
+            debugInfo.textContent = `DEBUG INFO:\nDocument type: ${typeof overseerDocument}\nIs array: ${Array.isArray(overseerDocument)}\nDocument length: ${overseerDocument?.length || 'N/A'}\nDocument content: ${JSON.stringify(overseerDocument, null, 2)}`
+            this.contentDisplay.appendChild(debugInfo)
+        }
 
         if (!overseerDocument) {
             console.error('Document is null or undefined')

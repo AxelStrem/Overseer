@@ -1,4 +1,7 @@
 import { invoke } from '@tauri-apps/api/tauri'
+
+// Set this to false to disable all debug UI/status output
+const DEBUG_MODE = false;
 import { open, save } from '@tauri-apps/api/dialog'
 import { appWindow } from '@tauri-apps/api/window'
 import { OverseerRenderer } from './renderer.js'
@@ -74,47 +77,52 @@ class OverseerApp {
 
     async loadFile(filePath) {
         try {
-            this.setStatus('Loading file...')
-            
-            // Add visible debugging to the status bar
-            this.setStatus('DEBUG: Starting file load...')
-            
+            if (DEBUG_MODE) this.setStatus('Loading file...')
+            else this.setStatus('')
+
+            if (DEBUG_MODE) this.setStatus('DEBUG: Starting file load...')
+
             // Read file content
             const content = await invoke('load_overseer_file', { path: filePath })
-            this.setStatus(`DEBUG: File content loaded, length: ${content?.length || 'unknown'}`)
-            
+            if (DEBUG_MODE) this.setStatus(`DEBUG: File content loaded, length: ${content?.length || 'unknown'}`)
+
             // Parse the content
             const overseerDocument = await invoke('parse_overseer_content', { content })
-            this.setStatus(`DEBUG: Document parsed, type: ${typeof overseerDocument}, length: ${overseerDocument?.length || 'unknown'}`)
-            
+            if (DEBUG_MODE) this.setStatus(`DEBUG: Document parsed, type: ${typeof overseerDocument}, length: ${overseerDocument?.length || 'unknown'}`)
+
             this.currentFile = filePath
             this.currentDocument = overseerDocument
-            
+
             // Update UI
             document.getElementById('file-path').textContent = filePath
             document.getElementById('save-file-btn').disabled = false
-            
+
             // Add visible debug info before rendering
             const contentDisplay = document.getElementById('content-display')
-            contentDisplay.innerHTML = `<div style="background: yellow; padding: 10px; margin: 10px;">
-                <h3>DEBUG: About to render document</h3>
-                <p>Document type: ${typeof overseerDocument}</p>
-                <p>Is array: ${Array.isArray(overseerDocument)}</p>
-                <p>Length: ${overseerDocument?.length || 'N/A'}</p>
-                <p>Content preview: ${JSON.stringify(overseerDocument).substring(0, 200)}...</p>
-            </div>`
-            
-            this.setStatus('DEBUG: About to call renderer...')
-            
+            if (DEBUG_MODE) {
+                contentDisplay.innerHTML = `<div style="background: yellow; padding: 10px; margin: 10px;">
+                    <h3>DEBUG: About to render document</h3>
+                    <p>Document type: ${typeof overseerDocument}</p>
+                    <p>Is array: ${Array.isArray(overseerDocument)}</p>
+                    <p>Length: ${overseerDocument?.length || 'N/A'}</p>
+                    <p>Content preview: ${JSON.stringify(overseerDocument).substring(0, 200)}...</p>
+                </div>`
+            } else {
+                contentDisplay.innerHTML = '';
+            }
+
+            if (DEBUG_MODE) this.setStatus('DEBUG: About to call renderer...')
+
             // Render the document
             this.renderer.renderDocument(overseerDocument)
-            
-            this.setStatus('DEBUG: Renderer called, switching to editor screen...')
+
+            if (DEBUG_MODE) this.setStatus('DEBUG: Renderer called, switching to editor screen...')
             this.showEditorScreen()
-            this.setStatus('File loaded successfully - DEBUG VERSION')
+            if (DEBUG_MODE) this.setStatus('File loaded successfully - DEBUG VERSION')
+            else this.setStatus('Ready')
             
         } catch (error) {
-            this.setStatus(`DEBUG: Error occurred - ${error.message}`)
+            if (DEBUG_MODE) this.setStatus(`DEBUG: Error occurred - ${error.message}`)
             this.showError('Failed to load file', error)
         }
     }
@@ -166,7 +174,7 @@ tab Main {
         }
 
         try {
-            this.setStatus('Saving file...')
+            if (DEBUG_MODE) this.setStatus('Saving file...')
             
             // For now, we'll save the original content
             // Later this will save the modified document
@@ -176,7 +184,7 @@ tab Main {
                 content 
             })
             
-            this.setStatus('File saved successfully')
+            if (DEBUG_MODE) this.setStatus('File saved successfully')
         } catch (error) {
             this.showError('Failed to save file', error)
         }
@@ -184,7 +192,7 @@ tab Main {
 
     showWelcomeScreen() {
         this.showScreen('welcome-screen')
-        this.setStatus('Ready')
+        if (!DEBUG_MODE) this.setStatus('Ready')
     }
 
     showEditorScreen() {
@@ -195,7 +203,7 @@ tab Main {
         console.error(title, error)
         document.getElementById('error-message').textContent = `${title}: ${error}`
         this.showScreen('error-screen')
-        this.setStatus('Error')
+        if (!DEBUG_MODE) this.setStatus('Error')
     }
 
     showScreen(screenId) {

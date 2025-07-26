@@ -36,11 +36,6 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
 
 /// Recursively traverses the AST, resolving templates as it goes.
 fn resolve_node(node: &mut OverseerNode, templates: &HashMap<String, OverseerNode>) {
-    // Recurse to children first to resolve from the inside out.
-    for child in node.children.iter_mut() {
-        resolve_node(child, templates);
-    }
-
     // Check if the current node is a list that uses a template.
     if node.node_type == "list" {
         if let Some(OverseerValue::Template(template_path)) = node.parameters.get("entry") {
@@ -63,9 +58,6 @@ fn resolve_node(node: &mut OverseerNode, templates: &HashMap<String, OverseerNod
 
                         merge_node(&mut resolved_item, &overrides);
 
-                        // After merging, the new item might have its own lists that need resolving.
-                        resolve_node(&mut resolved_item, templates);
-
                         resolved_children.push(resolved_item);
                     } else {
                         // Pass through simple list items (e.g., - "a string")
@@ -76,6 +68,13 @@ fn resolve_node(node: &mut OverseerNode, templates: &HashMap<String, OverseerNod
                 node.children = resolved_children;
             }
         }
+    }
+
+    // After processing the current node (e.g., resolving a list), recurse into
+    // the children. This is a pre-order traversal, which is correct for this
+    // problem because it resolves containers before their contents.
+    for child in node.children.iter_mut() {
+        resolve_node(child, templates);
     }
 }
 
