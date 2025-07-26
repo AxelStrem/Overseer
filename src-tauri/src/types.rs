@@ -27,9 +27,9 @@ impl OverseerNode {
     }
     
     pub fn new_with_type(node_type: String, name: Option<String>) -> Self {
-        // A node is considered transparent if it's a top-level container like 'tab',
-        // or an unnamed 'div' which is typically used for logical grouping without
-        // a visual container. List items are concrete and never transparent.
+        // A node is considered transparent for rendering if it's a top-level container
+        // like 'tab', or an unnamed 'div' which is used for logical grouping.
+        // This check must happen BEFORE we default the name.
         let is_transparent = match node_type.as_str() {
             "tab" => true,
             "div" if name.is_none() => true,

@@ -8,6 +8,7 @@ mod parser;
 mod evaluator;
 mod file_ops;
 mod file_ops_new;
+pub mod resolver;
 
 use types::*;
 use file_ops::FileOperations;
@@ -45,11 +46,17 @@ async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
     println!("DEBUG: Content preview: {}", &content[..content.len().min(200)]);
     
     match parse_document(&content) {
-        Ok((remaining, nodes)) => {
+        Ok((remaining, mut nodes)) => {
             println!("DEBUG: Parse successful! Nodes count: {}", nodes.len());
             println!("DEBUG: Remaining input: {:?}", remaining);
+
+            // After parsing, resolve all templates to create the final, "hydrated" AST.
+            println!("DEBUG: Resolving templates...");
+            resolver::resolve_document(&mut nodes);
+            println!("DEBUG: Template resolution complete.");
+
             for (i, node) in nodes.iter().enumerate() {
-                println!("DEBUG: Node {}: {:?}", i, node);
+                println!("DEBUG: Resolved Node {}: {:?}", i, node);
             }
             Ok(nodes)
         },
