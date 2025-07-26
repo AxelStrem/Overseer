@@ -15,9 +15,18 @@ use parser::parse_document;
 
 #[command]
 async fn load_overseer_file(path: String) -> Result<String> {
+    println!("DEBUG: load_overseer_file called with path: {}", path);
+    
     match FileOperations::read_file(&path).await {
-        Ok(content) => Ok(content),
-        Err(e) => Err(OverseerError::IoError(format!("Failed to read file: {}", e))),
+        Ok(content) => {
+            println!("DEBUG: File read successful! Content length: {}", content.len());
+            println!("DEBUG: Content preview: {}", &content[..content.len().min(200)]);
+            Ok(content)
+        },
+        Err(e) => {
+            println!("DEBUG: File read error: {:?}", e);
+            Err(OverseerError::IoError(format!("Failed to read file: {}", e)))
+        }
     }
 }
 
@@ -31,9 +40,23 @@ async fn save_overseer_file(path: String, content: String) -> Result<()> {
 
 #[command]
 async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
+    println!("DEBUG: parse_overseer_content called");
+    println!("DEBUG: Content length: {}", content.len());
+    println!("DEBUG: Content preview: {}", &content[..content.len().min(200)]);
+    
     match parse_document(&content) {
-        Ok((_, nodes)) => Ok(nodes),
-        Err(e) => Err(OverseerError::ParseError(format!("Parse error: {}", e))),
+        Ok((remaining, nodes)) => {
+            println!("DEBUG: Parse successful! Nodes count: {}", nodes.len());
+            println!("DEBUG: Remaining input: {:?}", remaining);
+            for (i, node) in nodes.iter().enumerate() {
+                println!("DEBUG: Node {}: {:?}", i, node);
+            }
+            Ok(nodes)
+        },
+        Err(e) => {
+            println!("DEBUG: Parse error: {:?}", e);
+            Err(OverseerError::ParseError(format!("Parse error: {}", e)))
+        }
     }
 }
 

@@ -16,7 +16,7 @@ export class OverseerRenderer {
 
         // Add visible debugging info
         const debugInfo = document.createElement('div')
-        debugInfo.style.cssText = 'background: #f0f0f0; padding: 10px; margin: 10px; border: 1px solid #ccc; font-family: monospace; white-space: pre-wrap;'
+        debugInfo.style.cssText = 'background: #f0f0f0; padding: 10px; margin: 10px; border: 1px solid #ccc; font-family: monospace; white-space: pre-wrap; color: #000;'
         debugInfo.textContent = `DEBUG INFO:
 Document type: ${typeof overseerDocument}
 Is array: ${Array.isArray(overseerDocument)}
@@ -86,7 +86,14 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
 
     createNodeElement(node) {
         // Handle both possible node structures
-        const nodeType = node.node_type || node.type || node.name || 'div'
+        let nodeType = node.node_type || node.type || node.name || 'div'
+        
+        // Special case: if this node has a value but no name and is likely a list item,
+        // treat it as a string element to display the value
+        if (!node.name && this.getNodeValue(node) && !node.children?.length) {
+            nodeType = 'list_item'
+        }
+        
         console.log('Creating element for node type:', nodeType, 'from node:', node)
         
         switch (nodeType.toLowerCase()) {
@@ -96,6 +103,8 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
                 return this.createDivElement(node)
             case 'list':
                 return this.createListElement(node)
+            case 'list_item':
+                return this.createListItemElement(node)
             case 'string':
                 return this.createStringElement(node)
             case 'text':
@@ -177,11 +186,8 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         const list = document.createElement('div')
         list.className = 'overseer-list'
         
-        if (node.name) {
-            const header = document.createElement('h3')
-            header.textContent = node.name
-            list.appendChild(header)
-        }
+        // Don't show list name as header - we just want the list contents
+        // Lists should be transparent containers for their items
         
         // Apply list layout
         const layout = node.parameters?.layout || 'vertical'
@@ -191,11 +197,25 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         return list
     }
 
+    createListItemElement(node) {
+        const listItem = document.createElement('div')
+        listItem.className = 'overseer-list-item'
+        
+        const value = this.getNodeValue(node)
+        if (value) {
+            listItem.textContent = value
+        }
+        
+        this.applyNodeStyles(listItem, node)
+        return listItem
+    }
+
     createStringElement(node) {
         const container = document.createElement('div')
         container.className = 'overseer-field string-field'
         
-        if (node.name) {
+        // Only show label for meaningful names (not internal names)
+        if (node.name && !node.name.match(/^(string|text)_/)) {
             const label = document.createElement('label')
             label.textContent = node.name
             container.appendChild(label)
@@ -219,7 +239,8 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         const container = document.createElement('div')
         container.className = 'overseer-field text-field'
         
-        if (node.name) {
+        // Only show label for meaningful names (not internal names like "text_notes")
+        if (node.name && !node.name.startsWith('text_')) {
             const label = document.createElement('label')
             label.textContent = node.name
             container.appendChild(label)
@@ -289,7 +310,8 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         const container = document.createElement('div')
         container.className = 'overseer-field boolean-field'
         
-        if (node.name) {
+        // For boolean elements, only show label if it's meaningful (not internal names)
+        if (node.name && !node.name.match(/^(bool|boolean|checkbox|complete|tested)$/)) {
             const label = document.createElement('label')
             label.textContent = node.name
             container.appendChild(label)
@@ -322,20 +344,26 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         const container = document.createElement('div')
         container.className = 'overseer-field checkbox-field'
         
-        const label = document.createElement('label')
         const checkbox = document.createElement('input')
         checkbox.type = 'checkbox'
         checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
         
-        label.appendChild(checkbox)
-        label.appendChild(document.createTextNode(node.name || 'Checkbox'))
+        // For standalone checkboxes, only add label if the name is meaningful (not internal names)
+        if (node.name && !node.name.match(/^(checkbox|complete|tested|newFileWorks|openFileWorks|saveFileWorks|noJsErrors)$/)) {
+            const label = document.createElement('label')
+            label.appendChild(checkbox)
+            label.appendChild(document.createTextNode(node.name))
+            container.appendChild(label)
+        } else {
+            // Just the checkbox without any label for unnamed or internal checkboxes
+            container.appendChild(checkbox)
+        }
         
         // TODO: Add action handling
         checkbox.addEventListener('change', () => {
             console.log('Checkbox changed:', node.name, checkbox.checked)
         })
         
-        container.appendChild(label)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -385,23 +413,35 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
     }
 
     getNodeValue(node) {
-        if (!node.value) return null
+        // Values are stored in parameters["_value"] according to the parser
+        let value = null
         
-        if (typeof node.value === 'string') {
-            return node.value
+        // First check if value is stored in parameters["_value"]
+        if (node.parameters && node.parameters["_value"] !== undefined) {
+            value = node.parameters["_value"]
+        }
+        // Fallback to old node.value for backward compatibility
+        else if (node.value !== undefined) {
+            value = node.value
         }
         
-        if (typeof node.value === 'object') {
+        if (value === null || value === undefined) return null
+        
+        if (typeof value === 'string') {
+            return value
+        }
+        
+        if (typeof value === 'object') {
             // Handle different value types
-            if (node.value.String !== undefined) return node.value.String
-            if (node.value.Integer !== undefined) return node.value.Integer.toString()
-            if (node.value.Float !== undefined) return node.value.Float.toString()
-            if (node.value.Boolean !== undefined) return node.value.Boolean.toString()
-            if (node.value.Date !== undefined) return node.value.Date
-            if (node.value.Formula !== undefined) return node.value.Formula
+            if (value.String !== undefined) return value.String
+            if (value.Integer !== undefined) return value.Integer.toString()
+            if (value.Float !== undefined) return value.Float.toString()
+            if (value.Boolean !== undefined) return value.Boolean.toString()
+            if (value.Date !== undefined) return value.Date
+            if (value.Formula !== undefined) return value.Formula
         }
         
-        return node.value.toString()
+        return value.toString()
     }
 
     makeFieldEditable(element, node, isMultiline = false) {

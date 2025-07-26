@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<!-- saved from url=(0024)https://tauri.localhost/ -->
+<!-- saved from url=(0022)http://127.0.0.1:1420/ -->
 <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <script type="module" src="./test_file_opeerations_files/client"></script>
+
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Overseer</title>
-
-  <script type="module" crossorigin="" src="https://tauri.localhost/assets/index-BwtHtZYa.js"></script>
-  <link rel="stylesheet" crossorigin="" href="https://tauri.localhost/assets/index-VNigjcFF.css">
+    <link rel="stylesheet" href="./test_file_opeerations_files/styles.css">
 </head>
 <body>
     <div id="app">
@@ -39,8 +39,196 @@
                         </div>
                         
                         <div id="main-content">
-                            <div id="tab-container"></div>
-                            <div id="content-display"></div>
+                            <div id="tab-container"><button class="tab-button active">tab</button></div>
+                            <div id="content-display"><div style="background: rgb(240, 240, 240); padding: 10px; margin: 10px; border: 1px solid rgb(204, 204, 204); font-family: monospace; white-space: pre-wrap; color: rgb(0, 0, 0);">DEBUG INFO:
+Document type: object
+Is array: true
+Document length: 1
+Document content: [
+  {
+    "name": "tab",
+    "node_type": "tab",
+    "parameters": {
+      "title": {
+        "String": "File Operations Test"
+      }
+    },
+    "children": [
+      {
+        "name": "text_welcome",
+        "node_type": "text",
+        "parameters": {
+          "_value": {
+            "String": "Welcome to Overseer!"
+          }
+        },
+        "children": [],
+        "is_hierarchy_transparent": false
+      },
+      {
+        "name": "div_BasicInfo",
+        "node_type": "div",
+        "parameters": {},
+        "children": [
+          {
+            "name": "string_appName",
+            "node_type": "string",
+            "parameters": {
+              "_value": {
+                "String": "Overseer DSL Editor"
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": false
+          },
+          {
+            "name": "string_version",
+            "node_type": "string",
+            "parameters": {
+              "_value": {
+                "String": "0.1.0"
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": false
+          },
+          {
+            "name": "bool_testComplete",
+            "node_type": "bool",
+            "parameters": {
+              "_value": {
+                "Boolean": false
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": false
+          }
+        ],
+        "is_hierarchy_transparent": false
+      },
+      {
+        "name": "list_TestSteps",
+        "node_type": "list",
+        "parameters": {
+          "entry": {
+            "String": "string"
+          }
+        },
+        "children": [
+          {
+            "name": "list_item",
+            "node_type": "list_item",
+            "parameters": {
+              "_value": {
+                "String": "Test New File button"
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": true
+          },
+          {
+            "name": "list_item",
+            "node_type": "list_item",
+            "parameters": {
+              "_value": {
+                "String": "Test Open File dialog"
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": true
+          },
+          {
+            "name": "list_item",
+            "node_type": "list_item",
+            "parameters": {
+              "_value": {
+                "String": "Test Save File functionality"
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": true
+          },
+          {
+            "name": "list_item",
+            "node_type": "list_item",
+            "parameters": {
+              "_value": {
+                "String": "Verify no getElementById errors"
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": true
+          }
+        ],
+        "is_hierarchy_transparent": false
+      },
+      {
+        "name": "div_TestResults",
+        "node_type": "div",
+        "parameters": {},
+        "children": [
+          {
+            "name": "checkbox_newFileWorks",
+            "node_type": "checkbox",
+            "parameters": {
+              "_value": {
+                "Boolean": false
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": false
+          },
+          {
+            "name": "checkbox_openFileWorks",
+            "node_type": "checkbox",
+            "parameters": {
+              "_value": {
+                "Boolean": false
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": false
+          },
+          {
+            "name": "checkbox_saveFileWorks",
+            "node_type": "checkbox",
+            "parameters": {
+              "_value": {
+                "Boolean": false
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": false
+          },
+          {
+            "name": "checkbox_noJsErrors",
+            "node_type": "checkbox",
+            "parameters": {
+              "_value": {
+                "Boolean": false
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": false
+          },
+          {
+            "name": "text_notes",
+            "node_type": "text",
+            "parameters": {
+              "_value": {
+                "String": "Record any issues encountered during testing"
+              }
+            },
+            "children": [],
+            "is_hierarchy_transparent": false
+          }
+        ],
+        "is_hierarchy_transparent": false
+      }
+    ],
+    "is_hierarchy_transparent": true
+  }
+]</div><div class="tab-content" style="display: block;"><div class="overseer-field text-field"><div class="field-value text-content">Welcome to Overseer!</div></div><div class="overseer-div" data-name="div_BasicInfo"><div class="overseer-field string-field"><span class="field-value">Overseer DSL Editor</span></div><div class="overseer-field string-field"><span class="field-value">0.1.0</span></div><div class="overseer-field boolean-field"><label>bool_testComplete</label><input type="checkbox"></div></div><div class="overseer-list layout-vertical"><h3>list_TestSteps</h3><div class="overseer-div" data-name="list_item"></div><div class="overseer-div" data-name="list_item"></div><div class="overseer-div" data-name="list_item"></div><div class="overseer-div" data-name="list_item"></div></div><div class="overseer-div" data-name="div_TestResults"><div class="overseer-field checkbox-field"><label><input type="checkbox">checkbox_newFileWorks</label></div><div class="overseer-field checkbox-field"><label><input type="checkbox">checkbox_openFileWorks</label></div><div class="overseer-field checkbox-field"><label><input type="checkbox">checkbox_saveFileWorks</label></div><div class="overseer-field checkbox-field"><label><input type="checkbox">checkbox_noJsErrors</label></div><div class="overseer-field text-field"><div class="field-value text-content" style="display: inline;">Record any issues encountered during testing</div></div></div></div></div>
                         </div>
                     </div>
                 </div>
@@ -55,13 +243,13 @@
 
         <footer>
             <div id="status-bar">
-                <span id="status-message">File loaded successfully</span>
+                <span id="status-message">File loaded successfully - DEBUG VERSION</span>
                 <span id="status-info"></span>
             </div>
         </footer>
     </div>
 
-
+    <script type="module" src="./test_file_opeerations_files/main.js.download"></script>
 
 
 </body></html>
