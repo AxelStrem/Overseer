@@ -1,283 +1,240 @@
-use crate::types::{OverseerNode, OverseerValue, OverseerError};
+use crate::types::{OverseerNode, OverseerValue};
 use nom::{
-    IResult,
-    bytes::complete::{tag, take_until, take},
-    character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, none_of},
-    combinator::{opt, recognize},
-    multi::{many0, separated_list0},
-    sequence::{delimited, pair, preceded, tuple},
     branch::alt,
-    Parser,
+    bytes::complete::{tag, take_until},
+    character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, none_of},
+    combinator::{map, opt, recognize},
+    multi::{many0, separated_list0},
+    sequence::{delimited, pair, preceded},
+    IResult,
 };
 use std::collections::HashMap;
 
-/// Parse an entire Overseer file
-pub fn parse_overseer_file(input: &str) -> Result<serde_json::Value, OverseerError> {
-    match parse_document(input) {
-        Ok((_, document)) => {
-            // Convert to JSON for now (later we'll return the proper AST)
-            Ok(serde_json::to_value(document).unwrap())
-        }
-        Err(e) => Err(OverseerError::ParseError(format!("Failed to parse: {:?}", e))),
-    }
-}
-
 /// Parse the entire document (top-level nodes)
 pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
-    println!("DEBUG parse_document: input start: {:?}", &input[..input.len().min(100)]);
-    let result = preceded(
+    preceded(
         skip_comments_and_whitespace,
-        many0(preceded(skip_comments_and_whitespace, parse_node))
-    )(input);
-    println!("DEBUG parse_document: result: {:?}", result.as_ref().map(|(remaining, nodes)| (remaining.len(), nodes.len())));
-    result
+        many0(preceded(skip_comments_and_whitespace, parse_node)),
+    )(input)
 }
 
 /// Skip comments and whitespace
 fn skip_comments_and_whitespace(input: &str) -> IResult<&str, ()> {
-    println!("DEBUG skip_comments_and_whitespace: input start: {:?}", &input[..input.len().min(100)]);
-    let (input, _) = many0(alt((
-        skip_single_line_comment,
-        skip_multi_line_comment,
-        skip_whitespace
-    )))(input)?;
-    println!("DEBUG skip_comments_and_whitespace: output start: {:?}", &input[..input.len().min(100)]);
-    Ok((input, ()))
+    map(
+        many0(alt((
+            skip_single_line_comment,
+            skip_multi_line_comment,
+            skip_whitespace,
+        ))),
+        |_| (),
+    )(input)
 }
 
 /// Skip single line comment // comment
 fn skip_single_line_comment(input: &str) -> IResult<&str, ()> {
-    let (input, _) = tag("//")(input)?;
-    let (input, _) = many0(none_of("\r\n"))(input)?; // consume until line ending
-    let (input, _) = alt((tag("\r\n"), tag("\n"), tag("\r")))(input)?; // handle any line ending
-    Ok((input, ()))
+    use nom::bytes::complete::is_not;
+    map(
+        preceded(tag("//"), is_not("\r\n")),
+        |_| (),
+    )(input)
 }
 
 /// Skip multi-line comment /* comment */
 fn skip_multi_line_comment(input: &str) -> IResult<&str, ()> {
-    let (input, _) = tag("/*")(input)?;
-    let (input, _) = take_until("*/")(input)?;
-    let (input, _) = tag("*/")(input)?;
-    Ok((input, ()))
+    map(delimited(tag("/*"), take_until("*/"), tag("*/")), |_| ())(input)
 }
 
 /// Skip whitespace
 fn skip_whitespace(input: &str) -> IResult<&str, ()> {
-    let (input, _) = multispace1(input)?;
-    Ok((input, ()))
+    map(multispace1, |_| ())(input)
 }
 
 /// Parse a single node
 fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
-    println!("DEBUG parse_node: input start: {:?}", &input[..input.len().min(50)]);
-    let (input, node_type) = parse_identifier(input)?;
-    println!("DEBUG parse_node: parsed node_type: {:?}", node_type);
-    let (input, _) = skip_comments_and_whitespace(input)?;
-    
-    // Try to parse name and parameters in different orders
-    // Pattern 1: node_type name (params) 
-    // Pattern 2: node_type (params)
-    // Pattern 3: node_type name
-    // Pattern 4: node_type
-    
-    let (input, (node_name, parameters)) = 
-        if let Ok((input, name)) = parse_identifier(input) {
-            let (input, _) = skip_comments_and_whitespace(input)?;
-            if let Ok((input, params)) = parse_parameters(input) {
-                println!("DEBUG: Pattern 1 success: name={:?}, params=true", name);
-                (input, (Some(name), Some(params)))
-            } else {
-                println!("DEBUG: Pattern 3 success: name={:?}, params=false", name);
-                (input, (Some(name), None))
-            }
-        } else if let Ok((input, params)) = parse_parameters(input) {
-            println!("DEBUG: Pattern 2 success: params={}", params.len());
-            (input, (None, Some(params)))
-        } else {
-            println!("DEBUG: Pattern 4 success: no name, no params");
-            (input, (None, None))
-        };
-    
-    let (input, _) = skip_comments_and_whitespace(input)?;
-    
-    println!("DEBUG: After pattern matching, about to parse value/block. Input: {:?}", &input[..input.len().min(50)]);
-    
-    // Check if this is a simple value assignment or a block
-    println!("DEBUG: About to parse value assignment or block, input: {:?}", &input[..input.len().min(50)]);
-    let (input, (value, children)) = alt((
-        parse_value_assignment,
-        parse_block
+    // A node definition can be templated or regular
+    let (input, (template_val, node_type)) = alt((
+        // Templated: <path>
+        map(parse_template_value, |p| (Some(p), None)),
+        // Regular: type or -
+        map(parse_node_type, |t| (None, Some(t.to_string()))),
     ))(input)?;
-    println!("DEBUG: Parsed value/block successfully, remaining input: {:?}", &input[..input.len().min(50)]);
 
-    // Create node with hierarchy transparency logic
-    let mut node = OverseerNode::new_with_type(
-        node_type.to_string(), 
-        node_name.map(|s| s.to_string())
-    );
+    // Then parse optional name and parameters
+    let (input, _) = multispace0(input)?;
+    let (input, node_name) = opt(parse_identifier)(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, parameters) = opt(parse_parameters)(input)?;
+    let (input, _) = multispace0(input)?;
+
+    // Then parse body, which can be a block, a value assignment, or nothing
+    let (input, body) = opt(alt((
+        // Node with a value assignment = ...
+        map(parse_value_assignment, |val| (Some(val), Vec::new())),
+        // Node with a block body { ... }
+        map(parse_block, |children| (None, children)),
+    )))(input)?;
+
+    let (value, children) = body.unwrap_or((None, Vec::new()));
+
+    // Determine the template path string, if it exists
+    let template_path = if let Some(OverseerValue::Template(t)) = &template_val {
+        Some(t.clone())
+    } else {
+        None
+    };
+
+    // Construct the node
+    let final_node_type = if let Some(nt) = node_type {
+        nt
+    } else if let Some(t) = &template_path {
+        // If the type is a template, we can use the template path as a hint for the type
+        t.split('/').last().unwrap_or_default().to_string()
+    } else { "".to_string() };
+    let mut node = OverseerNode::new_with_type(final_node_type, node_name.map(|s| s.to_string()));
     
-    if let Some(params) = parameters {
-        // Convert HashMap<String, String> to HashMap<String, OverseerValue>
-        node.parameters = params.into_iter()
-            .map(|(k, v)| (k, OverseerValue::String(v)))
-            .collect();
-    }
-    
-    // Set the value if we got one from value assignment
-    if let Some(val) = value {
-        node.parameters.insert("_value".to_string(), val);
-    }
-    
+    node.template = template_path;
+    node.parameters = parameters.unwrap_or_default();
     node.children = children;
 
-    println!("DEBUG: Created node with type={:?}, name={:?}, children={}", 
-             node.node_type, node.name, node.children.len());
+    if let Some(val) = value {
+        node.parameters.insert("value".to_string(), val);
+    }
 
     Ok((input, node))
 }
 
+/// Parse a node type, which is an identifier or a hyphen for inference
+fn parse_node_type(input: &str) -> IResult<&str, &str> {
+    alt((parse_identifier, tag("-")))(input)
+}
+
+/// Parse a template path like <../Task>
+fn parse_template_value(input: &str) -> IResult<&str, OverseerValue> {
+    map(delimited(char('<'), take_until(">"), char('>')), |s: &str| OverseerValue::Template(s.to_string()))(input)
+}
+
 /// Parse node parameters like (param=value, param2=value2)
-fn parse_parameters(input: &str) -> IResult<&str, HashMap<String, String>> {
-    delimited(
-        char('('),
-        preceded(
-            multispace0,
+fn parse_parameters(input: &str) -> IResult<&str, HashMap<String, OverseerValue>> {
+    map(
+        delimited(
+            char('('),
             separated_list0(
                 preceded(multispace0, char(',')),
-                preceded(multispace0, parse_parameter)
-            )
+                preceded(multispace0, parse_parameter),
+            ),
+            preceded(multispace0, char(')')),
         ),
-        preceded(multispace0, char(')'))
+        |params| params.into_iter().collect(),
     )(input)
-    .map(|(input, params)| {
-        let mut map = HashMap::new();
-        for (key, value) in params {
-            map.insert(key, value);
-        }
-        (input, map)
-    })
 }
 
 /// Parse a single parameter (key=value)
-fn parse_parameter(input: &str) -> IResult<&str, (String, String)> {
-    let (input, key) = parse_identifier(input)?;
-    let (input, _) = preceded(multispace0, char('='))(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, value) = parse_parameter_value(input)?;
-    Ok((input, (key.to_string(), value)))
-}
-
-/// Parse parameter values (strings, formulas, identifiers)
-fn parse_parameter_value(input: &str) -> IResult<&str, String> {
-    alt((
-        parse_quoted_string,
-        parse_formula,
-        parse_identifier
-    ))(input).map(|(input, value)| (input, value.to_string()))
+fn parse_parameter(input: &str) -> IResult<&str, (String, OverseerValue)> {
+    map(
+        pair(
+            parse_identifier,
+            preceded(pair(multispace0, char('=')), preceded(multispace0, parse_value)),
+        ),
+        |(key, value)| (key.to_string(), value),
+    )(input)
 }
 
 /// Parse value assignment (= value)
-fn parse_value_assignment(input: &str) -> IResult<&str, (Option<OverseerValue>, Vec<OverseerNode>)> {
-    let (input, _) = char('=')(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, value) = parse_value(input)?;
-    Ok((input, (Some(value), Vec::new())))
+fn parse_value_assignment(input: &str) -> IResult<&str, OverseerValue> {
+    preceded(pair(multispace0, char('=')), preceded(multispace0, parse_value))(input)
 }
 
 /// Parse a block { ... }
-fn parse_block(input: &str) -> IResult<&str, (Option<OverseerValue>, Vec<OverseerNode>)> {
-    let (input, _) = char('{')(input)?;
-    let (input, _) = skip_comments_and_whitespace(input)?;
-    
-    let (input, children) = many0(
-        alt((
-            preceded(skip_comments_and_whitespace, parse_list_item),
-            preceded(skip_comments_and_whitespace, parse_node)
-        ))
-    )(input)?;
-    
-    let (input, _) = skip_comments_and_whitespace(input)?;
-    let (input, _) = char('}')(input)?;
-    
-    Ok((input, (None, children)))
+fn parse_block(input: &str) -> IResult<&str, Vec<OverseerNode>> {
+    delimited(
+        preceded(multispace0, char('{')),
+        preceded(
+            skip_comments_and_whitespace,
+            many0(preceded(
+                skip_comments_and_whitespace,
+                alt((parse_list_item, parse_node)),
+            )),
+        ),
+        preceded(skip_comments_and_whitespace, char('}')),
+    )(input)
 }
 
 /// Parse a list item starting with -
 fn parse_list_item(input: &str) -> IResult<&str, OverseerNode> {
-    let (input, _) = char('-')(input)?;
+    let (input, _) = preceded(multispace0, char('-'))(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, value) = parse_value(input)?;
-    
+
+    // A list item can be a simple value or a complex object in a block
+    let (input, body) = alt((
+        // Case 1: Complex object like - { - name = "..." }
+        map(parse_block, |children| (None, children)),
+        // Case 2: Simple value like - "a string"
+        map(parse_value, |value| (Some(value), Vec::new())),
+    ))(input)?;
+
+    let (value, children) = body;
+
     let mut node = OverseerNode::new_with_type("list_item".to_string(), None);
-    node.parameters.insert("_value".to_string(), value);
-    
-    println!("DEBUG: Created list item node with value: {:?}", node.parameters.get("_value"));
+    if let Some(val) = value {
+        node.parameters.insert("value".to_string(), val);
+    }
+    node.children = children;
     Ok((input, node))
 }
 
 /// Parse different types of values
 fn parse_value(input: &str) -> IResult<&str, OverseerValue> {
     alt((
+        parse_template_value,
         parse_formula_value,
-        parse_quoted_string_value,
-        parse_number_value,
         parse_boolean_value,
-        parse_function_call_value,
-        parse_identifier_value
+        parse_number_value,
+        parse_quoted_string_value,
+        parse_unquoted_string_value, // Must be last as it's a fallback
     ))(input)
 }
 
 /// Parse formula like $(expression)
-fn parse_formula(input: &str) -> IResult<&str, &str> {
-    delimited(
-        tag("$("),
-        take_until(")"),
-        char(')')
-    )(input)
-}
-
 fn parse_formula_value(input: &str) -> IResult<&str, OverseerValue> {
-    let (input, _) = tag("$(")(input)?;
-    let (input, formula) = take_until(")")(input)?;
-    let (input, _) = char(')')(input)?;
-    Ok((input, OverseerValue::Formula(format!("$({})", formula))))
+    map(
+        delimited(tag("$("), take_until(")"), char(')')),
+        |s: &str| OverseerValue::Formula(s.to_string()),
+    )(input)
 }
 
 /// Parse quoted strings
-fn parse_quoted_string(input: &str) -> IResult<&str, &str> {
-    delimited(
-        char('"'),
-        take_until("\""),
-        char('"')
-    )(input)
-}
-
 fn parse_quoted_string_value(input: &str) -> IResult<&str, OverseerValue> {
-    parse_quoted_string(input)
-        .map(|(input, s)| (input, OverseerValue::String(s.to_string())))
+    map(
+        delimited(char('"'), take_until("\""), char('"')),
+        |s: &str| OverseerValue::String(s.to_string()),
+    )(input)
 }
 
 /// Parse numbers (int or float)
 fn parse_number_value(input: &str) -> IResult<&str, OverseerValue> {
-    let (input, number_str) = recognize(
-        tuple((
+    // Recognize a number pattern first to avoid ambiguity between int and float.
+    // This is more robust than alt((double, i64)) because i64 could partially
+    // parse a float, and double could parse an integer as a float.
+    let (remaining, number_str) = recognize(
+        pair(
             opt(char('-')),
-            nom::character::complete::digit1,
-            opt(preceded(char('.'), nom::character::complete::digit1))
-        ))
+            pair(
+                nom::character::complete::digit1,
+                opt(preceded(char('.'), nom::character::complete::digit1))
+            )
+        )
     )(input)?;
 
+    // If the recognized string contains a '.', it's a float. Otherwise, it's an integer.
     if number_str.contains('.') {
-        if let Ok(f) = number_str.parse::<f64>() {
-            Ok((input, OverseerValue::Float(f)))
-        } else {
-            Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Float)))
+        match number_str.parse::<f64>() {
+            Ok(f) => Ok((remaining, OverseerValue::Float(f))),
+            Err(_) => Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Float)))
         }
     } else {
-        if let Ok(i) = number_str.parse::<i64>() {
-            Ok((input, OverseerValue::Integer(i)))
-        } else {
-            Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Digit)))
+        match number_str.parse::<i64>() {
+            Ok(i) => Ok((remaining, OverseerValue::Integer(i))),
+            Err(_) => Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Digit)))
         }
     }
 }
@@ -285,22 +242,14 @@ fn parse_number_value(input: &str) -> IResult<&str, OverseerValue> {
 /// Parse boolean values
 fn parse_boolean_value(input: &str) -> IResult<&str, OverseerValue> {
     alt((
-        tag("true").map(|_| OverseerValue::Boolean(true)),
-        tag("false").map(|_| OverseerValue::Boolean(false))
+        map(tag("true"), |_| OverseerValue::Boolean(true)),
+        map(tag("false"), |_| OverseerValue::Boolean(false)),
     ))(input)
 }
 
-/// Parse function calls like today()
-fn parse_function_call_value(input: &str) -> IResult<&str, OverseerValue> {
-    let (input, func_name) = parse_identifier(input)?;
-    let (input, _) = tag("()")(input)?;
-    Ok((input, OverseerValue::Formula(format!("{}()", func_name))))
-}
-
-/// Parse identifier as a value
-fn parse_identifier_value(input: &str) -> IResult<&str, OverseerValue> {
-    parse_identifier(input)
-        .map(|(input, id)| (input, OverseerValue::String(id.to_string())))
+/// Parse unquoted strings (identifiers, paths, etc.)
+fn parse_unquoted_string_value(input: &str) -> IResult<&str, OverseerValue> {
+    map(parse_identifier, |s| OverseerValue::String(s.to_string()))(input)
 }
 
 /// Parse identifiers (variable names, node types, etc.)
@@ -308,38 +257,9 @@ fn parse_identifier(input: &str) -> IResult<&str, &str> {
     recognize(
         pair(
             alt((alpha1, tag("_"))),
-            many0(alt((alphanumeric1, tag("_"))))
-        )
+            many0(alt((alphanumeric1, tag("_"), tag("."), tag("/")))),
+        ),
     )(input)
-}
-
-// Helper functions for parsing node patterns
-fn parse_name_and_params(input: &str) -> IResult<&str, (Option<&str>, Option<HashMap<String, String>>)> {
-    println!("DEBUG: Trying Pattern 1 (name + params): {:?}", &input[..input.len().min(50)]);
-    let (input, name) = parse_identifier(input)?;
-    let (input, _) = skip_comments_and_whitespace(input)?;
-    let (input, params) = opt(parse_parameters)(input)?;
-    println!("DEBUG: Pattern 1 success: name={:?}, params={:?}", name, params.is_some());
-    Ok((input, (Some(name), params)))
-}
-
-fn parse_params_only(input: &str) -> IResult<&str, (Option<&str>, Option<HashMap<String, String>>)> {
-    println!("DEBUG: Trying Pattern 2 (params only): {:?}", &input[..input.len().min(50)]);
-    let (input, params) = parse_parameters(input)?;
-    println!("DEBUG: Pattern 2 success: params={:?}", params.len());
-    Ok((input, (None, Some(params))))
-}
-
-fn parse_name_only(input: &str) -> IResult<&str, (Option<&str>, Option<HashMap<String, String>>)> {
-    println!("DEBUG: Trying Pattern 3 (name only): {:?}", &input[..input.len().min(50)]);
-    let (input, name) = parse_identifier(input)?;
-    println!("DEBUG: Pattern 3 success: name={:?}", name);
-    Ok((input, (Some(name), None)))
-}
-
-fn parse_neither(input: &str) -> IResult<&str, (Option<&str>, Option<HashMap<String, String>>)> {
-    println!("DEBUG: Trying Pattern 4 (neither): {:?}", &input[..input.len().min(50)]);
-    Ok((input, (None, None)))
 }
 
 #[cfg(test)]
@@ -348,39 +268,64 @@ mod tests {
 
     #[test]
     fn test_parse_simple_node() {
-        let input = r#"string Name = "Test""#;
+        let input = r#"string Name = "TestValue""#;
         let result = parse_node(input);
         assert!(result.is_ok());
         
-        let (_, node) = result.unwrap();
-        assert_eq!(node.name, "string_Name");
+        let (remaining, node) = result.unwrap();
+        assert_eq!(remaining, "");
         assert_eq!(node.node_type, "string");
-        assert!(!node.is_hierarchy_transparent);
+        assert_eq!(node.name, "Name");
+        assert_eq!(
+            node.parameters.get("value"),
+            Some(&OverseerValue::String("TestValue".to_string()))
+        );
     }
-
+    
     #[test]
-    fn test_parse_node_with_parameters() {
-        let input = r#"div Task (background=Red) { }"#;
+    fn test_parse_node_with_block() {
+        let input = r#"div Task { string name = "My Task" }"#;
         let result = parse_node(input);
         assert!(result.is_ok());
-        
-        let (_, node) = result.unwrap();
-        assert_eq!(node.name, "div_Task");
+        let (remaining, node) = result.unwrap();
+        assert_eq!(remaining, "");
         assert_eq!(node.node_type, "div");
-        assert_eq!(node.parameters.get("background"), Some(&OverseerValue::String("Red".to_string())));
-        assert!(!node.is_hierarchy_transparent);
+        assert_eq!(node.name, "Task");
+        assert_eq!(node.children.len(), 1);
+        assert_eq!(node.children[0].node_type, "string");
+        assert_eq!(node.children[0].name, "name");
     }
 
     #[test]
-    fn test_parse_transparent_node() {
-        let input = r#"tab (title="Test") { }"#;
+    fn test_parse_list_with_complex_items() {
+        let input = r#"list Steps { - { - name = "Step 1" } }"#;
         let result = parse_node(input);
         assert!(result.is_ok());
-        
+        let (remaining, node) = result.unwrap();
+        assert_eq!(remaining, "");
+        assert_eq!(node.node_type, "list");
+        assert_eq!(node.children.len(), 1);
+        let list_item = &node.children[0];
+        assert_eq!(list_item.node_type, "list_item");
+        assert_eq!(list_item.children.len(), 1);
+        let item_field = &list_item.children[0];
+        assert_eq!(item_field.node_type, "-"); // Inferred type
+        assert_eq!(item_field.name, "name");
+        assert_eq!(
+            item_field.parameters.get("value"),
+            Some(&OverseerValue::String("Step 1".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_templated_node() {
+        let input = r#"<../TaskTemplate> my_task (priority=5) {}"#;
+        let result = parse_node(input);
+        assert!(result.is_ok());
         let (_, node) = result.unwrap();
-        assert_eq!(node.name, "tab");
-        assert_eq!(node.node_type, "tab");
-        assert_eq!(node.parameters.get("title"), Some(&OverseerValue::String("Test".to_string())));
-        assert!(node.is_hierarchy_transparent); // Should be transparent since no name
+        assert_eq!(node.node_type, "TaskTemplate");
+        assert_eq!(node.name, "my_task");
+        assert_eq!(node.template, Some("../TaskTemplate".to_string()));
+        assert_eq!(node.parameters.get("priority"), Some(&OverseerValue::Integer(5)));
     }
 }

@@ -491,11 +491,7 @@ div Tasks {
 
 ## Reserved Keywords
 
-- Node types: `div`, `string`, `text`, `int`, `float`, `date`, `bool`, `enum`, `list`, `tab`, `button`, `checkbox`, `chart`, `trigger`, `action`
-- Parameters: `hidden`, `background`, `border`, `layout`, `sort`, `direction`, `base`, `entry`, `target`, `condition`, `type`, `data`, `labels`
-- Functions: `today()`, `count()`, `where()`, `sort()`, `find_max()`, `find_min()`, `average()`, `sum()`
-- Operators: `+`, `-`, `*`, `/`, `%`, `>`, `<`, `>=`, `<=`, `==`, `!=`, `&&`, `||`, `!`
-- Literals: `true`, `false`
+- Parameters: `hidden`, `background`, `border`, `layout`, `sort`, `direction`, `entry`, `target`, `condition`, `type`, `data`, `labels`
 
 ---
 

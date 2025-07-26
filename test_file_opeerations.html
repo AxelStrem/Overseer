@@ -39,15 +39,16 @@
                         </div>
                         
                         <div id="main-content">
-                            <div id="tab-container"><button class="tab-button active">tab</button></div>
+                            <div id="tab-container"><button class="tab-button active">Tab</button></div>
                             <div id="content-display"><div style="background: rgb(240, 240, 240); padding: 10px; margin: 10px; border: 1px solid rgb(204, 204, 204); font-family: monospace; white-space: pre-wrap; color: rgb(0, 0, 0);">DEBUG INFO:
 Document type: object
 Is array: true
 Document length: 1
 Document content: [
   {
-    "name": "tab",
+    "name": "",
     "node_type": "tab",
+    "template": null,
     "parameters": {
       "title": {
         "String": "File Operations Test"
@@ -55,10 +56,11 @@ Document content: [
     },
     "children": [
       {
-        "name": "text_welcome",
+        "name": "welcome",
         "node_type": "text",
+        "template": null,
         "parameters": {
-          "_value": {
+          "value": {
             "String": "Welcome to Overseer!"
           }
         },
@@ -66,15 +68,17 @@ Document content: [
         "is_hierarchy_transparent": false
       },
       {
-        "name": "div_BasicInfo",
+        "name": "BasicInfo",
         "node_type": "div",
+        "template": null,
         "parameters": {},
         "children": [
           {
-            "name": "string_appName",
+            "name": "appName",
             "node_type": "string",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "String": "Overseer DSL Editor"
               }
             },
@@ -82,10 +86,11 @@ Document content: [
             "is_hierarchy_transparent": false
           },
           {
-            "name": "string_version",
+            "name": "version",
             "node_type": "string",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "String": "0.1.0"
               }
             },
@@ -93,10 +98,11 @@ Document content: [
             "is_hierarchy_transparent": false
           },
           {
-            "name": "bool_testComplete",
+            "name": "testComplete",
             "node_type": "bool",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "Boolean": false
               }
             },
@@ -107,8 +113,9 @@ Document content: [
         "is_hierarchy_transparent": false
       },
       {
-        "name": "list_TestSteps",
+        "name": "TestSteps",
         "node_type": "list",
+        "template": null,
         "parameters": {
           "entry": {
             "String": "string"
@@ -116,10 +123,11 @@ Document content: [
         },
         "children": [
           {
-            "name": "list_item",
+            "name": "",
             "node_type": "list_item",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "String": "Test New File button"
               }
             },
@@ -127,10 +135,11 @@ Document content: [
             "is_hierarchy_transparent": true
           },
           {
-            "name": "list_item",
+            "name": "",
             "node_type": "list_item",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "String": "Test Open File dialog"
               }
             },
@@ -138,10 +147,11 @@ Document content: [
             "is_hierarchy_transparent": true
           },
           {
-            "name": "list_item",
+            "name": "",
             "node_type": "list_item",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "String": "Test Save File functionality"
               }
             },
@@ -149,10 +159,11 @@ Document content: [
             "is_hierarchy_transparent": true
           },
           {
-            "name": "list_item",
+            "name": "",
             "node_type": "list_item",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "String": "Verify no getElementById errors"
               }
             },
@@ -163,15 +174,17 @@ Document content: [
         "is_hierarchy_transparent": false
       },
       {
-        "name": "div_TestResults",
+        "name": "TestResults",
         "node_type": "div",
+        "template": null,
         "parameters": {},
         "children": [
           {
-            "name": "checkbox_newFileWorks",
+            "name": "newFileWorks",
             "node_type": "checkbox",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "Boolean": false
               }
             },
@@ -179,10 +192,11 @@ Document content: [
             "is_hierarchy_transparent": false
           },
           {
-            "name": "checkbox_openFileWorks",
+            "name": "openFileWorks",
             "node_type": "checkbox",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "Boolean": false
               }
             },
@@ -190,10 +204,11 @@ Document content: [
             "is_hierarchy_transparent": false
           },
           {
-            "name": "checkbox_saveFileWorks",
+            "name": "saveFileWorks",
             "node_type": "checkbox",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "Boolean": false
               }
             },
@@ -201,10 +216,11 @@ Document content: [
             "is_hierarchy_transparent": false
           },
           {
-            "name": "checkbox_noJsErrors",
+            "name": "noJsErrors",
             "node_type": "checkbox",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "Boolean": false
               }
             },
@@ -212,10 +228,11 @@ Document content: [
             "is_hierarchy_transparent": false
           },
           {
-            "name": "text_notes",
+            "name": "notes",
             "node_type": "text",
+            "template": null,
             "parameters": {
-              "_value": {
+              "value": {
                 "String": "Record any issues encountered during testing"
               }
             },
@@ -228,7 +245,7 @@ Document content: [
     ],
     "is_hierarchy_transparent": true
   }
-]</div><div class="tab-content" style="display: block;"><div class="overseer-field text-field"><div class="field-value text-content">Welcome to Overseer!</div></div><div class="overseer-div" data-name="div_BasicInfo"><div class="overseer-field string-field"><span class="field-value">Overseer DSL Editor</span></div><div class="overseer-field string-field"><span class="field-value">0.1.0</span></div><div class="overseer-field boolean-field"><label>bool_testComplete</label><input type="checkbox"></div></div><div class="overseer-list layout-vertical"><h3>list_TestSteps</h3><div class="overseer-div" data-name="list_item"></div><div class="overseer-div" data-name="list_item"></div><div class="overseer-div" data-name="list_item"></div><div class="overseer-div" data-name="list_item"></div></div><div class="overseer-div" data-name="div_TestResults"><div class="overseer-field checkbox-field"><label><input type="checkbox">checkbox_newFileWorks</label></div><div class="overseer-field checkbox-field"><label><input type="checkbox">checkbox_openFileWorks</label></div><div class="overseer-field checkbox-field"><label><input type="checkbox">checkbox_saveFileWorks</label></div><div class="overseer-field checkbox-field"><label><input type="checkbox">checkbox_noJsErrors</label></div><div class="overseer-field text-field"><div class="field-value text-content" style="display: inline;">Record any issues encountered during testing</div></div></div></div></div>
+]</div><div class="tab-content" style="display: block;"><div class="overseer-field text-field"><label>welcome</label><div class="field-value text-content"></div></div><div class="overseer-div" data-name="BasicInfo"><div class="overseer-field string-field"><label>appName</label><span class="field-value"></span></div><div class="overseer-field string-field"><label>version</label><span class="field-value"></span></div><div class="overseer-field boolean-field"><label>testComplete</label><input type="checkbox"></div></div><div class="overseer-list layout-vertical"><div class="overseer-list-item"></div><div class="overseer-list-item"></div><div class="overseer-list-item"></div><div class="overseer-list-item"></div></div><div class="overseer-div" data-name="TestResults"><div class="overseer-field checkbox-field"><input type="checkbox"></div><div class="overseer-field checkbox-field"><input type="checkbox"></div><div class="overseer-field checkbox-field"><input type="checkbox"></div><div class="overseer-field checkbox-field"><input type="checkbox"></div><div class="overseer-field text-field"><label>notes</label><div class="field-value text-content"></div></div></div></div></div>
                         </div>
                     </div>
                 </div>

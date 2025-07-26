@@ -87,13 +87,7 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
     createNodeElement(node) {
         // Handle both possible node structures
         let nodeType = node.node_type || node.type || node.name || 'div'
-        
-        // Special case: if this node has a value but no name and is likely a list item,
-        // treat it as a string element to display the value
-        if (!node.name && this.getNodeValue(node) && !node.children?.length) {
-            nodeType = 'list_item'
-        }
-        
+
         console.log('Creating element for node type:', nodeType, 'from node:', node)
         
         switch (nodeType.toLowerCase()) {
@@ -214,8 +208,7 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         const container = document.createElement('div')
         container.className = 'overseer-field string-field'
         
-        // Only show label for meaningful names (not internal names)
-        if (node.name && !node.name.match(/^(string|text)_/)) {
+        if (node.name) {
             const label = document.createElement('label')
             label.textContent = node.name
             container.appendChild(label)
@@ -239,8 +232,7 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         const container = document.createElement('div')
         container.className = 'overseer-field text-field'
         
-        // Only show label for meaningful names (not internal names like "text_notes")
-        if (node.name && !node.name.startsWith('text_')) {
+        if (node.name) {
             const label = document.createElement('label')
             label.textContent = node.name
             container.appendChild(label)
@@ -310,8 +302,7 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         const container = document.createElement('div')
         container.className = 'overseer-field boolean-field'
         
-        // For boolean elements, only show label if it's meaningful (not internal names)
-        if (node.name && !node.name.match(/^(bool|boolean|checkbox|complete|tested)$/)) {
+        if (node.name) {
             const label = document.createElement('label')
             label.textContent = node.name
             container.appendChild(label)
@@ -347,9 +338,8 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
         const checkbox = document.createElement('input')
         checkbox.type = 'checkbox'
         checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
-        
-        // For standalone checkboxes, only add label if the name is meaningful (not internal names)
-        if (node.name && !node.name.match(/^(checkbox|complete|tested|newFileWorks|openFileWorks|saveFileWorks|noJsErrors)$/)) {
+
+        if (node.name) {
             const label = document.createElement('label')
             label.appendChild(checkbox)
             label.appendChild(document.createTextNode(node.name))
@@ -413,16 +403,11 @@ Document content: ${JSON.stringify(overseerDocument, null, 2)}`
     }
 
     getNodeValue(node) {
-        // Values are stored in parameters["_value"] according to the parser
+        // Values are stored in parameters["value"] according to the parser
         let value = null
         
-        // First check if value is stored in parameters["_value"]
-        if (node.parameters && node.parameters["_value"] !== undefined) {
-            value = node.parameters["_value"]
-        }
-        // Fallback to old node.value for backward compatibility
-        else if (node.value !== undefined) {
-            value = node.value
+        if (node.parameters && node.parameters["value"] !== undefined) {
+            value = node.parameters["value"]
         }
         
         if (value === null || value === undefined) return null

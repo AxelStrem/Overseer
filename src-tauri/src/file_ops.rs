@@ -101,31 +101,55 @@ impl OverseerFileHandler {
     }
 
     fn serialize_node(node: &OverseerNode, output: &mut String, indent_level: usize) -> Result<()> {
-        let indent = "  ".repeat(indent_level);
+        let indent = "    ".repeat(indent_level); // Use 4 spaces for indentation
+        output.push_str(&indent);
         
-        // Write node name
-        output.push_str(&format!("{}{}", indent, node.name));
+        // Handle special case for list items which start with '-'
+        if node.node_type == "list_item" {
+            output.push_str("- ");
+            // Simple value list item: - "value"
+            if let Some(value) = node.parameters.get("value") {
+                output.push_str(&Self::serialize_value(value));
+                output.push('\n');
+                return Ok(());
+            }
+            // Complex object list item: - { ... }
+        } else {
+            // Handle node type or template path
+            if let Some(template_path) = &node.template {
+                output.push_str(&format!("<{}>", template_path));
+            } else {
+                output.push_str(&node.node_type);
+            }
+
+            // Handle node name
+            if !node.name.is_empty() {
+                output.push(' ');
+                output.push_str(&node.name);
+            }
+        }
         
-        // Write parameters if any
-        if !node.parameters.is_empty() {
-            output.push('(');
-            let params: Vec<String> = node.parameters.iter()
-                .map(|(k, v)| format!("{}: {}", k, Self::serialize_value(v)))
+        // Handle parameters (excluding the special 'value' parameter for fields)
+        let regular_params: Vec<_> = node.parameters.iter().filter(|(k, _)| k.as_str() != "value").collect();
+        if !regular_params.is_empty() {
+            output.push_str(" (");
+            let params_str: Vec<String> = regular_params.iter()
+                .map(|(k, v)| format!("{}={}", k, Self::serialize_value(v)))
                 .collect();
-            output.push_str(&params.join(", "));
+            output.push_str(&params_str.join(", "));
             output.push(')');
         }
         
-        if node.children.is_empty() {
+        // Handle body (value assignment, block, or nothing)
+        if let Some(value) = node.parameters.get("value") {
+            output.push_str(&format!(" = {}\n", Self::serialize_value(value)));
+        } else if node.children.is_empty() {
             output.push('\n');
         } else {
             output.push_str(" {\n");
-            
-            // Write children
             for child in &node.children {
                 Self::serialize_node(child, output, indent_level + 1)?;
             }
-            
             output.push_str(&format!("{}}}\n", indent));
         }
         
@@ -140,6 +164,7 @@ impl OverseerFileHandler {
             OverseerValue::Boolean(b) => b.to_string(),
             OverseerValue::Date(d) => format!("\"{}\"", d),
             OverseerValue::Formula(f) => format!("$({})", f),
+            OverseerValue::Template(t) => format!("<{}>", t),
         }
     }
 }

@@ -4,10 +4,11 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, OverseerError>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OverseerNode {
     pub name: String,
     pub node_type: String, // The original type (tab, div, etc.)
+    pub template: Option<String>, // Path to a template node, e.g., "../TaskTemplate"
     pub parameters: HashMap<String, OverseerValue>,
     pub children: Vec<OverseerNode>,
     pub is_hierarchy_transparent: bool, // If true, children are accessible as if they belong to parent
@@ -18,6 +19,7 @@ impl OverseerNode {
         Self {
             name: name.clone(),
             node_type: name.clone(),
+            template: None,
             parameters: HashMap::new(),
             children: Vec::new(),
             is_hierarchy_transparent: false,
@@ -25,16 +27,19 @@ impl OverseerNode {
     }
     
     pub fn new_with_type(node_type: String, name: Option<String>) -> Self {
-        let is_transparent = name.is_none();
-        let full_name = if let Some(name) = name {
-            format!("{}_{}", node_type, name)
-        } else {
-            node_type.clone()
+        // A node is considered transparent if it's a top-level container like 'tab',
+        // or an unnamed 'div' which is typically used for logical grouping without
+        // a visual container. List items are concrete and never transparent.
+        let is_transparent = match node_type.as_str() {
+            "tab" => true,
+            "div" if name.is_none() => true,
+            _ => false,
         };
         
         Self {
-            name: full_name,
+            name: name.unwrap_or_default(),
             node_type,
+            template: None,
             parameters: HashMap::new(),
             children: Vec::new(),
             is_hierarchy_transparent: is_transparent,
@@ -59,7 +64,7 @@ impl OverseerNode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum OverseerValue {
     String(String),
     Integer(i64),
@@ -67,6 +72,7 @@ pub enum OverseerValue {
     Boolean(bool),
     Date(String), // We'll use string representation for now
     Formula(String), // Formula expressions like $(...)
+    Template(String), // For <...> syntax in parameters, e.g. entry=<../Template>
 }
 
 #[derive(Error, Debug, Serialize, Deserialize)]
