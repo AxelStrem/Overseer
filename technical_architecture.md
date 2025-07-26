@@ -162,7 +162,7 @@ pub enum OverseerValue {
 ### Node Types
 - **tab**: Top-level navigation containers
 - **div**: Generic containers with layout options
-- **list**: Collections with iteration support
+- **list**: Collections with iteration support. Uses an `entry` parameter to define the type or template for its items (e.g., `entry=string` or `entry=<../Template>`).
 - **string**: Text input fields
 - **text**: Multi-line text with markdown support
 - **int/float**: Numeric input fields

@@ -25,12 +25,12 @@ tab (title="Overseer DSL Development") {
         string name = ""
         string description = ""
         int priority = 0        
-        list StepTasks (entry=../Task) {
+        list StepTasks (entry=<../Task>) {
         }
 
     }
 
-    list Steps (entry=../Step) {
+    list Steps (entry=<../Step>) {
 
         - {
             - name = "1.1: Test Current File Operations"

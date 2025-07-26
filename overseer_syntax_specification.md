@@ -34,12 +34,12 @@ The `-` character can be used to automatically infer types in contexts where the
 
 ```overseer
 // In templated nodes - type inferred from template field
-div Task (hidden=true) {
+div TaskTemplate (hidden=true) {
     string name = ""
     int priority = 0
 }
 
-list Tasks (entry=../Task) {
+list Tasks (entry=<../TaskTemplate>) {
     - {  // Type inferred as Task from entry= parameter
         - name = "Complete project"      // Type inferred as string
         - priority = 5                   // Type inferred as int
@@ -78,6 +78,11 @@ list Items (entry=string) {
     - "First item"    // string inferred from entry=string
     - "Second item"   // string inferred from entry=string
 }
+
+// Node created from a template
+<../TaskTemplate> my_task {
+    - name = "A new templated task"
+}
 ```
 
 ### 2. Data Types
@@ -94,7 +99,7 @@ list Items (entry=string) {
 #### Container Types:
 - `div`: Generic container for grouping
 - `list`: Collection with CRUD operations and two entry types:
-  - **Template node entries**: `list Tasks (entry=../Task)` - structured objects following a template
+  - **Template node entries**: `list Tasks (entry=<../TaskTemplate>)` - structured objects following a template
   - **Vanilla type entries**: `list Names (entry=string)` - simple primitive values
 - `tab`: Tab container for UI organization
 
@@ -105,14 +110,14 @@ Lists support two distinct entry patterns:
 **Template Node Lists** - for structured data:
 ```overseer
 // Define a template (usually hidden)
-div Task (hidden=true) {
+div TaskTemplate (hidden=true) {
     string name = ""
     int priority = 0
     bool completed = false
 }
 
 // List using the template
-list Tasks (entry=../Task) {
+list Tasks (entry=<../TaskTemplate>) {
     - {  // Type inferred as Task
         - name = "Complete project"
         - priority = 5
@@ -339,7 +344,7 @@ tab Dashboard {
 tab Tasks {
     // Hidden template section
     div (hidden=true) {
-        div Task (background=$(Priority>20?"#FFE6E6":"#E6F3FF")) {
+        div TaskTemplate (background=$(Priority>20?"#FFE6E6":"#E6F3FF")) {
             string Header = ""
             text Description = ""
             int Priority = 0
@@ -375,22 +380,22 @@ tab Tasks {
     }
     
     // Task list with grid layout
-    list Data (entry=../Task, layout=grid, sort=Priority, direction=vertical) {
-        div urgent_task (base=../../Task) {
+    list Data (entry=<../TaskTemplate>, layout=grid, sort=Priority, direction=vertical) {
+        div urgent_task {
             Header = "Fix critical bug"
             Description = "System crashes on startup"
             Priority = 25
             Due = "2025-07-25"
         }
         
-        div normal_task (base=../../Task) {
+        div normal_task {
             Header = "Write documentation"
             Description = "Update API documentation"
             Priority = 5
             Due = "2025-07-30"
         }
         
-        div completed_task (base=../../Task) {
+        div completed_task {
             Header = "Setup development environment"
             Priority = 3
             Due = "2025-07-20"
@@ -400,7 +405,7 @@ tab Tasks {
     
     // Add new task button
     button AddTask "Add New Task" {
-        action Create (target=Data, template=../Task)
+        action Create (target=Data, template=<../Task>)
     }
 }
 
