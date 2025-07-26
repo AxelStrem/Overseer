@@ -23,10 +23,35 @@ type NodeName (param=value, param=value) {
 }
 ```
 
-- **type**: Required node type (e.g., `div`, `string`, `list`, `tab`)
+- **type**: Node type (e.g., `div`, `string`, `list`, `tab`) or `-` for automatically inferred type
 - **NodeName**: Optional identifier for the node
 - **parameters**: Optional configuration in parentheses
 - **content**: Nested nodes or values within braces
+
+#### Type Inference with `-`
+
+The `-` character can be used to automatically infer types in contexts where the type is determinable:
+
+```overseer
+// In templated nodes - type inferred from template field
+div Task (hidden=true) {
+    string name = ""
+    int priority = 0
+}
+
+list Tasks (entry=../Task) {
+    - {  // Type inferred as Task from entry= parameter
+        - name = "Complete project"      // Type inferred as string
+        - priority = 5                   // Type inferred as int
+    }
+}
+
+// In lists with vanilla types
+list Phases (entry=string) {
+    - "Phase 1: Core File Operations"   // Type inferred as string
+    - "Phase 2: Basic Content Display"  // Type inferred as string
+}
+```
 
 #### Examples:
 ```overseer
@@ -47,6 +72,12 @@ string TaskName {
 
 // Simple data field
 int Priority = 5
+
+// Auto-inferred types in list entries
+list Items (entry=string) {
+    - "First item"    // string inferred from entry=string
+    - "Second item"   // string inferred from entry=string
+}
 ```
 
 ### 2. Data Types
@@ -62,8 +93,53 @@ int Priority = 5
 
 #### Container Types:
 - `div`: Generic container for grouping
-- `list`: Collection with CRUD operations
+- `list`: Collection with CRUD operations and two entry types:
+  - **Template node entries**: `list Tasks (entry=../Task)` - structured objects following a template
+  - **Vanilla type entries**: `list Names (entry=string)` - simple primitive values
 - `tab`: Tab container for UI organization
+
+#### List Entry Types
+
+Lists support two distinct entry patterns:
+
+**Template Node Lists** - for structured data:
+```overseer
+// Define a template (usually hidden)
+div Task (hidden=true) {
+    string name = ""
+    int priority = 0
+    bool completed = false
+}
+
+// List using the template
+list Tasks (entry=../Task) {
+    - {  // Type inferred as Task
+        - name = "Complete project"
+        - priority = 5
+        - completed = false
+    }
+    - {  // Another Task entry
+        - name = "Review code"
+        - priority = 3
+        - completed = true
+    }
+}
+```
+
+**Vanilla Type Lists** - for simple values:
+```overseer
+list Phases (entry=string) {
+    - "Phase 1: Core File Operations"    // Type inferred as string
+    - "Phase 2: Basic Content Display"   // Type inferred as string
+    - "Phase 3: Interactive Editing"     // Type inferred as string
+}
+
+list Priorities (entry=int) {
+    - 1    // Type inferred as int
+    - 5    // Type inferred as int
+    - 10   // Type inferred as int
+}
+```
 
 #### Interactive Types:
 - `button`: Clickable button with actions

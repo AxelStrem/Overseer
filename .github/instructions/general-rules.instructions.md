@@ -7,3 +7,4 @@ Git commands (especially "git commit") complete immediately and silently in Powe
 
 Always consult product_description.md and technical_architecture.md for project-specific guidelines and architecture details.
 
+Consult overseer_syntax_specification.md for Overseer language syntax; Keep the syntax in mind when developing app features.
