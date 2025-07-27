@@ -195,12 +195,48 @@ export class OverseerRenderer {
     createListItemElement(node) {
         const listItem = document.createElement('div')
         listItem.className = 'overseer-list-item'
-        
-        const value = this.getNodeValue(node)
-        if (value) {
-            listItem.textContent = value
+
+        // If the node is a value node (string, int, float, bool, date), render using the appropriate element creator
+        const valueTypes = ['string', 'int', 'float', 'bool', 'date', 'text']
+        const nodeType = (node.node_type || node.type || '').toLowerCase()
+        if (valueTypes.includes(nodeType)) {
+            // Use the appropriate element creator, which will only show a label if a user-friendly label is present
+            let valueElement
+            switch (nodeType) {
+                case 'string':
+                    valueElement = this.createStringElement(node)
+                    break
+                case 'int':
+                case 'float':
+                    valueElement = this.createNumberElement(node)
+                    break
+                case 'bool':
+                    valueElement = this.createBooleanElement(node)
+                    break
+                case 'date':
+                    valueElement = this.createDateElement(node)
+                    break
+                case 'text':
+                    valueElement = this.createTextElement(node)
+                    break
+                default:
+                    valueElement = document.createTextNode(this.getNodeValue(node) || '')
+            }
+            listItem.appendChild(valueElement)
+        } else {
+        // For non-value nodes, render their children (if any)
+        if (node.children && Array.isArray(node.children)) {
+            for (const child of node.children) {
+                const childElement = this.createNodeElement(child)
+                if (childElement) {
+                    listItem.appendChild(childElement)
+                }
+            }
+        } else {
+            // No children, render nothing (or could add a placeholder if desired)
         }
-        
+        }
+
         this.applyNodeStyles(listItem, node)
         return listItem
     }
@@ -209,9 +245,11 @@ export class OverseerRenderer {
         const container = document.createElement('div')
         container.className = 'overseer-field string-field'
         
-        if (node.name) {
+        // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
+        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        if (labelText) {
             const label = document.createElement('label')
-            label.textContent = node.name
+            label.textContent = labelText
             container.appendChild(label)
         }
         
@@ -233,9 +271,11 @@ export class OverseerRenderer {
         const container = document.createElement('div')
         container.className = 'overseer-field text-field'
         
-        if (node.name) {
+        // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
+        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        if (labelText) {
             const label = document.createElement('label')
-            label.textContent = node.name
+            label.textContent = labelText
             container.appendChild(label)
         }
         
@@ -260,9 +300,11 @@ export class OverseerRenderer {
         const container = document.createElement('div')
         container.className = 'overseer-field number-field'
         
-        if (node.name) {
+        // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
+        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        if (labelText) {
             const label = document.createElement('label')
-            label.textContent = node.name
+            label.textContent = labelText
             container.appendChild(label)
         }
         
@@ -284,9 +326,11 @@ export class OverseerRenderer {
         const container = document.createElement('div')
         container.className = 'overseer-field date-field'
         
-        if (node.name) {
+        // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
+        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        if (labelText) {
             const label = document.createElement('label')
-            label.textContent = node.name
+            label.textContent = labelText
             container.appendChild(label)
         }
         
@@ -303,9 +347,11 @@ export class OverseerRenderer {
         const container = document.createElement('div')
         container.className = 'overseer-field boolean-field'
         
-        if (node.name) {
+        // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
+        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        if (labelText) {
             const label = document.createElement('label')
-            label.textContent = node.name
+            label.textContent = labelText
             container.appendChild(label)
         }
         
@@ -335,26 +381,28 @@ export class OverseerRenderer {
     createCheckboxElement(node) {
         const container = document.createElement('div')
         container.className = 'overseer-field checkbox-field'
-        
+
         const checkbox = document.createElement('input')
         checkbox.type = 'checkbox'
         checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
 
-        if (node.name) {
+        // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
+        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        if (labelText) {
             const label = document.createElement('label')
             label.appendChild(checkbox)
-            label.appendChild(document.createTextNode(node.name))
+            label.appendChild(document.createTextNode(labelText))
             container.appendChild(label)
         } else {
             // Just the checkbox without any label for unnamed or internal checkboxes
             container.appendChild(checkbox)
         }
-        
+
         // TODO: Add action handling
         checkbox.addEventListener('change', () => {
-            console.log('Checkbox changed:', node.name, checkbox.checked)
+            if (DEBUG_MODE) console.log('Checkbox changed:', node.name, checkbox.checked)
         })
-        
+
         this.applyNodeStyles(container, node)
         return container
     }

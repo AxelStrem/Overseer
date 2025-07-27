@@ -51,9 +51,8 @@ tab (title="Overseer DSL Development") {
                 }
                 - {
                     - task_description = "Test basic file saving"
-                    - complete = true
-                    - tested = true
-                    - notes = "COMPLETED: Save functionality works, need to debug content parsing"
+                    - complete = false
+                    - tested = false
                 }
             }
         }
