@@ -23,7 +23,7 @@ type NodeName (param=value, param=value) {
 }
 ```
 
-- **type**: Node type (e.g., `div`, `string`, `list`, `tab`) or `-` for automatically inferred type
+- **type**: Node type (e.g., `div`, `string`, `list`, `tab`, `int`, `float`) or `-` for automatically inferred type
 - **NodeName**: Optional identifier for the node
 - **parameters**: Optional configuration in parentheses
 - **content**: Nested nodes or values within braces
@@ -97,7 +97,7 @@ list Items (entry=string) {
 - `enum`: Predefined choice from a list
 
 #### Container Types:
-- `div`: Generic container for grouping
+- `div`: Generic container for grouping and visual placement and styling
 - `list`: Collection with CRUD operations and two entry types:
   - **Template node entries**: `list Tasks (entry=<../TaskTemplate>)` - structured objects following a template
   - **Vanilla type entries**: `list Names (entry=string)` - simple primitive values

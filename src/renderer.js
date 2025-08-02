@@ -89,8 +89,11 @@ export class OverseerRenderer {
         // Handle both possible node structures
         let nodeType = node.node_type || node.type || node.name || 'div'
 
-        console.log('Creating element for node type:', nodeType, 'from node:', node)
-        
+        console.log('[DEBUG] createNodeElement:', { nodeType, node });
+        if (node.children && Array.isArray(node.children)) {
+            console.log(`[DEBUG] Node ${nodeType} has ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
+        }
+
         switch (nodeType.toLowerCase()) {
             case 'tab':
                 return this.createTabElement(node)
@@ -197,11 +200,13 @@ export class OverseerRenderer {
         listItem.className = 'overseer-list-item'
 
         // If the node is a value node (string, int, float, bool, date), render using the appropriate element creator
+
         const valueTypes = ['string', 'int', 'float', 'bool', 'date', 'text']
         const nodeType = (node.node_type || node.type || '').toLowerCase()
+        console.log('[DEBUG] createListItemElement:', { nodeType, node });
         if (valueTypes.includes(nodeType)) {
-            // Use the appropriate element creator, which will only show a label if a user-friendly label is present
             let valueElement
+            console.log('[DEBUG] List item is value node, extracting value:', node);
             switch (nodeType) {
                 case 'string':
                     valueElement = this.createStringElement(node)
@@ -224,17 +229,17 @@ export class OverseerRenderer {
             }
             listItem.appendChild(valueElement)
         } else {
-        // For non-value nodes, render their children (if any)
-        if (node.children && Array.isArray(node.children)) {
-            for (const child of node.children) {
-                const childElement = this.createNodeElement(child)
-                if (childElement) {
-                    listItem.appendChild(childElement)
+            if (node.children && Array.isArray(node.children)) {
+                console.log(`[DEBUG] List item is non-value node with ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
+                for (const child of node.children) {
+                    const childElement = this.createNodeElement(child)
+                    if (childElement) {
+                        listItem.appendChild(childElement)
+                    }
                 }
+            } else {
+                console.log('[DEBUG] List item is non-value node with no children:', node);
             }
-        } else {
-            // No children, render nothing (or could add a placeholder if desired)
-        }
         }
 
         this.applyNodeStyles(listItem, node)
@@ -452,30 +457,62 @@ export class OverseerRenderer {
     }
 
     getNodeValue(node) {
-        // Values are stored in parameters["value"] according to the parser
-        let value = null
-        
+        // If the node itself is a string, return it
+        if (typeof node === 'string') {
+            console.log('[DEBUG] getNodeValue: node is a string:', node);
+            return node
+        }
+
+        // Try parameters["value"] first
         if (node.parameters && node.parameters["value"] !== undefined) {
-            value = node.parameters["value"]
+            const value = node.parameters["value"]
+            console.log('[DEBUG] getNodeValue: found parameters["value"]:', value, 'in node:', node);
+            if (typeof value === 'string') return value
+            if (typeof value === 'object') {
+                if (value.String !== undefined) return value.String
+                if (value.Integer !== undefined) return value.Integer.toString()
+                if (value.Float !== undefined) return value.Float.toString()
+                if (value.Boolean !== undefined) return value.Boolean.toString()
+                if (value.Date !== undefined) return value.Date
+                if (value.Formula !== undefined) return value.Formula
+            }
+            return value.toString()
         }
-        
-        if (value === null || value === undefined) return null
-        
-        if (typeof value === 'string') {
-            return value
+
+        // Fallback: check node.value directly
+        if (node.value !== undefined && node.value !== null) {
+            console.log('[DEBUG] getNodeValue: found node.value:', node.value, 'in node:', node);
+            if (typeof node.value === 'string') return node.value
+            if (typeof node.value === 'object') {
+                if (node.value.String !== undefined) return node.value.String
+                if (node.value.Integer !== undefined) return node.value.Integer.toString()
+                if (node.value.Float !== undefined) return node.value.Float.toString()
+                if (node.value.Boolean !== undefined) return node.value.Boolean.toString()
+                if (node.value.Date !== undefined) return node.value.Date
+                if (node.value.Formula !== undefined) return node.value.Formula
+            }
+            return node.value.toString()
         }
-        
-        if (typeof value === 'object') {
-            // Handle different value types
-            if (value.String !== undefined) return value.String
-            if (value.Integer !== undefined) return value.Integer.toString()
-            if (value.Float !== undefined) return value.Float.toString()
-            if (value.Boolean !== undefined) return value.Boolean.toString()
-            if (value.Date !== undefined) return value.Date
-            if (value.Formula !== undefined) return value.Formula
+
+        // Fallback: check node.String (for string nodes)
+        if (node.String !== undefined && node.String !== null) {
+            console.log('[DEBUG] getNodeValue: found node.String:', node.String, 'in node:', node);
+            return node.String
         }
-        
-        return value.toString()
+
+        // As a last resort, return the first string property that isn't a metadata field
+        if (typeof node === 'object' && node !== null) {
+            const skip = new Set(['name', 'type', 'node_type', 'parameters', 'children', 'label'])
+            for (const key in node) {
+                if (!skip.has(key) && typeof node[key] === 'string') {
+                    console.log(`[DEBUG] getNodeValue: found string property '${key}' in node:`, node);
+                    return node[key]
+                }
+            }
+        }
+
+        console.log('[DEBUG] getNodeValue: no value found for node:', node);
+        return null
     }
 
     makeFieldEditable(element, node, isMultiline = false) {
