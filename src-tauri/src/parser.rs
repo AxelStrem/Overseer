@@ -67,7 +67,9 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     ))(input) {
         Ok(res) => res,
         Err(e) => {
-            println!("[parse_node] Failed to parse node type: {:?}", e);
+            if !input.trim().is_empty() {
+                println!("[parse_node] Failed to parse node type: {:?}", e);
+            }
             return Err(e);
         }
     };

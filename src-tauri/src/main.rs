@@ -7,7 +7,6 @@ mod types;
 mod parser;
 mod evaluator;
 mod file_ops;
-mod file_ops_new;
 pub mod resolver;
 
 use types::*;

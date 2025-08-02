@@ -2,7 +2,7 @@
 // Created: 2025-07-26
 // Purpose: Test basic file operations without JavaScript errors
 
-tab (title="File Operations Test") {
+tab main (title="File Operations Test") {
     
     text welcome = "Welcome to Overseer!"
     
