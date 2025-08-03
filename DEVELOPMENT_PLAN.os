@@ -2,7 +2,7 @@
 // Created: 2025-07-25
 // Purpose: Track development progress with small, testable steps
 
-tab (title="Overseer DSL Development") {
+tab main (title="Overseer DSL Development") {
 
     text PhasesHeader = "Overseer DSL Development phases:"
     list Phases (entry=string) {

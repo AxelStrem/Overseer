@@ -103,33 +103,15 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     };
 
     // Construct the node
-    // Only allow '-' as a type for value assignments (with type inference)
-    let mut final_node_type = node_type.clone();
-    if let Some(nt) = &node_type {
-        if nt == "-" {
-            if let Some(ref val) = value {
-                final_node_type = Some(match val {
-                    OverseerValue::String(_) => "string".to_string(),
-                    OverseerValue::Integer(_) => "int".to_string(),
-                    OverseerValue::Float(_) => "float".to_string(),
-                    OverseerValue::Boolean(_) => "boolean".to_string(),
-                    OverseerValue::Date(_) => "date".to_string(),
-                    OverseerValue::Formula(_) => "formula".to_string(),
-                    OverseerValue::Template(_) => "template".to_string(),
-                });
-            } else {
-                println!("[parse_node] '-' used as type but not a value assignment. input: {}", input.chars().take(80).collect::<String>());
-                // If '-' is used as a type but not a value assignment, treat as invalid and skip node
-                return Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
-            }
-        }
-    }
-    let final_node_type = if let Some(nt) = final_node_type {
+    // Keep '-' as the type - type inference will happen in the resolver stage
+    let final_node_type = if let Some(nt) = node_type {
         nt
     } else if let Some(t) = &template_path {
         // If the type is a template, we can use the template path as a hint for the type
         t.split('/').last().unwrap_or_default().to_string()
-    } else { "".to_string() };
+    } else { 
+        "".to_string() 
+    };
     let mut node = OverseerNode::new_with_type(final_node_type, node_name.map(|s| s.to_string()));
 
     node.template = template_path;
@@ -198,13 +180,10 @@ fn parse_block(input: &str) -> IResult<&str, Vec<OverseerNode>> {
             input = after;
             break;
         }
-        // Try to parse a list item or node
-        match alt((parse_list_item, parse_node))(next_input) {
+        match parse_node(next_input) {
             Ok((after, node)) => {
-                // Never allow '-' as a node type in a block
-                if node.node_type != "-" {
-                    children.push(node);
-                }
+                // Always add the parsed node to children
+                children.push(node);
                 input = after;
             }
             Err(_) => {
@@ -214,43 +193,6 @@ fn parse_block(input: &str) -> IResult<&str, Vec<OverseerNode>> {
         }
     }
     Ok((input, children))
-}
-
-/// Parse a list item starting with -
-fn parse_list_item(input: &str) -> IResult<&str, OverseerNode> {
-    let (input, _) = preceded(multispace0, char('-'))(input)?;
-    let (input, _) = multispace0(input)?;
-
-    // Try to parse a block first
-    if let Ok((input, children)) = parse_block(input) {
-        let mut node = OverseerNode::new_with_type(String::new(), None);
-        node.children = children;
-        return Ok((input, node));
-    }
-
-    // Otherwise, try to parse a value (string, number, boolean, etc.)
-    if let Ok((input, value)) = parse_value(input) {
-        let node_type = match &value {
-            OverseerValue::String(_) => "string".to_string(),
-            OverseerValue::Integer(_) => "int".to_string(),
-            OverseerValue::Float(_) => "float".to_string(),
-            OverseerValue::Boolean(_) => "boolean".to_string(),
-            OverseerValue::Date(_) => "date".to_string(),
-            OverseerValue::Formula(_) => "formula".to_string(),
-            OverseerValue::Template(_) => "template".to_string(),
-        };
-        let mut node = OverseerNode::new_with_type(node_type, None);
-        node.parameters.insert("value".to_string(), value);
-        return Ok((input, node));
-    }
-
-    // Otherwise, try to parse a node (identifier or template)
-    if let Ok((input, node)) = parse_node(input) {
-        return Ok((input, node));
-    }
-
-    // If none matched, error
-    Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
 }
 
 /// Parse different types of values
