@@ -30,3 +30,7 @@ notify = "6.0"
 # This feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+
+# Debug logging features
+debug-parser = []
+debug-resolver = []

@@ -8,6 +8,14 @@ use nom::{
     sequence::{delimited, pair, preceded},
     IResult,
 };
+
+// Debug logging macro for parser
+macro_rules! debug_parser {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug-parser")]
+        println!($($arg)*);
+    };
+}
 use std::collections::HashMap;
 
 /// Parse the entire document (top-level nodes)
@@ -54,11 +62,11 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     // Only skip lines that start with '=' and are not part of a value assignment after a type or identifier
     let trimmed = input.trim_start();
     if trimmed.starts_with('=') {
-        println!("[parse_node] Skipping invalid node start: {}", trimmed.chars().take(40).collect::<String>());
+        debug_parser!("[PARSER] Skipping invalid node start: {}", trimmed.chars().take(40).collect::<String>());
         return Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
     }
     // Debug: print the input being parsed
-    println!("[parse_node] input: {}", input.chars().take(80).collect::<String>());
+    debug_parser!("[PARSER] input: {}", input.chars().take(80).collect::<String>());
 
     // A node definition can be templated or regular
     let (input, (template_val, node_type)) = match alt((
@@ -68,7 +76,7 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
         Ok(res) => res,
         Err(e) => {
             if !input.trim().is_empty() {
-                println!("[parse_node] Failed to parse node type: {:?}", e);
+                debug_parser!("[PARSER] Failed to parse node type: {:?}", e);
             }
             return Err(e);
         }
@@ -88,7 +96,7 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     )))(input) {
         Ok(res) => res,
         Err(e) => {
-            println!("[parse_node] Failed to parse body: {:?}", e);
+            debug_parser!("[PARSER] Failed to parse body: {:?}", e);
             return Err(e);
         }
     };
@@ -122,7 +130,7 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
         node.parameters.insert("value".to_string(), val);
     }
 
-    println!("[parse_node] Parsed node: type='{}', name='{}'", node.node_type, node.name);
+    debug_parser!("[PARSER] Parsed node: type='{}', name='{}'", node.node_type, node.name);
 
     Ok((input, node))
 }

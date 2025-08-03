@@ -11,7 +11,11 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "prebuild:check": "node -e \"const fs=require('fs'); const path='src-tauri/webview2/Microsoft.WebView2.FixedVersionRuntime.138.0.3351.95.x64'; if(!fs.existsSync(path)) { console.error('❌ WebView2 runtime missing! See WEBVIEW2_SETUP.md'); process.exit(1); } console.log('✅ WebView2 runtime found');\"",
-    "tauri:build:release": "npm run prebuild:check && npm run tauri:build"
+    "tauri:build:release": "npm run prebuild:check && npm run tauri:build",
+    "tauri:dev:debug": "tauri dev --features debug-parser,debug-resolver",
+    "tauri:dev:debug-parser": "tauri dev --features debug-parser",
+    "tauri:dev:debug-resolver": "tauri dev --features debug-resolver",
+    "tauri:build:debug": "tauri build --features debug-parser,debug-resolver"
   },
   "dependencies": {
     "@tauri-apps/api": "^1.0.0",
