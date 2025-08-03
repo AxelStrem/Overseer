@@ -172,7 +172,8 @@ export class OverseerRenderer {
         }
         
         // Check if this is a hidden div (template)
-        if (node.parameters && node.parameters.hidden === 'true') {
+        if (node.parameters && (node.parameters.hidden === true || node.parameters.hidden === 'true' || 
+            (node.parameters.hidden && node.parameters.hidden.Boolean === true))) {
             div.style.display = 'none'
         }
         
