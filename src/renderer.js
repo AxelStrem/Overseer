@@ -252,7 +252,7 @@ export class OverseerRenderer {
         container.className = 'overseer-field string-field'
         
         // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
-        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
             label.textContent = labelText
@@ -278,7 +278,7 @@ export class OverseerRenderer {
         container.className = 'overseer-field text-field'
         
         // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
-        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
             label.textContent = labelText
@@ -307,7 +307,7 @@ export class OverseerRenderer {
         container.className = 'overseer-field number-field'
         
         // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
-        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
             label.textContent = labelText
@@ -333,7 +333,7 @@ export class OverseerRenderer {
         container.className = 'overseer-field date-field'
         
         // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
-        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
             label.textContent = labelText
@@ -393,7 +393,7 @@ export class OverseerRenderer {
         checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
 
         // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
-        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
             label.appendChild(checkbox)
@@ -514,6 +514,33 @@ export class OverseerRenderer {
 
         console.log('[DEBUG] getNodeValue: no value found for node:', node);
         return null
+    }
+
+    // Helper function to extract parameter values from OverseerValue objects
+    getParameterValue(node, parameterName) {
+        if (!node.parameters || node.parameters[parameterName] === undefined) {
+            return null
+        }
+        
+        const paramValue = node.parameters[parameterName]
+        
+        // If it's already a simple string, return it
+        if (typeof paramValue === 'string') {
+            return paramValue
+        }
+        
+        // If it's an OverseerValue object, extract the actual value
+        if (typeof paramValue === 'object' && paramValue !== null) {
+            if (paramValue.String !== undefined) return paramValue.String
+            if (paramValue.Integer !== undefined) return paramValue.Integer.toString()
+            if (paramValue.Float !== undefined) return paramValue.Float.toString()
+            if (paramValue.Boolean !== undefined) return paramValue.Boolean.toString()
+            if (paramValue.Date !== undefined) return paramValue.Date
+            if (paramValue.Formula !== undefined) return paramValue.Formula
+        }
+        
+        // Fallback: convert to string
+        return paramValue.toString()
     }
 
     makeFieldEditable(element, node, isMultiline = false) {

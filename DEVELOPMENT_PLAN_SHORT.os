@@ -8,8 +8,8 @@ tab main (title="Overseer DSL Development") {
 
     div Task (hidden=true){
         string task_description = ""
-        checkbox complete = false
-        checkbox tested = false
+        checkbox complete(label="Complete") = false
+        checkbox tested(label="Tested") = false
         string notes = ""
     }
 

@@ -131,6 +131,9 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     }
 
     debug_parser!("[PARSER] Parsed node: type='{}', name='{}'", node.node_type, node.name);
+    if !node.parameters.is_empty() {
+        debug_parser!("[PARSER]   Parameters: {:?}", node.parameters);
+    }
 
     Ok((input, node))
 }
