@@ -4,7 +4,13 @@ tab main (title="Overseer DSL Development") {
         - "Phase 1: Core File Operations"
         - "Phase 2: Basic Content Display"
         - "Phase 3: Interactive Editing"
-        - "Phase 4: UI Polish"
+        - "Phase 4: Formula System"
+        - "Phase 5: Advanced UI Components"
+        - "Phase 6: Actions & Triggers"
+        - "Phase 7: Multi-file Support"
+        - "Phase 8: Data Persistence & Sync"
+        - "Phase 9: Charts & Visualization"
+        - "Phase 10: Mobile & Performance"
     }
     text StepsHeader = "Step list:"
     div Task (hidden=true) {
@@ -41,7 +47,7 @@ tab main (title="Overseer DSL Development") {
                     string task_description = "Test basic file saving"
                     checkbox complete = true
                     checkbox tested = true
-                    string notes = ""
+                    string notes = "COMPLETED: All basic save functions working"
                 }
             }
         }
@@ -71,41 +77,358 @@ tab main (title="Overseer DSL Development") {
             }
         }
         - {
-            string name = "1.2: Fix File Status Indicators"
-            string description = "Add proper UI feedback for file operations"
+            string name = "2.1: Basic Content Parsing and Display"
+            string description = "Ensure all basic node types render correctly with proper styling"
+            int priority = 1
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Fix any remaining UI rendering issues for simple types"
+                    checkbox complete = true
+                    checkbox tested = true
+                    string notes = "COMPLETED: Fixed string list rendering with resolver enhancements"
+                }
+                - {
+                    string task_description = "Add support for enum type display"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Need dropdown/select UI component for enum values"
+                }
+                - {
+                    string task_description = "Implement proper date formatting and input"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Date picker component and proper display formatting"
+                }
+                - {
+                    string task_description = "Add validation for all basic types"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Type validation and error display in UI"
+                }
+            }
+        }
+        - {
+            string name = "2.2: Advanced Layout Support"
+            string description = "Implement grid layouts, responsive design basics"
             int priority = 2
             list StepTasks (entry=<../Task>) {
                 - {
-                    string task_description = "Add status bar at bottom of app"
+                    string task_description = "Add grid layout for list components"
                     checkbox complete = false
                     checkbox tested = false
-                    string notes = "Show current operation status and file state"
+                    string notes = "Table-like display with aligned columns"
                 }
                 - {
-                    string task_description = "Show file path in title/header"
+                    string task_description = "Implement responsive tab layouts"
                     checkbox complete = false
                     checkbox tested = false
-                    string notes = "Display currently open file path for user reference"
+                    string notes = "Horizontal/vertical tab options with mobile considerations"
                 }
                 - {
-                    string task_description = "Add unsaved changes indicator (*)"
+                    string task_description = "Add accordion/collapsible sections"
                     checkbox complete = false
                     checkbox tested = false
-                    string notes = "Visual indicator when file has unsaved modifications"
+                    string notes = "Expandable div containers for better organization"
+                }
+            }
+        }
+        - {
+            string name = "3.1: Interactive Field Editing"
+            string description = "Make all field types properly editable with validation"
+            int priority = 1
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Enhance inline editing for all basic types"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Improve current double-click editing system"
+                }
+                - {
+                    string task_description = "Add proper form validation and error handling"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Real-time validation with user-friendly error messages"
+                }
+                - {
+                    string task_description = "Implement undo/redo functionality"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Track changes and allow reverting edits"
+                }
+            }
+        }
+        - {
+            string name = "3.2: List CRUD Operations"
+            string description = "Add, remove, and reorder items in lists"
+            int priority = 1
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Add 'New Item' button to all lists"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Create new items from templates with proper defaults"
+                }
+                - {
+                    string task_description = "Implement item deletion with confirmation"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Delete button with undo capability"
+                }
+                - {
+                    string task_description = "Add drag-and-drop reordering"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Visual reordering of list items"
+                }
+                - {
+                    string task_description = "Implement list filtering and sorting"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Basic search/filter UI for large lists"
+                }
+            }
+        }
+        - {
+            string name = "4.1: Formula Parser Implementation"
+            string description = "Build the $(formula) evaluation system"
+            int priority = 1
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Implement basic arithmetic operations"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Support +, -, *, /, parentheses, numeric literals"
+                }
+                - {
+                    string task_description = "Add path-based field references"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Support ../field, ../../other/path syntax"
+                }
+                - {
+                    string task_description = "Implement comparison operators"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Support ==, !=, <, >, <=, >= for conditionals"
+                }
+                - {
+                    string task_description = "Add basic functions (today, count, sum)"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Built-in functions for common operations"
+                }
+            }
+        }
+        - {
+            string name = "4.2: Dynamic Field Updates"
+            string description = "Real-time formula evaluation and dependency tracking"
+            int priority = 2
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Build dependency graph for formulas"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Track which fields depend on which others"
+                }
+                - {
+                    string task_description = "Implement reactive updates"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Update dependent fields when source values change"
+                }
+                - {
+                    string task_description = "Add circular dependency detection"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Prevent infinite loops in formula evaluation"
+                }
+            }
+        }
+        - {
+            string name = "5.1: Advanced UI Components"
+            string description = "Implement specialized UI elements"
+            int priority = 2
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Add enum dropdown/select components"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Proper select UI for enumerated values"
+                }
+                - {
+                    string task_description = "Implement date picker component"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Calendar-based date selection"
+                }
+                - {
+                    string task_description = "Add file/reference picker"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Browse and select other nodes as references"
+                }
+                - {
+                    string task_description = "Implement modal dialogs"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Overlay dialogs for complex editing tasks"
+                }
+            }
+        }
+        - {
+            string name = "6.1: Action System Foundation"
+            string description = "Build the trigger and action execution framework"
+            int priority = 2
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Parse action syntax in DSL"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Support trigger conditions and action definitions"
+                }
+                - {
+                    string task_description = "Implement basic actions (Set, Add, Create)"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Core action types for field manipulation"
+                }
+                - {
+                    string task_description = "Build action execution engine"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Safe execution of actions with error handling"
+                }
+                - {
+                    string task_description = "Add button click handlers"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Connect UI buttons to action execution"
+                }
+            }
+        }
+        - {
+            string name = "7.1: Multi-file Support"
+            string description = "Handle cross-file references and imports"
+            int priority = 2
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Implement file import/reference system"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Support ../otherfile.os/path references"
+                }
+                - {
+                    string task_description = "Add file dependency tracking"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Reload dependent files when imports change"
+                }
+                - {
+                    string task_description = "Build project-wide search/navigation"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Find and navigate between related files"
+                }
+            }
+        }
+        - {
+            string name = "8.1: Enhanced Save/Load System"
+            string description = "Robust data persistence with change tracking"
+            int priority = 1
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Implement auto-save functionality"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Periodic saving of changes with conflict detection"
+                }
+                - {
+                    string task_description = "Add file versioning/backup system"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Keep backups of important changes"
+                }
+                - {
+                    string task_description = "Build change conflict resolution"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Handle concurrent edits gracefully"
+                }
+            }
+        }
+        - {
+            string name = "9.1: Chart and Visualization System"
+            string description = "Integrate Chart.js for data visualization"
+            int priority = 2
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Add Chart.js integration"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Basic line, bar, and pie chart support"
+                }
+                - {
+                    string task_description = "Implement chart node type"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "DSL syntax for defining charts"
+                }
+                - {
+                    string task_description = "Add data binding for charts"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Connect chart data to list/field values"
+                }
+                - {
+                    string task_description = "Implement interactive chart features"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Zoom, hover, click interactions"
+                }
+            }
+        }
+        - {
+            string name = "10.1: Performance Optimization"
+            string description = "Optimize for large datasets and mobile devices"
+            int priority = 3
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Implement virtual scrolling for large lists"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Handle thousands of list items efficiently"
+                }
+                - {
+                    string task_description = "Add formula result caching"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Cache expensive calculations"
+                }
+                - {
+                    string task_description = "Optimize mobile UI responsiveness"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Touch-friendly interfaces and layouts"
+                }
+                - {
+                    string task_description = "Build Tauri Mobile version"
+                    checkbox complete = false
+                    checkbox tested = false
+                    string notes = "Deploy to Android with native performance"
                 }
             }
         }
     }
     div metadata {
         string created = "2025-07-25"
-        string lastUpdated = "2025-07-26"
-        int totalSteps = 9
-        int totalTasks = 27
+        string lastUpdated = "2025-08-04"
+        int totalSteps = 18
+        int totalTasks = 63
         int completedSteps = 1
-        int completedTasks = 3
+        int completedTasks = 4
         string currentPhase = "Phase 1: Core File Operations"
-        string nextStep = "2.1: Basic Content Parsing and Display"
-        string estimatedCompletion = "TBD"
-        string notes = "Step 1.1 completed - file operations working. Now debugging content parsing and display. This document tracks our incremental development approach with small, testable steps. Each task should take 15-30 minutes and be immediately verifiable."
+        string nextStep = "1.2: Fix File Status Indicators"
+        string estimatedCompletion = "Q1 2026"
+        string notes = "Step 1.1 completed - file operations working. Expanded plan to cover full Overseer DSL vision from product description. Plan now includes 10 phases covering basic display through advanced features like formulas, actions, charts, and mobile support. This document tracks our incremental development approach with small, testable steps. Each task should take 15-30 minutes and be immediately verifiable."
     }
 }

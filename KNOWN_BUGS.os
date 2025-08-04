@@ -22,6 +22,8 @@ tab (title="Known Bugs") {
 
         - {
             - description = "Save file doesn't seem to work at all"
+            - fixed = true
+            - fix_date = 04.08.2025
         }
         
         - {
@@ -44,6 +46,8 @@ tab (title="Known Bugs") {
 
         - {
             - description = "Strings are still displayed as their names instad of their values sometimes"
+            - fixed = true
+            - fix_date = 26.07.2025
         }
     }
 }
