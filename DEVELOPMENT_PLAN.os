@@ -1,16 +1,16 @@
 tab main (title="Overseer DSL Development") {
     text PhasesHeader = "Overseer DSL Development phases:"
     list Phases (entry=string) {
-        - = "Phase 1: Core File Operations"
-        - = "Phase 2: Basic Content Display"
-        - = "Phase 3: Interactive Editing"
-        - = "Phase 4: UI Polish"
+        - "Phase 1: Core File Operations"
+        - "Phase 2: Basic Content Display"
+        - "Phase 3: Interactive Editing"
+        - "Phase 4: UI Polish"
     }
     text StepsHeader = "Step list:"
     div Task (hidden=true) {
         string task_description = ""
-        checkbox complete = false
-        checkbox tested = false
+        checkbox complete (label="Complete") = false
+        checkbox tested (label="Tested") = false
         string notes = ""
     }
     div Step (hidden=true) {
@@ -40,7 +40,7 @@ tab main (title="Overseer DSL Development") {
                 - {
                     string task_description = "Test basic file saving"
                     checkbox complete = true
-                    checkbox tested = false
+                    checkbox tested = true
                     string notes = ""
                 }
             }

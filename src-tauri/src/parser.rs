@@ -92,6 +92,7 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     // Then parse body, which can be a block, a value assignment, or nothing
     let (input, body) = match opt(alt((
         map(parse_value_assignment, |val| (Some(val), Vec::new())),
+        map(parse_direct_value, |val| (Some(val), Vec::new())),
         map(parse_block, |children| (None, children)),
     )))(input) {
         Ok(res) => res,
@@ -177,6 +178,17 @@ fn parse_parameter(input: &str) -> IResult<&str, (String, OverseerValue)> {
 /// Parse value assignment (= value)
 fn parse_value_assignment(input: &str) -> IResult<&str, OverseerValue> {
     preceded(pair(multispace0, char('=')), preceded(multispace0, parse_value))(input)
+}
+
+/// Parse a value directly (without =) - only for quoted strings, numbers, booleans, etc.
+fn parse_direct_value(input: &str) -> IResult<&str, OverseerValue> {
+    preceded(multispace0, alt((
+        parse_quoted_string_value,
+        parse_template_value,
+        parse_number_value,
+        parse_boolean_value,
+        // Note: We don't include parse_unquoted_string_value here to avoid conflicts
+    )))(input)
 }
 
 /// Parse a block { ... }

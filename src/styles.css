@@ -148,6 +148,16 @@ body {
     font-weight: 600;
 }
 
+.overseer-list-value {
+    color: var(--text-color);
+    padding: 4px 8px;
+    background: var(--field-bg-color);
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    display: inline-block;
+    margin: 2px;
+}
+
 .layout-horizontal {
     display: flex;
     flex-wrap: wrap;

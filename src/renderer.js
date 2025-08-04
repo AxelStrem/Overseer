@@ -200,46 +200,64 @@ export class OverseerRenderer {
         const listItem = document.createElement('div')
         listItem.className = 'overseer-list-item'
 
-        // If the node is a value node (string, int, float, bool, date), render using the appropriate element creator
+        console.log('[DEBUG] createListItemElement:', { nodeType: node.node_type, node });
 
-        const valueTypes = ['string', 'int', 'float', 'bool', 'date', 'text']
-        const nodeType = (node.node_type || node.type || '').toLowerCase()
-        console.log('[DEBUG] createListItemElement:', { nodeType, node });
-        if (valueTypes.includes(nodeType)) {
-            let valueElement
-            console.log('[DEBUG] List item is value node, extracting value:', node);
-            switch (nodeType) {
-                case 'string':
-                    valueElement = this.createStringElement(node)
-                    break
-                case 'int':
-                case 'float':
-                    valueElement = this.createNumberElement(node)
-                    break
-                case 'bool':
-                    valueElement = this.createBooleanElement(node)
-                    break
-                case 'date':
-                    valueElement = this.createDateElement(node)
-                    break
-                case 'text':
-                    valueElement = this.createTextElement(node)
-                    break
-                default:
-                    valueElement = document.createTextNode(this.getNodeValue(node) || '')
+        // Check if this is a simple value list item (has a value parameter but no children)
+        const hasValue = node.parameters && node.parameters["value"] !== undefined
+        const hasChildren = node.children && Array.isArray(node.children) && node.children.length > 0
+        
+        if (hasValue && !hasChildren) {
+            // This is a simple value list item like - "some string"
+            console.log('[DEBUG] List item is simple value node:', node);
+            const value = this.getNodeValue(node)
+            if (value !== null && value !== undefined) {
+                const valueElement = document.createElement('span')
+                valueElement.className = 'overseer-list-value'
+                valueElement.textContent = value
+                listItem.appendChild(valueElement)
             }
-            listItem.appendChild(valueElement)
         } else {
-            if (node.children && Array.isArray(node.children)) {
-                console.log(`[DEBUG] List item is non-value node with ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
-                for (const child of node.children) {
-                    const childElement = this.createNodeElement(child)
-                    if (childElement) {
-                        listItem.appendChild(childElement)
-                    }
+            // Check if it's a typed value node (string, int, float, bool, date, text)
+            const valueTypes = ['string', 'int', 'float', 'bool', 'date', 'text']
+            const nodeType = (node.node_type || node.type || '').toLowerCase()
+            
+            if (valueTypes.includes(nodeType)) {
+                let valueElement
+                console.log('[DEBUG] List item is typed value node, extracting value:', node);
+                switch (nodeType) {
+                    case 'string':
+                        valueElement = this.createStringElement(node)
+                        break
+                    case 'int':
+                    case 'float':
+                        valueElement = this.createNumberElement(node)
+                        break
+                    case 'bool':
+                        valueElement = this.createBooleanElement(node)
+                        break
+                    case 'date':
+                        valueElement = this.createDateElement(node)
+                        break
+                    case 'text':
+                        valueElement = this.createTextElement(node)
+                        break
+                    default:
+                        valueElement = document.createTextNode(this.getNodeValue(node) || '')
                 }
+                listItem.appendChild(valueElement)
             } else {
-                console.log('[DEBUG] List item is non-value node with no children:', node);
+                // This is a complex list item with children
+                if (hasChildren) {
+                    console.log(`[DEBUG] List item is complex node with ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
+                    for (const child of node.children) {
+                        const childElement = this.createNodeElement(child)
+                        if (childElement) {
+                            listItem.appendChild(childElement)
+                        }
+                    }
+                } else {
+                    console.log('[DEBUG] List item has no value or children:', node);
+                }
             }
         }
 
