@@ -404,9 +404,15 @@ export class OverseerRenderer {
             container.appendChild(checkbox)
         }
 
-        // TODO: Add action handling
+        // Handle checkbox changes
         checkbox.addEventListener('change', () => {
             if (DEBUG_MODE) console.log('Checkbox changed:', node.name, checkbox.checked)
+            this.updateNodeValue(node, checkbox.checked)
+            
+            // Mark document as modified
+            if (window.app && window.app.markDocumentModified) {
+                window.app.markDocumentModified()
+            }
         })
 
         this.applyNodeStyles(container, node)
@@ -566,8 +572,14 @@ export class OverseerRenderer {
             element.style.display = 'inline'
             input.remove()
             
-            // TODO: Update the node value and save changes
+            // Update the node value in the document structure
+            this.updateNodeValue(node, newValue)
             console.log('Field updated:', node.name, newValue)
+            
+            // Mark document as modified
+            if (window.app && window.app.markDocumentModified) {
+                window.app.markDocumentModified()
+            }
         }
         
         input.addEventListener('blur', finishEditing)
@@ -580,6 +592,48 @@ export class OverseerRenderer {
                 input.remove()
             }
         })
+    }
+
+    // Helper function to update a node's value in the document structure
+    updateNodeValue(node, newValue) {
+        // Update the node's parameters.value with the appropriate OverseerValue type
+        if (!node.parameters) {
+            node.parameters = {}
+        }
+        
+        // Handle boolean values (from checkboxes)
+        if (typeof newValue === 'boolean') {
+            node.parameters.value = { Boolean: newValue }
+            return
+        }
+        
+        // Try to preserve the original type for other values, or default to String
+        const currentValue = node.parameters.value
+        if (currentValue && typeof currentValue === 'object') {
+            if (currentValue.Integer !== undefined) {
+                const numValue = parseInt(newValue)
+                if (!isNaN(numValue)) {
+                    node.parameters.value = { Integer: numValue }
+                    return
+                }
+            }
+            if (currentValue.Float !== undefined) {
+                const floatValue = parseFloat(newValue)
+                if (!isNaN(floatValue)) {
+                    node.parameters.value = { Float: floatValue }
+                    return
+                }
+            }
+            if (currentValue.Boolean !== undefined) {
+                if (newValue === 'true' || newValue === 'false') {
+                    node.parameters.value = { Boolean: newValue === 'true' }
+                    return
+                }
+            }
+        }
+        
+        // Default to String type
+        node.parameters.value = { String: newValue }
     }
 
     renderMarkdown(text) {

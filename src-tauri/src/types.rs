@@ -88,6 +88,9 @@ pub enum OverseerError {
     #[error("IO error: {0}")]
     IoError(String),
     
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+    
     #[error("Formula error: {0}")]
     FormulaError(String),
     

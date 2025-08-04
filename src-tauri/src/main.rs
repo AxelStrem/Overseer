@@ -34,6 +34,14 @@ async fn save_overseer_file(path: String, content: String) -> Result<()> {
 }
 
 #[command]
+async fn serialize_overseer_nodes(nodes: Vec<OverseerNode>) -> Result<String> {
+    match file_ops::OverseerFileHandler::serialize_nodes(&nodes) {
+        Ok(content) => Ok(content),
+        Err(e) => Err(OverseerError::SerializationError(format!("Failed to serialize nodes: {}", e))),
+    }
+}
+
+#[command]
 async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
     match parse_document(&content) {
         Ok((remaining, mut nodes)) => {
@@ -74,6 +82,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_overseer_file,
             save_overseer_file,
+            serialize_overseer_nodes,
             parse_overseer_content,
             find_overseer_files
         ])

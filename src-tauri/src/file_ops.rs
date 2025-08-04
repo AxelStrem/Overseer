@@ -90,7 +90,7 @@ impl OverseerFileHandler {
         FileOperations::write_file(path, &content).await
     }
 
-    fn serialize_nodes(nodes: &[OverseerNode]) -> Result<String> {
+    pub fn serialize_nodes(nodes: &[OverseerNode]) -> Result<String> {
         let mut output = String::new();
         
         for node in nodes {
@@ -105,7 +105,7 @@ impl OverseerFileHandler {
         output.push_str(&indent);
         
         // Handle special case for list items which start with '-'
-        if node.node_type == "list_item" {
+        if node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-") {
             output.push_str("- ");
             // Simple value list item: - "value"
             if let Some(value) = node.parameters.get("value") {
@@ -114,16 +114,22 @@ impl OverseerFileHandler {
                 return Ok(());
             }
             // Complex object list item: - { ... }
+            // Fall through to handle as block
         } else {
             // Handle node type or template path
             if let Some(template_path) = &node.template {
                 output.push_str(&format!("<{}>", template_path));
             } else {
-                output.push_str(&node.node_type);
+                // Use "-" for type-inferred nodes, otherwise use the actual type
+                if node.node_type == "-" || (node.name == "-" && node.node_type != "list_item") {
+                    output.push('-');
+                } else {
+                    output.push_str(&node.node_type);
+                }
             }
 
-            // Handle node name
-            if !node.name.is_empty() {
+            // Handle node name - skip if it's "-" (unnamed node marker)
+            if !node.name.is_empty() && node.name != "-" {
                 output.push(' ');
                 output.push_str(&node.name);
             }
@@ -134,7 +140,19 @@ impl OverseerFileHandler {
         if !regular_params.is_empty() {
             output.push_str(" (");
             let params_str: Vec<String> = regular_params.iter()
-                .map(|(k, v)| format!("{}={}", k, Self::serialize_value(v)))
+                .map(|(k, v)| {
+                    let value_str = if k.as_str() == "entry" {
+                        // Special handling for entry parameters - they should be type names, not quoted strings
+                        match v {
+                            OverseerValue::String(s) => s.clone(), // Don't quote type names
+                            OverseerValue::Template(t) => format!("<{}>", t),
+                            _ => Self::serialize_value(v)
+                        }
+                    } else {
+                        Self::serialize_value(v)
+                    };
+                    format!("{}={}", k, value_str)
+                })
                 .collect();
             output.push_str(&params_str.join(", "));
             output.push(')');

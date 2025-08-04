@@ -11,8 +11,12 @@ class OverseerApp {
     constructor() {
         this.currentFile = null
         this.currentDocument = null
+        this.isDocumentModified = false
         this.fileManager = new FileManager()
         this.renderer = new OverseerRenderer()
+        
+        // Make app instance available globally for renderer
+        window.app = this
         
         this.initializeEventListeners()
         this.showWelcomeScreen()
@@ -92,10 +96,12 @@ class OverseerApp {
 
             this.currentFile = filePath
             this.currentDocument = overseerDocument
+            this.isDocumentModified = false
 
             // Update UI
             document.getElementById('file-path').textContent = filePath
             document.getElementById('save-file-btn').disabled = false
+            this.updateTitle()
 
             // Add visible debug info before rendering
             const contentDisplay = document.getElementById('content-display')
@@ -169,24 +175,48 @@ tab Main {
     }
 
     async saveFile() {
-        if (!this.currentFile) {
+        if (!this.currentFile || !this.currentDocument) {
             return
         }
 
         try {
             if (DEBUG_MODE) this.setStatus('Saving file...')
             
-            // For now, we'll save the original content
-            // Later this will save the modified document
-            const content = await invoke('load_overseer_file', { path: this.currentFile })
+            // Serialize the current document state to Overseer DSL format
+            const content = await invoke('serialize_overseer_nodes', { 
+                nodes: this.currentDocument 
+            })
+            
+            // Save the serialized content
             await invoke('save_overseer_file', { 
                 path: this.currentFile, 
                 content 
             })
             
+            // Mark document as saved
+            this.isDocumentModified = false
+            this.updateTitle()
+            
             if (DEBUG_MODE) this.setStatus('File saved successfully')
         } catch (error) {
             this.showError('Failed to save file', error)
+        }
+    }
+
+    markDocumentModified() {
+        if (!this.isDocumentModified) {
+            this.isDocumentModified = true
+            this.updateTitle()
+        }
+    }
+
+    updateTitle() {
+        if (this.currentFile) {
+            const fileName = this.currentFile.split('\\').pop() || this.currentFile.split('/').pop()
+            const modifiedMarker = this.isDocumentModified ? ' *' : ''
+            document.title = `${fileName}${modifiedMarker} - Overseer`
+        } else {
+            document.title = 'Overseer'
         }
     }
 
