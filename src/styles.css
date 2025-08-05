@@ -71,9 +71,22 @@ body {
 }
 
 .toolbar .file-path {
-    color: var(--text-secondary);
-    font-size: 14px;
+    color: var(--text-color);
+    font-size: 13px;
+    font-weight: 500;
     margin-left: auto;
+    background: var(--background-color);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#file-path {
+    display: none; /* Hidden by default, shown when file is loaded */
 }
 
 /* Tab System */
@@ -389,20 +402,38 @@ body {
 .status-bar {
     background: var(--surface-color);
     border-top: 1px solid var(--border-color);
-    padding: 4px 16px;
+    padding: 6px 16px;
     font-size: 12px;
     color: var(--text-secondary);
     display: flex;
     justify-content: space-between;
     align-items: center;
+    min-height: 28px;
 }
 
-.status-message.error {
+#status-message {
+    font-weight: 500;
+}
+
+#status-info {
+    font-size: 11px;
+    color: var(--text-secondary);
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.status-message.error, #status-message.error {
     color: var(--error-color);
 }
 
-.status-message.success {
+.status-message.success, #status-message.success {
     color: var(--success-color);
+}
+
+.status-message.warning, #status-message.warning {
+    color: var(--warning-color);
 }
 
 /* Responsive Design */
@@ -412,11 +443,17 @@ body {
         gap: 8px;
     }
     
-    .toolbar .file-path {
+    .toolbar .file-path, .toolbar #file-path {
         width: 100%;
         margin-left: 0;
         order: 1;
+        max-width: none;
     }
+    
+    #status-info {
+        display: none; /* Hide detailed status on mobile */
+    }
+}
     
     .content-display {
         padding: 12px;

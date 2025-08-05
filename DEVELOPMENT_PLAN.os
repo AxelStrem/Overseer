@@ -1,16 +1,16 @@
 tab main (title="Overseer DSL Development") {
     text PhasesHeader = "Overseer DSL Development phases:"
     list Phases (entry=string) {
-        - "Phase 1: Core File Operations"
-        - "Phase 2: Basic Content Display"
-        - "Phase 3: Interactive Editing"
-        - "Phase 4: Formula System"
-        - "Phase 5: Advanced UI Components"
-        - "Phase 6: Actions & Triggers"
-        - "Phase 7: Multi-file Support"
-        - "Phase 8: Data Persistence & Sync"
-        - "Phase 9: Charts & Visualization"
-        - "Phase 10: Mobile & Performance"
+        - = "Phase 1: Core File Operations"
+        - = "Phase 2: Basic Content Display"
+        - = "Phase 3: Interactive Editing"
+        - = "Phase 4: Formula System"
+        - = "Phase 5: Advanced UI Components"
+        - = "Phase 6: Actions & Triggers"
+        - = "Phase 7: Multi-file Support"
+        - = "Phase 8: Data Persistence & Sync"
+        - = "Phase 9: Charts & Visualization"
+        - = "Phase 10: Mobile & Performance"
     }
     text StepsHeader = "Step list:"
     div Task (hidden=true) {
@@ -33,20 +33,20 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Verify New File works without getElementById error"
-                    checkbox complete = true
-                    checkbox tested = true
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "COMPLETED: JavaScript fix for document variable naming conflict working"
                 }
                 - {
                     string task_description = "Verify Open File works without error"
-                    checkbox complete = true
-                    checkbox tested = true
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "COMPLETED: File dialog and loading process works correctly"
                 }
                 - {
                     string task_description = "Test basic file saving"
-                    checkbox complete = true
-                    checkbox tested = true
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "COMPLETED: All basic save functions working"
                 }
             }
@@ -58,21 +58,21 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Add status bar at bottom of app"
-                    checkbox complete = false
-                    checkbox tested = false
-                    string notes = "Show current operation status and file state"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: Show current operation status and file state"
                 }
                 - {
                     string task_description = "Show file path in title/header"
-                    checkbox complete = false
-                    checkbox tested = false
-                    string notes = "Display currently open file path for user reference"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: Display currently open file path for user reference"
                 }
                 - {
                     string task_description = "Add unsaved changes indicator (*)"
-                    checkbox complete = false
-                    checkbox tested = false
-                    string notes = "Visual indicator when file has unsaved modifications"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: Visual indicator when file has unsaved modifications"
                 }
             }
         }
@@ -83,26 +83,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Fix any remaining UI rendering issues for simple types"
-                    checkbox complete = true
-                    checkbox tested = true
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "COMPLETED: Fixed string list rendering with resolver enhancements"
                 }
                 - {
                     string task_description = "Add support for enum type display"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Need dropdown/select UI component for enum values"
                 }
                 - {
                     string task_description = "Implement proper date formatting and input"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Date picker component and proper display formatting"
                 }
                 - {
                     string task_description = "Add validation for all basic types"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Type validation and error display in UI"
                 }
             }
@@ -114,20 +114,20 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Add grid layout for list components"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Table-like display with aligned columns"
                 }
                 - {
                     string task_description = "Implement responsive tab layouts"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Horizontal/vertical tab options with mobile considerations"
                 }
                 - {
                     string task_description = "Add accordion/collapsible sections"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Expandable div containers for better organization"
                 }
             }
@@ -139,20 +139,20 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Enhance inline editing for all basic types"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Improve current double-click editing system"
                 }
                 - {
                     string task_description = "Add proper form validation and error handling"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Real-time validation with user-friendly error messages"
                 }
                 - {
                     string task_description = "Implement undo/redo functionality"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Track changes and allow reverting edits"
                 }
             }
@@ -164,26 +164,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Add 'New Item' button to all lists"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Create new items from templates with proper defaults"
                 }
                 - {
                     string task_description = "Implement item deletion with confirmation"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Delete button with undo capability"
                 }
                 - {
                     string task_description = "Add drag-and-drop reordering"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Visual reordering of list items"
                 }
                 - {
                     string task_description = "Implement list filtering and sorting"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Basic search/filter UI for large lists"
                 }
             }
@@ -195,26 +195,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Implement basic arithmetic operations"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Support +, -, *, /, parentheses, numeric literals"
                 }
                 - {
                     string task_description = "Add path-based field references"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Support ../field, ../../other/path syntax"
                 }
                 - {
                     string task_description = "Implement comparison operators"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Support ==, !=, <, >, <=, >= for conditionals"
                 }
                 - {
                     string task_description = "Add basic functions (today, count, sum)"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Built-in functions for common operations"
                 }
             }
@@ -226,20 +226,20 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Build dependency graph for formulas"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Track which fields depend on which others"
                 }
                 - {
                     string task_description = "Implement reactive updates"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Update dependent fields when source values change"
                 }
                 - {
                     string task_description = "Add circular dependency detection"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Prevent infinite loops in formula evaluation"
                 }
             }
@@ -251,26 +251,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Add enum dropdown/select components"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Proper select UI for enumerated values"
                 }
                 - {
                     string task_description = "Implement date picker component"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Calendar-based date selection"
                 }
                 - {
                     string task_description = "Add file/reference picker"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Browse and select other nodes as references"
                 }
                 - {
                     string task_description = "Implement modal dialogs"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Overlay dialogs for complex editing tasks"
                 }
             }
@@ -282,26 +282,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Parse action syntax in DSL"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Support trigger conditions and action definitions"
                 }
                 - {
                     string task_description = "Implement basic actions (Set, Add, Create)"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Core action types for field manipulation"
                 }
                 - {
                     string task_description = "Build action execution engine"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Safe execution of actions with error handling"
                 }
                 - {
                     string task_description = "Add button click handlers"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Connect UI buttons to action execution"
                 }
             }
@@ -313,20 +313,20 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Implement file import/reference system"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Support ../otherfile.os/path references"
                 }
                 - {
                     string task_description = "Add file dependency tracking"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Reload dependent files when imports change"
                 }
                 - {
                     string task_description = "Build project-wide search/navigation"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Find and navigate between related files"
                 }
             }
@@ -338,20 +338,20 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Implement auto-save functionality"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Periodic saving of changes with conflict detection"
                 }
                 - {
                     string task_description = "Add file versioning/backup system"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Keep backups of important changes"
                 }
                 - {
                     string task_description = "Build change conflict resolution"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Handle concurrent edits gracefully"
                 }
             }
@@ -363,26 +363,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Add Chart.js integration"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Basic line, bar, and pie chart support"
                 }
                 - {
                     string task_description = "Implement chart node type"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "DSL syntax for defining charts"
                 }
                 - {
                     string task_description = "Add data binding for charts"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Connect chart data to list/field values"
                 }
                 - {
                     string task_description = "Implement interactive chart features"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Zoom, hover, click interactions"
                 }
             }
@@ -394,26 +394,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Implement virtual scrolling for large lists"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Handle thousands of list items efficiently"
                 }
                 - {
                     string task_description = "Add formula result caching"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Cache expensive calculations"
                 }
                 - {
                     string task_description = "Optimize mobile UI responsiveness"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Touch-friendly interfaces and layouts"
                 }
                 - {
                     string task_description = "Build Tauri Mobile version"
-                    checkbox complete = false
-                    checkbox tested = false
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
                     string notes = "Deploy to Android with native performance"
                 }
             }

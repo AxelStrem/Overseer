@@ -81,8 +81,7 @@ class OverseerApp {
 
     async loadFile(filePath) {
         try {
-            if (DEBUG_MODE) this.setStatus('Loading file...')
-            else this.setStatus('')
+            this.setStatus('Loading file...', filePath, 'info')
 
             if (DEBUG_MODE) this.setStatus('DEBUG: Starting file load...')
 
@@ -98,8 +97,7 @@ class OverseerApp {
             this.currentDocument = overseerDocument
             this.isDocumentModified = false
 
-            // Update UI
-            document.getElementById('file-path').textContent = filePath
+            // Update UI - remove direct file path update since updateTitle handles it now
             document.getElementById('save-file-btn').disabled = false
             this.updateTitle()
 
@@ -124,8 +122,9 @@ class OverseerApp {
 
             if (DEBUG_MODE) this.setStatus('DEBUG: Renderer called, switching to editor screen...')
             this.showEditorScreen()
+            
+            // Final status update handled by updateTitle()
             if (DEBUG_MODE) this.setStatus('File loaded successfully - DEBUG VERSION')
-            else this.setStatus('Ready')
             
         } catch (error) {
             if (DEBUG_MODE) this.setStatus(`DEBUG: Error occurred - ${error.message}`)
@@ -176,11 +175,12 @@ tab Main {
 
     async saveFile() {
         if (!this.currentFile || !this.currentDocument) {
+            this.setStatus('No file to save', '', 'warning')
             return
         }
 
         try {
-            if (DEBUG_MODE) this.setStatus('Saving file...')
+            this.setStatus('Saving file...', this.currentFile, 'info')
             
             // Serialize the current document state to Overseer DSL format
             const content = await invoke('serialize_overseer_nodes', { 
@@ -195,10 +195,10 @@ tab Main {
             
             // Mark document as saved
             this.isDocumentModified = false
-            this.updateTitle()
+            this.updateTitle() // This will update status to show "All changes saved"
             
-            if (DEBUG_MODE) this.setStatus('File saved successfully')
         } catch (error) {
+            this.setStatus('Failed to save file', error.message, 'error')
             this.showError('Failed to save file', error)
         }
     }
@@ -207,22 +207,43 @@ tab Main {
         if (!this.isDocumentModified) {
             this.isDocumentModified = true
             this.updateTitle()
+            
+            // Enable save button if it was disabled
+            document.getElementById('save-file-btn').disabled = false
         }
     }
 
     updateTitle() {
+        const filePathElement = document.getElementById('file-path')
+        
         if (this.currentFile) {
             const fileName = this.currentFile.split('\\').pop() || this.currentFile.split('/').pop()
             const modifiedMarker = this.isDocumentModified ? ' *' : ''
+            
+            // Update window title
             document.title = `${fileName}${modifiedMarker} - Overseer`
+            
+            // Update file path display in toolbar
+            filePathElement.textContent = `${this.currentFile}${modifiedMarker}`
+            filePathElement.style.display = 'block'
+            
+            // Update status bar with current file info
+            if (this.isDocumentModified) {
+                this.setStatus(`Editing: ${fileName}`, 'Unsaved changes', 'warning')
+            } else {
+                this.setStatus(`Editing: ${fileName}`, 'All changes saved', 'success')
+            }
         } else {
             document.title = 'Overseer'
+            filePathElement.textContent = ''
+            filePathElement.style.display = 'none'
+            this.setStatus('Ready', 'No file open')
         }
     }
 
     showWelcomeScreen() {
         this.showScreen('welcome-screen')
-        if (!DEBUG_MODE) this.setStatus('Ready')
+        this.setStatus('Ready', 'Open or create a new Overseer file to get started')
     }
 
     showEditorScreen() {
@@ -233,7 +254,7 @@ tab Main {
         console.error(title, error)
         document.getElementById('error-message').textContent = `${title}: ${error}`
         this.showScreen('error-screen')
-        if (!DEBUG_MODE) this.setStatus('Error')
+        this.setStatus('Error occurred', error.message, 'error')
     }
 
     showScreen(screenId) {
@@ -246,9 +267,24 @@ tab Main {
         document.getElementById(screenId).classList.add('active')
     }
 
-    setStatus(message, info = '') {
-        document.getElementById('status-message').textContent = message
-        document.getElementById('status-info').textContent = info
+    setStatus(message, info = '', type = 'info') {
+        const statusMessage = document.getElementById('status-message')
+        const statusInfo = document.getElementById('status-info')
+        
+        statusMessage.textContent = message
+        statusInfo.textContent = info
+        
+        // Clear previous status classes
+        statusMessage.classList.remove('error', 'success', 'warning')
+        
+        // Add appropriate status class
+        if (type === 'error') {
+            statusMessage.classList.add('error')
+        } else if (type === 'success') {
+            statusMessage.classList.add('success')
+        } else if (type === 'warning') {
+            statusMessage.classList.add('warning')
+        }
     }
 }
 
