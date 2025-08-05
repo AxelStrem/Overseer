@@ -208,6 +208,51 @@ A: For our prototype build let's just have today() function, what's more importa
 Q: How are we going to deal with cross-file dependencies?
 A: At this stage let's assume that all code will be well-formed, with no broken references and circular dependencies, just like we did for formulas
 
+Q: Layout Management: How should div and list containers arrange their children - vertically, horizontally, or adaptively?
+A: We need a flexible layout system that maximizes screen space utilization. Each div and list node should support a `layout` parameter with these options:
+- `vertical`: Stack children from top to bottom (traditional)
+- `horizontal`: Arrange children from left to right (space-efficient)
+- `inherit`: Use the same layout direction as the parent node
+- `opposite`: Use the opposite layout direction from the parent (default behavior)
+
+By defaulting to `opposite`, we create an automatic alternating pattern: root containers use vertical layout, their immediate children use horizontal layout, grandchildren use vertical again, etc. This ensures optimal visual packing without requiring manual layout decisions for most use cases.
+
+The layout parameter only affects div and list nodes since they're the only node types that contain children. Individual field nodes (string, int, date, etc.) are always displayed inline within their container's layout direction.
+
+Q: Spacing and Margins: How should we control the visual spacing between and around elements?
+A: We need two complementary spacing systems for precise layout control:
+
+**Spacing Parameter (for div/list containers):**
+- `spacing=N` (in pixels) controls the gap between child elements
+- Automatically follows the layout axis: horizontal spacing for horizontal layouts, vertical spacing for vertical layouts
+- Default value: `spacing=8` for reasonable visual separation
+- Example: `div TaskRow (layout=horizontal, spacing=16)` creates 16px gaps between horizontally arranged children
+
+**Margin Parameters (for all nodes):**
+- `margin-top=N`, `margin-bottom=N`, `margin-left=N`, `margin-right=N` (in pixels)
+- Applied independently of parent layout direction
+- Allows precise positioning control for any node type
+- Default value: all margins default to `0`
+- Example: `string Title (margin-top=8, margin-bottom=4)` adds specific spacing around a text field
+
+**Combined Example:**
+```overseer
+div TaskBoard (layout=vertical, spacing=12) {        // 12px vertical gaps between rows
+    div TaskRow (layout=horizontal, spacing=16) {     // 16px horizontal gaps between cards
+        div TaskCard (margin-left=8, margin-right=8) { // Extra horizontal margins for cards
+            string Title (margin-bottom=4) = "Task 1"  // 4px space below title
+            int Priority = 5                           // No extra margins
+        }
+        div TaskCard (margin-left=8, margin-right=8) {
+            string Title (margin-bottom=4) = "Task 2"
+            int Priority = 3
+        }
+    }
+}
+```
+
+This creates a perfectly spaced task board with controlled gaps between all elements, allowing pixel-perfect layout control while maintaining the automatic layout direction system.
+
 Observation: For shopping lists on mobile, you'll need:
 Touch-friendly UI elements - Yes, let's keep this in mind
 Offline capability when network is poor - Let's not bother with optimization for our MVP

@@ -171,8 +171,25 @@ body {
     margin: 2px;
 }
 
+/* Layout System - Higher specificity to override default styles */
+.overseer-div.layout-horizontal,
+.overseer-list.layout-horizontal {
+    display: flex !important;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.overseer-div.layout-vertical,
+.overseer-list.layout-vertical {
+    display: flex !important;
+    flex-direction: column;
+}
+
+/* Fallback for generic layout classes */
 .layout-horizontal {
     display: flex;
+    flex-direction: row;
     flex-wrap: wrap;
     gap: 12px;
 }

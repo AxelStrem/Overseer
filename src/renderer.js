@@ -177,6 +177,12 @@ export class OverseerRenderer {
             div.style.display = 'none'
         }
         
+        // Apply layout (use effective layout calculated by resolver, or fall back to explicit parameter)
+        const layout = this.getEffectiveLayout(node)
+        div.classList.add(`layout-${layout}`)
+        
+        // Apply spacing and margins
+        this.applyLayoutStyles(div, node)
         this.applyNodeStyles(div, node)
         return div
     }
@@ -188,10 +194,12 @@ export class OverseerRenderer {
         // Don't show list name as header - we just want the list contents
         // Lists should be transparent containers for their items
         
-        // Apply list layout
-        const layout = node.parameters?.layout || 'vertical'
+        // Apply layout (use effective layout calculated by resolver, or fall back to explicit parameter)
+        const layout = this.getEffectiveLayout(node)
         list.classList.add(`layout-${layout}`)
         
+        // Apply spacing and margins  
+        this.applyLayoutStyles(list, node)
         this.applyNodeStyles(list, node)
         return list
     }
@@ -460,6 +468,65 @@ export class OverseerRenderer {
         return container
     }
 
+    getEffectiveLayout(node) {
+        // First check if resolver calculated an effective layout
+        if (node.parameters && node.parameters._effective_layout) {
+            return this.getParameterValue(node, '_effective_layout') || 'vertical'
+        }
+        
+        // Fall back to explicit layout parameter or default
+        return this.getParameterValue(node, 'layout') || 'vertical'
+    }
+
+    applyLayoutStyles(element, node) {
+        if (!node.parameters) return
+        
+        // Apply spacing (for container elements)
+        const spacing = this.getParameterValue(node, 'spacing')
+        if (spacing !== null) {
+            const spacingValue = parseInt(spacing) || 8 // Default to 8px
+            element.style.gap = `${spacingValue}px`
+        } else {
+            // Apply default spacing
+            element.style.gap = '8px'
+        }
+        
+        // Apply margins (for all elements)
+        this.applyMarginStyles(element, node)
+    }
+
+    applyMarginStyles(element, node) {
+        if (!node.parameters) return
+        
+        const params = node.parameters
+        
+        // Handle shorthand margin parameter
+        const margin = this.getParameterValue(node, 'margin')
+        if (margin !== null) {
+            const marginValue = parseInt(margin) || 0
+            element.style.margin = `${marginValue}px`
+        }
+        
+        // Handle individual margin parameters (these override shorthand)
+        const marginTop = this.getParameterValue(node, 'margin-top')
+        const marginBottom = this.getParameterValue(node, 'margin-bottom')
+        const marginLeft = this.getParameterValue(node, 'margin-left')
+        const marginRight = this.getParameterValue(node, 'margin-right')
+        
+        if (marginTop !== null) {
+            element.style.marginTop = `${parseInt(marginTop) || 0}px`
+        }
+        if (marginBottom !== null) {
+            element.style.marginBottom = `${parseInt(marginBottom) || 0}px`
+        }
+        if (marginLeft !== null) {
+            element.style.marginLeft = `${parseInt(marginLeft) || 0}px`
+        }
+        if (marginRight !== null) {
+            element.style.marginRight = `${parseInt(marginRight) || 0}px`
+        }
+    }
+
     applyNodeStyles(element, node) {
         if (!node.parameters) return
         
@@ -477,6 +544,9 @@ export class OverseerRenderer {
         if (params['horizontal-size']) {
             element.style.width = params['horizontal-size']
         }
+        
+        // Apply margins to all elements
+        this.applyMarginStyles(element, node)
         
         // Add more style mappings as needed
     }

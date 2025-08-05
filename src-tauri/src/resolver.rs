@@ -46,6 +46,66 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     for node in nodes.iter_mut() {
         resolve_node(node, &templates);
     }
+    
+    // After template resolution, resolve layout parameters
+    resolve_layout_parameters(nodes, None);
+}
+
+/// Resolves layout parameters for all nodes, calculating effective layout based on parent and parameter values
+fn resolve_layout_parameters(nodes: &mut Vec<OverseerNode>, parent_layout: Option<&str>) {
+    for node in nodes.iter_mut() {
+        // Only div and list nodes support layout
+        if node.node_type == "div" || node.node_type == "list" {
+            let effective_layout = calculate_effective_layout(node, parent_layout);
+            
+            // Store the calculated layout in parameters for the renderer to use
+            node.parameters.insert("_effective_layout".to_string(), OverseerValue::String(effective_layout.clone()));
+            debug_resolver!("[RESOLVER] Node {} effective layout: {}", node.name, effective_layout);
+            
+            // Recursively resolve children with this node's effective layout
+            if !node.children.is_empty() {
+                resolve_layout_parameters(&mut node.children, Some(&effective_layout));
+            }
+        } else {
+            // For non-container nodes, just pass through the parent layout to children
+            if !node.children.is_empty() {
+                resolve_layout_parameters(&mut node.children, parent_layout);
+            }
+        }
+    }
+}
+
+/// Calculate the effective layout for a node based on its layout parameter and parent layout
+fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) -> String {
+    // Check if node has explicit layout parameter
+    if let Some(layout_param) = node.parameters.get("layout") {
+        if let OverseerValue::String(layout_value) = layout_param {
+            match layout_value.as_str() {
+                "vertical" => return "vertical".to_string(),
+                "horizontal" => return "horizontal".to_string(),
+                "inherit" => {
+                    return parent_layout.unwrap_or("vertical").to_string();
+                },
+                "opposite" => {
+                    return match parent_layout.unwrap_or("vertical") {
+                        "vertical" => "horizontal".to_string(),
+                        "horizontal" => "vertical".to_string(),
+                        _ => "horizontal".to_string(), // Default opposite of vertical
+                    };
+                },
+                _ => {
+                    debug_resolver!("[RESOLVER] Unknown layout value: {}, defaulting to opposite", layout_value);
+                }
+            }
+        }
+    }
+    
+    // Default behavior: opposite to parent (or horizontal if no parent)
+    match parent_layout.unwrap_or("vertical") {
+        "vertical" => "horizontal".to_string(),
+        "horizontal" => "vertical".to_string(),
+        _ => "horizontal".to_string(),
+    }
 }
 
 /// Recursively traverses the AST, resolving templates as it goes.

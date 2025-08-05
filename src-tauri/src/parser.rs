@@ -86,10 +86,13 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     let (input, _) = multispace0(input)?;
     let (input, node_name) = opt(parse_identifier)(input)?;
     let (input, _) = multispace0(input)?;
+    debug_parser!("[PARSER] Before parsing parameters, input: {}", input.chars().take(50).collect::<String>());
     let (input, parameters) = opt(parse_parameters)(input)?;
+    debug_parser!("[PARSER] After parsing parameters, input: {}", input.chars().take(50).collect::<String>());
     let (input, _) = multispace0(input)?;
 
     // Then parse body, which can be a block, a value assignment, or nothing
+    debug_parser!("[PARSER] Before parsing body, input: {}", input.chars().take(50).collect::<String>());
     let (input, body) = match opt(alt((
         map(parse_value_assignment, |val| (Some(val), Vec::new())),
         map(parse_direct_value, |val| (Some(val), Vec::new())),
@@ -101,6 +104,7 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
             return Err(e);
         }
     };
+    debug_parser!("[PARSER] After parsing body, input: {}", input.chars().take(50).collect::<String>());
 
     let (value, children) = body.unwrap_or((None, Vec::new()));
 
@@ -293,7 +297,7 @@ fn parse_identifier(input: &str) -> IResult<&str, &str> {
     recognize(
         pair(
             alt((alpha1, tag("_"))),
-            many0(alt((alphanumeric1, tag("_"), tag("."), tag("/")))),
+            many0(alt((alphanumeric1, tag("_"), tag("."), tag("/"), tag("-")))),
         ),
     )(input)
 }
