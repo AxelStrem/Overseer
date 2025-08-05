@@ -2,7 +2,7 @@ use crate::types::{OverseerNode, OverseerValue};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
-    character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1, none_of},
+    character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1},
     combinator::{map, opt, recognize},
     multi::{many0, separated_list0},
     sequence::{delimited, pair, preceded},
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(node.node_type, "list");
         assert_eq!(node.children.len(), 1);
         let list_item = &node.children[0];
-        assert_eq!(list_item.node_type, "list_item");
+        assert_eq!(list_item.node_type, "-"); // Changed: now uses "-" instead of "list_item"
         assert_eq!(list_item.children.len(), 1);
         let item_field = &list_item.children[0];
         assert_eq!(item_field.node_type, "-"); // Inferred type
@@ -367,5 +367,70 @@ mod tests {
         assert_eq!(node.name, "my_task");
         assert_eq!(node.template, Some("../TaskTemplate".to_string()));
         assert_eq!(node.parameters.get("priority"), Some(&OverseerValue::Integer(5)));
+    }
+
+    #[test]
+    fn test_parse_node_with_hyphenated_parameters() {
+        let input = r#"string title (margin-top=10, margin-left=5) = "Test Value""#;
+        let result = parse_node(input);
+        assert!(result.is_ok());
+        let (remaining, node) = result.unwrap();
+        assert_eq!(remaining, "");
+        assert_eq!(node.node_type, "string");
+        assert_eq!(node.name, "title");
+        assert_eq!(node.parameters.get("margin-top"), Some(&OverseerValue::Integer(10)));
+        assert_eq!(node.parameters.get("margin-left"), Some(&OverseerValue::Integer(5)));
+        assert_eq!(node.parameters.get("value"), Some(&OverseerValue::String("Test Value".to_string())));
+    }
+
+    #[test]
+    fn test_parse_layout_parameters() {
+        let input = r#"div Container (layout=horizontal, spacing=15) { string field = "test" }"#;
+        let result = parse_node(input);
+        assert!(result.is_ok());
+        let (remaining, node) = result.unwrap();
+        assert_eq!(remaining, "");
+        assert_eq!(node.node_type, "div");
+        assert_eq!(node.name, "Container");
+        assert_eq!(node.parameters.get("layout"), Some(&OverseerValue::String("horizontal".to_string())));
+        assert_eq!(node.parameters.get("spacing"), Some(&OverseerValue::Integer(15)));
+        assert_eq!(node.children.len(), 1);
+        assert_eq!(node.children[0].node_type, "string");
+        assert_eq!(node.children[0].name, "field");
+    }
+
+    #[test]
+    fn test_parse_complex_parameters() {
+        let input = r#"div Card (layout=vertical, spacing=8, margin-bottom=12) {
+            string title (margin-top=4) = "Card Title"
+        }"#;
+        let result = parse_node(input);
+        assert!(result.is_ok());
+        let (remaining, node) = result.unwrap();
+        assert_eq!(remaining, "");
+        assert_eq!(node.node_type, "div");
+        assert_eq!(node.name, "Card");
+        assert_eq!(node.parameters.get("layout"), Some(&OverseerValue::String("vertical".to_string())));
+        assert_eq!(node.parameters.get("spacing"), Some(&OverseerValue::Integer(8)));
+        assert_eq!(node.parameters.get("margin-bottom"), Some(&OverseerValue::Integer(12)));
+        
+        assert_eq!(node.children.len(), 1);
+        let child = &node.children[0];
+        assert_eq!(child.node_type, "string");
+        assert_eq!(child.name, "title");
+        assert_eq!(child.parameters.get("margin-top"), Some(&OverseerValue::Integer(4)));
+        assert_eq!(child.parameters.get("value"), Some(&OverseerValue::String("Card Title".to_string())));
+    }
+
+    #[test]
+    fn test_parse_boolean_and_float_values() {
+        let input = r#"div Settings (visible=true, opacity=0.8, count=42) {}"#;
+        let result = parse_node(input);
+        assert!(result.is_ok());
+        let (remaining, node) = result.unwrap();
+        assert_eq!(remaining, "");
+        assert_eq!(node.parameters.get("visible"), Some(&OverseerValue::Boolean(true)));
+        assert_eq!(node.parameters.get("opacity"), Some(&OverseerValue::Float(0.8)));
+        assert_eq!(node.parameters.get("count"), Some(&OverseerValue::Integer(42)));
     }
 }

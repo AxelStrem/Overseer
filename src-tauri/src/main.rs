@@ -44,7 +44,7 @@ async fn serialize_overseer_nodes(nodes: Vec<OverseerNode>) -> Result<String> {
 #[command]
 async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
     match parse_document(&content) {
-        Ok((remaining, mut nodes)) => {
+        Ok((_remaining, mut nodes)) => {
             resolver::resolve_document(&mut nodes);
             Ok(nodes)
         },
