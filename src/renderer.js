@@ -1,6 +1,9 @@
 // Set this to false to disable all debug info in the rendered UI
 const DEBUG_MODE = false;
 
+// Import marked for markdown rendering
+import { marked } from 'marked';
+
 export class OverseerRenderer {
     constructor() {
         this.contentDisplay = document.getElementById('content-display')
@@ -314,13 +317,27 @@ export class OverseerRenderer {
         const value = document.createElement('div')
         value.className = 'field-value text-content'
         
-        // Support markdown rendering (basic for now)
+        // Check if markdown is enabled for this text field
+        const isMarkdownEnabled = this.getParameterValue(node, 'markdown') === true
         const textContent = this.getNodeValue(node) || ''
-        value.innerHTML = this.renderMarkdown(textContent)
+        
+        if (isMarkdownEnabled) {
+            // Use markdown rendering
+            value.innerHTML = this.renderMarkdown(textContent)
+            value.classList.add('markdown-enabled')
+        } else {
+            // Plain text with line breaks preserved
+            value.textContent = textContent
+            value.style.whiteSpace = 'pre-wrap'
+        }
         
         // Make it editable on double-click
         value.addEventListener('dblclick', () => {
-            this.makeFieldEditable(value, node, true)
+            if (isMarkdownEnabled) {
+                this.makeMarkdownFieldEditable(value, node)
+            } else {
+                this.makeFieldEditable(value, node, true)
+            }
         })
         
         container.appendChild(value)
@@ -702,11 +719,13 @@ export class OverseerRenderer {
         // If it's an OverseerValue object, extract the actual value
         if (typeof paramValue === 'object' && paramValue !== null) {
             if (paramValue.String !== undefined) return paramValue.String
-            if (paramValue.Integer !== undefined) return paramValue.Integer.toString()
-            if (paramValue.Float !== undefined) return paramValue.Float.toString()
-            if (paramValue.Boolean !== undefined) return paramValue.Boolean.toString()
+            if (paramValue.Integer !== undefined) return paramValue.Integer
+            if (paramValue.Float !== undefined) return paramValue.Float
+            if (paramValue.Boolean !== undefined) return paramValue.Boolean
             if (paramValue.Date !== undefined) return paramValue.Date
             if (paramValue.Formula !== undefined) return paramValue.Formula
+            if (paramValue.Color !== undefined) return paramValue.Color
+            if (paramValue.CssSize !== undefined) return paramValue.CssSize
         }
         
         // Fallback: convert to string
@@ -758,6 +777,114 @@ export class OverseerRenderer {
         })
     }
 
+    makeMarkdownFieldEditable(element, node) {
+        // Get the raw markdown text from the node, not the rendered HTML
+        const rawMarkdown = this.getNodeValue(node) || ''
+        
+        // Create a container for the markdown editor
+        const editorContainer = document.createElement('div')
+        editorContainer.className = 'markdown-editor-container'
+        
+        // Create toolbar
+        const toolbar = document.createElement('div')
+        toolbar.className = 'markdown-toolbar'
+        
+        // Mode toggle button
+        const modeToggle = document.createElement('button')
+        modeToggle.textContent = 'Preview'
+        modeToggle.className = 'mode-toggle-btn'
+        toolbar.appendChild(modeToggle)
+        
+        // Save button
+        const saveBtn = document.createElement('button')
+        saveBtn.textContent = 'Save'
+        saveBtn.className = 'save-btn'
+        toolbar.appendChild(saveBtn)
+        
+        // Cancel button
+        const cancelBtn = document.createElement('button')
+        cancelBtn.textContent = 'Cancel'
+        cancelBtn.className = 'cancel-btn'
+        toolbar.appendChild(cancelBtn)
+        
+        editorContainer.appendChild(toolbar)
+        
+        // Create textarea for editing
+        const textarea = document.createElement('textarea')
+        textarea.value = rawMarkdown
+        textarea.className = 'markdown-editor'
+        textarea.rows = 10
+        textarea.placeholder = 'Enter markdown text...'
+        editorContainer.appendChild(textarea)
+        
+        // Create preview div (initially hidden)
+        const preview = document.createElement('div')
+        preview.className = 'markdown-preview'
+        preview.style.display = 'none'
+        editorContainer.appendChild(preview)
+        
+        // Insert editor container
+        element.style.display = 'none'
+        element.parentNode.insertBefore(editorContainer, element.nextSibling)
+        textarea.focus()
+        
+        let isPreviewMode = false
+        
+        // Mode toggle functionality
+        modeToggle.addEventListener('click', () => {
+            if (isPreviewMode) {
+                // Switch to edit mode
+                textarea.style.display = 'block'
+                preview.style.display = 'none'
+                modeToggle.textContent = 'Preview'
+                isPreviewMode = false
+                textarea.focus()
+            } else {
+                // Switch to preview mode
+                preview.innerHTML = this.renderMarkdown(textarea.value)
+                textarea.style.display = 'none'
+                preview.style.display = 'block'
+                modeToggle.textContent = 'Edit'
+                isPreviewMode = true
+            }
+        })
+        
+        const finishEditing = (save = true) => {
+            if (save) {
+                const newValue = textarea.value
+                // Update the element with rendered markdown
+                element.innerHTML = this.renderMarkdown(newValue)
+                
+                // Update the node value in the document structure
+                this.updateNodeValue(node, newValue)
+                console.log('Markdown field updated:', node.name, newValue)
+                
+                // Mark document as modified
+                if (window.app && window.app.markDocumentModified) {
+                    window.app.markDocumentModified()
+                }
+            }
+            
+            // Clean up
+            element.style.display = 'block'
+            editorContainer.remove()
+        }
+        
+        // Event handlers
+        saveBtn.addEventListener('click', () => finishEditing(true))
+        cancelBtn.addEventListener('click', () => finishEditing(false))
+        
+        // Keyboard shortcuts
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                finishEditing(false)
+            }
+            if (e.ctrlKey && e.key === 'Enter') {
+                finishEditing(true)
+            }
+        })
+    }
+
     // Helper function to update a node's value in the document structure
     updateNodeValue(node, newValue) {
         // Update the node's parameters.value with the appropriate OverseerValue type
@@ -801,10 +928,16 @@ export class OverseerRenderer {
     }
 
     renderMarkdown(text) {
-        // Basic markdown rendering (replace with proper library later)
-        return text
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*(.*?)\*/g, '<em>$1</em>')
-            .replace(/\n/g, '<br>')
+        try {
+            // Use marked library for proper markdown rendering
+            return marked.parse(text);
+        } catch (error) {
+            console.warn('Markdown parsing error:', error);
+            // Fallback to basic markdown rendering
+            return text
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\n/g, '<br>');
+        }
     }
 }

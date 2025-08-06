@@ -511,3 +511,126 @@ body {
         color: #f87171;
     }
 }
+
+/* Markdown Editor Styles */
+.markdown-editor-container {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--surface-color);
+    margin: 8px 0;
+    overflow: hidden;
+}
+
+.markdown-toolbar {
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    background: var(--background-color);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.markdown-toolbar button {
+    padding: 4px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--surface-color);
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.markdown-toolbar button:hover {
+    background: var(--primary-color);
+    color: white;
+    transform: translateY(-1px);
+}
+
+.mode-toggle-btn {
+    background: var(--secondary-color) !important;
+    color: white !important;
+}
+
+.save-btn {
+    background: var(--success-color) !important;
+    color: white !important;
+    border-color: var(--success-color) !important;
+}
+
+.cancel-btn {
+    background: var(--error-color) !important;
+    color: white !important;
+    border-color: var(--error-color) !important;
+}
+
+.markdown-editor {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    background: var(--field-bg-color);
+    color: var(--text-color);
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    line-height: 1.4;
+    resize: vertical;
+    outline: none;
+}
+
+.markdown-preview {
+    padding: 12px;
+    background: var(--surface-color);
+    color: var(--text-color);
+    line-height: 1.6;
+}
+
+/* Markdown content styling */
+.markdown-enabled {
+    line-height: 1.6;
+}
+
+.markdown-enabled h1,
+.markdown-enabled h2,
+.markdown-enabled h3,
+.markdown-enabled h4,
+.markdown-enabled h5,
+.markdown-enabled h6 {
+    margin-top: 0;
+    margin-bottom: 16px;
+    color: var(--text-color);
+}
+
+.markdown-enabled p {
+    margin-bottom: 16px;
+}
+
+.markdown-enabled code {
+    background: var(--field-bg-color);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+}
+
+.markdown-enabled pre {
+    background: var(--field-bg-color);
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin-bottom: 16px;
+}
+
+.markdown-enabled blockquote {
+    border-left: 4px solid var(--primary-color);
+    margin-left: 0;
+    padding-left: 16px;
+    color: var(--text-secondary);
+}
+
+.markdown-enabled ul,
+.markdown-enabled ol {
+    padding-left: 24px;
+    margin-bottom: 16px;
+}
+
+.markdown-enabled li {
+    margin-bottom: 8px;
+}

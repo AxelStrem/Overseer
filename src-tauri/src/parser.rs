@@ -640,4 +640,20 @@ mod tests {
         assert_eq!(node.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
         assert_eq!(node.parameters.get("width"), Some(&OverseerValue::CssSize(CssSize::Percentage(50.0))));
     }
+
+    #[test]
+    fn test_markdown_parameter() {
+        // Test with parameter syntax matching existing working tests
+        let input = r#"div Container (markdown=true, font-size=18px) {
+        }"#;
+        
+        let result = parse_node(input);
+        assert!(result.is_ok(), "Failed to parse node with markdown parameter: {:?}", result.err());
+        
+        let (_, node) = result.unwrap();
+        assert_eq!(node.node_type, "div");
+        assert_eq!(node.name, "Container");
+        assert_eq!(node.parameters.get("markdown"), Some(&OverseerValue::Boolean(true)));
+        assert_eq!(node.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(18.0))));
+    }
 }
