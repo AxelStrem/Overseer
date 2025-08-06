@@ -533,14 +533,42 @@ export class OverseerRenderer {
         // Apply basic styling parameters
         const params = node.parameters
         
+        // Legacy background support (keep for compatibility)
         if (params.background) {
             element.style.backgroundColor = params.background
         }
         
+        // New styling parameters
+        if (params['background-color']) {
+            element.style.backgroundColor = this.convertColorValue(params['background-color'])
+        }
+        
+        if (params['font-color']) {
+            element.style.color = this.convertColorValue(params['font-color'])
+            
+            // Also apply font-color to any field-value children to override CSS class specificity
+            const fieldValueElements = element.querySelectorAll('.field-value')
+            fieldValueElements.forEach(fieldValue => {
+                fieldValue.style.setProperty('color', this.convertColorValue(params['font-color']), 'important')
+            })
+        }
+        
+        if (params['font-size']) {
+            element.style.setProperty('font-size', this.convertCssSizeValue(params['font-size']), 'important')
+            
+            // Also apply font-size to any field-value children to override CSS class specificity
+            const fieldValueElements = element.querySelectorAll('.field-value')
+            fieldValueElements.forEach(fieldValue => {
+                fieldValue.style.setProperty('font-size', this.convertCssSizeValue(params['font-size']), 'important')
+            })
+        }
+        
+        // Legacy border support (keep for compatibility)
         if (params.border) {
             element.style.border = params.border
         }
         
+        // Legacy horizontal-size support (keep for compatibility)
         if (params['horizontal-size']) {
             element.style.width = params['horizontal-size']
         }
@@ -549,6 +577,54 @@ export class OverseerRenderer {
         this.applyMarginStyles(element, node)
         
         // Add more style mappings as needed
+    }
+
+    convertColorValue(colorParam) {
+        // Handle different color value types from the Rust backend
+        if (typeof colorParam === 'string') {
+            return colorParam // Legacy string colors
+        }
+        
+        if (typeof colorParam === 'object' && colorParam !== null) {
+            if (colorParam.Color) {
+                const color = colorParam.Color
+                if (color.Hex) return color.Hex
+                if (color.Named) return color.Named
+                if (color.Rgb) {
+                    const [r, g, b] = color.Rgb
+                    // Convert from 0.0-1.0 range to 0-255 range
+                    const r255 = Math.round(r * 255)
+                    const g255 = Math.round(g * 255)
+                    const b255 = Math.round(b * 255)
+                    return `rgb(${r255}, ${g255}, ${b255})`
+                }
+            }
+        }
+        
+        return colorParam // Fallback
+    }
+
+    convertCssSizeValue(sizeParam) {
+        // Handle different CSS size value types from the Rust backend
+        if (typeof sizeParam === 'string') {
+            return sizeParam // Legacy string sizes
+        }
+        
+        if (typeof sizeParam === 'object' && sizeParam !== null) {
+            if (sizeParam.CssSize) {
+                const size = sizeParam.CssSize
+                if (size.Pixels) return `${size.Pixels}px`
+                if (size.Percentage) return `${size.Percentage}%`
+                if (size.Em) return `${size.Em}em`
+                if (size.Rem) return `${size.Rem}rem`
+                if (size.ViewportWidth) return `${size.ViewportWidth}vw`
+                if (size.ViewportHeight) return `${size.ViewportHeight}vh`
+                if (size.Auto) return 'auto'
+                if (size.FitContent) return 'fit-content'
+            }
+        }
+        
+        return sizeParam // Fallback
     }
 
     getNodeValue(node) {

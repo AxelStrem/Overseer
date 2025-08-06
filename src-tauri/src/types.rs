@@ -78,6 +78,27 @@ pub enum OverseerValue {
     Date(String), // We'll use string representation for now
     Formula(String), // Formula expressions like $(...)
     Template(String), // For <...> syntax in parameters, e.g. entry=<../Template>
+    Color(Color), // Colors in various formats
+    CssSize(CssSize), // CSS size units (px, em, %, etc.)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Color {
+    Hex(String), // #FF0000
+    Named(String), // red, blue, etc.
+    Rgb(f32, f32, f32), // rgb(0.2, 0.8, 0.5) - float values 0.0-1.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CssSize {
+    Pixels(f32), // 16px
+    Percentage(f32), // 120%
+    Em(f32), // 1.2em
+    Rem(f32), // 1.2rem
+    ViewportWidth(f32), // 50vw
+    ViewportHeight(f32), // 50vh
+    Auto, // auto
+    FitContent, // fit-content
 }
 
 #[derive(Error, Debug, Serialize, Deserialize)]

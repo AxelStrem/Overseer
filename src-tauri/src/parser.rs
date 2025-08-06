@@ -1,11 +1,11 @@
-use crate::types::{OverseerNode, OverseerValue};
+use crate::types::{OverseerNode, OverseerValue, Color, CssSize};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1},
     combinator::{map, opt, recognize},
     multi::{many0, separated_list0},
-    sequence::{delimited, pair, preceded},
+    sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
 
@@ -228,6 +228,8 @@ fn parse_value(input: &str) -> IResult<&str, OverseerValue> {
         parse_template_value,
         parse_formula_value,
         parse_boolean_value,
+        parse_color_value,
+        parse_css_size_value, // Must come before number parsing to handle "10px" correctly
         parse_number_value,
         parse_quoted_string_value,
         parse_unquoted_string_value, // Must be last as it's a fallback
@@ -290,6 +292,135 @@ fn parse_boolean_value(input: &str) -> IResult<&str, OverseerValue> {
 /// Parse unquoted strings (identifiers, paths, etc.)
 fn parse_unquoted_string_value(input: &str) -> IResult<&str, OverseerValue> {
     map(parse_identifier, |s| OverseerValue::String(s.to_string()))(input)
+}
+
+/// Parse color values in various formats
+fn parse_color_value(input: &str) -> IResult<&str, OverseerValue> {
+    alt((
+        parse_hex_color,
+        parse_rgb_color,
+        parse_named_color,
+    ))(input)
+}
+
+/// Parse hex color like #FF0000 or #ff0000
+fn parse_hex_color(input: &str) -> IResult<&str, OverseerValue> {
+    use nom::character::complete::hex_digit1;
+    map(
+        preceded(
+            char('#'), 
+            recognize(hex_digit1)
+        ),
+        |hex: &str| {
+            if hex.len() == 3 || hex.len() == 6 {
+                OverseerValue::Color(Color::Hex(format!("#{}", hex)))
+            } else {
+                // Invalid hex color, treat as string
+                OverseerValue::String(format!("#{}", hex))
+            }
+        }
+    )(input)
+}
+
+/// Parse RGB color like rgb(0.2, 0.8, 0.5)
+fn parse_rgb_color(input: &str) -> IResult<&str, OverseerValue> {
+    use nom::number::complete::float;
+    map(
+        delimited(
+            tag("rgb("),
+            tuple((
+                preceded(multispace0, float),
+                preceded(preceded(multispace0, char(',')), preceded(multispace0, float)),
+                preceded(preceded(multispace0, char(',')), preceded(multispace0, float)),
+            )),
+            preceded(multispace0, char(')')),
+        ),
+        |(r, g, b)| OverseerValue::Color(Color::Rgb(r, g, b))
+    )(input)
+}
+
+/// Parse named colors like red, blue, green
+fn parse_named_color(input: &str) -> IResult<&str, OverseerValue> {
+    map(
+        alt((
+            // Primary colors
+            alt((tag("red"), tag("green"), tag("blue"), tag("yellow"), tag("orange"))),
+            // Secondary colors  
+            alt((tag("purple"), tag("pink"), tag("brown"), tag("black"), tag("white"))),
+            // Tertiary colors
+            alt((tag("gray"), tag("grey"), tag("cyan"), tag("magenta"), tag("lime"))),
+            // Additional colors
+            alt((tag("maroon"), tag("navy"), tag("olive"), tag("teal"), tag("silver"))),
+            // Final colors
+            alt((tag("aqua"), tag("fuchsia"), tag("transparent")))
+        )),
+        |color: &str| OverseerValue::Color(Color::Named(color.to_string()))
+    )(input)
+}
+
+/// Parse CSS size values with units
+fn parse_css_size_value(input: &str) -> IResult<&str, OverseerValue> {
+    alt((
+        parse_css_size_with_unit,
+        parse_css_size_keywords,
+    ))(input)
+}
+
+/// Parse CSS size with unit like 16px, 1.2em, 50%
+fn parse_css_size_with_unit(input: &str) -> IResult<&str, OverseerValue> {
+    // Use our own number parsing that matches the existing behavior
+    map(
+        pair(
+            recognize(
+                pair(
+                    opt(char('-')),
+                    pair(
+                        nom::character::complete::digit1,
+                        opt(preceded(char('.'), nom::character::complete::digit1))
+                    )
+                )
+            ),
+            parse_css_unit
+        ),
+        |(number_str, unit)| {
+            let value = number_str.parse::<f32>().unwrap_or(0.0);
+            let size = match unit {
+                "px" => CssSize::Pixels(value),
+                "%" => CssSize::Percentage(value),
+                "em" => CssSize::Em(value),
+                "rem" => CssSize::Rem(value),
+                "vw" => CssSize::ViewportWidth(value),
+                "vh" => CssSize::ViewportHeight(value),
+                _ => return OverseerValue::String(format!("{}{}", value, unit)), // Invalid unit, treat as string
+            };
+            OverseerValue::CssSize(size)
+        }
+    )(input)
+}
+
+/// Parse CSS unit suffixes
+fn parse_css_unit(input: &str) -> IResult<&str, &str> {
+    alt((
+        tag("px"), tag("em"), tag("rem"), tag("vh"), tag("vw"), tag("%")
+    ))(input)
+}
+
+/// Parse CSS size keywords like auto, fit-content
+fn parse_css_size_keywords(input: &str) -> IResult<&str, OverseerValue> {
+    map(
+        alt((
+            tag("auto"),
+            tag("fit-content"),
+        )),
+        |keyword: &str| {
+            let size = match keyword {
+                "auto" => CssSize::Auto,
+                "fit-content" => CssSize::FitContent,
+                _ => return OverseerValue::String(keyword.to_string()),
+            };
+            OverseerValue::CssSize(size)
+        }
+    )(input)
 }
 
 /// Parse identifiers (variable names, node types, etc.)
@@ -432,5 +563,81 @@ mod tests {
         assert_eq!(node.parameters.get("visible"), Some(&OverseerValue::Boolean(true)));
         assert_eq!(node.parameters.get("opacity"), Some(&OverseerValue::Float(0.8)));
         assert_eq!(node.parameters.get("count"), Some(&OverseerValue::Integer(42)));
+    }
+
+    #[test]
+    fn test_parse_color_values() {
+        // Test hex colors
+        let result = parse_value("#FF0000");
+        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Hex("#FF0000".to_string())))));
+        
+        let result = parse_value("#abc");
+        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Hex("#abc".to_string())))));
+        
+        // Test named colors
+        let result = parse_value("red");
+        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Named("red".to_string())))));
+        
+        let result = parse_value("transparent");
+        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Named("transparent".to_string())))));
+        
+        // Test RGB colors
+        let result = parse_value("rgb(0.2, 0.8, 0.5)");
+        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Rgb(0.2, 0.8, 0.5)))));
+        
+        let result = parse_value("rgb(1.0, 0.0, 0.5)");
+        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Rgb(1.0, 0.0, 0.5)))));
+    }
+    
+    #[test]
+    fn test_parse_css_size_values() {
+        // Test pixels
+        let result = parse_value("16px");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Pixels(16.0)))));
+        
+        let result = parse_value("10.5px");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Pixels(10.5)))));
+        
+        // Test percentages
+        let result = parse_value("120%");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Percentage(120.0)))));
+        
+        // Test em/rem
+        let result = parse_value("1.2em");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Em(1.2)))));
+        
+        let result = parse_value("2rem");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Rem(2.0)))));
+        
+        // Test viewport units
+        let result = parse_value("50vw");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::ViewportWidth(50.0)))));
+        
+        let result = parse_value("100vh");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::ViewportHeight(100.0)))));
+        
+        // Test keywords
+        let result = parse_value("auto");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Auto))));
+        
+        let result = parse_value("fit-content");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::FitContent))));
+    }
+
+    #[test]
+    fn test_parse_styling_parameters() {
+        let input = r#"div Container (background-color=#FF0000, font-color=blue, font-size=16px, width=50%) {
+            string field = "Value"
+        }"#;
+        let result = parse_node(input);
+        assert!(result.is_ok());
+        
+        let (_, node) = result.unwrap();
+        assert_eq!(node.node_type, "div");
+        assert_eq!(node.name, "Container");
+        assert_eq!(node.parameters.get("background-color"), Some(&OverseerValue::Color(Color::Hex("#FF0000".to_string()))));
+        assert_eq!(node.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
+        assert_eq!(node.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
+        assert_eq!(node.parameters.get("width"), Some(&OverseerValue::CssSize(CssSize::Percentage(50.0))));
     }
 }

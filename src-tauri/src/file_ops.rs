@@ -183,6 +183,21 @@ impl OverseerFileHandler {
             OverseerValue::Date(d) => format!("\"{}\"", d),
             OverseerValue::Formula(f) => format!("$({})", f),
             OverseerValue::Template(t) => format!("<{}>", t),
+            OverseerValue::Color(color) => match color {
+                Color::Hex(hex) => hex.clone(),
+                Color::Named(name) => name.clone(),
+                Color::Rgb(r, g, b) => format!("rgb({}, {}, {})", r, g, b),
+            },
+            OverseerValue::CssSize(size) => match size {
+                CssSize::Pixels(px) => format!("{}px", px),
+                CssSize::Percentage(pct) => format!("{}%", pct),
+                CssSize::Em(em) => format!("{}em", em),
+                CssSize::Rem(rem) => format!("{}rem", rem),
+                CssSize::ViewportWidth(vw) => format!("{}vw", vw),
+                CssSize::ViewportHeight(vh) => format!("{}vh", vh),
+                CssSize::Auto => "auto".to_string(),
+                CssSize::FitContent => "fit-content".to_string(),
+            },
         }
     }
 }

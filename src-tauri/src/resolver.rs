@@ -1,4 +1,4 @@
-use crate::types::{OverseerNode, OverseerValue};
+use crate::types::{OverseerNode, OverseerValue, Color, CssSize};
 use std::collections::HashMap;
 
 // Debug logging macro for resolver
@@ -49,6 +49,9 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     
     // After template resolution, resolve layout parameters
     resolve_layout_parameters(nodes, None);
+    
+    // After layout resolution, resolve parameter inheritance
+    resolve_parameter_inheritance(nodes, &HashMap::new());
 }
 
 /// Resolves layout parameters for all nodes, calculating effective layout based on parent and parameter values
@@ -105,6 +108,39 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
         "vertical" => "horizontal".to_string(),
         "horizontal" => "vertical".to_string(),
         _ => "horizontal".to_string(),
+    }
+}
+
+/// Resolves parameter inheritance for styling properties
+fn resolve_parameter_inheritance(nodes: &mut Vec<OverseerNode>, parent_params: &HashMap<String, OverseerValue>) {
+    for node in nodes.iter_mut() {
+        // List of inheritable styling parameters
+        let inheritable_params = [
+            "background-color", "font-color", "font-size"
+        ];
+        
+        // Inherit each styling parameter from parent if not explicitly set
+        for param_name in &inheritable_params {
+            if !node.parameters.contains_key(*param_name) {
+                if let Some(parent_value) = parent_params.get(*param_name) {
+                    debug_resolver!("[RESOLVER] Inheriting {} = {:?} for node {}", param_name, parent_value, node.name);
+                    node.parameters.insert(param_name.to_string(), parent_value.clone());
+                }
+            }
+        }
+        
+        // Build inherited parameters map for children (including this node's parameters)
+        let mut inherited_params = parent_params.clone();
+        for (key, value) in &node.parameters {
+            if inheritable_params.contains(&key.as_str()) {
+                inherited_params.insert(key.clone(), value.clone());
+            }
+        }
+        
+        // Recursively resolve children with inherited parameters
+        if !node.children.is_empty() {
+            resolve_parameter_inheritance(&mut node.children, &inherited_params);
+        }
     }
 }
 
@@ -444,5 +480,66 @@ mod tests {
         
         // The checkbox field is not copied because it wasn't overridden
         // This is the current behavior - could be improved to copy all template fields
+    }
+
+    #[test]
+    fn test_parameter_inheritance() {
+        let input = r#"div Container (font-color=blue, font-size=16px) {
+            div Inner {
+                string field = "Test"
+            }
+            string direct = "Direct child"
+        }"#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        
+        let container = &nodes[0];
+        let inner = &container.children[0];
+        let field = &inner.children[0];
+        let direct = &container.children[1];
+        
+        // Container should have its own styling
+        assert_eq!(container.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
+        assert_eq!(container.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
+        
+        // Inner div should inherit styling parameters
+        assert_eq!(inner.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
+        assert_eq!(inner.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
+        
+        // Field should inherit from both container and inner
+        assert_eq!(field.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
+        assert_eq!(field.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
+        
+        // Direct child should inherit from container
+        assert_eq!(direct.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
+        assert_eq!(direct.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
+    }
+
+    #[test]
+    fn test_parameter_inheritance_override() {
+        let input = r#"div Container (font-color=blue, font-size=16px) {
+            string child1 = "Default styling"
+            string child2 (font-color=red) = "Overridden color"
+            string child3 (font-size=20px) = "Overridden size"
+        }"#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        
+        let container = &nodes[0];
+        let child1 = &container.children[0];
+        let child2 = &container.children[1];
+        let child3 = &container.children[2];
+        
+        // Child1 should inherit both parameters
+        assert_eq!(child1.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
+        assert_eq!(child1.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
+        
+        // Child2 should override color but inherit size
+        assert_eq!(child2.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("red".to_string()))));
+        assert_eq!(child2.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
+        
+        // Child3 should override size but inherit color
+        assert_eq!(child3.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
+        assert_eq!(child3.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(20.0))));
     }
 }
