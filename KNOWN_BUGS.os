@@ -49,5 +49,17 @@ tab (title="Known Bugs") {
             - fixed = true
             - fix_date = 26.07.2025
         }
+
+        - {
+            - description = "Template detection relies on hidden=true parameter instead of allowing any node to be a template"
+            - fixed = false
+            - storypoints = 3
+        }
+
+        - {
+            - description = "When creating node from template, parent node doesn't inherit template's parameters (only children do)"
+            - fixed = false
+            - storypoints = 2
+        }
     }
 }

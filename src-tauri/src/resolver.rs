@@ -9,49 +9,238 @@ macro_rules! debug_resolver {
     };
 }
 
-/// Recursively finds all nodes marked as templates (`hidden=true`) and adds them to the map.
-fn find_all_templates(nodes: &[OverseerNode], templates: &mut HashMap<String, OverseerNode>) {
+/// Finds a specific template by name in the node tree (on-demand search).
+/// This allows any node to be a template, not just div nodes with hidden=true.
+fn find_template_by_name(nodes: &[OverseerNode], template_name: &str) -> Option<OverseerNode> {
     for node in nodes {
-        // A template is a div marked as hidden. We use its name as the key.
-        if node.node_type == "div" && node.parameters.get("hidden") == Some(&OverseerValue::Boolean(true)) {
-            if !node.name.is_empty() {
-                debug_resolver!("[RESOLVER] Found template: {} with {} children", node.name, node.children.len());
-                for _child in &node.children {
-                    debug_resolver!("[RESOLVER]   Template field: {} (type: {})", child.name, child.node_type);
-                }
-                templates.insert(node.name.clone(), node.clone());
+        // Any node can be a template if its name matches
+        if node.name == template_name {
+            debug_resolver!("[RESOLVER] Found template: {} (type: {}) with {} children", node.name, node.node_type, node.children.len());
+            for child in &node.children {
+                debug_resolver!("[RESOLVER]   Template field: {} (type: {})", child.name, child.node_type);
             }
+            return Some(node.clone());
         }
         // Recurse into children to find nested templates.
         if !node.children.is_empty() {
-            find_all_templates(&node.children, templates);
+            if let Some(template) = find_template_by_name(&node.children, template_name) {
+                return Some(template);
+            }
         }
     }
+    None
 }
 
-fn build_template_map(nodes: &[OverseerNode]) -> HashMap<String, OverseerNode> {
-    let mut templates = HashMap::new();
-    debug_resolver!("[RESOLVER] Building template map from {} root nodes", nodes.len());
-    find_all_templates(nodes, &mut templates);
-    debug_resolver!("[RESOLVER] Template map built with {} templates: {:?}", templates.len(), templates.keys().collect::<Vec<_>>());
-    templates
+/// Multi-pass template resolution that handles template dependencies.
+/// Templates can depend on other templates, so we need multiple passes to resolve everything.
+fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
+    const MAX_PASSES: usize = 10; // Prevent infinite loops
+    let mut pass = 0;
+    let mut made_progress = true;
+    
+    while made_progress && pass < MAX_PASSES {
+        made_progress = false;
+        pass += 1;
+        debug_resolver!("[RESOLVER] Template resolution pass {}", pass);
+        
+        // Create a snapshot of nodes for template lookup (immutable reference)
+        let nodes_snapshot = nodes.clone(); // We need this for template lookup
+        
+        // Try to resolve templates in this pass
+        for node in nodes.iter_mut() {
+            if resolve_node_templates(node, &nodes_snapshot, &mut made_progress) {
+                made_progress = true;
+            }
+        }
+        
+        debug_resolver!("[RESOLVER] Pass {} complete, made_progress: {}", pass, made_progress);
+    }
+    
+    if pass >= MAX_PASSES {
+        debug_resolver!("[RESOLVER] Warning: Maximum template resolution passes reached. Some templates may have circular dependencies.");
+    } else {
+        debug_resolver!("[RESOLVER] Template resolution completed in {} passes", pass);
+    }
 }
 
 /// Public entry point to resolve all templates in a document AST.
 pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
-    // Build a map of all available templates by traversing the entire document.
-    let templates = build_template_map(nodes);
-
-    // Start the recursive resolution process.
-    for node in nodes.iter_mut() {
-        resolve_node(node, &templates);
-    }
+    // Multi-pass template resolution to handle template dependencies
+    resolve_templates_multipass(nodes);
     
     // After template resolution, resolve layout parameters
     resolve_layout_parameters(nodes, None);
     
     // After layout resolution, resolve parameter inheritance
     resolve_parameter_inheritance(nodes, &HashMap::new());
+}
+
+/// Resolves templates for a single node and its children.
+/// Returns true if any progress was made in this pass.
+fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], made_progress: &mut bool) -> bool {
+    let mut local_progress = false;
+    
+    debug_resolver!("[RESOLVER] Resolving node: {} (type: {})", node.name, node.node_type);
+    
+    // Check if the current node is a list that uses a template or simple type.
+    if node.node_type == "list" {
+        if let Some(entry_value) = node.parameters.get("entry") {
+            match entry_value {
+                OverseerValue::Template(template_path) => {
+                    debug_resolver!("[RESOLVER] List {} uses template: {}", node.name, template_path);
+                    // Simplified path resolution: "entry=<../Task>" -> "Task"
+                    let template_name = template_path.split('/').last().unwrap_or("");
+                    debug_resolver!("[RESOLVER] Resolved template name: {}", template_name);
+
+                    if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
+                        debug_resolver!("[RESOLVER] Found template node for {}, processing {} children", template_name, node.children.len());
+                        let mut resolved_children = Vec::new();
+                        for (_i, list_item) in node.children.iter().enumerate() {
+                            debug_resolver!("[RESOLVER]   Processing list item {}: {} (type: {})", _i, list_item.name, list_item.node_type);
+                            // Handle both old "list_item" type and new "-" type (after parse_list_item removal)
+                            if list_item.node_type == "list_item" || (list_item.node_type == "-" && !list_item.children.is_empty()) {
+                                if !list_item.children.is_empty() {
+                                    debug_resolver!("[RESOLVER]     Complex list item with {} children", list_item.children.len());
+                                    // Complex list item: create a node of the template's type
+                                    let mut resolved_item = OverseerNode {
+                                        name: list_item.name.clone(),
+                                        node_type: template_node.node_type.clone(),
+                                        template: None,
+                                        parameters: {
+                                            // Start with template parameters as base
+                                            let mut merged_params = template_node.parameters.clone();
+                                            // List item parameters override template parameters
+                                            for (key, value) in &list_item.parameters {
+                                                merged_params.insert(key.clone(), value.clone());
+                                            }
+                                            merged_params
+                                        },
+                                        children: template_node.children.clone(),
+                                        is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                    };
+                                    let overrides: HashMap<String, &OverseerNode> = list_item
+                                        .children
+                                        .iter()
+                                        .map(|o| (o.name.clone(), o))
+                                        .collect();
+                                    debug_resolver!("[RESOLVER]     Override fields: {:?}", overrides.keys().collect::<Vec<_>>());
+                                    merge_node(&mut resolved_item, &overrides);
+                                    // Infer types for '-' children from template fields
+                                    for child in resolved_item.children.iter_mut() {
+                                        if child.node_type == "-" {
+                                            if let Some(template_field) = template_node.children.iter().find(|f| f.name == child.name) {
+                                                debug_resolver!("[RESOLVER]     Resolving '-' type for {}: {} -> {}", child.name, child.node_type, template_field.node_type);
+                                                child.node_type = template_field.node_type.clone();
+                                            } else {
+                                                debug_resolver!("[RESOLVER]     Warning: No template field found for '-' type: {}", child.name);
+                                            }
+                                        }
+                                    }
+                                    resolved_children.push(resolved_item);
+                                } else if let Some(val) = list_item.parameters.get("value") {
+                                    debug_resolver!("[RESOLVER]     Simple value list item: {:?}", val);
+                                    // Simple value: create a node of the template's type, with value
+                                    let mut resolved_item = OverseerNode {
+                                        name: list_item.name.clone(),
+                                        node_type: template_node.node_type.clone(),
+                                        template: None,
+                                        parameters: {
+                                            // Start with template parameters as base  
+                                            let mut merged_params = template_node.parameters.clone();
+                                            merged_params.insert("value".to_string(), val.clone());
+                                            merged_params
+                                        },
+                                        children: Vec::new(),
+                                        is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                    };
+                                    resolved_children.push(resolved_item);
+                                } else {
+                                    debug_resolver!("[RESOLVER]     Fallback: cloning list item as-is");
+                                    // Fallback: just clone
+                                    resolved_children.push(list_item.clone());
+                                }
+                            } else {
+                                debug_resolver!("[RESOLVER]   Not a complex list_item, passing through: {} (type: {})", list_item.name, list_item.node_type);
+                                // Not a complex list_item, pass through
+                                resolved_children.push(list_item.clone());
+                            }
+                        }
+                        debug_resolver!("[RESOLVER] List resolution complete, {} -> {} children", node.children.len(), resolved_children.len());
+                        node.children = resolved_children;
+                        local_progress = true;
+                    } else {
+                        debug_resolver!("[RESOLVER] Warning: Template not found: {}", template_name);
+                        // Template not found - might be resolved in a later pass
+                    }
+                },
+                OverseerValue::String(type_name) => {
+                    debug_resolver!("[RESOLVER] List {} uses simple type: {}", node.name, type_name);
+                    // Handle simple type entries like entry=string
+                    let mut resolved_children = Vec::new();
+                    for (_i, list_item) in node.children.iter().enumerate() {
+                        debug_resolver!("[RESOLVER]   Processing simple type list item {}: {} (type: {})", _i, list_item.name, list_item.node_type);
+                        if let Some(val) = list_item.parameters.get("value") {
+                            debug_resolver!("[RESOLVER]     Converting to {} with value: {:?}", type_name, val);
+                            // Create a node of the specified simple type
+                            let mut resolved_item = OverseerNode {
+                                name: list_item.name.clone(),
+                                node_type: type_name.clone(),
+                                template: None,
+                                parameters: HashMap::new(),
+                                children: Vec::new(),
+                                is_hierarchy_transparent: false,
+                            };
+                            resolved_item.parameters.insert("value".to_string(), val.clone());
+                            resolved_children.push(resolved_item);
+                        } else {
+                            debug_resolver!("[RESOLVER]     No value found, keeping as-is: {} (type: {})", list_item.name, list_item.node_type);
+                            resolved_children.push(list_item.clone());
+                        }
+                    }
+                    debug_resolver!("[RESOLVER] Simple type list resolution complete, {} -> {} children", node.children.len(), resolved_children.len());
+                    node.children = resolved_children;
+                    local_progress = true;
+                },
+                _ => {
+                    debug_resolver!("[RESOLVER] List {} has unsupported entry parameter type: {:?}", node.name, entry_value);
+                }
+            }
+        } else {
+            debug_resolver!("[RESOLVER] List {} has no entry parameter", node.name);
+        }
+    }
+
+    // If this node is an instantiated template, infer types for '-' children from the template
+    if let Some(template_path) = &node.template.clone() {
+        debug_resolver!("[RESOLVER] Node {} has template: {}", node.name, template_path);
+        let template_name = template_path.split('/').last().unwrap_or("");
+        if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
+            debug_resolver!("[RESOLVER] Resolving template fields for {}", template_name);
+            for child in node.children.iter_mut() {
+                if child.node_type == "-" {
+                    if let Some(template_field) = template_node.children.iter().find(|f| f.name == child.name) {
+                        debug_resolver!("[RESOLVER] Resolving template field {}: {} -> {}", child.name, child.node_type, template_field.node_type);
+                        child.node_type = template_field.node_type.clone();
+                        local_progress = true;
+                    } else {
+                        debug_resolver!("[RESOLVER] Warning: No template field found for {}", child.name);
+                    }
+                }
+            }
+        } else {
+            debug_resolver!("[RESOLVER] Warning: Template not found for node: {}", template_name);
+        }
+    }
+
+    // Recursively process children
+    for child in node.children.iter_mut() {
+        if resolve_node_templates(child, all_nodes, made_progress) {
+            local_progress = true;
+        }
+    }
+    
+    debug_resolver!("[RESOLVER] Finished resolving node: {} (final type: {}) - progress: {}", node.name, node.node_type, local_progress);
+    local_progress
 }
 
 /// Resolves layout parameters for all nodes, calculating effective layout based on parent and parameter values
@@ -142,154 +331,6 @@ fn resolve_parameter_inheritance(nodes: &mut Vec<OverseerNode>, parent_params: &
             resolve_parameter_inheritance(&mut node.children, &inherited_params);
         }
     }
-}
-
-/// Recursively traverses the AST, resolving templates as it goes.
-fn resolve_node(node: &mut OverseerNode, templates: &HashMap<String, OverseerNode>) {
-    debug_resolver!("[RESOLVER] Resolving node: {} (type: {})", node.name, node.node_type);
-    
-    // Check if the current node is a list that uses a template or simple type.
-    if node.node_type == "list" {
-        if let Some(entry_value) = node.parameters.get("entry") {
-            match entry_value {
-                OverseerValue::Template(template_path) => {
-                    debug_resolver!("[RESOLVER] List {} uses template: {}", node.name, template_path);
-                    // Simplified path resolution: "entry=<../Task>" -> "Task"
-                    let template_name = template_path.split('/').last().unwrap_or("");
-                    debug_resolver!("[RESOLVER] Resolved template name: {}", template_name);
-
-                    if let Some(template_node) = templates.get(template_name) {
-                        debug_resolver!("[RESOLVER] Found template node for {}, processing {} children", template_name, node.children.len());
-                        let mut resolved_children = Vec::new();
-                        for (_i, list_item) in node.children.iter().enumerate() {
-                            debug_resolver!("[RESOLVER]   Processing list item {}: {} (type: {})", i, list_item.name, list_item.node_type);
-                            // Handle both old "list_item" type and new "-" type (after parse_list_item removal)
-                            if list_item.node_type == "list_item" || (list_item.node_type == "-" && !list_item.children.is_empty()) {
-                                if !list_item.children.is_empty() {
-                                    debug_resolver!("[RESOLVER]     Complex list item with {} children", list_item.children.len());
-                                    // Complex list item: create a node of the template's type
-                                    let mut resolved_item = OverseerNode {
-                                        name: list_item.name.clone(),
-                                        node_type: template_node.node_type.clone(),
-                                        template: None,
-                                        parameters: list_item.parameters.clone(),
-                                        children: template_node.children.clone(),
-                                        is_hierarchy_transparent: template_node.is_hierarchy_transparent,
-                                    };
-                                    let overrides: HashMap<String, &OverseerNode> = list_item
-                                        .children
-                                        .iter()
-                                        .map(|o| (o.name.clone(), o))
-                                        .collect();
-                                    debug_resolver!("[RESOLVER]     Override fields: {:?}", overrides.keys().collect::<Vec<_>>());
-                                    merge_node(&mut resolved_item, &overrides);
-                                    // Infer types for '-' children from template fields
-                                    for child in resolved_item.children.iter_mut() {
-                                        if child.node_type == "-" {
-                                            if let Some(template_field) = template_node.children.iter().find(|f| f.name == child.name) {
-                                                debug_resolver!("[RESOLVER]     Resolving '-' type for {}: {} -> {}", child.name, child.node_type, template_field.node_type);
-                                                child.node_type = template_field.node_type.clone();
-                                            } else {
-                                                debug_resolver!("[RESOLVER]     Warning: No template field found for '-' type: {}", child.name);
-                                            }
-                                        }
-                                    }
-                                    resolved_children.push(resolved_item);
-                                } else if let Some(val) = list_item.parameters.get("value") {
-                                    debug_resolver!("[RESOLVER]     Simple value list item: {:?}", val);
-                                    // Simple value: create a node of the template's type, with value
-                                    let mut resolved_item = OverseerNode {
-                                        name: list_item.name.clone(),
-                                        node_type: template_node.node_type.clone(),
-                                        template: None,
-                                        parameters: HashMap::new(),
-                                        children: Vec::new(),
-                                        is_hierarchy_transparent: template_node.is_hierarchy_transparent,
-                                    };
-                                    resolved_item.parameters.insert("value".to_string(), val.clone());
-                                    resolved_children.push(resolved_item);
-                                } else {
-                                    debug_resolver!("[RESOLVER]     Fallback: cloning list item as-is");
-                                    // Fallback: just clone
-                                    resolved_children.push(list_item.clone());
-                                }
-                            } else {
-                                debug_resolver!("[RESOLVER]   Not a complex list_item, passing through: {} (type: {})", list_item.name, list_item.node_type);
-                                // Not a complex list_item, pass through
-                                resolved_children.push(list_item.clone());
-                            }
-                        }
-                        debug_resolver!("[RESOLVER] List resolution complete, {} -> {} children", node.children.len(), resolved_children.len());
-                        node.children = resolved_children;
-                    } else {
-                        debug_resolver!("[RESOLVER] Warning: Template not found: {}", template_name);
-                    }
-                },
-                OverseerValue::String(type_name) => {
-                    debug_resolver!("[RESOLVER] List {} uses simple type: {}", node.name, type_name);
-                    // Handle simple type entries like entry=string
-                    let mut resolved_children = Vec::new();
-                    for (_i, list_item) in node.children.iter().enumerate() {
-                        debug_resolver!("[RESOLVER]   Processing simple type list item {}: {} (type: {})", i, list_item.name, list_item.node_type);
-                        if let Some(val) = list_item.parameters.get("value") {
-                            debug_resolver!("[RESOLVER]     Converting to {} with value: {:?}", type_name, val);
-                            // Create a node of the specified simple type
-                            let mut resolved_item = OverseerNode {
-                                name: list_item.name.clone(),
-                                node_type: type_name.clone(),
-                                template: None,
-                                parameters: HashMap::new(),
-                                children: Vec::new(),
-                                is_hierarchy_transparent: false,
-                            };
-                            resolved_item.parameters.insert("value".to_string(), val.clone());
-                            resolved_children.push(resolved_item);
-                        } else {
-                            debug_resolver!("[RESOLVER]     No value found, keeping as-is: {} (type: {})", list_item.name, list_item.node_type);
-                            resolved_children.push(list_item.clone());
-                        }
-                    }
-                    debug_resolver!("[RESOLVER] Simple type list resolution complete, {} -> {} children", node.children.len(), resolved_children.len());
-                    node.children = resolved_children;
-                },
-                _ => {
-                    debug_resolver!("[RESOLVER] List {} has unsupported entry parameter type: {:?}", node.name, entry_value);
-                }
-            }
-        } else {
-            debug_resolver!("[RESOLVER] List {} has no entry parameter", node.name);
-        }
-    }
-
-    // If this node is an instantiated template, infer types for '-' children from the template
-    if let Some(template_path) = &node.template {
-        debug_resolver!("[RESOLVER] Node {} has template: {}", node.name, template_path);
-        let template_name = template_path.split('/').last().unwrap_or("");
-        if let Some(template_node) = templates.get(template_name) {
-            debug_resolver!("[RESOLVER] Resolving template fields for {}", template_name);
-            for child in node.children.iter_mut() {
-                if child.node_type == "-" {
-                    if let Some(template_field) = template_node.children.iter().find(|f| f.name == child.name) {
-                        debug_resolver!("[RESOLVER] Resolving template field {}: {} -> {}", child.name, child.node_type, template_field.node_type);
-                        child.node_type = template_field.node_type.clone();
-                    } else {
-                        debug_resolver!("[RESOLVER] Warning: No template field found for {}", child.name);
-                    }
-                }
-            }
-        } else {
-            debug_resolver!("[RESOLVER] Warning: Template not found for node: {}", template_name);
-        }
-    }
-
-    // After processing the current node (e.g., resolving a list), recurse into
-    // the children. This is a pre-order traversal, which is correct for this
-    // problem because it resolves containers before their contents.
-    for child in node.children.iter_mut() {
-        resolve_node(child, templates);
-    }
-    
-    debug_resolver!("[RESOLVER] Finished resolving node: {} (final type: {})", node.name, node.node_type);
 }
 
 /// Merges override fields into a template clone.
