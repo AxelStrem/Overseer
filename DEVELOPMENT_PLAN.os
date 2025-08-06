@@ -13,6 +13,7 @@ tab main (title="Overseer DSL Development") {
         - = "Phase 10: Mobile & Performance"
     }
     text StepsHeader = "Step list:"
+    text PriorityUpdate = "UPDATED: Added comprehensive UI styling system (2.2-2.4) as next priority after completing layout system and testing infrastructure"
     div Task (hidden=true) {
         string task_description = ""
         checkbox complete (label="Complete") = false
@@ -169,27 +170,107 @@ tab main (title="Overseer DSL Development") {
             }
         }
         - {
-            string name = "2.2: Advanced Layout Support"
-            string description = "Implement grid layouts, responsive design basics"
+            string name = "2.2: Basic UI Styling System"
+            string description = "Implement fundamental UI styling parameters for colors, fonts, and visual appearance"
             int priority = 2
             list StepTasks (entry=<../Task>) {
                 - {
-                    string task_description = "Add grid layout for list components"
+                    string task_description = "Add background-color parameter support for divs and lists"
                     checkbox complete (label="Complete") = false
                     checkbox tested (label="Tested") = false
-                    string notes = "Table-like display with aligned columns"
+                    string notes = "Support hex colors (#FF0000) and named colors (red, blue) with inheritance"
                 }
                 - {
-                    string task_description = "Implement responsive tab layouts"
+                    string task_description = "Add font-size parameter for all node types"
                     checkbox complete (label="Complete") = false
                     checkbox tested (label="Tested") = false
-                    string notes = "Horizontal/vertical tab options with mobile considerations"
+                    string notes = "Support pixels (16px), percentages (120%), and relative units (em) with inheritance"
                 }
                 - {
-                    string task_description = "Add accordion/collapsible sections"
+                    string task_description = "Add font-color parameter for all node types"
                     checkbox complete (label="Complete") = false
                     checkbox tested (label="Tested") = false
-                    string notes = "Expandable div containers for better organization"
+                    string notes = "Support same color formats as background-color with inheritance"
+                }
+                - {
+                    string task_description = "Implement parameter inheritance system in resolver"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Children inherit styling parameters from parents unless explicitly overridden"
+                }
+                - {
+                    string task_description = "Update renderer to apply styling parameters"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Convert styling parameters to CSS properties in frontend renderer"
+                }
+            }
+        }
+        - {
+            string name = "2.3: Markdown Text Formatting"
+            string description = "Add support for markdown formatting in text content with edit/view modes"
+            int priority = 2
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Add markdown parameter to text field types"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Enable markdown support for string and text node types"
+                }
+                - {
+                    string task_description = "Implement markdown parser in frontend"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Use library like marked.js for markdown to HTML conversion"
+                }
+                - {
+                    string task_description = "Create dual edit/view mode for markdown fields"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Raw markdown for editing, rendered HTML for viewing with mode toggle"
+                }
+                - {
+                    string task_description = "Add markdown editor with syntax highlighting"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Enhanced editing experience with markdown syntax highlighting and preview"
+                }
+            }
+        }
+        - {
+            string name = "2.4: Advanced Grid Layout System"
+            string description = "Implement fixed sizing and advanced border controls for grid-like layouts"
+            int priority = 2
+            list StepTasks (entry=<../Task>) {
+                - {
+                    string task_description = "Add width and height parameters with multiple unit support"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Support pixels (200px), percentages (50%), auto, and fit-content"
+                }
+                - {
+                    string task_description = "Implement content overflow clamping"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Clamp content that exceeds fixed width/height with CSS overflow: hidden"
+                }
+                - {
+                    string task_description = "Add border-style parameter with multiple options"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Support none, default (rounded+shadow), and custom border styles"
+                }
+                - {
+                    string task_description = "Add selective border side controls"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "border-top, border-bottom, border-left, border-right parameters for grid building"
+                }
+                - {
+                    string task_description = "Create grid layout examples and templates"
+                    checkbox complete (label="Complete") = false
+                    checkbox tested (label="Tested") = false
+                    string notes = "Demonstrate table-like layouts using fixed sizes and selective borders"
                 }
             }
         }
