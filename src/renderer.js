@@ -580,6 +580,24 @@ export class OverseerRenderer {
             })
         }
         
+        // Width parameter
+        if (params.width) {
+            element.style.width = this.convertCssSizeValue(params.width)
+        }
+        
+        // Height parameter  
+        if (params.height) {
+            element.style.height = this.convertCssSizeValue(params.height)
+        }
+        
+        // Border style parameter
+        if (params['border-style']) {
+            const borderStyle = this.convertBorderStyleValue(params['border-style'])
+            if (borderStyle) {
+                element.style.border = borderStyle
+            }
+        }
+        
         // Legacy border support (keep for compatibility)
         if (params.border) {
             element.style.border = params.border
@@ -642,6 +660,41 @@ export class OverseerRenderer {
         }
         
         return sizeParam // Fallback
+    }
+
+    convertBorderStyleValue(borderParam) {
+        // Handle different border style value types from the Rust backend
+        if (typeof borderParam === 'string') {
+            return borderParam // Legacy string borders
+        }
+        
+        if (typeof borderParam === 'object' && borderParam !== null) {
+            if (borderParam.BorderStyle) {
+                const style = borderParam.BorderStyle
+                if (style === 'None') return 'none'
+                if (style === 'Default') return '' // Use default browser styling
+                if (style.Solid) {
+                    const [thickness, color] = style.Solid
+                    const thicknessStr = this.convertCssSizeValue({CssSize: thickness})
+                    const colorStr = this.convertColorValue({Color: color})
+                    return `${thicknessStr} solid ${colorStr}`
+                }
+                if (style.Dashed) {
+                    const [thickness, color] = style.Dashed
+                    const thicknessStr = this.convertCssSizeValue({CssSize: thickness})
+                    const colorStr = this.convertColorValue({Color: color})
+                    return `${thicknessStr} dashed ${colorStr}`
+                }
+                if (style.Dotted) {
+                    const [thickness, color] = style.Dotted
+                    const thicknessStr = this.convertCssSizeValue({CssSize: thickness})
+                    const colorStr = this.convertColorValue({Color: color})
+                    return `${thicknessStr} dotted ${colorStr}`
+                }
+            }
+        }
+        
+        return borderParam // Fallback
     }
 
     getNodeValue(node) {

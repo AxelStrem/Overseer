@@ -198,6 +198,67 @@ impl OverseerFileHandler {
                 CssSize::Auto => "auto".to_string(),
                 CssSize::FitContent => "fit-content".to_string(),
             },
+            OverseerValue::BorderStyle(style) => match style {
+                BorderStyle::None => "none".to_string(),
+                BorderStyle::Default => "default".to_string(),
+                BorderStyle::Solid(thickness, color) => {
+                    format!("solid {} {}", 
+                        match thickness {
+                            CssSize::Pixels(px) => format!("{}px", px),
+                            CssSize::Percentage(pct) => format!("{}%", pct),
+                            CssSize::Em(em) => format!("{}em", em),
+                            CssSize::Rem(rem) => format!("{}rem", rem),
+                            CssSize::ViewportWidth(vw) => format!("{}vw", vw),
+                            CssSize::ViewportHeight(vh) => format!("{}vh", vh),
+                            CssSize::Auto => "auto".to_string(),
+                            CssSize::FitContent => "fit-content".to_string(),
+                        },
+                        match color {
+                            Color::Hex(hex) => hex.clone(),
+                            Color::Named(name) => name.clone(),
+                            Color::Rgb(r, g, b) => format!("rgb({}, {}, {})", r, g, b),
+                        }
+                    )
+                },
+                BorderStyle::Dashed(thickness, color) => {
+                    format!("dashed {} {}", 
+                        match thickness {
+                            CssSize::Pixels(px) => format!("{}px", px),
+                            CssSize::Percentage(pct) => format!("{}%", pct),
+                            CssSize::Em(em) => format!("{}em", em),
+                            CssSize::Rem(rem) => format!("{}rem", rem),
+                            CssSize::ViewportWidth(vw) => format!("{}vw", vw),
+                            CssSize::ViewportHeight(vh) => format!("{}vh", vh),
+                            CssSize::Auto => "auto".to_string(),
+                            CssSize::FitContent => "fit-content".to_string(),
+                        },
+                        match color {
+                            Color::Hex(hex) => hex.clone(),
+                            Color::Named(name) => name.clone(),
+                            Color::Rgb(r, g, b) => format!("rgb({}, {}, {})", r, g, b),
+                        }
+                    )
+                },
+                BorderStyle::Dotted(thickness, color) => {
+                    format!("dotted {} {}", 
+                        match thickness {
+                            CssSize::Pixels(px) => format!("{}px", px),
+                            CssSize::Percentage(pct) => format!("{}%", pct),
+                            CssSize::Em(em) => format!("{}em", em),
+                            CssSize::Rem(rem) => format!("{}rem", rem),
+                            CssSize::ViewportWidth(vw) => format!("{}vw", vw),
+                            CssSize::ViewportHeight(vh) => format!("{}vh", vh),
+                            CssSize::Auto => "auto".to_string(),
+                            CssSize::FitContent => "fit-content".to_string(),
+                        },
+                        match color {
+                            Color::Hex(hex) => hex.clone(),
+                            Color::Named(name) => name.clone(),
+                            Color::Rgb(r, g, b) => format!("rgb({}, {}, {})", r, g, b),
+                        }
+                    )
+                },
+            },
         }
     }
 }

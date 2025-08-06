@@ -1,4 +1,4 @@
-use crate::types::{OverseerNode, OverseerValue, Color, CssSize};
+use crate::types::{OverseerNode, OverseerValue, Color, CssSize, BorderStyle};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
@@ -228,6 +228,7 @@ fn parse_value(input: &str) -> IResult<&str, OverseerValue> {
         parse_template_value,
         parse_formula_value,
         parse_boolean_value,
+        parse_border_style_value, // Parse border styles
         parse_color_value,
         parse_css_size_value, // Must come before number parsing to handle "10px" correctly
         parse_number_value,
@@ -421,6 +422,73 @@ fn parse_css_size_keywords(input: &str) -> IResult<&str, OverseerValue> {
             OverseerValue::CssSize(size)
         }
     )(input)
+}
+
+/// Parse border style values
+fn parse_border_style_value(input: &str) -> IResult<&str, OverseerValue> {
+    alt((
+        // Parse "none"
+        map(tag("none"), |_| OverseerValue::BorderStyle(BorderStyle::None)),
+        // Parse "default"
+        map(tag("default"), |_| OverseerValue::BorderStyle(BorderStyle::Default)),
+        // Parse "solid thickness color" format
+        map(
+            tuple((
+                tag("solid"),
+                preceded(multispace1, parse_css_size_value),
+                preceded(multispace1, parse_color_value),
+            )),
+            |(_, thickness, color)| {
+                let thickness_size = match thickness {
+                    OverseerValue::CssSize(size) => size,
+                    _ => CssSize::Pixels(1.0), // fallback
+                };
+                let border_color = match color {
+                    OverseerValue::Color(color) => color,
+                    _ => Color::Named("black".to_string()), // fallback
+                };
+                OverseerValue::BorderStyle(BorderStyle::Solid(thickness_size, border_color))
+            }
+        ),
+        // Parse "dashed thickness color" format
+        map(
+            tuple((
+                tag("dashed"),
+                preceded(multispace1, parse_css_size_value),
+                preceded(multispace1, parse_color_value),
+            )),
+            |(_, thickness, color)| {
+                let thickness_size = match thickness {
+                    OverseerValue::CssSize(size) => size,
+                    _ => CssSize::Pixels(1.0), // fallback
+                };
+                let border_color = match color {
+                    OverseerValue::Color(color) => color,
+                    _ => Color::Named("black".to_string()), // fallback
+                };
+                OverseerValue::BorderStyle(BorderStyle::Dashed(thickness_size, border_color))
+            }
+        ),
+        // Parse "dotted thickness color" format
+        map(
+            tuple((
+                tag("dotted"),
+                preceded(multispace1, parse_css_size_value),
+                preceded(multispace1, parse_color_value),
+            )),
+            |(_, thickness, color)| {
+                let thickness_size = match thickness {
+                    OverseerValue::CssSize(size) => size,
+                    _ => CssSize::Pixels(1.0), // fallback
+                };
+                let border_color = match color {
+                    OverseerValue::Color(color) => color,
+                    _ => Color::Named("black".to_string()), // fallback
+                };
+                OverseerValue::BorderStyle(BorderStyle::Dotted(thickness_size, border_color))
+            }
+        ),
+    ))(input)
 }
 
 /// Parse identifiers (variable names, node types, etc.)

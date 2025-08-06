@@ -80,6 +80,7 @@ pub enum OverseerValue {
     Template(String), // For <...> syntax in parameters, e.g. entry=<../Template>
     Color(Color), // Colors in various formats
     CssSize(CssSize), // CSS size units (px, em, %, etc.)
+    BorderStyle(BorderStyle), // Border styling options
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -99,6 +100,15 @@ pub enum CssSize {
     ViewportHeight(f32), // 50vh
     Auto, // auto
     FitContent, // fit-content
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum BorderStyle {
+    None, // No border
+    Default, // Default rounded border with shadow (current overseer style)
+    Solid(CssSize, Color), // Solid border: border-style: solid, thickness, color
+    Dashed(CssSize, Color), // Dashed border
+    Dotted(CssSize, Color), // Dotted border
 }
 
 #[derive(Error, Debug, Serialize, Deserialize)]
