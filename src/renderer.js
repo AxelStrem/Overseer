@@ -714,15 +714,22 @@ export class OverseerRenderer {
         // Width parameter
         if (params.width) {
             element.style.width = this.convertCssSizeValue(params.width)
-            // Enable content clamping when fixed width is specified
-            element.style.overflowX = 'hidden'
         }
         
         // Height parameter  
         if (params.height) {
             element.style.height = this.convertCssSizeValue(params.height)
-            // Enable content clamping when fixed height is specified
-            element.style.overflowY = 'hidden'
+        }
+        
+        // Explicit overflow control parameters
+        if (params['overflow-x']) {
+            element.style.overflowX = params['overflow-x']
+        }
+        if (params['overflow-y']) {
+            element.style.overflowY = params['overflow-y']
+        }
+        if (params.overflow) {
+            element.style.overflow = params.overflow
         }
         
         // Border style parameter
@@ -760,6 +767,40 @@ export class OverseerRenderer {
             if (borderStyle) {
                 element.style.borderRight = borderStyle
             }
+        }
+        
+        // Border radius parameter for controlling corner rounding
+        if (params['border-radius']) {
+            const borderRadiusValue = this.convertCssSizeValue(params['border-radius'])
+            
+            // Check for zero radius before applying - handle both string and object cases
+            const isZeroRadius = borderRadiusValue === '0px' || borderRadiusValue === '0' || borderRadiusValue === 0 ||
+                                String(borderRadiusValue) === '0px' || String(borderRadiusValue) === '0' ||
+                                (typeof params['border-radius'] === 'object' && 
+                                 params['border-radius'].CssSize && 
+                                 params['border-radius'].CssSize.Pixels === 0)
+            
+            if (isZeroRadius) {
+                // For zero radius, be extra explicit to override default CSS
+                element.style.setProperty('border-radius', '0px', 'important')
+                element.style.cssText += `; border-radius: 0px !important;`
+            } else {
+                // Use converted value for non-zero radius
+                element.style.setProperty('border-radius', borderRadiusValue, 'important')
+            }
+            
+            // Apply to field-value children for consistent appearance
+            setTimeout(() => {
+                const fieldValues = element.querySelectorAll('.field-value')
+                fieldValues.forEach(fieldValue => {
+                    if (isZeroRadius) {
+                        fieldValue.style.setProperty('border-radius', '0px', 'important')
+                        fieldValue.style.cssText += `; border-radius: 0px !important;`
+                    } else {
+                        fieldValue.style.setProperty('border-radius', borderRadiusValue, 'important')
+                    }
+                })
+            }, 0)
         }
         
         // Legacy border support (keep for compatibility)

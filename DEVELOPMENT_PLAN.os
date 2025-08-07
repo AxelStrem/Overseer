@@ -244,33 +244,39 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<../Task>) {
                 - {
                     string task_description = "Add width and height parameters with multiple unit support"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
-                    string notes = "Support pixels (200px), percentages (50%), auto, and fit-content"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: Support pixels (200px), percentages (50%), auto, and fit-content with proper CSS conversion and inheritance"
                 }
                 - {
-                    string task_description = "Implement content overflow clamping"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
-                    string notes = "Clamp content that exceeds fixed width/height with CSS overflow: hidden"
+                    string task_description = "Implement content overflow control system"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: Added explicit overflow-x, overflow-y, and overflow parameters to replace automatic overflow application, preventing unwanted scrollbars"
                 }
                 - {
                     string task_description = "Add border-style parameter with multiple options"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
-                    string notes = "Support none, default (rounded+shadow), and custom border styles with thickness and color"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: Support none, default (rounded+shadow), and custom border styles with thickness and color using space-separated syntax"
                 }
                 - {
                     string task_description = "Add selective border side controls"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
-                    string notes = "border-top, border-bottom, border-left, border-right parameters for grid building"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: border-top, border-bottom, border-left, border-right parameters for precise grid building with individual side control"
+                }
+                - {
+                    string task_description = "Add border-radius parameter for corner control"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: Support CSS size values (0px for straight corners, 1px+ for rounded) with proper zero-value detection and CSS override system"
                 }
                 - {
                     string task_description = "Create grid layout examples and templates"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
-                    string notes = "Demonstrate table-like layouts using fixed sizes and selective borders"
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
+                    string notes = "COMPLETED: Comprehensive test files demonstrating table-like layouts using fixed sizes, selective borders, and corner controls"
                 }
             }
         }
