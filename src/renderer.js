@@ -714,11 +714,15 @@ export class OverseerRenderer {
         // Width parameter
         if (params.width) {
             element.style.width = this.convertCssSizeValue(params.width)
+            // Enable content clamping when fixed width is specified
+            element.style.overflowX = 'hidden'
         }
         
         // Height parameter  
         if (params.height) {
             element.style.height = this.convertCssSizeValue(params.height)
+            // Enable content clamping when fixed height is specified
+            element.style.overflowY = 'hidden'
         }
         
         // Border style parameter
@@ -726,6 +730,35 @@ export class OverseerRenderer {
             const borderStyle = this.convertBorderStyleValue(params['border-style'])
             if (borderStyle) {
                 element.style.border = borderStyle
+            }
+        }
+        
+        // Selective border controls
+        if (params['border-top']) {
+            const borderStyle = this.convertBorderStyleValue(params['border-top'])
+            if (borderStyle) {
+                element.style.borderTop = borderStyle
+            }
+        }
+        
+        if (params['border-bottom']) {
+            const borderStyle = this.convertBorderStyleValue(params['border-bottom'])
+            if (borderStyle) {
+                element.style.borderBottom = borderStyle
+            }
+        }
+        
+        if (params['border-left']) {
+            const borderStyle = this.convertBorderStyleValue(params['border-left'])
+            if (borderStyle) {
+                element.style.borderLeft = borderStyle
+            }
+        }
+        
+        if (params['border-right']) {
+            const borderStyle = this.convertBorderStyleValue(params['border-right'])
+            if (borderStyle) {
+                element.style.borderRight = borderStyle
             }
         }
         
