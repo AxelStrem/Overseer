@@ -123,17 +123,35 @@ impl OverseerFileHandler {
         } else {
             // For children of list items, always use "-" even if the type was resolved
             if in_list_item {
-                output.push('-');
+                // Check if this node had its type resolved from "-" and restore original
+                if let Some(OverseerValue::String(original_type)) = node.parameters.get("_original_type") {
+                    if original_type == "-" {
+                        output.push('-');
+                    } else {
+                        output.push_str(original_type);
+                    }
+                } else {
+                    output.push('-');
+                }
             } else {
                 // Handle node type or template path
                 if let Some(template_path) = &node.template {
                     output.push_str(&format!("<{}>", template_path));
                 } else {
-                    // Use "-" for type-inferred nodes, otherwise use the actual type
-                    if node.node_type == "-" || (node.name == "-" && node.node_type != "list_item") {
-                        output.push('-');
+                    // Check if this node had its type resolved and restore original
+                    if let Some(OverseerValue::String(original_type)) = node.parameters.get("_original_type") {
+                        if original_type == "-" {
+                            output.push('-');
+                        } else {
+                            output.push_str(original_type);
+                        }
                     } else {
-                        output.push_str(&node.node_type);
+                        // Use "-" for type-inferred nodes, otherwise use the actual type
+                        if node.node_type == "-" || (node.name == "-" && node.node_type != "list_item") {
+                            output.push('-');
+                        } else {
+                            output.push_str(&node.node_type);
+                        }
                     }
                 }
             }
@@ -150,7 +168,7 @@ impl OverseerFileHandler {
             .filter(|(k, _)| {
                 let key = k.as_str();
                 // Always exclude 'value' parameter and internal computed parameters (except _template_ markers)
-                if key == "value" || (key.starts_with("_") && !key.starts_with("_template_")) {
+                if key == "value" || key == "_original_type" || (key.starts_with("_") && !key.starts_with("_template_")) {
                     return false;
                 }
                 

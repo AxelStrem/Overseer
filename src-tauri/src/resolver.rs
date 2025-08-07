@@ -154,6 +154,8 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         if child.node_type == "-" {
                                             if let Some(template_field) = template_node.children.iter().find(|f| f.name == child.name) {
                                                 debug_resolver!("[RESOLVER]     Resolving '-' type for {}: {} -> {}", child.name, child.node_type, template_field.node_type);
+                                                // Store original type before changing it
+                                                child.parameters.insert("_original_type".to_string(), OverseerValue::String(child.node_type.clone()));
                                                 child.node_type = template_field.node_type.clone();
                                             } else {
                                                 debug_resolver!("[RESOLVER]     Warning: No template field found for '-' type: {}", child.name);
