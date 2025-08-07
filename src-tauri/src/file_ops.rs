@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::collections::HashMap;
 use tokio::fs;
 use crate::types::*;
 
@@ -101,6 +102,10 @@ impl OverseerFileHandler {
     }
 
     fn serialize_node(node: &OverseerNode, output: &mut String, indent_level: usize) -> Result<()> {
+        Self::serialize_node_context(node, output, indent_level, false)
+    }
+    
+    fn serialize_node_context(node: &OverseerNode, output: &mut String, indent_level: usize, in_list_item: bool) -> Result<()> {
         let indent = "    ".repeat(indent_level); // Use 4 spaces for indentation
         output.push_str(&indent);
         
@@ -116,15 +121,20 @@ impl OverseerFileHandler {
             // Complex object list item: - { ... }
             // Fall through to handle as block
         } else {
-            // Handle node type or template path
-            if let Some(template_path) = &node.template {
-                output.push_str(&format!("<{}>", template_path));
+            // For children of list items, always use "-" even if the type was resolved
+            if in_list_item {
+                output.push('-');
             } else {
-                // Use "-" for type-inferred nodes, otherwise use the actual type
-                if node.node_type == "-" || (node.name == "-" && node.node_type != "list_item") {
-                    output.push('-');
+                // Handle node type or template path
+                if let Some(template_path) = &node.template {
+                    output.push_str(&format!("<{}>", template_path));
                 } else {
-                    output.push_str(&node.node_type);
+                    // Use "-" for type-inferred nodes, otherwise use the actual type
+                    if node.node_type == "-" || (node.name == "-" && node.node_type != "list_item") {
+                        output.push('-');
+                    } else {
+                        output.push_str(&node.node_type);
+                    }
                 }
             }
 
@@ -136,7 +146,33 @@ impl OverseerFileHandler {
         }
         
         // Handle parameters (excluding the special 'value' parameter for fields)
-        let regular_params: Vec<_> = node.parameters.iter().filter(|(k, _)| k.as_str() != "value").collect();
+        let regular_params: HashMap<String, OverseerValue> = node.parameters.iter()
+            .filter(|(k, _)| {
+                let key = k.as_str();
+                // Always exclude 'value' parameter and internal computed parameters (except _template_ markers)
+                if key == "value" || (key.starts_with("_") && !key.starts_with("_template_")) {
+                    return false;
+                }
+                
+                // If this is a _template_ marker, exclude it from output (but don't filter other params based on it)
+                if key.starts_with("_template_") {
+                    return false;
+                }
+                
+                // Check if this is a template-derived parameter by looking for corresponding _template_ marker
+                let template_marker = format!("_template_{}", key);
+                let is_template_derived = node.parameters.contains_key(&template_marker);
+                
+                if is_template_derived {
+                    // This parameter came from template resolution - don't save it
+                    false
+                } else {
+                    // This is an original user-specified parameter - save it
+                    true
+                }
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         if !regular_params.is_empty() {
             output.push_str(" (");
             let params_str: Vec<String> = regular_params.iter()
@@ -146,10 +182,10 @@ impl OverseerFileHandler {
                         match v {
                             OverseerValue::String(s) => s.clone(), // Don't quote type names
                             OverseerValue::Template(t) => format!("<{}>", t),
-                            _ => Self::serialize_value(v)
+                            _ => Self::serialize_value(&v)
                         }
                     } else {
-                        Self::serialize_value(v)
+                        Self::serialize_value(&v)
                     };
                     format!("{}={}", k, value_str)
                 })
@@ -165,8 +201,10 @@ impl OverseerFileHandler {
             output.push('\n');
         } else {
             output.push_str(" {\n");
+            // Determine if we're in a list item context
+            let is_list_item = node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-");
             for child in &node.children {
-                Self::serialize_node(child, output, indent_level + 1)?;
+                Self::serialize_node_context(child, output, indent_level + 1, is_list_item)?;
             }
             output.push_str(&format!("{}}}\n", indent));
         }

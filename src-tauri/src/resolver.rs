@@ -107,8 +107,15 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         node_type: template_node.node_type.clone(),
                                         template: None,
                                         parameters: {
-                                            // Start with template parameters as base
-                                            let mut merged_params = template_node.parameters.clone();
+                                            // Start with template parameters as base, but mark them as template-derived
+                                            let mut merged_params = HashMap::new();
+                                            
+                                            // Add template parameters with _template_ prefix to mark their origin
+                                            for (key, value) in &template_node.parameters {
+                                                merged_params.insert(format!("_template_{}", key), value.clone());
+                                                merged_params.insert(key.clone(), value.clone());
+                                            }
+                                            
                                             // List item parameters override template parameters
                                             for (key, value) in &list_item.parameters {
                                                 merged_params.insert(key.clone(), value.clone());
@@ -125,6 +132,23 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         .collect();
                                     debug_resolver!("[RESOLVER]     Override fields: {:?}", overrides.keys().collect::<Vec<_>>());
                                     merge_node(&mut resolved_item, &overrides);
+                                    
+                                    // Mark template-derived styling parameters for all field children
+                                    for child in resolved_item.children.iter_mut() {
+                                        // For field children, mark common styling parameters as template-derived
+                                        let styling_params = ["width", "margin", "spacing", "padding", 
+                                                            "margin-top", "margin-bottom", "margin-left", "margin-right",
+                                                            "padding-top", "padding-bottom", "padding-left", "padding-right",
+                                                            "color", "font-color", "background-color", "font-size"];
+                                        
+                                        for param in styling_params.iter() {
+                                            if let Some(value) = child.parameters.get(*param) {
+                                                // Mark this parameter as template-derived
+                                                child.parameters.insert(format!("_template_{}", param), value.clone());
+                                            }
+                                        }
+                                    }
+                                    
                                     // Infer types for '-' children from template fields
                                     for child in resolved_item.children.iter_mut() {
                                         if child.node_type == "-" {
