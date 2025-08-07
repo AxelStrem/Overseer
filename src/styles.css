@@ -141,8 +141,6 @@ body {
     background: var(--surface-color);
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 16px;
     box-shadow: var(--shadow);
 }
 
@@ -150,8 +148,6 @@ body {
     background: var(--surface-color);
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 16px;
 }
 
 .overseer-list h3 {
@@ -191,25 +187,20 @@ body {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
-    gap: 12px;
 }
 
 .layout-vertical {
     display: flex;
     flex-direction: column;
-    gap: 8px;
 }
 
 .layout-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 12px;
 }
 
 /* Field Styles */
 .overseer-field {
-    margin-bottom: 12px;
-    padding: 8px;
     border-radius: 6px;
     transition: background-color 0.2s;
 }

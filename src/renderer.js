@@ -298,6 +298,9 @@ export class OverseerRenderer {
         })
         
         container.appendChild(value)
+        
+        // Apply default field styling if no explicit parameters are set
+        this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -341,6 +344,9 @@ export class OverseerRenderer {
         })
         
         container.appendChild(value)
+        
+        // Apply default field styling if no explicit parameters are set
+        this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -367,6 +373,10 @@ export class OverseerRenderer {
         })
         
         container.appendChild(value)
+        
+        
+        // Apply default field styling if no explicit parameters are set
+        this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -388,6 +398,9 @@ export class OverseerRenderer {
         value.textContent = this.getNodeValue(node) || ''
         
         container.appendChild(value)
+        
+        // Apply default field styling if no explicit parameters are set
+        this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -409,6 +422,9 @@ export class OverseerRenderer {
         checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
         
         container.appendChild(checkbox)
+        
+        // Apply default field styling if no explicit parameters are set
+        this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -458,6 +474,8 @@ export class OverseerRenderer {
             }
         })
 
+        // Apply default field styling if no explicit parameters are set
+        this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -498,13 +516,50 @@ export class OverseerRenderer {
     applyLayoutStyles(element, node) {
         if (!node.parameters) return
         
-        // Apply spacing (for container elements)
+          // Check if user wants zero spacing/margin layout (tight grid)
         const spacing = this.getParameterValue(node, 'spacing')
+        const margin = this.getParameterValue(node, 'margin')
+        const isTightLayout = (spacing === 0 || margin === 0)
+        
+        // Apply default padding unless explicitly overridden or in tight layout mode
+        
+        const hasExplicitPadding = node.parameters.padding !== undefined || 
+                                 node.parameters['padding-top'] !== undefined ||
+                                 node.parameters['padding-bottom'] !== undefined ||
+                                 node.parameters['padding-left'] !== undefined ||
+                                 node.parameters['padding-right'] !== undefined
+        
+        if (!hasExplicitPadding) {
+            if (isTightLayout) {
+                // In tight layout mode, use minimal or no padding
+                element.style.padding = '0px'
+            } else {
+                // Apply default padding for containers (div/list) unless explicitly set to 0
+                if (node.node_type === 'div' || node.node_type === 'list') {
+                    element.style.padding = '16px'
+                }
+            }
+        } else {
+            // Apply explicit padding parameters
+            this.applyPaddingStyles(element, node)
+        }
+        
+        // Apply default margin unless explicitly set
+        const hasExplicitMargin = node.parameters.margin !== undefined ||
+                                node.parameters['margin-top'] !== undefined ||
+                                node.parameters['margin-bottom'] !== undefined ||
+                                node.parameters['margin-left'] !== undefined ||
+                                node.parameters['margin-right'] !== undefined
+        
+        if (!hasExplicitMargin && (node.node_type === 'div' || node.node_type === 'list')) {
+            element.style.marginBottom = '16px'
+        }
+
         if (spacing !== null) {
-            const spacingValue = parseInt(spacing) || 8 // Default to 8px
+            const spacingValue = parseInt(spacing)
             element.style.gap = `${spacingValue}px`
         } else {
-            // Apply default spacing
+            // Apply default spacing only if no explicit spacing parameter
             element.style.gap = '8px'
         }
         
@@ -541,6 +596,82 @@ export class OverseerRenderer {
         }
         if (marginRight !== null) {
             element.style.marginRight = `${parseInt(marginRight) || 0}px`
+        }
+    }
+
+    
+    applyPaddingStyles(element, node) {
+        if (!node.parameters) return
+        
+        // Handle shorthand padding parameter
+        const padding = this.getParameterValue(node, 'padding')
+        if (padding !== null) {
+            const paddingValue = parseInt(padding) || 0
+            element.style.padding = `${paddingValue}px`
+        }
+        
+        // Handle individual padding parameters (these override shorthand)
+        const paddingTop = this.getParameterValue(node, 'padding-top')
+        const paddingBottom = this.getParameterValue(node, 'padding-bottom')
+        const paddingLeft = this.getParameterValue(node, 'padding-left')
+        const paddingRight = this.getParameterValue(node, 'padding-right')
+        
+        if (paddingTop !== null) {
+            element.style.paddingTop = `${parseInt(paddingTop) || 0}px`
+        }
+        if (paddingBottom !== null) {
+            element.style.paddingBottom = `${parseInt(paddingBottom) || 0}px`
+        }
+        if (paddingLeft !== null) {
+            element.style.paddingLeft = `${parseInt(paddingLeft) || 0}px`
+        }
+        if (paddingRight !== null) {
+            element.style.paddingRight = `${parseInt(paddingRight) || 0}px`
+        }
+    }
+
+    
+    applyFieldDefaultStyles(element, node) {
+        if (!node.parameters) {
+            // Apply default field styling when no parameters
+            element.style.marginBottom = '12px'
+            element.style.padding = '8px'
+            return
+        }
+
+        
+        // Check if user wants zero spacing/margin layout (tight grid)
+        const spacing = this.getParameterValue(node, 'spacing')
+        const margin = this.getParameterValue(node, 'margin')
+        const isTightLayout = (spacing === 0 || margin === 0)
+        
+        // Check if any margin/padding parameters are explicitly set
+        const hasExplicitMargin = node.parameters.margin !== undefined ||
+                                node.parameters['margin-top'] !== undefined ||
+                                node.parameters['margin-bottom'] !== undefined ||
+                                node.parameters['margin-left'] !== undefined ||
+                                node.parameters['margin-right'] !== undefined
+        
+        const hasExplicitPadding = node.parameters.padding !== undefined ||
+                                 node.parameters['padding-top'] !== undefined ||
+                                 node.parameters['padding-bottom'] !== undefined ||
+                                 node.parameters['padding-left'] !== undefined ||
+                                 node.parameters['padding-right'] !== undefined
+        
+        // Apply defaults only if not explicitly set
+        if (!hasExplicitMargin) {
+            if (isTightLayout) {
+                element.style.margin = '0px'
+            } else {
+                element.style.marginBottom = '12px'
+            }
+        }
+        if (!hasExplicitPadding) {
+            if (isTightLayout) {
+                element.style.padding = '2px' // Minimal padding for readability
+            } else {
+                element.style.padding = '8px'
+            }
         }
     }
 
