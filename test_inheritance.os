@@ -4,7 +4,7 @@ tab test_inheritance {
         int value (width=40%, color=red) = 0
     }
     
-    list items (entry=<../item>) {
+    list items (entry=<item>) {
         - {
             - name = "Test Item"
         }

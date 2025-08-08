@@ -5,7 +5,7 @@ tab inheritance_test {
         checkbox done (width=20%) = false
     }
     
-    list items (entry=<../item>, spacing=0) {
+    list items (entry=<item>, spacing=0) {
         - {
             - name = "Override name only"
         }

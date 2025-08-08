@@ -4,7 +4,7 @@ tab test_save {
         int value (width=40%) = 0
     }
     
-    list items (entry=<../item>, spacing=0) {
+    list items (entry=<item>, spacing=0) {
         - {
             - name = "Test Item"
         }

@@ -13,7 +13,7 @@ tab (title="Known Bugs") {
         date fix_date = 10.07.2025
     }
     
-    list BugList(entry=<../Bug>) {
+    list BugList(entry=<Bug>) {
         - {
             - description = "Checkboxes still display their internal names as labels instead of showing clean checkboxes"
             - fixed = true

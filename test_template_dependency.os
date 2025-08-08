@@ -6,7 +6,7 @@ tab test_template_dependency {
     }
     
     // Second template that extends the first (depends on BaseTemplate)
-    list ExtendedTemplate (entry=<../BaseTemplate>) {
+    list ExtendedTemplate (entry=<BaseTemplate>) {
         - {
             - title = "Extended Title" 
             - priority = 2
@@ -14,14 +14,14 @@ tab test_template_dependency {
     }
     
     // Third template that uses the extended template
-    list FinalTemplate (entry=<../ExtendedTemplate>) {
+    list FinalTemplate (entry=<ExtendedTemplate>) {
         - {
             // Should inherit BaseTemplate parameters through ExtendedTemplate
         }
     }
     
     text header = "Multi-level template test"
-    list items (entry=<../FinalTemplate>) {
+    list items (entry=<FinalTemplate>) {
         - {
             // This should work after multi-pass resolution
         }

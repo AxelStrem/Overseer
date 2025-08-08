@@ -14,17 +14,17 @@ tab test_template_inheritance {
     
     text header = "Template Inheritance Tests:"
     
-    list string_items (entry=<../StringTemplate>) {
+    list string_items (entry=<StringTemplate>) {
         - { }
         - { }
     }
     
-    list int_items (entry=<../IntTemplate>) {  
+    list int_items (entry=<IntTemplate>) {  
         - { }
         - { }
     }
     
-    list div_items (entry=<../DivTemplate>) {
+    list div_items (entry=<DivTemplate>) {
         - {
             - field1 = "overridden field1"
             - field2 = 99

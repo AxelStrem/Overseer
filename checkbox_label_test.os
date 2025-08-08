@@ -8,7 +8,7 @@ tab test_tab (title="Checkbox Label Test") {
         checkbox is_tested(label="Tested") = false
     }
     
-    list TestItems (entry=<../TestTemplate>) {
+    list TestItems (entry=<TestTemplate>) {
         - {
             - description = "First test item"
             - is_complete = true

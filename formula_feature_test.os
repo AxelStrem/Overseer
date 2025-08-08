@@ -68,8 +68,18 @@ div FormulaFeatureTest (layout = vertical) {
 
     // Parameter formulas: color depends on boolean
    
-    div Colorful (background-color=$(/isOk ? #AABBFF : #AA5555)) {
+    div Colorful (layout = vertical, background-color=$((/isOk1 && /isOk2) ? #AABBFF : #AA5555)) {
         string Note = "Color based on isOk"
-        bool isOk = true
+        div {
+            bool isOk1 = true
+            bool isOk2 = true
+        }
+    }
+
+    <Colorful> ColorfulInstance {
+        string Note = "X"
+        - {
+        - isOk1 = false
+        }
     }
 }

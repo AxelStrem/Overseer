@@ -92,8 +92,8 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
             match entry_value {
                 OverseerValue::Template(template_path) => {
                     debug_resolver!("[RESOLVER] List {} uses template: {}", node.name, template_path);
-                    // Simplified path resolution: "entry=<../Task>" -> "Task"
-                    let template_name = template_path.split('/').last().unwrap_or("");
+                    // Simplified path resolution: allow both <../Task> and <Task>
+                    let template_name = template_path.trim_start_matches("../").split('/').last().unwrap_or("");
                     debug_resolver!("[RESOLVER] Resolved template name: {}", template_name);
 
                     if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
@@ -240,23 +240,92 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
         }
     }
 
-    // If this node is an instantiated template, infer types for '-' children from the template
+    // If this node is a direct template instance (e.g., <Colorful> Instance { ... }),
+    // clone the template's parameters and children, then merge overrides from the instance.
     if let Some(template_path) = &node.template.clone() {
         debug_resolver!("[RESOLVER] Node {} has template: {}", node.name, template_path);
-        let template_name = template_path.split('/').last().unwrap_or("");
+        let template_name = template_path.trim_start_matches("../").split('/').last().unwrap_or("");
         if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
-            debug_resolver!("[RESOLVER] Resolving template fields for {}", template_name);
+            debug_resolver!(
+                "[RESOLVER] Instantiating template {} for instance {}",
+                template_name, node.name
+            );
+
+            // Start with a clone of the template's type, params, and children
+            node.node_type = template_node.node_type.clone();
+            let mut merged_params: HashMap<String, OverseerValue> = HashMap::new();
+
+            // Mark template parameters and copy them as defaults
+            for (key, value) in &template_node.parameters {
+                merged_params.insert(format!("_template_{}", key), value.clone());
+                merged_params.insert(key.clone(), value.clone());
+            }
+
+            // Instance parameters override template parameters
+            for (key, value) in node.parameters.clone() {
+                merged_params.insert(key, value);
+            }
+
+            node.parameters = merged_params;
+            // Preserve instance children as overrides before replacing children with template
+            let instance_children = node.children.clone();
+            node.children = template_node.children.clone();
+
+            // Build overrides from instance children by name
+            if !instance_children.is_empty() {
+                let overrides: HashMap<String, &OverseerNode> = instance_children
+                    .iter()
+                    .filter(|c| c.name.len() > 0) // named fields only
+                    .map(|o| (o.name.clone(), o))
+                    .collect();
+
+                // Merge overrides into the template clone
+                merge_node(node, &overrides);
+            }
+
+            // Mark common styling parameters on field children as template-derived
             for child in node.children.iter_mut() {
-                if child.node_type == "-" {
-                    if let Some(template_field) = template_node.children.iter().find(|f| f.name == child.name) {
-                        debug_resolver!("[RESOLVER] Resolving template field {}: {} -> {}", child.name, child.node_type, template_field.node_type);
-                        child.node_type = template_field.node_type.clone();
-                        local_progress = true;
-                    } else {
-                        debug_resolver!("[RESOLVER] Warning: No template field found for {}", child.name);
+                let styling_params = [
+                    "width", "margin", "spacing", "padding", "margin-top", "margin-bottom",
+                    "margin-left", "margin-right", "padding-top", "padding-bottom",
+                    "padding-left", "padding-right", "color", "font-color", "background-color",
+                    "font-size",
+                ];
+                for param in styling_params.iter() {
+                    if let Some(value) = child.parameters.get(*param) {
+                        child
+                            .parameters
+                            .insert(format!("_template_{}", param), value.clone());
                     }
                 }
             }
+
+            // Infer types for '-' children from template fields
+            for child in node.children.iter_mut() {
+                if child.node_type == "-" {
+                    if let Some(template_field) = template_node
+                        .children
+                        .iter()
+                        .find(|f| f.name == child.name)
+                    {
+                        debug_resolver!(
+                            "[RESOLVER] Resolving '-' type for {}: {} -> {}",
+                            child.name, child.node_type, template_field.node_type
+                        );
+                        child
+                            .parameters
+                            .insert("_original_type".to_string(), OverseerValue::String(child.node_type.clone()));
+                        child.node_type = template_field.node_type.clone();
+                    } else {
+                        debug_resolver!(
+                            "[RESOLVER] Warning: No template field found for '-' type: {}",
+                            child.name
+                        );
+                    }
+                }
+            }
+
+            local_progress = true;
         } else {
             debug_resolver!("[RESOLVER] Warning: Template not found for node: {}", template_name);
         }

@@ -7,7 +7,7 @@ tab test {
         int complete (width=10%, margin=0, spacing=0) = 0
     }
     text header = "Bug list:"
-    list bugs (entry=<../bug>, layout=vertical, spacing=0, margin=0) {
+    list bugs (entry=<bug>, layout=vertical, spacing=0, margin=0) {
         - {
             - description = "Enemy Sub-Units loot keeps the parent"
             - in_demo = true
