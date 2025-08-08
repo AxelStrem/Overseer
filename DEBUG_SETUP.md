@@ -6,7 +6,7 @@ This document explains how to enable and use debug logging features in the Overs
 
 ### Run with Debug Logging
 ```bash
-# Enable all debug logging (parser + resolver)
+# Enable all debug logging (parser + resolver + evaluator)
 npm run tauri:dev:debug
 
 # Enable only parser debug logging
@@ -14,6 +14,9 @@ npm run tauri:dev:debug-parser
 
 # Enable only resolver debug logging  
 npm run tauri:dev:debug-resolver
+
+# Enable only evaluator debug logging
+npm run tauri:dev:debug-evaluator
 
 # Run without debug logging (production mode)
 npm run tauri:dev
@@ -45,6 +48,14 @@ When enabled, shows:
 - `[RESOLVER]` Template merging and field overrides
 - `[RESOLVER]` Type inference for `-` types
 
+### Evaluator Debug (`debug-evaluator`)
+When enabled, shows:
+- `[EVAL]` Entry/exit for each formula evaluation with node path
+- `[EVAL]` Parsed AST for expressions
+- `[EVAL]` Path resolution attempts and matches (field, /-anchored, ../, identifier)
+- `[EVAL]` Lambda bindings and method chain steps (map/filter/reduce/aggregates)
+- `[EVAL]` Errors with context
+
 ## Technical Implementation
 
 ### Cargo Features
@@ -52,6 +63,7 @@ When enabled, shows:
 [features]
 debug-parser = []
 debug-resolver = []
+debug-evaluator = []
 ```
 
 ### Debug Macros
@@ -61,6 +73,9 @@ debug_parser!("[PARSER] {}", message);
 
 // Resolver debug macro  
 debug_resolver!("[RESOLVER] {}", message);
+
+// Evaluator debug macro
+debug_evaluator!("[EVAL] {}", message);
 ```
 
 ### Feature-Gated Compilation
@@ -69,6 +84,12 @@ Debug statements are only compiled when the corresponding feature flag is enable
 macro_rules! debug_parser {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-parser")]
+        println!($($arg)*);
+    };
+}
+macro_rules! debug_evaluator {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug-evaluator")]
         println!($($arg)*);
     };
 }

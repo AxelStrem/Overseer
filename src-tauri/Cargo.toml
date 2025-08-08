@@ -34,3 +34,4 @@ custom-protocol = ["tauri/custom-protocol"]
 # Debug logging features
 debug-parser = []
 debug-resolver = []
+debug-evaluator = []

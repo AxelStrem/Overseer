@@ -105,12 +105,12 @@ impl OverseerFileHandler {
         Self::serialize_node_context(node, output, indent_level, false)
     }
     
-    fn serialize_node_context(node: &OverseerNode, output: &mut String, indent_level: usize, in_list_item: bool) -> Result<()> {
+    fn serialize_node_context(node: &OverseerNode, output: &mut String, indent_level: usize, in_list_body: bool) -> Result<()> {
         let indent = "    ".repeat(indent_level); // Use 4 spaces for indentation
         output.push_str(&indent);
         
-        // Handle special case for list items which start with '-'
-        if node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-") {
+        // Handle list body items which start with '-'
+        if in_list_body || node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-") {
             output.push_str("- ");
             // Simple value list item: - "value"
             if let Some(value) = node.parameters.get("value") {
@@ -122,7 +122,7 @@ impl OverseerFileHandler {
             // Fall through to handle as block
         } else {
             // For children of list items, always use "-" even if the type was resolved
-            if in_list_item {
+            if in_list_body {
                 // Check if this node had its type resolved from "-" and restore original
                 if let Some(OverseerValue::String(original_type)) = node.parameters.get("_original_type") {
                     if original_type == "-" {
@@ -219,10 +219,10 @@ impl OverseerFileHandler {
             output.push('\n');
         } else {
             output.push_str(" {\n");
-            // Determine if we're in a list item context
-            let is_list_item = node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-");
+            // Children under a list node are list-body items (render as '-')
+            let children_in_list_body = node.node_type == "list";
             for child in &node.children {
-                Self::serialize_node_context(child, output, indent_level + 1, is_list_item)?;
+                Self::serialize_node_context(child, output, indent_level + 1, children_in_list_body)?;
             }
             output.push_str(&format!("{}}}\n", indent));
         }

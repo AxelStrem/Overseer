@@ -45,12 +45,12 @@ export class OverseerRenderer {
             // Document is an array of root nodes
             for (let i = 0; i < overseerDocument.length; i++) {
                 console.log(`Rendering node ${i}:`, overseerDocument[i])
-                this.renderNode(overseerDocument[i], this.contentDisplay)
+                this.renderNode(overseerDocument[i], this.contentDisplay, {})
             }
         } else if (overseerDocument && typeof overseerDocument === 'object') {
             console.log('Processing single root node:', overseerDocument)
             // Single root node
-            this.renderNode(overseerDocument, this.contentDisplay)
+            this.renderNode(overseerDocument, this.contentDisplay, {})
         } else {
             console.warn('Unexpected document format:', overseerDocument)
             this.contentDisplay.innerHTML += '<p>Unexpected document format</p>'
@@ -59,7 +59,7 @@ export class OverseerRenderer {
         console.log('Content display after rendering:', this.contentDisplay.innerHTML)
     }
 
-    renderNode(node, container) {
+    renderNode(node, container, inheritedStyles = {}) {
         console.log('renderNode called with:', node, 'container:', container)
         
         if (!node || typeof node !== 'object') {
@@ -73,16 +73,26 @@ export class OverseerRenderer {
         if (element) {
             container.appendChild(element)
             console.log('Appended element to container')
+            // Apply background-color fallback from parent if this node has none
+            try {
+                const ownBg = this.getParameterValue(node, 'background-color')
+                const effectiveBg = ownBg !== null ? this.convertColorValue(ownBg) : (inheritedStyles.backgroundColor ?? null)
+                if (ownBg === null && effectiveBg) {
+                    element.style.backgroundColor = effectiveBg
+                }
+                // Prepare styles to pass to children (inherit current effective bg)
+                const nextInherited = { backgroundColor: effectiveBg }
             
             // Render children
             if (node.children && Array.isArray(node.children)) {
                 console.log('Rendering', node.children.length, 'children for node:', node)
                 for (const child of node.children) {
-                    this.renderNode(child, element)
+                    this.renderNode(child, element, nextInherited)
                 }
             } else {
                 console.log('No children for node:', node)
             }
+            } catch (e) { console.warn('Style inheritance error:', e) }
         } else {
             console.warn('Failed to create element for node:', node)
         }
@@ -202,8 +212,8 @@ export class OverseerRenderer {
         list.classList.add(`layout-${layout}`)
         
         // Apply spacing and margins  
-        this.applyLayoutStyles(list, node)
-        this.applyNodeStyles(list, node)
+    this.applyLayoutStyles(list, node)
+    this.applyNodeStyles(list, node)
         return list
     }
 
@@ -261,10 +271,8 @@ export class OverseerRenderer {
                 if (hasChildren) {
                     console.log(`[DEBUG] List item is complex node with ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
                     for (const child of node.children) {
-                        const childElement = this.createNodeElement(child)
-                        if (childElement) {
-                            listItem.appendChild(childElement)
-                        }
+                        // Defer to renderNode so it can propagate inherited styles
+                        this.renderNode(child, listItem, { backgroundColor: this.getParameterValue(node, 'background-color') ?? null })
                     }
                 } else {
                     console.log('[DEBUG] List item has no value or children:', node);

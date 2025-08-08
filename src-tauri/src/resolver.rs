@@ -514,9 +514,12 @@ fn evaluate_formulas_in_document(nodes: &mut Vec<OverseerNode>) {
     debug_resolver!("[RESOLVER] Starting formula evaluation");
     let document_root_snapshot = nodes.clone();
 
-    for node in nodes.iter_mut() {
-        let mut current_path = vec![node.name.clone()];
-        recursively_evaluate_node_formulas(node, &mut current_path, &document_root_snapshot);
+    // Walk using raw pointers so we can pass parent immutable reference alongside child mutable
+    let len = nodes.len();
+    for i in 0..len {
+        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
+        unsafe { recursively_evaluate_node_formulas(node_ptr, std::ptr::null(), &mut current_path, &document_root_snapshot); }
     }
 
     debug_resolver!("[RESOLVER] Formula evaluation completed");
@@ -524,14 +527,15 @@ fn evaluate_formulas_in_document(nodes: &mut Vec<OverseerNode>) {
 
 /// Recursively traverses the node tree, evaluating formulas along the way.
 /// It maintains the path to the current node, which is crucial for the EvaluationContext.
-fn recursively_evaluate_node_formulas(
-    node: &mut OverseerNode,
+unsafe fn recursively_evaluate_node_formulas(
+    node_ptr: *mut OverseerNode,
+    parent_ptr: *const OverseerNode,
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
 ) {
-    // Create evaluation context for this node
-    // The context uses the path to resolve references, avoiding complex lifetime issues with parent references.
-    let context = EvaluationContext::new_with_current(node, current_path.to_vec(), document_root);
+    let node: &mut OverseerNode = &mut *node_ptr;
+    let parent_ref: Option<&OverseerNode> = if parent_ptr.is_null() { None } else { Some(&*parent_ptr) };
+    let context = EvaluationContext::new_with_current_and_parent(node, parent_ref, current_path.to_vec(), document_root);
 
     // Evaluate formulas in this node's parameters, but preserve original values.
     // Store computed results under shadow keys: _computed_<key> (or _computed_value for value).
@@ -546,7 +550,7 @@ fn recursively_evaluate_node_formulas(
                     computed_params.insert(shadow_key, result);
                 }
                 Err(_err) => {
-                    debug_resolver!("[RESOLVER] Formula error");
+                    debug_resolver!("[RESOLVER] Formula error at {}.{}", node.name, key);
                     computed_params.insert(shadow_key, OverseerValue::String("invalid formula error".to_string()));
                 }
             }
@@ -558,10 +562,11 @@ fn recursively_evaluate_node_formulas(
     }
     
     // Recursively evaluate formulas in children
-    for child in &mut node.children {
-        // Maintain path for context
-        current_path.push(child.name.clone());
-        recursively_evaluate_node_formulas(child, current_path, document_root);
+    let child_len = node.children.len();
+    for idx in 0..child_len {
+        let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
+        current_path.push( (&*child_ptr).name.clone() );
+        recursively_evaluate_node_formulas(child_ptr, node as *const OverseerNode, current_path, document_root);
         current_path.pop();
     }
 }
