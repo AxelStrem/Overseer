@@ -707,28 +707,31 @@ export class OverseerRenderer {
             element.style.backgroundColor = params.background
         }
         
-        // New styling parameters
-        if (params['background-color']) {
-            element.style.backgroundColor = this.convertColorValue(params['background-color'])
+        // New styling parameters (prefer computed values)
+        const bgColor = this.getParameterValue(node, 'background-color')
+        if (bgColor !== null) {
+            element.style.backgroundColor = this.convertColorValue(bgColor)
         }
         
-        if (params['font-color']) {
-            element.style.color = this.convertColorValue(params['font-color'])
+        const fontColor = this.getParameterValue(node, 'font-color')
+        if (fontColor !== null) {
+            element.style.color = this.convertColorValue(fontColor)
             
             // Also apply font-color to any field-value children to override CSS class specificity
             const fieldValueElements = element.querySelectorAll('.field-value')
             fieldValueElements.forEach(fieldValue => {
-                fieldValue.style.setProperty('color', this.convertColorValue(params['font-color']), 'important')
+                fieldValue.style.setProperty('color', this.convertColorValue(fontColor), 'important')
             })
         }
         
-        if (params['font-size']) {
-            element.style.setProperty('font-size', this.convertCssSizeValue(params['font-size']), 'important')
+        const fontSize = this.getParameterValue(node, 'font-size')
+        if (fontSize !== null) {
+            element.style.setProperty('font-size', this.convertCssSizeValue(fontSize), 'important')
             
             // Also apply font-size to any field-value children to override CSS class specificity
             const fieldValueElements = element.querySelectorAll('.field-value')
             fieldValueElements.forEach(fieldValue => {
-                fieldValue.style.setProperty('font-size', this.convertCssSizeValue(params['font-size']), 'important')
+                fieldValue.style.setProperty('font-size', this.convertCssSizeValue(fontSize), 'important')
             })
         }
         
@@ -847,18 +850,28 @@ export class OverseerRenderer {
         }
         
         if (typeof colorParam === 'object' && colorParam !== null) {
+            // Wrapped enum variant: { Color: { ... } }
             if (colorParam.Color) {
                 const color = colorParam.Color
                 if (color.Hex) return color.Hex
                 if (color.Named) return color.Named
                 if (color.Rgb) {
                     const [r, g, b] = color.Rgb
-                    // Convert from 0.0-1.0 range to 0-255 range
                     const r255 = Math.round(r * 255)
                     const g255 = Math.round(g * 255)
                     const b255 = Math.round(b * 255)
                     return `rgb(${r255}, ${g255}, ${b255})`
                 }
+            }
+            // Unwrapped inner variant: { Hex: "#..." } | { Named: "blue" } | { Rgb: [r,g,b] }
+            if (colorParam.Hex) return colorParam.Hex
+            if (colorParam.Named) return colorParam.Named
+            if (colorParam.Rgb) {
+                const [r, g, b] = colorParam.Rgb
+                const r255 = Math.round(r * 255)
+                const g255 = Math.round(g * 255)
+                const b255 = Math.round(b * 255)
+                return `rgb(${r255}, ${g255}, ${b255})`
             }
         }
         
@@ -872,17 +885,27 @@ export class OverseerRenderer {
         }
         
         if (typeof sizeParam === 'object' && sizeParam !== null) {
+            // Wrapped enum variant: { CssSize: { ... } }
             if (sizeParam.CssSize) {
                 const size = sizeParam.CssSize
-                if (size.Pixels) return `${size.Pixels}px`
-                if (size.Percentage) return `${size.Percentage}%`
-                if (size.Em) return `${size.Em}em`
-                if (size.Rem) return `${size.Rem}rem`
-                if (size.ViewportWidth) return `${size.ViewportWidth}vw`
-                if (size.ViewportHeight) return `${size.ViewportHeight}vh`
-                if (size.Auto) return 'auto'
-                if (size.FitContent) return 'fit-content'
+                if (size.Pixels !== undefined) return `${size.Pixels}px`
+                if (size.Percentage !== undefined) return `${size.Percentage}%`
+                if (size.Em !== undefined) return `${size.Em}em`
+                if (size.Rem !== undefined) return `${size.Rem}rem`
+                if (size.ViewportWidth !== undefined) return `${size.ViewportWidth}vw`
+                if (size.ViewportHeight !== undefined) return `${size.ViewportHeight}vh`
+                if (size.Auto !== undefined) return 'auto'
+                if (size.FitContent !== undefined) return 'fit-content'
             }
+            // Unwrapped inner variant: { Pixels: n } | { Percentage: n } | ...
+            if (sizeParam.Pixels !== undefined) return `${sizeParam.Pixels}px`
+            if (sizeParam.Percentage !== undefined) return `${sizeParam.Percentage}%`
+            if (sizeParam.Em !== undefined) return `${sizeParam.Em}em`
+            if (sizeParam.Rem !== undefined) return `${sizeParam.Rem}rem`
+            if (sizeParam.ViewportWidth !== undefined) return `${sizeParam.ViewportWidth}vw`
+            if (sizeParam.ViewportHeight !== undefined) return `${sizeParam.ViewportHeight}vh`
+            if (sizeParam.Auto !== undefined) return 'auto'
+            if (sizeParam.FitContent !== undefined) return 'fit-content'
         }
         
         return sizeParam // Fallback

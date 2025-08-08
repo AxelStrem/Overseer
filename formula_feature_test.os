@@ -39,15 +39,20 @@ div FormulaFeatureTest (layout = vertical) {
 
     // Path references
     div ParentScope {
-        int income = 5000
+    int income = 5000
         div ChildScope {
             int bonus = 1000
             div GrandChild {
-                div Inner { int x = 3 }
+        div Inner { int x = 3 }
             }
             int total1 = $(../income + bonus)    // 6000 via parent + sibling
             int total2 = $((../income + ../bonus) * 1) // 6000 via explicit parent on both
             int total3 = $(GrandChild/Inner/x * bonus) // 3000 via path
+        // Parameter extraction from a sibling node parameter
+        div label (background-color = #FF2233) {
+                string "label text"
+            }
+        string colorGrab = $(label.background-color)
         }
         
     }
@@ -59,5 +64,11 @@ div FormulaFeatureTest (layout = vertical) {
                 int calc = $((../../base + 1) * 2) // 10
             }
         }
+    }
+
+    // Parameter formulas: color depends on boolean
+    bool isOk = true
+    div Colorful (background-color=$(isOk ? #AABBFF : #AA5555)) {
+        string Note = "Color based on isOk"
     }
 }

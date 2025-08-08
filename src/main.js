@@ -27,6 +27,7 @@ class OverseerApp {
         document.getElementById('open-file-btn').addEventListener('click', () => this.openFile())
         document.getElementById('new-file-btn').addEventListener('click', () => this.newFile())
         document.getElementById('save-file-btn').addEventListener('click', () => this.saveFile())
+    document.getElementById('reload-file-btn').addEventListener('click', () => this.reloadFile())
         
         // Welcome screen
         document.getElementById('welcome-open-btn').addEventListener('click', () => this.openFile())
@@ -99,6 +100,7 @@ class OverseerApp {
 
             // Update UI - remove direct file path update since updateTitle handles it now
             document.getElementById('save-file-btn').disabled = false
+            document.getElementById('reload-file-btn').disabled = false
             this.updateTitle()
 
             // Add visible debug info before rendering
@@ -227,6 +229,23 @@ tab Main {
             // Enable save button if it was disabled
             document.getElementById('save-file-btn').disabled = false
         }
+    }
+
+    async reloadFile() {
+        if (!this.currentFile) {
+            this.setStatus('No file to reload', '', 'warning')
+            return
+        }
+
+        // If there are unsaved changes, confirm with the user
+        if (this.isDocumentModified) {
+            const confirmDiscard = confirm('Discard unsaved changes and reload from disk?')
+            if (!confirmDiscard) {
+                return
+            }
+        }
+
+        await this.loadFile(this.currentFile)
     }
 
     updateTitle() {

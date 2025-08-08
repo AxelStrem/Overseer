@@ -2,9 +2,9 @@ use crate::types::{OverseerValue, OverseerError, OverseerNode};
 use nom::{
     IResult,
     branch::alt,
-    bytes::complete::{tag, take_while1},
+    bytes::complete::{tag, take_while1, take_while},
     character::complete::{char, multispace0},
-    combinator::map,
+    combinator::{map, opt},
     multi::many0,
     number::complete::double,
     sequence::{delimited, pair, preceded, tuple},
@@ -24,8 +24,10 @@ pub struct EvaluationContext<'a> {
 #[derive(Debug, Clone)]
 pub enum FormulaExpression {
     Number(f64),
+    StringLiteral(String),
     FieldReference(String),
     PathReference(Vec<String>), // e.g., ["..","field"] for ../field
+    PathParam { path: Vec<String>, param: String },
     UnaryOp {
         operator: UnaryOperator,
         expr: Box<FormulaExpression>,
@@ -125,11 +127,15 @@ impl FormulaEvaluator {
                     Ok(OverseerValue::Float(*n))
                 }
             }
+            FormulaExpression::StringLiteral(s) => Ok(OverseerValue::String(s.clone())),
             FormulaExpression::FieldReference(field_name) => {
                 Self::resolve_field_reference(field_name, context)
             }
             FormulaExpression::PathReference(path) => {
                 Self::resolve_path_reference(path, context)
+            }
+            FormulaExpression::PathParam { path, param } => {
+                Self::resolve_path_param(path, param, context)
             }
             FormulaExpression::UnaryOp { operator, expr } => {
                 match operator {
@@ -417,6 +423,108 @@ impl FormulaEvaluator {
         }
 
         Err(OverseerError::FormulaError(format!("Unknown field '{}' at target path", last)))
+    }
+
+    /// Resolve a path reference with parameter extraction like ../field.color
+    fn resolve_path_param(
+        path: &[String],
+        param: &str,
+        context: &EvaluationContext,
+    ) -> Result<OverseerValue, OverseerError> {
+        if path.is_empty() {
+            return Err(OverseerError::FormulaError("Empty path for param extraction".to_string()));
+        }
+        // Identifier-based path from nearest ancestor
+        if path[0] != ".." {
+            let mut end = context.node_path.len();
+            while end > 0 {
+                let anc_path = &context.node_path[..end];
+                if let Some(mut node) = FormulaEvaluator::resolve_path_to_node(anc_path, context.document_root) {
+                    let mut ok = true;
+                    for seg in path {
+                        if let Some(next) = node.get_accessible_children().into_iter().find(|c| &c.name == seg) {
+                            node = next;
+                        } else {
+                            ok = false; break;
+                        }
+                    }
+                    if ok {
+                        if let Some(v) = Self::get_effective_param(&node.parameters, param) {
+                            if let OverseerValue::Formula(formula_expr) = v {
+                                let mut p = anc_path.to_vec();
+                                p.extend(path.iter().cloned());
+                                let child_ctx = EvaluationContext::new(p, context.document_root);
+                                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                            }
+                            return Ok(Self::value_for_param_extraction(v));
+                        }
+                        // If parameter not found, error
+                        return Err(OverseerError::FormulaError(format!("Parameter '{}' not found on node", param)));
+                    }
+                }
+                end -= 1;
+            }
+            return Err(OverseerError::FormulaError(format!("Path not found: {}.{}", path.join("/"), param)));
+        }
+
+        // ../ path
+        let mut hops = 1usize;
+        let mut idx = 1usize;
+        while idx < path.len() && path[idx] == ".." { hops += 1; idx += 1; }
+        let remaining = &path[idx..];
+        if context.node_path.len() < hops {
+            return Err(OverseerError::FormulaError("Path climbs above root".to_string()));
+        }
+        let ancestor_segments = &context.node_path[..context.node_path.len() - hops];
+        let mut current = Self::resolve_path_to_node(ancestor_segments, context.document_root)
+            .ok_or_else(|| OverseerError::FormulaError("Ancestor not found".to_string()))?;
+        for seg in remaining {
+            if let Some(next) = current.get_accessible_children().into_iter().find(|c| &c.name == seg) {
+                current = next;
+            } else {
+                return Err(OverseerError::FormulaError(format!("Path segment not found: {}", seg)));
+            }
+        }
+        if let Some(v) = Self::get_effective_param(&current.parameters, param) {
+            if let OverseerValue::Formula(formula_expr) = v {
+                let mut p = ancestor_segments.to_vec();
+                p.extend(remaining.iter().cloned());
+                let child_ctx = EvaluationContext::new(p, context.document_root);
+                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+            }
+            return Ok(Self::value_for_param_extraction(v));
+        }
+        Err(OverseerError::FormulaError(format!("Parameter '{}' not found on node", param)))
+    }
+
+    /// For parameter extraction, convert complex visual types to String for text fields
+    fn value_for_param_extraction(v: &OverseerValue) -> OverseerValue {
+        match v {
+            OverseerValue::Color(color) => OverseerValue::String(Self::color_to_string(color)),
+            OverseerValue::CssSize(size) => OverseerValue::String(Self::css_size_to_string(size)),
+            _ => v.clone(),
+        }
+    }
+
+    fn color_to_string(color: &crate::types::Color) -> String {
+        match color {
+            crate::types::Color::Hex(hex) => hex.clone(),
+            crate::types::Color::Named(name) => name.clone(),
+            crate::types::Color::Rgb(r, g, b) => format!("rgb({}, {}, {})", r, g, b),
+        }
+    }
+
+    fn css_size_to_string(size: &crate::types::CssSize) -> String {
+        match size {
+            crate::types::CssSize::Pixels(px) => format!("{}px", px),
+            crate::types::CssSize::Percentage(p) => format!("{}%", p),
+            crate::types::CssSize::Em(em) => format!("{}em", em),
+            crate::types::CssSize::Rem(rem) => format!("{}rem", rem),
+            crate::types::CssSize::ViewportWidth(vw) => format!("{}vw", vw),
+            crate::types::CssSize::ViewportHeight(vh) => format!("{}vh", vh),
+            crate::types::CssSize::Auto => "auto".to_string(),
+            crate::types::CssSize::FitContent => "fit-content".to_string(),
+        }
     }
 
     /// Apply a binary operator to two values
@@ -747,19 +855,47 @@ fn unary_expression(input: &str) -> IResult<&str, FormulaExpression> {
 
 /// Parse primary expressions (numbers, identifiers, function calls, parentheses)
 fn primary_expression(input: &str) -> IResult<&str, FormulaExpression> {
-    delimited(
+    // Parse an atom first
+    let (input, atom) = delimited(
         multispace0,
         alt((
             parenthesized_expression,
             function_call,
+            string_literal,
             relative_path_reference,
             path_reference,
             number,
             field_reference,
         )),
-
         multispace0,
-    )(input)
+    )(input)?;
+
+    // Optionally parse a parameter suffix like .color
+    let (input, param_opt) = opt(preceded(char('.'), take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-')))(input)?;
+    if let Some(param) = param_opt {
+        let param = param.to_string();
+        return match atom {
+            FormulaExpression::FieldReference(name) => Ok((input, FormulaExpression::PathParam { path: vec![name], param })),
+            FormulaExpression::PathReference(path) => Ok((input, FormulaExpression::PathParam { path, param })),
+            other => Ok((input, other)),
+        };
+    }
+    Ok((input, atom))
+}
+
+/// Parse string literals: quoted strings or #HEX-like values used for colors
+fn string_literal(input: &str) -> IResult<&str, FormulaExpression> {
+    // Quoted string
+    let quoted = map(
+        delimited(char('"'), take_while(|c| c != '"'), char('"')),
+        |s: &str| FormulaExpression::StringLiteral(s.to_string()),
+    );
+    // #hex literal (letters/numbers)
+    let hexish = map(
+        preceded(char('#'), take_while1(|c: char| c.is_ascii_hexdigit())),
+        |s: &str| FormulaExpression::StringLiteral(format!("#{s}")),
+    );
+    alt((quoted, hexish))(input)
 }
 
 /// Parse parenthesized expressions
