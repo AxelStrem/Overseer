@@ -15,7 +15,7 @@ export class OverseerRenderer {
         console.log('Document type:', typeof overseerDocument)
         console.log('Document is array:', Array.isArray(overseerDocument))
         console.log('Document length:', overseerDocument?.length)
-        
+
         // Clear previous content
         this.contentDisplay.innerHTML = ''
         this.tabContainer.innerHTML = ''
@@ -36,12 +36,12 @@ export class OverseerRenderer {
 
         if (Array.isArray(overseerDocument)) {
             console.log('Processing array document with', overseerDocument.length, 'nodes')
-            
+
             if (overseerDocument.length === 0) {
                 this.contentDisplay.innerHTML += '<p>Document is empty (no nodes parsed)</p>'
                 return
             }
-            
+
             // Document is an array of root nodes
             for (let i = 0; i < overseerDocument.length; i++) {
                 console.log(`Rendering node ${i}:`, overseerDocument[i])
@@ -55,13 +55,13 @@ export class OverseerRenderer {
             console.warn('Unexpected document format:', overseerDocument)
             this.contentDisplay.innerHTML += '<p>Unexpected document format</p>'
         }
-        
+
         console.log('Content display after rendering:', this.contentDisplay.innerHTML)
     }
 
     renderNode(node, container, inheritedStyles = {}) {
         console.log('renderNode called with:', node, 'container:', container)
-        
+
         if (!node || typeof node !== 'object') {
             console.warn('Invalid node:', node)
             return
@@ -69,29 +69,68 @@ export class OverseerRenderer {
 
         const element = this.createNodeElement(node)
         console.log('Created element:', element)
-        
+
         if (element) {
             container.appendChild(element)
             console.log('Appended element to container')
+
             // Apply background-color fallback from parent if this node has none
             try {
                 const ownBg = this.getParameterValue(node, 'background-color')
-                const effectiveBg = ownBg !== null ? this.convertColorValue(ownBg) : (inheritedStyles.backgroundColor ?? null)
-                if (ownBg === null && effectiveBg) {
-                    element.style.backgroundColor = effectiveBg
+                const hasComputedBg = !!(node?.parameters && node.parameters['_computed_background-color'] !== undefined)
+                const hasRawFormulaBg = this.parameterHasFormula(node, 'background-color')
+                const ownRawFormulaText = this.getRawFormulaText(node, 'background-color')
+                const parentRawFormulaText = inheritedStyles?.rawBgFormula ?? null
+                const isInheritedSameFormula = !!(hasRawFormulaBg && parentRawFormulaText && ownRawFormulaText === parentRawFormulaText)
+
+                // If there's no computed bg and the raw param is a Formula, treat as missing to allow inheritance
+                const treatAsNoOwnBg = (ownBg === null) || (!hasComputedBg && hasRawFormulaBg)
+                // If this node carries the same raw formula as parent, prefer parent's computed bg
+                const forceInheritFromParent = isInheritedSameFormula
+                const effectiveBg = forceInheritFromParent
+                    ? (inheritedStyles.backgroundColor ?? null)
+                    : (!treatAsNoOwnBg && ownBg !== null
+                        ? this.convertColorValue(ownBg)
+                        : (inheritedStyles.backgroundColor ?? null))
+
+                if (DEBUG_MODE) {
+                    try {
+                        const dbgName = node.name || node.node_type || node.type || 'unknown'
+                        console.log(`[BG] enter node=${dbgName} type=${node.node_type || node.type} parentBg=${inheritedStyles?.backgroundColor ?? 'null'}`)
+                        console.log(`[BG] node=${dbgName} ownBg=${ownBg ? JSON.stringify(ownBg) : 'null'} computed=${hasComputedBg} rawFormula=${hasRawFormulaBg} sameAsParent=${isInheritedSameFormula} useParentFallback=${treatAsNoOwnBg || forceInheritFromParent} effectiveBg=${effectiveBg ?? 'null'}`)
+                    } catch (_) { /* no-op */ }
                 }
+
+                if (treatAsNoOwnBg || forceInheritFromParent) {
+                    // Force CSS inheritance from the actual DOM parent
+                    element.style.backgroundColor = 'inherit'
+                }
+
                 // Prepare styles to pass to children (inherit current effective bg)
-                const nextInherited = { backgroundColor: effectiveBg }
-            
-            // Render children
-            if (node.children && Array.isArray(node.children)) {
-                console.log('Rendering', node.children.length, 'children for node:', node)
-                for (const child of node.children) {
-                    this.renderNode(child, element, nextInherited)
+                const nextInherited = {
+                    backgroundColor: effectiveBg,
+                    // Propagate raw formula string consistently
+                    rawBgFormula: forceInheritFromParent
+                        ? (parentRawFormulaText ?? null)
+                        : (ownRawFormulaText ?? parentRawFormulaText ?? null)
                 }
-            } else {
-                console.log('No children for node:', node)
-            }
+
+                // Render children
+                if (node.children && Array.isArray(node.children)) {
+                    console.log('Rendering', node.children.length, 'children for node:', node)
+                    for (const child of node.children) {
+                        if (DEBUG_MODE) {
+                            try {
+                                const dbgParent = node.name || node.node_type || node.type || 'unknown'
+                                const dbgChild = child?.name || child?.node_type || child?.type || 'unknown'
+                                console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
+                            } catch (_) { /* no-op */ }
+                        }
+                        this.renderNode(child, element, nextInherited)
+                    }
+                } else {
+                    console.log('No children for node:', node)
+                }
             } catch (e) { console.warn('Style inheritance error:', e) }
         } else {
             console.warn('Failed to create element for node:', node)
@@ -267,13 +306,11 @@ export class OverseerRenderer {
                 }
                 listItem.appendChild(valueElement)
             } else {
-                // This is a complex list item with children
+                // Complex list item with children: do NOT render children here.
+                // Let the generic renderNode() flow render node.children exactly once
+                // so inherited background-color is computed consistently per parent.
                 if (hasChildren) {
-                    console.log(`[DEBUG] List item is complex node with ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
-                    for (const child of node.children) {
-                        // Defer to renderNode so it can propagate inherited styles
-                        this.renderNode(child, listItem, { backgroundColor: this.getParameterValue(node, 'background-color') ?? null })
-                    }
+                    console.log(`[DEBUG] List item is complex node with ${node.children.length} children (deferred to renderNode):`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
                 } else {
                     console.log('[DEBUG] List item has no value or children:', node);
                 }
@@ -717,8 +754,13 @@ export class OverseerRenderer {
         
         // New styling parameters (prefer computed values)
         const bgColor = this.getParameterValue(node, 'background-color')
+        const hasComputedBg = !!(node?.parameters && node.parameters['_computed_background-color'] !== undefined)
+        const hasRawFormulaBg = this.parameterHasFormula(node, 'background-color')
         if (bgColor !== null) {
-            element.style.backgroundColor = this.convertColorValue(bgColor)
+            // Avoid setting raw Formula as a CSS color; wait for computed value or inherit
+            if (!(hasRawFormulaBg && !hasComputedBg)) {
+                element.style.backgroundColor = this.convertColorValue(bgColor)
+            }
         }
         
         const fontColor = this.getParameterValue(node, 'font-color')
@@ -1123,6 +1165,28 @@ export class OverseerRenderer {
         
         // Fallback: return as-is (let callers handle unknown shapes)
         return paramValue
+    }
+
+    // Detects whether the raw parameter (not computed) is a Formula
+    parameterHasFormula(node, parameterName) {
+        try {
+            if (!node?.parameters) return false
+            const raw = node.parameters[parameterName]
+            if (!raw || typeof raw !== 'object') return false
+            return raw.Formula !== undefined
+        } catch (_) { return false }
+    }
+
+    // Returns the raw formula string for a parameter, if any
+    getRawFormulaText(node, parameterName) {
+        try {
+            if (!node?.parameters) return null
+            const raw = node.parameters[parameterName]
+            if (raw && typeof raw === 'object' && raw.Formula !== undefined) {
+                return String(raw.Formula)
+            }
+        } catch (_) { /* no-op */ }
+        return null
     }
 
     makeFieldEditable(element, node, isMultiline = false) {
