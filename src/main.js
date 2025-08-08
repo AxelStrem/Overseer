@@ -203,6 +203,22 @@ tab Main {
         }
     }
 
+    async reevaluateDocument() {
+        try {
+            if (!this.currentDocument) return
+            // Serialize current nodes to DSL
+            const content = await invoke('serialize_overseer_nodes', { nodes: this.currentDocument })
+            // Parse + resolve + evaluate on backend
+            const resolved = await invoke('parse_overseer_content', { content })
+            // Replace current document and re-render
+            this.currentDocument = resolved
+            this.renderer.renderDocument(this.currentDocument)
+        } catch (error) {
+            // Non-fatal: log and keep current view
+            console.warn('Reevaluation failed:', error)
+        }
+    }
+
     markDocumentModified() {
         if (!this.isDocumentModified) {
             this.isDocumentModified = true

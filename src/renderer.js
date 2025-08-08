@@ -336,6 +336,12 @@ export class OverseerRenderer {
         
         // Make it editable on double-click
         value.addEventListener('dblclick', () => {
+            const hasFormula = node?.parameters && typeof node.parameters.value === 'object' && node.parameters.value?.Formula !== undefined
+            if (hasFormula) {
+                // Always use formula editor when a formula exists
+                this.makeFieldEditable(value, node, true)
+                return
+            }
             if (isMarkdownEnabled) {
                 this.makeMarkdownFieldEditable(value, node)
             } else {
@@ -420,8 +426,19 @@ export class OverseerRenderer {
         const checkbox = document.createElement('input')
         checkbox.type = 'checkbox'
         checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
-        
+
         container.appendChild(checkbox)
+
+        // Handle changes
+        checkbox.addEventListener('change', () => {
+            this.updateNodeValue(node, checkbox.checked)
+            if (window.app && window.app.markDocumentModified) {
+                window.app.markDocumentModified()
+            }
+            if (window.app && window.app.reevaluateDocument) {
+                window.app.reevaluateDocument()
+            }
+        })
         
         // Apply default field styling if no explicit parameters are set
         this.applyFieldDefaultStyles(container, node)
@@ -471,6 +488,10 @@ export class OverseerRenderer {
             // Mark document as modified
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
+            }
+            // Trigger reevaluation so formulas/computed params refresh
+            if (window.app && window.app.reevaluateDocument) {
+                window.app.reevaluateDocument()
             }
         })
 
@@ -1023,10 +1044,14 @@ export class OverseerRenderer {
     }
 
     makeFieldEditable(element, node, isMultiline = false) {
+        // Prefer editing the raw formula if this field has one; otherwise use displayed text
+        const originalParam = node?.parameters?.value
+        const hasFormula = originalParam && typeof originalParam === 'object' && originalParam.Formula !== undefined
         const currentValue = element.textContent
-        
+        const initialEditorText = hasFormula ? `$(${originalParam.Formula})` : currentValue
+
         const input = document.createElement(isMultiline ? 'textarea' : 'input')
-        input.value = currentValue
+        input.value = initialEditorText
         input.className = 'field-editor'
         
         if (isMultiline) {
@@ -1041,17 +1066,33 @@ export class OverseerRenderer {
         
         const finishEditing = () => {
             const newValue = input.value
-            element.textContent = newValue
+            // Keep showing the previous computed value if a formula was entered/edited
+            const prevDisplay = element.textContent
+            const isFormulaInput = typeof newValue === 'string' && /\$\([\s\S]*\)/.test(newValue.trim())
+            element.textContent = isFormulaInput ? prevDisplay : newValue
             element.style.display = 'inline'
             input.remove()
             
             // Update the node value in the document structure
             this.updateNodeValue(node, newValue)
+            // If user entered a formula, also set a client-side computed value to avoid showing raw formula on re-render
+            if (isFormulaInput) {
+                try {
+                    if (!node.parameters) node.parameters = {}
+                    node.parameters["_computed_value"] = { String: prevDisplay }
+                } catch (e) {
+                    // no-op
+                }
+            }
             console.log('Field updated:', node.name, newValue)
             
             // Mark document as modified
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
+            }
+            // Trigger reevaluation so formulas and computed values refresh
+            if (window.app && window.app.reevaluateDocument) {
+                window.app.reevaluateDocument()
             }
         }
         
@@ -1153,6 +1194,10 @@ export class OverseerRenderer {
                 if (window.app && window.app.markDocumentModified) {
                     window.app.markDocumentModified()
                 }
+                // Trigger reevaluation so formulas/computed params refresh
+                if (window.app && window.app.reevaluateDocument) {
+                    window.app.reevaluateDocument()
+                }
             }
             
             // Clean up
@@ -1187,34 +1232,49 @@ export class OverseerRenderer {
             node.parameters.value = { Boolean: newValue }
             return
         }
-        
-        // Try to preserve the original type for other values, or default to String
+        // Normalize input
+        const text = (newValue ?? '').toString()
+
+        // If user entered a formula like $(...), store as Formula preserving the inner expression
+        const formulaMatch = text.match(/^\s*\$\(([\s\S]*)\)\s*$/)
+        if (formulaMatch) {
+            const inner = formulaMatch[1]
+            node.parameters.value = { Formula: inner }
+            return
+        }
+
+        // Prefer node type when coercing values
+        const nodeType = (node.node_type || node.type || '').toLowerCase()
+        if (nodeType === 'int') {
+            const intVal = parseInt(text, 10)
+            if (!isNaN(intVal)) { node.parameters.value = { Integer: intVal }; return }
+        }
+        if (nodeType === 'float') {
+            const floatVal = parseFloat(text)
+            if (!isNaN(floatVal)) { node.parameters.value = { Float: floatVal }; return }
+        }
+        if (nodeType === 'bool' || nodeType === 'boolean') {
+            if (text === 'true' || text === 'false') { node.parameters.value = { Boolean: text === 'true' }; return }
+        }
+
+        // Try to preserve the original type if possible
         const currentValue = node.parameters.value
         if (currentValue && typeof currentValue === 'object') {
             if (currentValue.Integer !== undefined) {
-                const numValue = parseInt(newValue)
-                if (!isNaN(numValue)) {
-                    node.parameters.value = { Integer: numValue }
-                    return
-                }
+                const numValue = parseInt(text, 10)
+                if (!isNaN(numValue)) { node.parameters.value = { Integer: numValue }; return }
             }
             if (currentValue.Float !== undefined) {
-                const floatValue = parseFloat(newValue)
-                if (!isNaN(floatValue)) {
-                    node.parameters.value = { Float: floatValue }
-                    return
-                }
+                const floatValue = parseFloat(text)
+                if (!isNaN(floatValue)) { node.parameters.value = { Float: floatValue }; return }
             }
             if (currentValue.Boolean !== undefined) {
-                if (newValue === 'true' || newValue === 'false') {
-                    node.parameters.value = { Boolean: newValue === 'true' }
-                    return
-                }
+                if (text === 'true' || text === 'false') { node.parameters.value = { Boolean: text === 'true' }; return }
             }
         }
-        
+
         // Default to String type
-        node.parameters.value = { String: newValue }
+        node.parameters.value = { String: text }
     }
 
     renderMarkdown(text) {
