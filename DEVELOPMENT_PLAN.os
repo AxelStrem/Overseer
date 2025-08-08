@@ -27,6 +27,8 @@ tab main (title="Overseer DSL Development") {
         string description = ""
         int priority = 0
         list StepTasks (entry=<../Task>)
+        int complete_tasks = $(StepTasks.filter(|x| x/complete).count())
+        int total_tasks = $(StepTasks.count())
     }
     list Steps (entry=<Step>) {
         - {

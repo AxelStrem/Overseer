@@ -79,4 +79,19 @@ div FormulaFeatureTest (layout = vertical) {
     <Colorful> ColorfulInstance {
         - isOk1 = false
     }
+
+    div Task {
+        string description = ""
+        bool complete = false
+    }
+
+    list Tasks(entry=<Task>)
+    {
+        - { - description = "test task 1" }
+        - { - description = "test task 2" }
+        - { - description = "test task 3" }
+    }
+
+    int tasks_complete = $(Tasks.filter(|x| x/complete).count())
+    int tasks_total = $(Tasks.count())
 }
