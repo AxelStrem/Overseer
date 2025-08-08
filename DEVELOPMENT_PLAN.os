@@ -14,10 +14,12 @@ tab main (title="Overseer DSL Development") {
     }
     text StepsHeader = "Step list:"
     text PriorityUpdate = "UPDATED: Added comprehensive UI styling system (2.2-2.4) as next priority after completing layout system and testing infrastructure"
-    div Task (hidden=true, background-color=$(/tested?#CCFFCC:(/complete?#FFFFCC:#CCCCCC))) {
+    div Task (hidden=true, background-color=$(/tested?#112211:(/complete?#222211:#111111))) {
         string task_description = ""
-        checkbox complete (label="Complete") = false
-        checkbox tested (label="Tested") = false
+        div (border-style=none) {
+            checkbox complete (label="Complete") = false
+            checkbox tested (label="Tested") = false
+        }
         string notes = ""
     }
     div Step (hidden=true) {

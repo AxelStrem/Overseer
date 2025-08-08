@@ -144,6 +144,18 @@ body {
     box-shadow: var(--shadow);
 }
 
+/* If inline style disables border, also suppress default shadow for a truly flat look */
+.overseer-div[style*="border: none"] {
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Mirror border-none behavior for lists */
+.overseer-list[style*="border: none"] {
+    border: none !important;
+    box-shadow: none !important;
+}
+
 .overseer-list {
     background: var(--surface-color);
     border: 1px solid var(--border-color);
@@ -216,6 +228,7 @@ body {
     color: var(--text-color);
     font-size: 14px;
 }
+
 
 .field-value {
     padding: 6px 8px;
@@ -461,8 +474,7 @@ body {
     #status-info {
         display: none; /* Hide detailed status on mobile */
     }
-}
-    
+
     .content-display {
         padding: 12px;
     }

@@ -756,11 +756,36 @@ export class OverseerRenderer {
             element.style.overflow = params.overflow
         }
         
-        // Border style parameter
-        if (params['border-style']) {
-            const borderStyle = this.convertBorderStyleValue(params['border-style'])
-            if (borderStyle) {
-                element.style.border = borderStyle
+    // Border style parameter (prefer computed value)
+    {
+        let borderDisabled = false
+            const borderParam = this.getParameterValue(node, 'border-style') ?? params['border-style']
+            if (borderParam !== undefined) {
+                // Special-case: explicit none should remove both border and shadow to avoid default look
+                if (this.isBorderNone(borderParam)) {
+                    element.style.setProperty('border', 'none', 'important')
+                    element.style.setProperty('box-shadow', 'none', 'important')
+            borderDisabled = true
+
+                    // Also remove borders and shadows from common inner wrappers to avoid residual lines
+                    try {
+                        const innerSelectors = [
+                            ':scope .field-value',
+                            ':scope .overseer-list',
+                            ':scope .overseer-list-value'
+                        ]
+                        const innerEls = element.querySelectorAll(innerSelectors.join(','))
+                        innerEls.forEach(el => {
+                            el.style.setProperty('border', 'none', 'important')
+                            el.style.setProperty('box-shadow', 'none', 'important')
+                        })
+                    } catch (_) { /* no-op */ }
+                } else {
+                    const borderStyle = this.convertBorderStyleValue(borderParam)
+                    if (borderStyle) {
+                        element.style.border = borderStyle
+                    }
+                }
             }
         }
         
@@ -827,9 +852,13 @@ export class OverseerRenderer {
             }, 0)
         }
         
-        // Legacy border support (keep for compatibility)
+        // Legacy border support (keep for compatibility) - but do not override explicit none
         if (params.border) {
-            element.style.border = params.border
+            const currentBorder = element.style.getPropertyValue('border')
+            const hasBorderNone = currentBorder && currentBorder.trim().toLowerCase() === 'none'
+            if (!hasBorderNone) {
+                element.style.border = params.border
+            }
         }
         
         // Legacy horizontal-size support (keep for compatibility)
@@ -914,6 +943,9 @@ export class OverseerRenderer {
     convertBorderStyleValue(borderParam) {
         // Handle different border style value types from the Rust backend
         if (typeof borderParam === 'string') {
+            // Accept common keywords; normalize 'none' to CSS none
+            if (borderParam.toLowerCase() === 'none') return 'none'
+            if (borderParam.toLowerCase() === 'default') return ''
             return borderParam // Legacy string borders
         }
         
@@ -944,6 +976,23 @@ export class OverseerRenderer {
         }
         
         return borderParam // Fallback
+    }
+
+    isBorderNone(borderParam) {
+        if (borderParam === undefined || borderParam === null) return false
+        if (typeof borderParam === 'string') return borderParam.toLowerCase() === 'none'
+        if (typeof borderParam === 'object') {
+            // Wrapped enum
+            if (borderParam.BorderStyle) {
+                const style = borderParam.BorderStyle
+                if (style === 'None') return true
+                // Unwrapped spellings sometimes serialize as { None: null }
+                if (style.None !== undefined) return true
+            }
+            // Alternative shape: { BorderStyle: { None: null } }
+            if (borderParam.None !== undefined) return true
+        }
+        return false
     }
 
     getNodeValue(node) {
@@ -1035,8 +1084,9 @@ export class OverseerRenderer {
                 if (paramValue.Formula !== undefined) return paramValue.Formula
                 if (paramValue.Color !== undefined) return paramValue.Color
                 if (paramValue.CssSize !== undefined) return paramValue.CssSize
+                if (paramValue.BorderStyle !== undefined) return paramValue // keep full shape for converter
             }
-            return paramValue.toString()
+            return paramValue
         }
 
         if (!node.parameters || node.parameters[parameterName] === undefined) {
@@ -1060,10 +1110,11 @@ export class OverseerRenderer {
             if (paramValue.Formula !== undefined) return paramValue.Formula
             if (paramValue.Color !== undefined) return paramValue.Color
             if (paramValue.CssSize !== undefined) return paramValue.CssSize
+            if (paramValue.BorderStyle !== undefined) return paramValue // keep full shape for converter
         }
         
-        // Fallback: convert to string
-        return paramValue.toString()
+        // Fallback: return as-is (let callers handle unknown shapes)
+        return paramValue
     }
 
     makeFieldEditable(element, node, isMultiline = false) {

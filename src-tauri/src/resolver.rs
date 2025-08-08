@@ -433,33 +433,82 @@ fn resolve_parameter_inheritance(nodes: &mut Vec<OverseerNode>, parent_params: &
 }
 
 /// Merges override fields into a template clone.
+/// Helper: find the path (indices) to a named field within a node's accessible hierarchy,
+/// treating transparent nodes (unnamed divs, tabs) as invisible containers.
+fn find_accessible_child_path(node: &OverseerNode, target_name: &str) -> Option<Vec<usize>> {
+    for (i, child) in node.children.iter().enumerate() {
+        if child.name == target_name {
+            return Some(vec![i]);
+        }
+        if child.is_hierarchy_transparent {
+            if let Some(mut subpath) = find_accessible_child_path(child, target_name) {
+                let mut path = vec![i];
+                path.append(&mut subpath);
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Helper: get a mutable reference to a child using an index path
+fn get_child_mut_by_path<'a>(node: &'a mut OverseerNode, path: &[usize]) -> Option<&'a mut OverseerNode> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut current: *mut OverseerNode = node as *mut _;
+    // SAFETY: We ensure at most one mutable reference is active by walking iteratively.
+    for (depth, &idx) in path.iter().enumerate() {
+        unsafe {
+            let current_ref = &mut *current;
+            if idx >= current_ref.children.len() {
+                return None;
+            }
+            let child_ptr: *mut OverseerNode = &mut current_ref.children[idx];
+            if depth == path.len() - 1 {
+                return Some(&mut *child_ptr);
+            } else {
+                current = child_ptr;
+            }
+        }
+    }
+    None
+}
+
 fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &OverseerNode>) {
-    debug_resolver!("[RESOLVER] Merging overrides into template with {} fields", template.children.len());
-    for template_field in template.children.iter_mut() {
-        if let Some(override_field) = overrides.get(&template_field.name) {
-            debug_resolver!("[RESOLVER]   Merging field: {} (template type: {}, override type: {})", 
-                    template_field.name, template_field.node_type, override_field.node_type);
-            // Always preserve the node_type from the template
-            // (do NOT overwrite with the override's name or type)
-            // Only override value and children as appropriate
+    debug_resolver!("[RESOLVER] Merging overrides into template with {} fields (transparent-aware)", template.children.len());
+
+    // Apply each override by locating the target field path in the template via transparent-aware lookup
+    for (ov_name, override_field) in overrides.iter() {
+        if let Some(path) = find_accessible_child_path(template, ov_name) {
+            if let Some(template_field) = get_child_mut_by_path(template, &path) {
+            debug_resolver!(
+                "[RESOLVER]   Merging field: {} (template type: {}, override type: {})",
+                template_field.name, template_field.node_type, override_field.node_type
+            );
 
             // Override a simple value (e.g., name = "...")
             if let Some(val) = override_field.parameters.get("value") {
                 debug_resolver!("[RESOLVER]     Setting value: {:?}", val);
-                template_field.parameters.insert("value".to_string(), val.clone());
+                template_field
+                    .parameters
+                    .insert("value".to_string(), val.clone());
             }
+
             // If this field is a list, handle entry inheritance and recursive merge
             if template_field.node_type == "list" {
                 // If override does not specify entry, inherit from template
                 if !override_field.parameters.contains_key("entry") {
                     if let Some(entry) = template_field.parameters.get("entry") {
-                        template_field.parameters.insert("entry".to_string(), entry.clone());
+                        template_field
+                            .parameters
+                            .insert("entry".to_string(), entry.clone());
                     }
-                } else {
+                } else if let Some(entry) = override_field.parameters.get("entry") {
                     // If override specifies entry, use it
-                    if let Some(entry) = override_field.parameters.get("entry") {
-                        template_field.parameters.insert("entry".to_string(), entry.clone());
-                    }
+                    template_field
+                        .parameters
+                        .insert("entry".to_string(), entry.clone());
                 }
                 // Recursively resolve/merge children for nested lists
                 if !override_field.children.is_empty() {
@@ -470,7 +519,17 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 template_field.children = override_field.children.clone();
             }
             // Ensure node_type is preserved from template (do not overwrite)
-            // (No action needed, as we never assign node_type from override)
+            } else {
+                debug_resolver!(
+                    "[RESOLVER]   Override '{}' path lookup failed unexpectedly",
+                    ov_name
+                );
+            }
+        } else {
+            debug_resolver!(
+                "[RESOLVER]   Override '{}' had no matching field in template (considering transparency)",
+                ov_name
+            );
         }
     }
 }
