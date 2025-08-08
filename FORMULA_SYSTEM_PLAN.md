@@ -33,9 +33,9 @@ Implement `$(expression)` formula evaluation system for Overseer DSL with arithm
 
 ### 2.1 Simple Relative Path Navigation
 - [x] Parse `../field` syntax for parent node field access (parsing only)
-- [ ] Parse `../../field` syntax for grandparent access
+- [x] Parse `../../field` syntax for grandparent access
 - [ ] Implement document tree traversal from current node
-- [ ] Handle missing/invalid paths gracefully
+- [x] Handle missing/invalid paths gracefully
 
 ### 2.2 Field Value Extraction
 - [ ] Extract values from referenced nodes
@@ -51,9 +51,9 @@ Implement `$(expression)` formula evaluation system for Overseer DSL with arithm
 ## Phase 4: Advanced Features (Future Steps)
 
 ### 4.1 Conditional Expressions
-- [ ] Ternary operator: `condition ? value_if_true : value_if_false`
+- [x] Ternary operator: `condition ? value_if_true : value_if_false`
 - [x] Comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- [ ] Boolean logic: `&&`, `||`, `!`
+- [x] Boolean logic: `&&`, `||`, `!`
 
 ### 4.2 List Operations
 - [ ] Numeric indices: `../list[10]`

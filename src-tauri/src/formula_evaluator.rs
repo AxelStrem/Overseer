@@ -4,7 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while1},
     character::complete::{char, multispace0},
-    combinator::{map, opt},
+    combinator::map,
     multi::many0,
     number::complete::double,
     sequence::{delimited, pair, preceded, tuple},
@@ -14,6 +14,7 @@ use nom::{
 #[derive(Debug, Clone)]
 pub struct EvaluationContext<'a> {
     pub current_node: &'a OverseerNode,
+    #[allow(dead_code)]
     pub parent_node: Option<&'a OverseerNode>,
     pub document_root: &'a [OverseerNode],
     pub node_path: Vec<String>, // Path from root to current node for debugging
@@ -25,6 +26,10 @@ pub enum FormulaExpression {
     Number(f64),
     FieldReference(String),
     PathReference(Vec<String>), // e.g., ["..","field"] for ../field
+    UnaryOp {
+        operator: UnaryOperator,
+        expr: Box<FormulaExpression>,
+    },
     BinaryOp {
         left: Box<FormulaExpression>,
         operator: BinaryOperator,
@@ -33,6 +38,11 @@ pub enum FormulaExpression {
     FunctionCall {
         name: String,
         args: Vec<FormulaExpression>,
+    },
+    Conditional {
+        condition: Box<FormulaExpression>,
+        then_branch: Box<FormulaExpression>,
+        else_branch: Box<FormulaExpression>,
     },
 }
 
@@ -49,12 +59,30 @@ pub enum BinaryOperator {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+    // Boolean logic
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone)]
+pub enum UnaryOperator {
+    Not,
 }
 
 /// Formula evaluator - handles parsing and evaluation of $(expression) formulas
 pub struct FormulaEvaluator;
 
 impl FormulaEvaluator {
+    /// Helper: get effective parameter value preferring computed shadow
+    fn get_effective_param<'p>(params: &'p std::collections::HashMap<String, OverseerValue>, key: &str) -> Option<&'p OverseerValue> {
+        if key == "value" {
+            if let Some(v) = params.get("_computed_value") { return Some(v); }
+        } else {
+            let shadow = format!("_computed_{}", key);
+            if let Some(v) = params.get(&shadow) { return Some(v); }
+        }
+        params.get(key)
+    }
     /// Evaluate a formula expression string within the given context
     pub fn evaluate_formula(
         formula: &str,
@@ -103,13 +131,56 @@ impl FormulaEvaluator {
             FormulaExpression::PathReference(path) => {
                 Self::resolve_path_reference(path, context)
             }
+            FormulaExpression::UnaryOp { operator, expr } => {
+                match operator {
+                    UnaryOperator::Not => {
+                        let val = Self::evaluate_expression(expr, context)?;
+                        let b = Self::value_to_bool(&val)?;
+                        Ok(OverseerValue::Boolean(!b))
+                    }
+                }
+            }
             FormulaExpression::BinaryOp { left, operator, right } => {
-                let left_val = Self::evaluate_expression(left, context)?;
-                let right_val = Self::evaluate_expression(right, context)?;
-                Self::apply_binary_operator(&left_val, operator, &right_val)
+                // Short-circuit for boolean ops
+                match operator {
+                    BinaryOperator::And => {
+                        let left_val = Self::evaluate_expression(left, context)?;
+                        let lb = Self::value_to_bool(&left_val)?;
+                        if !lb {
+                            return Ok(OverseerValue::Boolean(false));
+                        }
+                        let right_val = Self::evaluate_expression(right, context)?;
+                        let rb = Self::value_to_bool(&right_val)?;
+                        Ok(OverseerValue::Boolean(rb))
+                    }
+                    BinaryOperator::Or => {
+                        let left_val = Self::evaluate_expression(left, context)?;
+                        let lb = Self::value_to_bool(&left_val)?;
+                        if lb {
+                            return Ok(OverseerValue::Boolean(true));
+                        }
+                        let right_val = Self::evaluate_expression(right, context)?;
+                        let rb = Self::value_to_bool(&right_val)?;
+                        Ok(OverseerValue::Boolean(rb))
+                    }
+                    _ => {
+                        let left_val = Self::evaluate_expression(left, context)?;
+                        let right_val = Self::evaluate_expression(right, context)?;
+                        Self::apply_binary_operator(&left_val, operator, &right_val)
+                    }
+                }
             }
             FormulaExpression::FunctionCall { name, args } => {
                 Self::evaluate_function_call(name, args, context)
+            }
+            FormulaExpression::Conditional { condition, then_branch, else_branch } => {
+                let cond_val = Self::evaluate_expression(condition, context)?;
+                let cond_bool = Self::value_to_bool(&cond_val)?;
+                if cond_bool {
+                    Self::evaluate_expression(then_branch, context)
+                } else {
+                    Self::evaluate_expression(else_branch, context)
+                }
             }
         }
     }
@@ -121,7 +192,7 @@ impl FormulaEvaluator {
     ) -> Result<OverseerValue, OverseerError> {
         // Strategy:
         // 1) Try current node's parameters by exact field name
-        if let Some(val) = context.current_node.parameters.get(field_name) {
+    if let Some(val) = Self::get_effective_param(&context.current_node.parameters, field_name) {
             return Ok(val.clone());
         }
 
@@ -132,8 +203,22 @@ impl FormulaEvaluator {
             .into_iter()
             .find(|c| c.name == field_name)
         {
-            if let Some(val) = child.parameters.get("value") {
+            if let Some(val) = Self::get_effective_param(&child.parameters, "value") {
+                if let OverseerValue::Formula(formula_expr) = val {
+                    // On-demand evaluate this child's formula
+                    let mut path = context.node_path.clone();
+                    path.push(child.name.clone());
+                    let child_ctx = EvaluationContext::new(path, context.document_root);
+                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                }
                 return Ok(val.clone());
+            }
+            // If no value found but there's a formula stored directly
+            if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
+                let mut path = context.node_path.clone();
+                path.push(child.name.clone());
+                let child_ctx = EvaluationContext::new(path, context.document_root);
+                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
             }
         }
 
@@ -144,13 +229,30 @@ impl FormulaEvaluator {
                 let ancestor_path = &context.node_path[..end];
                 if let Some(ancestor) = FormulaEvaluator::resolve_path_to_node(ancestor_path, context.document_root) {
                     // a) Ancestor parameters by key
-                    if let Some(val) = ancestor.parameters.get(field_name) {
+                    if let Some(val) = Self::get_effective_param(&ancestor.parameters, field_name) {
+                        if let OverseerValue::Formula(formula_expr) = val {
+                            // Evaluate formula for ancestor parameter on-demand
+                            let child_ctx = EvaluationContext::new(context.node_path.clone(), context.document_root);
+                            return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                        }
                         return Ok(val.clone());
                     }
                     // b) Child of ancestor by name
                     if let Some(child) = ancestor.get_accessible_children().into_iter().find(|c| c.name == field_name) {
-                        if let Some(val) = child.parameters.get("value") {
+                        if let Some(val) = Self::get_effective_param(&child.parameters, "value") {
+                            if let OverseerValue::Formula(formula_expr) = val {
+                                let mut path = ancestor_path.to_vec();
+                                path.push(child.name.clone());
+                                let child_ctx = EvaluationContext::new(path, context.document_root);
+                                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                            }
                             return Ok(val.clone());
+                        }
+                        if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
+                            let mut path = ancestor_path.to_vec();
+                            path.push(child.name.clone());
+                            let child_ctx = EvaluationContext::new(path, context.document_root);
+                            return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
                         }
                     }
                     // c) Deep search under ancestor (first match)
@@ -163,14 +265,19 @@ impl FormulaEvaluator {
 
         // 3) If current node is a simple field node (int/string/etc.), allow shorthand resolving its own value
         if field_name == "value" {
-            if let Some(v) = context.current_node.parameters.get("value") {
+            if let Some(v) = Self::get_effective_param(&context.current_node.parameters, "value") {
                 return Ok(v.clone());
             }
         }
 
         // 4) Fallback: search the entire document for a node with this name and return its value
         if let Some(node) = FormulaEvaluator::find_node_by_name(context.document_root, field_name) {
-            if let Some(v) = node.parameters.get("value") {
+            if let Some(v) = Self::get_effective_param(&node.parameters, "value") {
+                if let OverseerValue::Formula(formula_expr) = v {
+                    // Best-effort: evaluate with current path (unknown exact path)
+                    let child_ctx = EvaluationContext::new(context.node_path.clone(), context.document_root);
+                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                }
                 return Ok(v.clone());
             }
         }
@@ -196,7 +303,7 @@ impl FormulaEvaluator {
             let mut end = context.node_path.len();
             while end > 0 {
                 let anc_path = &context.node_path[..end];
-                if let Some(mut node) = FormulaEvaluator::resolve_path_to_node(anc_path, context.document_root) {
+            if let Some(mut node) = FormulaEvaluator::resolve_path_to_node(anc_path, context.document_root) {
                     let mut traversed_all = true;
                     for (i, seg) in path.iter().enumerate() {
                         if let Some(next) = node.get_accessible_children().into_iter().find(|c| &c.name == seg) {
@@ -204,7 +311,7 @@ impl FormulaEvaluator {
                         } else {
                             // Allow final segment to be a parameter on current node
                             if i == path.len() - 1 {
-                                if let Some(v) = node.parameters.get(seg) {
+                    if let Some(v) = Self::get_effective_param(&node.parameters, seg) {
                                     return Ok(v.clone());
                                 }
                             }
@@ -214,12 +321,12 @@ impl FormulaEvaluator {
                     }
                     if traversed_all {
                         // If we ended on a node (e.g., x), prefer its value
-                        if let Some(v) = node.parameters.get("value") {
+                if let Some(v) = Self::get_effective_param(&node.parameters, "value") {
                             return Ok(v.clone());
                         }
                         // Or last segment as parameter on that final node
                         if let Some(last) = path.last() {
-                            if let Some(v) = node.parameters.get(last) {
+                    if let Some(v) = Self::get_effective_param(&node.parameters, last) {
                                 return Ok(v.clone());
                             }
                         }
@@ -269,12 +376,31 @@ impl FormulaEvaluator {
         }
         // Final segment can be either a parameter key or a child node with value
     let last = remaining.last().unwrap();
-        if let Some(val) = current.parameters.get(last) {
+        if let Some(val) = Self::get_effective_param(&current.parameters, last) {
+            if let OverseerValue::Formula(formula_expr) = val {
+                // Evaluate parameter formula on-demand at this node
+                let path = ancestor_segments.to_vec();
+                // current is already at the end of path (no further name to push)
+                let child_ctx = EvaluationContext::new(path, context.document_root);
+                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+            }
             return Ok(val.clone());
         }
         if let Some(child) = current.get_accessible_children().into_iter().find(|c| &c.name == last) {
-            if let Some(v) = child.parameters.get("value") {
+            if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
+                if let OverseerValue::Formula(formula_expr) = v {
+                    let mut path = ancestor_segments.to_vec();
+                    path.push(child.name.clone());
+                    let child_ctx = EvaluationContext::new(path, context.document_root);
+                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                }
                 return Ok(v.clone());
+            }
+            if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
+                let mut path = ancestor_segments.to_vec();
+                path.push(child.name.clone());
+                let child_ctx = EvaluationContext::new(path, context.document_root);
+                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
             }
         }
 
@@ -299,6 +425,10 @@ impl FormulaEvaluator {
         operator: &BinaryOperator,
         right: &OverseerValue,
     ) -> Result<OverseerValue, OverseerError> {
+        // Boolean operators handled in evaluate_expression for short-circuit
+        if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
+            unreachable!("Boolean ops handled earlier")
+        }
         // For comparisons and arithmetic, convert both to numbers for now (step 4.1 scope)
         let left_num = Self::value_to_number(left)?;
         let right_num = Self::value_to_number(right)?;
@@ -319,6 +449,17 @@ impl FormulaEvaluator {
             BinaryOperator::LessThanOrEqual => OverseerValue::Boolean(left_num <= right_num),
             BinaryOperator::GreaterThan => OverseerValue::Boolean(left_num > right_num),
             BinaryOperator::GreaterThanOrEqual => OverseerValue::Boolean(left_num >= right_num),
+            BinaryOperator::And => {
+                // Should have been handled earlier; fallback without short-circuit
+                let lb = Self::value_to_bool(left)?;
+                let rb = Self::value_to_bool(right)?;
+                OverseerValue::Boolean(lb && rb)
+            }
+            BinaryOperator::Or => {
+                let lb = Self::value_to_bool(left)?;
+                let rb = Self::value_to_bool(right)?;
+                OverseerValue::Boolean(lb || rb)
+            }
         };
 
         // For arithmetic results, normalize integers if whole
@@ -348,11 +489,28 @@ impl FormulaEvaluator {
         }
     }
 
+    /// Convert an OverseerValue to boolean for logical operations
+    fn value_to_bool(value: &OverseerValue) -> Result<bool, OverseerError> {
+        match value {
+            OverseerValue::Boolean(b) => Ok(*b),
+            OverseerValue::Integer(i) => Ok(*i != 0),
+            OverseerValue::Float(f) => Ok(*f != 0.0),
+            OverseerValue::String(s) => {
+                let sl = s.to_lowercase();
+                if sl == "true" { Ok(true) }
+                else if sl == "false" { Ok(false) }
+                else if let Ok(n) = s.parse::<f64>() { Ok(n != 0.0) }
+                else { Err(OverseerError::FormulaError(format!("Cannot convert '{}' to bool", s))) }
+            }
+            _ => Err(OverseerError::FormulaError("Cannot convert value to bool".to_string())),
+        }
+    }
+
     /// Evaluate a function call
     fn evaluate_function_call(
         name: &str,
         args: &[FormulaExpression],
-        context: &EvaluationContext,
+        _context: &EvaluationContext,
     ) -> Result<OverseerValue, OverseerError> {
         match name {
             "today" => {
@@ -410,7 +568,7 @@ impl FormulaEvaluator {
     fn find_value_by_name_deep(node: &OverseerNode, name: &str) -> Option<OverseerValue> {
         for child in &node.children {
             if child.name == name {
-                if let Some(v) = child.parameters.get("value") {
+                if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
                     return Some(v.clone());
                 }
             }
@@ -438,8 +596,62 @@ impl FormulaEvaluator {
 
 /// Parse a complete expression with operator precedence
 fn expression(input: &str) -> IResult<&str, FormulaExpression> {
-    // Add comparison layer on top of arithmetic (step 4.1)
-    comparison_expression(input)
+    // Highest level: ternary operator
+    ternary_expression(input)
+}
+
+/// Ternary operator: condition ? then : else
+fn ternary_expression(input: &str) -> IResult<&str, FormulaExpression> {
+    use nom::combinator::opt as nopt;
+    let (input, cond) = logical_or_expression(input)?;
+    let (input, maybe) = nopt(tuple((
+        delimited(multispace0, char('?'), multispace0),
+        // then branch can be any expression
+        ternary_expression,
+        delimited(multispace0, char(':'), multispace0),
+        ternary_expression,
+    )))(input)?;
+    if let Some((_, then_e, _, else_e)) = maybe {
+        Ok((input, FormulaExpression::Conditional {
+            condition: Box::new(cond),
+            then_branch: Box::new(then_e),
+            else_branch: Box::new(else_e),
+        }))
+    } else {
+        Ok((input, cond))
+    }
+}
+
+/// Logical OR (||) with short-circuit semantics at evaluation time
+fn logical_or_expression(input: &str) -> IResult<&str, FormulaExpression> {
+    let (input, first) = logical_and_expression(input)?;
+    let (input, ops) = many0(pair(
+        delimited(multispace0, tag("||"), multispace0),
+        logical_and_expression,
+    ))(input)?;
+    Ok((input, ops.into_iter().fold(first, |acc, (_, expr)| {
+        FormulaExpression::BinaryOp {
+            left: Box::new(acc),
+            operator: BinaryOperator::Or,
+            right: Box::new(expr),
+        }
+    })))
+}
+
+/// Logical AND (&&)
+fn logical_and_expression(input: &str) -> IResult<&str, FormulaExpression> {
+    let (input, first) = comparison_expression(input)?;
+    let (input, ops) = many0(pair(
+        delimited(multispace0, tag("&&"), multispace0),
+        comparison_expression,
+    ))(input)?;
+    Ok((input, ops.into_iter().fold(first, |acc, (_, expr)| {
+        FormulaExpression::BinaryOp {
+            left: Box::new(acc),
+            operator: BinaryOperator::And,
+            right: Box::new(expr),
+        }
+    })))
 }
 
 /// New: comparison layer (==, !=, <, <=, >, >=) with lower precedence than +,-
@@ -503,10 +715,10 @@ fn additive_expression(input: &str) -> IResult<&str, FormulaExpression> {
 
 /// Parse multiplication and division (higher precedence)
 fn multiplicative_expression(input: &str) -> IResult<&str, FormulaExpression> {
-    let (input, first) = primary_expression(input)?;
+    let (input, first) = unary_expression(input)?;
     let (input, operations) = many0(pair(
         delimited(multispace0, alt((char('*'), char('/'))), multispace0),
-        primary_expression,
+        unary_expression,
     ))(input)?;
 
     Ok((input, operations.into_iter().fold(first, |acc, (op, expr)| {
@@ -521,6 +733,16 @@ fn multiplicative_expression(input: &str) -> IResult<&str, FormulaExpression> {
             right: Box::new(expr),
         }
     })))
+}
+
+/// Parse unary expressions like !expr
+fn unary_expression(input: &str) -> IResult<&str, FormulaExpression> {
+    let (input, bangs) = many0(delimited(multispace0, char('!'), multispace0))(input)?;
+    let (input, mut expr) = primary_expression(input)?;
+    for _ in 0..bangs.len() {
+        expr = FormulaExpression::UnaryOp { operator: UnaryOperator::Not, expr: Box::new(expr) };
+    }
+    Ok((input, expr))
 }
 
 /// Parse primary expressions (numbers, identifiers, function calls, parentheses)

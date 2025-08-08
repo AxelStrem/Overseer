@@ -24,6 +24,16 @@ div FormulaFeatureTest (layout = vertical) {
     bool gt = $(a > b)                // true
     bool gte = $(a >= 10)             // true
 
+    // Boolean logic
+    bool and1 = $((a > b) && (b == 5))    // true
+    bool and2 = $((a < b) && (b == 5))    // false
+    bool or1 = $((a < b) || (b == 5))     // true
+    bool not1 = $(!(a < b))               // true
+
+    // Ternary operator
+    int tern1 = $((a > b) ? 1 : 0)        // 1
+    int tern2 = $(and2 ? 100 : 200)      // 200
+
     // Function
     date todayValue = $(today())      // current date (YYYY-MM-DD)
 
