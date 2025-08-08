@@ -214,7 +214,7 @@ impl FormulaEvaluator {
                     // On-demand evaluate this child's formula
                     let mut path = context.node_path.clone();
                     path.push(child.name.clone());
-                    let child_ctx = EvaluationContext::new(path, context.document_root);
+                    let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
                     return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
                 }
                 return Ok(val.clone());
@@ -223,7 +223,7 @@ impl FormulaEvaluator {
             if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
                 let mut path = context.node_path.clone();
                 path.push(child.name.clone());
-                let child_ctx = EvaluationContext::new(path, context.document_root);
+                let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
                 return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
             }
         }
@@ -249,7 +249,7 @@ impl FormulaEvaluator {
                             if let OverseerValue::Formula(formula_expr) = val {
                                 let mut path = ancestor_path.to_vec();
                                 path.push(child.name.clone());
-                                let child_ctx = EvaluationContext::new(path, context.document_root);
+                                let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
                                 return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
                             }
                             return Ok(val.clone());
@@ -257,7 +257,7 @@ impl FormulaEvaluator {
                         if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
                             let mut path = ancestor_path.to_vec();
                             path.push(child.name.clone());
-                            let child_ctx = EvaluationContext::new(path, context.document_root);
+                            let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
                             return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
                         }
                     }
@@ -301,6 +301,57 @@ impl FormulaEvaluator {
     ) -> Result<OverseerValue, OverseerError> {
         if path.is_empty() {
             return Err(OverseerError::FormulaError("Empty path reference".to_string()));
+        }
+
+        // Case 0: "/"-anchored paths (within current node)
+        if path[0] == "/" {
+            let segments = &path[1..];
+            if segments.is_empty() {
+                return Err(OverseerError::FormulaError("Path missing target after /".to_string()));
+            }
+
+            // Start from current node
+            let mut current = context.current_node;
+            // Traverse all but last via children names
+            for seg in &segments[..segments.len().saturating_sub(1)] {
+                if let Some(next) = current.get_accessible_children().into_iter().find(|c| &c.name == seg) {
+                    current = next;
+                } else {
+                    return Err(OverseerError::FormulaError(format!("Path segment not found: {}", seg)));
+                }
+            }
+            let last = segments.last().unwrap();
+            // Final segment can be either a parameter on current or a child node's value
+            if let Some(val) = Self::get_effective_param(&current.parameters, last) {
+                if let OverseerValue::Formula(formula_expr) = val {
+                    // Evaluate parameter formula on-demand using exact node reference
+                    let child_ctx = EvaluationContext::new_with_current(current, context.node_path.clone(), context.document_root);
+                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                }
+                return Ok(val.clone());
+            }
+            if let Some(child) = current.get_accessible_children().into_iter().find(|c| &c.name == last) {
+                if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
+                    if let OverseerValue::Formula(formula_expr) = v {
+                        let mut path = context.node_path.clone();
+                        path.push(child.name.clone());
+                        let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
+                        return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                    }
+                    return Ok(v.clone());
+                }
+                if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
+                    let mut path = context.node_path.clone();
+                    path.push(child.name.clone());
+                    let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
+                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                }
+            }
+            // Fallback: deep search within current subtree
+            if let Some(v) = FormulaEvaluator::find_value_by_name_deep(current, last) {
+                return Ok(v);
+            }
+            return Err(OverseerError::FormulaError(format!("Unknown field '{}' at current path", last)));
         }
 
         // Case A: identifier-based relative path (e.g., GrandChild/Inner/x)
@@ -385,9 +436,12 @@ impl FormulaEvaluator {
         if let Some(val) = Self::get_effective_param(&current.parameters, last) {
             if let OverseerValue::Formula(formula_expr) = val {
                 // Evaluate parameter formula on-demand at this node
-                let path = ancestor_segments.to_vec();
-                // current is already at the end of path (no further name to push)
-                let child_ctx = EvaluationContext::new(path, context.document_root);
+                let mut p = ancestor_segments.to_vec();
+                // include traversed segments to reach 'current'
+                if !remaining.is_empty() {
+                    p.extend(remaining[..remaining.len()-1].iter().cloned());
+                }
+                let child_ctx = EvaluationContext::new_with_current(current, p, context.document_root);
                 return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
             }
             return Ok(val.clone());
@@ -395,17 +449,24 @@ impl FormulaEvaluator {
         if let Some(child) = current.get_accessible_children().into_iter().find(|c| &c.name == last) {
             if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
                 if let OverseerValue::Formula(formula_expr) = v {
-                    let mut path = ancestor_segments.to_vec();
-                    path.push(child.name.clone());
-                    let child_ctx = EvaluationContext::new(path, context.document_root);
+                    let mut p = ancestor_segments.to_vec();
+                    // include any traversed segments leading to 'current'
+                    if !remaining.is_empty() {
+                        p.extend(remaining[..remaining.len()-1].iter().cloned());
+                    }
+                    p.push(child.name.clone());
+                    let child_ctx = EvaluationContext::new_with_current(child, p, context.document_root);
                     return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
                 }
                 return Ok(v.clone());
             }
             if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
-                let mut path = ancestor_segments.to_vec();
-                path.push(child.name.clone());
-                let child_ctx = EvaluationContext::new(path, context.document_root);
+                let mut p = ancestor_segments.to_vec();
+                if !remaining.is_empty() {
+                    p.extend(remaining[..remaining.len()-1].iter().cloned());
+                }
+                p.push(child.name.clone());
+                let child_ctx = EvaluationContext::new_with_current(child, p, context.document_root);
                 return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
             }
         }
@@ -434,6 +495,32 @@ impl FormulaEvaluator {
         if path.is_empty() {
             return Err(OverseerError::FormulaError("Empty path for param extraction".to_string()));
         }
+        // Current-node anchored path: ["/", seg1, seg2, ...]
+        if path[0] == "/" {
+            let segments = &path[1..];
+            if segments.is_empty() {
+                return Err(OverseerError::FormulaError("Path missing target after / for param".to_string()));
+            }
+            // Traverse from current node
+            let mut node = context.current_node;
+            for seg in segments {
+                if let Some(next) = node.get_accessible_children().into_iter().find(|c| &c.name == seg) {
+                    node = next;
+                } else {
+                    return Err(OverseerError::FormulaError(format!("Path segment not found: {}", seg)));
+                }
+            }
+            if let Some(v) = Self::get_effective_param(&node.parameters, param) {
+                if let OverseerValue::Formula(formula_expr) = v {
+                    let mut p = context.node_path.clone();
+                    p.extend(segments.iter().cloned());
+                    let child_ctx = EvaluationContext::new(p, context.document_root);
+                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                }
+                return Ok(Self::value_for_param_extraction(v));
+            }
+            return Err(OverseerError::FormulaError(format!("Parameter '{}' not found on node", param)));
+        }
         // Identifier-based path from nearest ancestor
         if path[0] != ".." {
             let mut end = context.node_path.len();
@@ -453,7 +540,7 @@ impl FormulaEvaluator {
                             if let OverseerValue::Formula(formula_expr) = v {
                                 let mut p = anc_path.to_vec();
                                 p.extend(path.iter().cloned());
-                                let child_ctx = EvaluationContext::new(p, context.document_root);
+                                let child_ctx = EvaluationContext::new_with_current(node, p, context.document_root);
                                 return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
                             }
                             return Ok(Self::value_for_param_extraction(v));
@@ -646,6 +733,17 @@ impl<'a> EvaluationContext<'a> {
             .unwrap_or(current);
         Self {
             current_node: resolved_current,
+            parent_node: None,
+            document_root,
+            node_path,
+        }
+    }
+
+    /// Construct a context using a direct reference to the current node.
+    /// This avoids ambiguity when there are duplicate names under the same parent (e.g., template instances in lists).
+    pub fn new_with_current(current_node: &'a OverseerNode, node_path: Vec<String>, document_root: &'a [OverseerNode]) -> Self {
+        Self {
+            current_node,
             parent_node: None,
             document_root,
             node_path,
@@ -862,6 +960,7 @@ fn primary_expression(input: &str) -> IResult<&str, FormulaExpression> {
             parenthesized_expression,
             function_call,
             string_literal,
+            current_path_reference,
             relative_path_reference,
             path_reference,
             number,
@@ -935,6 +1034,22 @@ fn path_reference(input: &str) -> IResult<&str, FormulaExpression> {
             FormulaExpression::PathReference(path)
         },
     )(input)
+}
+
+/// Parse current-node anchored paths like /child or /child/grandchild
+fn current_path_reference(input: &str) -> IResult<&str, FormulaExpression> {
+    use nom::multi::separated_list1;
+    let (input, _) = char('/') (input)?;
+    let (input, segments) = separated_list1(
+        char('/'),
+        take_while1(|c: char| c.is_alphanumeric() || c == '_'),
+    )(input)?;
+    if segments.is_empty() {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::SeparatedList)));
+    }
+    let mut path = vec!["/".to_string()];
+    path.extend(segments.iter().map(|s| s.to_string()));
+    Ok((input, FormulaExpression::PathReference(path)))
 }
 
 /// Parse identifier-based relative paths like GrandChild/Inner/x (no whitespace around '/')

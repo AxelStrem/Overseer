@@ -57,7 +57,7 @@ Implement `$(expression)` formula evaluation system for Overseer DSL with arithm
 
 ### 4.2 List Operations
 - [ ] Numeric indices: `../list[10]`
-- [ ] Parameter extraction: `../field.color`
+- [x] Parameter extraction: `../field.color`
 - [ ] Aggregate functions: `sum()`, `count()`, `avg()`
 
 ### 4.3 Observer Pattern (for triggers/actions)

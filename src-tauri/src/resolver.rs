@@ -430,7 +430,7 @@ fn recursively_evaluate_node_formulas(
 ) {
     // Create evaluation context for this node
     // The context uses the path to resolve references, avoiding complex lifetime issues with parent references.
-    let context = EvaluationContext::new(current_path.to_vec(), document_root);
+    let context = EvaluationContext::new_with_current(node, current_path.to_vec(), document_root);
 
     // Evaluate formulas in this node's parameters, but preserve original values.
     // Store computed results under shadow keys: _computed_<key> (or _computed_value for value).
