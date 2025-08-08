@@ -1,4 +1,5 @@
 use crate::types::{OverseerNode, OverseerValue, Color, CssSize};
+use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext};
 use std::collections::HashMap;
 
 // Debug logging macro for resolver
@@ -73,6 +74,9 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     
     // After layout resolution, resolve parameter inheritance
     resolve_parameter_inheritance(nodes, &HashMap::new());
+    
+    // After parameter inheritance, evaluate formulas
+    evaluate_formulas_in_document(nodes);
 }
 
 /// Resolves templates for a single node and its children.
@@ -401,6 +405,67 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
         }
     }
 }
+
+/// Entry point for formula evaluation.
+/// It creates an immutable snapshot of the document for safe lookups
+/// and then starts the recursive evaluation process.
+fn evaluate_formulas_in_document(nodes: &mut Vec<OverseerNode>) {
+    debug_resolver!("[RESOLVER] Starting formula evaluation");
+    let document_root_snapshot = nodes.clone();
+
+    for node in nodes.iter_mut() {
+        let mut current_path = vec![node.name.clone()];
+        recursively_evaluate_node_formulas(node, &mut current_path, &document_root_snapshot);
+    }
+
+    debug_resolver!("[RESOLVER] Formula evaluation completed");
+}
+
+/// Recursively traverses the node tree, evaluating formulas along the way.
+/// It maintains the path to the current node, which is crucial for the EvaluationContext.
+fn recursively_evaluate_node_formulas(
+    node: &mut OverseerNode,
+    current_path: &mut Vec<String>,
+    document_root: &[OverseerNode],
+) {
+    // Create evaluation context for this node
+    // The context uses the path to resolve references, avoiding complex lifetime issues with parent references.
+    let context = EvaluationContext::new(current_path.to_vec(), document_root);
+
+    // Evaluate formulas in this node's parameters, but preserve original values.
+    // Store computed results under shadow keys: _computed_<key> (or _computed_value for value).
+    let mut computed_params: HashMap<String, OverseerValue> = HashMap::new();
+    for (key, value) in node.parameters.iter() {
+        if let OverseerValue::Formula(formula_expr) = value {
+            debug_resolver!("[RESOLVER] Evaluating formula in {}.{}: {}", node.name, key, formula_expr);
+            let shadow_key = if key == "value" { "_computed_value".to_string() } else { format!("_computed_{}", key) };
+            match FormulaEvaluator::evaluate_formula(formula_expr.as_str(), &context) {
+                Ok(result) => {
+                    debug_resolver!("[RESOLVER] Formula result: {:?}", result);
+                    computed_params.insert(shadow_key, result);
+                }
+                Err(_err) => {
+                    debug_resolver!("[RESOLVER] Formula error");
+                    computed_params.insert(shadow_key, OverseerValue::String("invalid formula error".to_string()));
+                }
+            }
+        }
+    }
+    // Merge computed shadow params into node.parameters (do not overwrite originals)
+    for (k, v) in computed_params {
+        node.parameters.insert(k, v);
+    }
+    
+    // Recursively evaluate formulas in children
+    for child in &mut node.children {
+        // Maintain path for context
+        current_path.push(child.name.clone());
+        recursively_evaluate_node_formulas(child, current_path, document_root);
+        current_path.pop();
+    }
+}
+
+// Note: child formula evaluation is handled via recursively_evaluate_node_formulas above
 
 #[cfg(test)]
 mod tests {

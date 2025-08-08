@@ -5,9 +5,9 @@ use tauri::command;
 
 mod types;
 mod parser;
-mod evaluator;
 mod file_ops;
 pub mod resolver;
+mod formula_evaluator;
 
 use types::*;
 use file_ops::FileOperations;

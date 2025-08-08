@@ -909,7 +909,22 @@ export class OverseerRenderer {
             return node
         }
 
-        // Try parameters["value"] first
+        // Prefer computed value if present
+        if (node.parameters && node.parameters["_computed_value"] !== undefined) {
+            const value = node.parameters["_computed_value"]
+            if (typeof value === 'string') return value
+            if (typeof value === 'object') {
+                if (value.String !== undefined) return value.String
+                if (value.Integer !== undefined) return value.Integer.toString()
+                if (value.Float !== undefined) return value.Float.toString()
+                if (value.Boolean !== undefined) return value.Boolean.toString()
+                if (value.Date !== undefined) return value.Date
+                if (value.Formula !== undefined) return value.Formula
+            }
+            return value.toString()
+        }
+
+        // Try parameters["value"] next
         if (node.parameters && node.parameters["value"] !== undefined) {
             const value = node.parameters["value"]
             console.log('[DEBUG] getNodeValue: found parameters["value"]:', value, 'in node:', node);
@@ -963,6 +978,23 @@ export class OverseerRenderer {
 
     // Helper function to extract parameter values from OverseerValue objects
     getParameterValue(node, parameterName) {
+        // Prefer computed parameter if present
+        if (node.parameters && node.parameters[`_computed_${parameterName}`] !== undefined) {
+            const paramValue = node.parameters[`_computed_${parameterName}`]
+            if (typeof paramValue === 'string') return paramValue
+            if (typeof paramValue === 'object' && paramValue !== null) {
+                if (paramValue.String !== undefined) return paramValue.String
+                if (paramValue.Integer !== undefined) return paramValue.Integer
+                if (paramValue.Float !== undefined) return paramValue.Float
+                if (paramValue.Boolean !== undefined) return paramValue.Boolean
+                if (paramValue.Date !== undefined) return paramValue.Date
+                if (paramValue.Formula !== undefined) return paramValue.Formula
+                if (paramValue.Color !== undefined) return paramValue.Color
+                if (paramValue.CssSize !== undefined) return paramValue.CssSize
+            }
+            return paramValue.toString()
+        }
+
         if (!node.parameters || node.parameters[parameterName] === undefined) {
             return null
         }

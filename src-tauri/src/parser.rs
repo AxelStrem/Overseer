@@ -237,12 +237,33 @@ fn parse_value(input: &str) -> IResult<&str, OverseerValue> {
     ))(input)
 }
 
-/// Parse formula like $(expression)
+/// Parse formula like $(expression) with support for nested parentheses
 fn parse_formula_value(input: &str) -> IResult<&str, OverseerValue> {
-    map(
-        delimited(tag("$("), take_until(")"), char(')')),
-        |s: &str| OverseerValue::Formula(s.to_string()),
-    )(input)
+    // Expect the opening '$( '
+    let (after_open, _) = tag("$(")(input)?;
+
+    // Scan until matching closing ')' accounting for nested parentheses
+    let bytes = after_open.as_bytes();
+    let mut depth: i32 = 1; // we've consumed one '('
+    let mut idx: usize = 0;
+    while idx < bytes.len() {
+        let c = bytes[idx] as char;
+        if c == '(' {
+            depth += 1;
+        } else if c == ')' {
+            depth -= 1;
+            if depth == 0 {
+                // content is everything before this ')'
+                let content = &after_open[..idx];
+                let remaining = &after_open[idx + 1..];
+                return Ok((remaining, OverseerValue::Formula(content.to_string())));
+            }
+        }
+        idx += 1;
+    }
+
+    // If we reach here, no matching ')'
+    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char)))
 }
 
 /// Parse quoted strings

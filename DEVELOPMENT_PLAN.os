@@ -1,6 +1,6 @@
 tab main (title="Overseer DSL Development") {
     text PhasesHeader = "Overseer DSL Development phases:"
-    list Phases (entry=string) {
+    list Phases (entry=string, layout="vertical") {
         - = "Phase 1: Core File Operations"
         - = "Phase 2: Basic Content Display"
         - = "Phase 3: Interactive Editing"
