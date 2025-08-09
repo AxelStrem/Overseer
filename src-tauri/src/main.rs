@@ -8,8 +8,10 @@ mod parser;
 mod file_ops;
 pub mod resolver;
 mod formula_evaluator;
+mod actions;
 
 use types::*;
+use actions::ActionExecutor;
 use file_ops::FileOperations;
 use parser::parse_document;
 
@@ -60,6 +62,17 @@ async fn find_overseer_files(_directory: String) -> Result<Vec<String>> {
     Ok(vec![])
 }
 
+#[command]
+async fn execute_overseer_event(
+    mut nodes: Vec<OverseerNode>,
+    node_path: Vec<String>,
+    event_name: String,
+) -> Result<Vec<OverseerNode>> {
+    // Execute actions for the event; this will mutate nodes and re-resolve once
+    ActionExecutor::execute_event(&mut nodes, &node_path, &event_name)?;
+    Ok(nodes)
+}
+
 fn main() {
     // Set WebView2 fixed version path with debug cache folder
     let debug_cache_folder = std::env::current_exe()
@@ -84,7 +97,8 @@ fn main() {
             save_overseer_file,
             serialize_overseer_nodes,
             parse_overseer_content,
-            find_overseer_files
+            find_overseer_files,
+            execute_overseer_event
         ])
         .run(tauri::generate_context!()) {
         Ok(_) => {},

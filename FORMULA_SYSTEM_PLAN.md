@@ -265,15 +265,27 @@ div error_tests {
 
 ## Success Criteria
 - [x] Basic arithmetic works: `$(5 + 3)` → `8`
-- [ ] Field references work: `$(salary + bonus)` 
-- [ ] Parent navigation works: `$(../parent_field)`
+- [x] Field references work: `$(salary + bonus)` 
+- [x] Parent navigation works: `$(../parent_field)`
 - [x] today() function works: `$(today())` → current date
 - [x] Errors are handled gracefully without crashes
-- [ ] Integration with existing example.os formulas
+- [x] Integration with existing example.os formulas
 
 ## Next Steps
-1. Implement field reference resolution within the current node
-2. Implement `../` path traversal (and `../../` etc.) with ancestor navigation in EvaluationContext
-3. Add unit/DSL tests exercising field and path references
-4. Add boolean logic (&&, ||, !) and ternary operator parsing/evaluation
-5. Consider result caching and dependency tracking for observer pattern
+1. Add unit/DSL tests exercising field and path references
+2. Add boolean logic (&&, ||, !) and ternary operator parsing/evaluation
+3. Consider result caching and dependency tracking for observer pattern
+
+Example:
+ tab CounterDemo { 
+    div CounterBox (layout="horizontal", spacing=8) {       
+        int counter = 0
+        button Increment (label="Increment") { 
+            // Event block attached to the button 
+            on click { 
+                // Increment the sibling counter field by 1 
+                inc (path="../counter", by=1)
+                 } 
+                }
+             } 
+            }

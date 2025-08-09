@@ -3,6 +3,7 @@ const DEBUG_MODE = false;
 
 // Import marked for markdown rendering
 import { marked } from 'marked';
+import { invoke } from '@tauri-apps/api/tauri'
 
 export class OverseerRenderer {
     constructor() {
@@ -45,12 +46,12 @@ export class OverseerRenderer {
             // Document is an array of root nodes
             for (let i = 0; i < overseerDocument.length; i++) {
                 console.log(`Rendering node ${i}:`, overseerDocument[i])
-                this.renderNode(overseerDocument[i], this.contentDisplay, {})
+                this.renderNode(overseerDocument[i], this.contentDisplay, {}, [overseerDocument[i].name || overseerDocument[i].node_type || overseerDocument[i].type || `root_${i}`])
             }
         } else if (overseerDocument && typeof overseerDocument === 'object') {
             console.log('Processing single root node:', overseerDocument)
             // Single root node
-            this.renderNode(overseerDocument, this.contentDisplay, {})
+            this.renderNode(overseerDocument, this.contentDisplay, {}, [overseerDocument.name || overseerDocument.node_type || overseerDocument.type || 'root'])
         } else {
             console.warn('Unexpected document format:', overseerDocument)
             this.contentDisplay.innerHTML += '<p>Unexpected document format</p>'
@@ -59,7 +60,7 @@ export class OverseerRenderer {
         console.log('Content display after rendering:', this.contentDisplay.innerHTML)
     }
 
-    renderNode(node, container, inheritedStyles = {}) {
+    renderNode(node, container, inheritedStyles = {}, path = []) {
         console.log('renderNode called with:', node, 'container:', container)
 
         if (!node || typeof node !== 'object') {
@@ -71,6 +72,14 @@ export class OverseerRenderer {
         console.log('Created element:', element)
 
         if (element) {
+            // Attach path metadata for event handling
+            try {
+                node.__overseer_path = Array.isArray(path) ? [...path] : []
+                if (element.dataset) {
+                    element.dataset.path = JSON.stringify(node.__overseer_path)
+                }
+            } catch (_) { /* no-op */ }
+
             container.appendChild(element)
             console.log('Appended element to container')
 
@@ -101,8 +110,11 @@ export class OverseerRenderer {
                     } catch (_) { /* no-op */ }
                 }
 
-                if (treatAsNoOwnBg || forceInheritFromParent) {
-                    // Force CSS inheritance from the actual DOM parent
+                // Avoid forcing inherit on controls/fields so built-in styles remain visible
+                const nodeTypeLower = (node.node_type || node.type || '').toLowerCase()
+                const skipBgInherit = ['button','checkbox','string','text','int','float','bool','date'].includes(nodeTypeLower)
+                if ((treatAsNoOwnBg || forceInheritFromParent) && !skipBgInherit) {
+                    // Force CSS inheritance from the actual DOM parent for containers only
                     element.style.backgroundColor = 'inherit'
                 }
 
@@ -116,9 +128,10 @@ export class OverseerRenderer {
                 }
 
                 // Render children
-                if (node.children && Array.isArray(node.children)) {
+        if (node.children && Array.isArray(node.children)) {
                     console.log('Rendering', node.children.length, 'children for node:', node)
                     for (const child of node.children) {
+            const childPath = [...path, (child.name || child.node_type || child.type || 'child')]
                         if (DEBUG_MODE) {
                             try {
                                 const dbgParent = node.name || node.node_type || node.type || 'unknown'
@@ -126,7 +139,7 @@ export class OverseerRenderer {
                                 console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
                             } catch (_) { /* no-op */ }
                         }
-                        this.renderNode(child, element, nextInherited)
+            this.renderNode(child, element, nextInherited, childPath)
                     }
                 } else {
                     console.log('No children for node:', node)
@@ -495,10 +508,25 @@ export class OverseerRenderer {
         const button = document.createElement('button')
         button.className = 'overseer-button'
         button.textContent = node.name || 'Button'
-        
-        // TODO: Add action handling
-        button.addEventListener('click', () => {
-            console.log('Button clicked:', node.name)
+        // Wire to backend actions on click (path is read from dataset set by renderNode)
+        button.addEventListener('click', async () => {
+            try {
+                const path = (button.dataset && button.dataset.path) ? JSON.parse(button.dataset.path) : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
+                console.log('Button clicked:', node.name, 'path=', path)
+                if (!window.app || !window.app.currentDocument) return
+                const updated = await invoke('execute_overseer_event', {
+                    nodes: window.app.currentDocument,
+                    nodePath: path,
+                    eventName: 'click'
+                })
+                // Update app state and re-render
+                window.app.currentDocument = updated
+                window.app.renderer.renderDocument(updated)
+                // Mark as modified since actions mutated state
+                window.app.markDocumentModified && window.app.markDocumentModified()
+            } catch (err) {
+                console.warn('Action execution failed:', err)
+            }
         })
         
         this.applyNodeStyles(button, node)
@@ -1165,6 +1193,27 @@ export class OverseerRenderer {
         
         // Fallback: return as-is (let callers handle unknown shapes)
         return paramValue
+    }
+
+    // Helper to compute a stable name-based path from the current DOM render context
+    buildNodePath(node) {
+        // Walk up via dataset breadcrumbs we attach during render
+        const names = []
+        let cur = node
+        // We rely on a temporary property set during traversal
+        while (cur && cur.__overseer_path && Array.isArray(cur.__overseer_path)) {
+            // The first time it's the full path; break to avoid duplicates
+            return [...cur.__overseer_path]
+        }
+        // Fallback: try to reconstruct from nearest parent DOM element breadcrumbs
+        try {
+            const el = this._lastCreatedElement || null
+            if (el && el.dataset && el.dataset.path) {
+                return JSON.parse(el.dataset.path)
+            }
+        } catch (_) { /* ignore */ }
+        // Worst case, return just the node's own name
+        return [node.name || node.node_type || node.type || 'root']
     }
 
     // Detects whether the raw parameter (not computed) is a Formula
