@@ -507,23 +507,13 @@ export class OverseerRenderer {
     createButtonElement(node) {
         const button = document.createElement('button')
         button.className = 'overseer-button'
-        button.textContent = node.name || 'Button'
+        // Button label comes from explicit 'label' parameter; do not use node name
+        const labelText = this.getParameterValue(node, 'label')
+        button.textContent = labelText ? String(labelText) : ''
         // Wire to backend actions on click (path is read from dataset set by renderNode)
         button.addEventListener('click', async () => {
             try {
-                const path = (button.dataset && button.dataset.path) ? JSON.parse(button.dataset.path) : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
-                console.log('Button clicked:', node.name, 'path=', path)
-                if (!window.app || !window.app.currentDocument) return
-                const updated = await invoke('execute_overseer_event', {
-                    nodes: window.app.currentDocument,
-                    nodePath: path,
-                    eventName: 'click'
-                })
-                // Update app state and re-render
-                window.app.currentDocument = updated
-                window.app.renderer.renderDocument(updated)
-                // Mark as modified since actions mutated state
-                window.app.markDocumentModified && window.app.markDocumentModified()
+                await this.emitEvent(node, button, 'click')
             } catch (err) {
                 console.warn('Action execution failed:', err)
             }
@@ -554,7 +544,7 @@ export class OverseerRenderer {
         }
 
         // Handle checkbox changes
-        checkbox.addEventListener('change', () => {
+        checkbox.addEventListener('change', async () => {
             if (DEBUG_MODE) console.log('Checkbox changed:', node.name, checkbox.checked)
             this.updateNodeValue(node, checkbox.checked)
             
@@ -566,6 +556,8 @@ export class OverseerRenderer {
             if (window.app && window.app.reevaluateDocument) {
                 window.app.reevaluateDocument()
             }
+            // Emit change event for actions
+            try { await this.emitEvent(node, checkbox, 'change') } catch(_) {}
         })
 
         // Apply default field styling if no explicit parameters are set
@@ -1259,7 +1251,7 @@ export class OverseerRenderer {
         input.focus()
         input.select()
         
-        const finishEditing = () => {
+        const finishEditing = async () => {
             const newValue = input.value
             // Keep showing the previous computed value if a formula was entered/edited
             const prevDisplay = element.textContent
@@ -1289,6 +1281,8 @@ export class OverseerRenderer {
             if (window.app && window.app.reevaluateDocument) {
                 window.app.reevaluateDocument()
             }
+            // Emit change event for actions
+            try { await this.emitEvent(node, element, 'change') } catch(_) {}
         }
         
         input.addEventListener('blur', finishEditing)
@@ -1375,7 +1369,7 @@ export class OverseerRenderer {
             }
         })
         
-        const finishEditing = (save = true) => {
+    const finishEditing = async (save = true) => {
             if (save) {
                 const newValue = textarea.value
                 // Update the element with rendered markdown
@@ -1393,6 +1387,8 @@ export class OverseerRenderer {
                 if (window.app && window.app.reevaluateDocument) {
                     window.app.reevaluateDocument()
                 }
+        // Emit change event for actions
+        try { await this.emitEvent(node, element, 'change') } catch(_) {}
             }
             
             // Clean up
@@ -1413,6 +1409,22 @@ export class OverseerRenderer {
                 finishEditing(true)
             }
         })
+    }
+
+    // Emit an event to the backend action executor for a given node
+    async emitEvent(node, element, eventName) {
+        if (!window.app || !window.app.currentDocument) return
+        const path = (element && element.dataset && element.dataset.path)
+            ? JSON.parse(element.dataset.path)
+            : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
+        const updated = await invoke('execute_overseer_event', {
+            nodes: window.app.currentDocument,
+            nodePath: path,
+            eventName
+        })
+        window.app.currentDocument = updated
+        window.app.renderer.renderDocument(updated)
+        window.app.markDocumentModified && window.app.markDocumentModified()
     }
 
     // Helper function to update a node's value in the document structure
