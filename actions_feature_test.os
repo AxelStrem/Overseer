@@ -33,6 +33,15 @@ div ActionFeatureTest (layout = vertical, spacing=md) {
         on click { append(list="/ActionFeatureTest/Tasks", template="<Task>") }
     }
 
+    // Sorting demos
+    button sort_title_asc (label="Sort Tasks by Title (A→Z)") {
+        on click { sort(list="/ActionFeatureTest/Tasks", by="$(x/title)", order="asc") }
+    }
+
+    button sort_title_desc (label="Sort Tasks by Title (Z→A)") {
+        on click { sort(list="/ActionFeatureTest/Tasks", by="$(x/title)", order="desc") }
+    }
+
     // Simple value list
     list Names (entry=string, spacing=sm) {
         - "Eve"

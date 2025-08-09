@@ -1,4 +1,5 @@
 use crate::resolver;
+use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext, BoundValue};
 use crate::types::{OverseerError, OverseerNode, OverseerValue};
 use chrono::{Local, Utc};
 
@@ -215,6 +216,30 @@ impl ActionExecutor {
                     _ => None,
                 };
                 Self::move_in_list(nodes, owner_path, &from_path, &to_path, &key_field, &key_value, at_index)
+            }
+            "sort" => {
+                // sort(list=/path, by=$(...), order=asc|desc, stable=true)
+                let list_path = Self::require_string(&action.parameters, "list")?;
+                let mut by_expr = match action.parameters.get("by") {
+                    Some(OverseerValue::Formula(s)) => s.clone(),
+                    Some(OverseerValue::String(s)) => s.clone(),
+                    _ => return Err(OverseerError::ValidationError("sort.by must be a formula string".to_string())),
+                };
+                // Allow passing with $(...) wrapper; strip it if present
+                let trimmed = by_expr.trim();
+                if trimmed.starts_with("$(") && trimmed.ends_with(')') {
+                    let inner = &trimmed[2..trimmed.len()-1];
+                    by_expr = inner.trim().to_string();
+                }
+                let order = match action.parameters.get("order") {
+                    Some(OverseerValue::String(s)) => s.to_lowercase(),
+                    _ => "asc".to_string(),
+                };
+                let stable = match action.parameters.get("stable") {
+                    Some(OverseerValue::Boolean(b)) => *b,
+                    _ => true,
+                };
+                Self::sort_list(nodes, owner_path, &list_path, &by_expr, &order, stable)
             }
             _ => {
                 // Unknown action: no-op for now
@@ -701,6 +726,103 @@ impl ActionExecutor {
         }
         Ok(())
     }
+
+    fn sort_list(
+        nodes: &mut Vec<OverseerNode>,
+        owner_path: &[String],
+        list_path: &str,
+        by_expr: &str,
+        order: &str,
+        stable: bool,
+    ) -> Result<(), OverseerError> {
+        let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
+        let snapshot = nodes.clone();
+        let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
+            .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
+        let list_node = Self::get_node_mut_by_indices(nodes, &indices)
+            .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
+        if list_node.node_type != "list" { return Err(OverseerError::ValidationError("sort.target is not a list".to_string())); }
+
+        // Prepare evaluation context base for by_expr; we'll bind 'x' to each item
+        // For current_node in base context, use the list node snapshot for relative paths
+        let list_snapshot = &snapshot[indices[0]]; // root of path's first segment
+        // Re-traverse to get the exact list snapshot node reference for context
+        let mut cur: &OverseerNode = list_snapshot;
+        for idx in &indices[1..] {
+            cur = &cur.children[*idx];
+        }
+
+        // Take children to reorder
+        let children_snapshot = cur.children.clone();
+        let taken = std::mem::take(&mut list_node.children);
+        let mut entries: Vec<(OverseerValue, OverseerNode, usize)> = Vec::with_capacity(taken.len());
+
+        for (i, item) in taken.into_iter().enumerate() {
+            // Build context with x bound to snapshot item
+            let base_ctx = EvaluationContext {
+                current_node: cur,
+                parent_node: None,
+                document_root: &snapshot,
+                node_path: owner_path.to_vec(),
+                var_bindings: std::collections::HashMap::new(),
+            };
+            let ctx = base_ctx.with_var("x", BoundValue::Node(&children_snapshot[i]));
+            let key = match FormulaEvaluator::evaluate_formula(by_expr, &ctx) {
+                Ok(v) => v,
+                Err(_) => OverseerValue::String(String::new()),
+            };
+            entries.push((key, item, i));
+        }
+
+        // Choose comparator
+        let cmp = |a: &OverseerValue, b: &OverseerValue| Self::compare_overseer_values(a, b);
+        if stable {
+            if order == "desc" {
+                entries.sort_by(|(ka, _ia, _xa), (kb, _ib, _xb)| cmp(kb, ka));
+            } else {
+                entries.sort_by(|(ka, _ia, _xa), (kb, _ib, _xb)| cmp(ka, kb));
+            }
+        } else {
+            if order == "desc" {
+                entries.sort_unstable_by(|(ka, _ia, _xa), (kb, _ib, _xb)| cmp(kb, ka));
+            } else {
+                entries.sort_unstable_by(|(ka, _ia, _xa), (kb, _ib, _xb)| cmp(ka, kb));
+            }
+        }
+
+        list_node.children = entries.into_iter().map(|(_k, item, _i)| item).collect();
+        Ok(())
+    }
+
+    fn compare_overseer_values(a: &OverseerValue, b: &OverseerValue) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (a, b) {
+            (OverseerValue::Integer(x), OverseerValue::Integer(y)) => x.cmp(y),
+            (OverseerValue::Float(x), OverseerValue::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+            (OverseerValue::Integer(x), OverseerValue::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(Ordering::Equal),
+            (OverseerValue::Float(x), OverseerValue::Integer(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(Ordering::Equal),
+            (OverseerValue::String(x), OverseerValue::String(y)) => x.cmp(y),
+            (OverseerValue::Boolean(x), OverseerValue::Boolean(y)) => x.cmp(y),
+            (OverseerValue::Date(x), OverseerValue::Date(y)) => x.cmp(y), // ISO-8601 strings are lex comparable
+            // Mixed types: compare their string representations
+            _ => Self::value_to_string(a).cmp(&Self::value_to_string(b)),
+        }
+    }
+
+    fn value_to_string(v: &OverseerValue) -> String {
+        match v {
+            OverseerValue::Integer(i) => i.to_string(),
+            OverseerValue::Float(f) => f.to_string(),
+            OverseerValue::String(s) => s.clone(),
+            OverseerValue::Boolean(b) => b.to_string(),
+            OverseerValue::Date(d) => d.clone(),
+            OverseerValue::Color(c) => format!("{:?}", c),
+            OverseerValue::CssSize(s) => format!("{:?}", s),
+            OverseerValue::BorderStyle(s) => format!("{:?}", s),
+            OverseerValue::Formula(s) => s.clone(),
+            OverseerValue::Template(s) => s.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -871,5 +993,31 @@ mod tests {
             it.children.iter().find(|f| f.name=="id").and_then(|f| f.parameters.get("value")).and_then(|v| if let OverseerValue::String(s)=v { Some(s.clone()) } else { None }).unwrap_or_default()
         }).collect();
         assert_eq!(ids, vec!["b".to_string(), "a".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn test_sort_list_by_number_desc() {
+        let input = r#"
+        div Root {
+            div Task { string id = "" int priority = 0 }
+            list Tasks (entry=<Task>, key="id") {
+                - Task { id = "a" priority = 1 }
+                - Task { id = "b" priority = 3 }
+                - Task { id = "c" priority = 2 }
+            }
+            button Sort { on click { sort(list="/Root/Tasks", by="$(x/priority)", order="desc") } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolver::resolve_document(&mut nodes);
+        let path = vec!["Root".to_string(), "Sort".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let list = root.children.iter().find(|c| c.name == "Tasks").unwrap();
+        let ids: Vec<String> = list.children.iter().map(|it| {
+            it.children.iter().find(|f| f.name=="id").and_then(|f| f.parameters.get("value")).and_then(|v| if let OverseerValue::String(s)=v { Some(s.clone()) } else { None }).unwrap_or_default()
+        }).collect();
+        assert_eq!(ids, vec!["b".to_string(), "c".to_string(), "a".to_string()]);
     }
 }
