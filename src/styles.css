@@ -289,19 +289,40 @@ body {
 
 /* Buttons */
 .overseer-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     padding: 8px 16px;
+    margin-bottom: 8px; /* default vertical spacing; inline styles can override */
+    margin-right: 8px;  /* helpful spacing in horizontal layouts */
     background: var(--primary-color);
     color: white;
-    border: none;
+    border: 1px solid var(--border-color); /* restore visible border */
     border-radius: 6px;
     cursor: pointer;
     font-size: 14px;
+    line-height: 1.2; /* avoid odd baseline/line artifacts */
     font-weight: 500;
-    transition: background-color 0.2s;
+    text-decoration: none;
+    transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+    outline: none;
 }
 
 .overseer-button:hover {
     background: #1d4ed8;
+    border-color: var(--primary-color);
+}
+
+.overseer-button:focus,
+.overseer-button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+    border-color: var(--primary-color);
+}
+
+.overseer-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 /* Charts */
