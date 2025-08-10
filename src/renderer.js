@@ -528,9 +528,100 @@ export class OverseerRenderer {
 
         const value = document.createElement('span')
         value.className = 'field-value'
-        value.textContent = this.getNodeValue(node) || ''
-
         container.appendChild(value)
+
+        const mode = (this.getParameterValue(node, 'mode') || '').toString().toLowerCase()
+        const fmt = (this.getParameterValue(node, 'format') || '').toString().toLowerCase()
+
+        // Helper to extract a raw RFC3339 timestamp string from node
+        const extractTs = () => {
+            const params = node.parameters || {}
+            const pick = (x) => {
+                if (!x) return null
+                if (typeof x === 'string') return x
+                if (typeof x === 'object') {
+                    if (x.Timestamp !== undefined) return x.Timestamp
+                    if (x.String !== undefined) return x.String
+                    if (x.Date !== undefined) return `${x.Date}T00:00:00Z`
+                }
+                return null
+            }
+            // Prefer computed value when available
+            if (params._computed_value !== undefined) {
+                const v = params._computed_value
+                const picked = pick(v)
+                if (picked) return picked
+            }
+            if (params.value !== undefined) {
+                const picked = pick(params.value)
+                if (picked) return picked
+            }
+            return null
+        }
+
+        // Relative formatter borrowed from timer
+        const formatRelative = (ms) => {
+            const timerFormat = fmt
+            const sign = ms >= 0 ? 1 : -1
+            const absMs = Math.abs(ms)
+            if (absMs <= 0) return timerFormat === 'seconds' ? '0' : '00:00'
+            const totalSec = Math.ceil(absMs / 1000)
+            const days = Math.floor(totalSec / 86400)
+            const hrsTotal = Math.floor(totalSec / 3600)
+            const hrs = Math.floor((totalSec % 86400) / 3600)
+            const mins = Math.floor((totalSec % 3600) / 60)
+            const secs = totalSec % 60
+            const prefix = sign < 0 ? '-' : ''
+            switch (timerFormat) {
+                case 'seconds':
+                    return prefix + String(totalSec)
+                case 'hh:mm:ss':
+                    return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                case 'mm:ss':
+                case '':
+                    if (days > 0) return prefix + `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    if (hrsTotal > 0) return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    return prefix + `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                case 'long':
+                    return prefix + (days > 0
+                        ? `${days} day${days>1?'s':''} ${hrs} hour${hrs!==1?'s':''} ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                        : (hrsTotal > 0
+                            ? `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                            : `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`))
+                default:
+                    if (days > 0) return prefix + `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    if (hrsTotal > 0) return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    return prefix + `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+            }
+        }
+
+        let intervalId = null
+        const update = () => {
+            const ts = extractTs()
+            if (!ts) { value.textContent = '\u2014'; return }
+            if (!mode) {
+                // Absolute formatting
+                value.textContent = this.formatTimestampValue(node, ts) || ''
+                return
+            }
+            const due = Date.parse(ts)
+            if (isNaN(due)) { value.textContent = '\u2014'; return }
+            if (mode === 'elapsed') {
+                value.textContent = formatRelative(Date.now() - due)
+            } else if (mode === 'remaining') {
+                value.textContent = formatRelative(due - Date.now())
+            } else {
+                value.textContent = this.formatTimestampValue(node, ts) || ''
+            }
+        }
+        update()
+        if (mode === 'elapsed' || mode === 'remaining') {
+            intervalId = setInterval(update, 1000)
+            const obs = new MutationObserver(() => {
+                if (!document.body.contains(container)) { clearInterval(intervalId); obs.disconnect() }
+            })
+            obs.observe(document.body, { childList: true, subtree: true })
+        }
 
         this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
@@ -627,7 +718,11 @@ export class OverseerRenderer {
             // Respect active flag: show nothing when inactive
             const activeParam = this.getParameterValue(node, 'active')
             const isActive = activeParam === true || String(activeParam).toLowerCase() === 'true'
-            if (!isActive) { value.textContent = ''; return }
+            if (!isActive) { 
+                const placeholder = this.getParameterValue(node, 'placeholder')
+                value.textContent = (placeholder !== null && placeholder !== undefined) ? String(placeholder) : '\u2014'
+                return 
+            }
             if (!atStr) { value.textContent = '—'; return }
             const due = Date.parse(atStr)
             if (isNaN(due)) { value.textContent = '—'; return }
@@ -807,7 +902,26 @@ export class OverseerRenderer {
         const spacing = this.getParameterValue(node, 'spacing')
         const margin = this.getParameterValue(node, 'margin')
         const isTightLayout = (spacing === 0 || margin === 0)
-        
+        // Apply cross-axis alignment if provided (near|center|far)
+        const layout = this.getEffectiveLayout(node)
+        const align = (this.getParameterValue(node, '_effective_alignment') || this.getParameterValue(node, 'alignment') || '').toString().toLowerCase()
+        const mapAlign = (a) => (a === 'center' ? 'center' : (a === 'far' ? 'flex-end' : (a === 'near' ? 'flex-start' : '')))
+        const crossAlign = mapAlign(align)
+        if (crossAlign) {
+            if (layout === 'horizontal') {
+                // horizontal layout => align vertically
+                element.style.alignItems = crossAlign
+            } else if (layout === 'vertical') {
+                // vertical layout => align horizontally
+                element.style.alignItems = crossAlign
+            }
+            // add class for CSS-based child align-self helpers
+            if (['near','center','far'].includes(align)) {
+                element.classList.remove('align-near','align-center','align-far')
+                element.classList.add(`align-${align}`)
+            }
+        }
+
         // Apply default padding unless explicitly overridden or in tight layout mode
         
         const hasExplicitPadding = node.parameters.padding !== undefined || 
@@ -946,13 +1060,15 @@ export class OverseerRenderer {
                                  node.parameters['padding-right'] !== undefined
         
         // Apply defaults only if not explicitly set
-        if (!hasExplicitMargin) {
-            if (isTightLayout) {
-                element.style.margin = '0px'
-            } else {
-                element.style.marginBottom = '12px'
+            if (!hasExplicitMargin) {
+                if (isTightLayout) {
+                    element.style.margin = '0px'
+                } else {
+                    // symmetric top/bottom margins for more balanced look
+                    element.style.marginTop = '8px'
+                    element.style.marginBottom = '8px'
+                }
             }
-        }
         if (!hasExplicitPadding) {
             if (isTightLayout) {
                 element.style.padding = '2px' // Minimal padding for readability

@@ -99,15 +99,18 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                     if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
                         debug_resolver!("[RESOLVER] Found template node for {}, processing {} children", template_name, node.children.len());
                         let mut resolved_children = Vec::new();
-                        for (_i, list_item) in node.children.iter().enumerate() {
-                            debug_resolver!("[RESOLVER]   Processing list item {}: {} (type: {})", _i, list_item.name, list_item.node_type);
+                        for (idx, list_item) in node.children.iter().enumerate() {
+                            debug_resolver!("[RESOLVER]   Processing list item {}: {} (type: {})", idx, list_item.name, list_item.node_type);
                             // Handle both old "list_item" type and new "-" type (after parse_list_item removal)
                             if list_item.node_type == "list_item" || (list_item.node_type == "-" && !list_item.children.is_empty()) {
                                 if !list_item.children.is_empty() {
                                     debug_resolver!("[RESOLVER]     Complex list item with {} children", list_item.children.len());
                                     // Complex list item: create a node of the template's type
                                     let mut resolved_item = OverseerNode {
-                                        name: list_item.name.clone(),
+                                        name: {
+                                            let n = list_item.name.clone();
+                                            if n.is_empty() || n == "-" { format!("{}__{}", template_node.name, idx + 1) } else { n }
+                                        },
                                         node_type: template_node.name.clone(),
                                         template: None,
                                         parameters: {
@@ -124,6 +127,8 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                             for (key, value) in &list_item.parameters {
                                                 merged_params.insert(key.clone(), value.clone());
                                             }
+                                            // Record original type of this template instance (e.g., div)
+                                            merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
                                             merged_params
                                         },
                                         children: template_node.children.clone(),
@@ -152,31 +157,23 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                             }
                                         }
                                     }
-                                    
-                                    // Infer types for '-' children from template fields
-                                    for child in resolved_item.children.iter_mut() {
-                                        if child.node_type == "-" {
-                                            if let Some(template_field) = template_node.children.iter().find(|f| f.name == child.name) {
-                                                debug_resolver!("[RESOLVER]     Resolving '-' type for {}: {} -> {}", child.name, child.node_type, template_field.node_type);
-                                                // Store original type before changing it
-                                                child.parameters.insert("_original_type".to_string(), OverseerValue::String(child.node_type.clone()));
-                                                child.node_type = template_field.node_type.clone();
-                                            } else {
-                                                debug_resolver!("[RESOLVER]     Warning: No template field found for '-' type: {}", child.name);
-                                            }
-                                        }
-                                    }
+                                    // Recursively infer '-' types based on template structure
+                                    infer_dash_types_from_template(&mut resolved_item, &template_node);
                                     resolved_children.push(resolved_item);
                                 } else if let Some(val) = list_item.parameters.get("value") {
                                     debug_resolver!("[RESOLVER]     Simple value list item: {:?}", val);
                                     // Simple value: create a node of the template's type, with value
-                                    let mut resolved_item = OverseerNode {
-                                        name: list_item.name.clone(),
+                    let mut resolved_item = OverseerNode {
+                                        name: {
+                                            let n = list_item.name.clone();
+                                            if n.is_empty() || n == "-" { format!("{}__{}", template_node.name, idx + 1) } else { n }
+                                        },
                                         node_type: template_node.name.clone(),
                                         template: None,
                                         parameters: {
                                             // Start with template parameters as base  
-                                            let mut merged_params = template_node.parameters.clone();
+                        let mut merged_params = template_node.parameters.clone();
+                        merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
                                             merged_params.insert("value".to_string(), val.clone());
                                             merged_params
                                         },
@@ -267,36 +264,17 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                 merged_params.insert(key, value);
             }
 
+            // Annotate with original type of template (e.g., div) so renderer can treat it as container
+            merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
+
             node.parameters = merged_params;
             // Keep only the instance's own children (overrides); do not copy all template fields.
             // This matches the current behavior expected by tests: only overridden fields are present.
             let instance_children = node.children.clone();
             node.children = instance_children;
 
-            // Infer types for '-' children from template fields
-            for child in node.children.iter_mut() {
-                if child.node_type == "-" {
-                    if let Some(template_field) = template_node
-                        .children
-                        .iter()
-                        .find(|f| f.name == child.name)
-                    {
-                        debug_resolver!(
-                            "[RESOLVER] Resolving '-' type for {}: {} -> {}",
-                            child.name, child.node_type, template_field.node_type
-                        );
-                        child
-                            .parameters
-                            .insert("_original_type".to_string(), OverseerValue::String(child.node_type.clone()));
-                        child.node_type = template_field.node_type.clone();
-                    } else {
-                        debug_resolver!(
-                            "[RESOLVER] Warning: No template field found for '-' type: {}",
-                            child.name
-                        );
-                    }
-                }
-            }
+            // Recursively infer '-' types based on template structure
+            infer_dash_types_from_template(node, &template_node);
 
             local_progress = true;
         } else {
@@ -315,15 +293,53 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
     local_progress
 }
 
+/// Recursively infer '-' typed override children using the corresponding template node structure.
+fn infer_dash_types_from_template(instance: &mut OverseerNode, template: &OverseerNode) {
+    // For each child in instance, find matching template child by name
+    for child in instance.children.iter_mut() {
+        if let Some(t_child) = template.children.iter().find(|t| t.name == child.name) {
+            if child.node_type == "-" {
+                debug_resolver!(
+                    "[RESOLVER]     Resolving '-' type for {}: {} -> {}",
+                    child.name, child.node_type, t_child.node_type
+                );
+                child
+                    .parameters
+                    .insert("_original_type".to_string(), OverseerValue::String(child.node_type.clone()));
+                child.node_type = t_child.node_type.clone();
+            }
+            // Recurse for grandchildren
+            if !child.children.is_empty() {
+                infer_dash_types_from_template(child, t_child);
+            }
+        }
+    }
+}
+
 /// Resolves layout parameters for all nodes, calculating effective layout based on parent and parameter values
 fn resolve_layout_parameters(nodes: &mut Vec<OverseerNode>, parent_layout: Option<&str>) {
     for node in nodes.iter_mut() {
-        // Only div and list nodes support layout
-        if node.node_type == "div" || node.node_type == "list" {
+        // Containers support layout. Treat template instances as containers if their _original_type is div/list.
+        let mut is_container = node.node_type == "div" || node.node_type == "list";
+        if !is_container {
+            if let Some(OverseerValue::String(orig_ty)) = node.parameters.get("_original_type") {
+                if orig_ty == "div" || orig_ty == "list" {
+                    is_container = true;
+                }
+            }
+        }
+
+        if is_container {
             let effective_layout = calculate_effective_layout(node, parent_layout);
             
             // Store the calculated layout in parameters for the renderer to use
             node.parameters.insert("_effective_layout".to_string(), OverseerValue::String(effective_layout.clone()));
+
+            // Optional alignment across the secondary axis: near|center|far
+            if let Some(OverseerValue::String(align)) = node.parameters.get("alignment") {
+                let a = match align.as_str() { "near"|"center"|"far" => align.clone(), _ => "near".to_string() };
+                node.parameters.insert("_effective_alignment".to_string(), OverseerValue::String(a));
+            }
             debug_resolver!("[RESOLVER] Node {} effective layout: {}", node.name, effective_layout);
             
             // Recursively resolve children with this node's effective layout
@@ -718,6 +734,29 @@ mod tests {
         
         // The checkbox field is not copied because it wasn't overridden
         // This is the current behavior - could be improved to copy all template fields
+    }
+
+    #[test]
+    fn test_effective_layout_on_template_instance_container() {
+        // Template declares a div; instance should be treated as container using _original_type
+        let input = r#"
+        div Outer (layout=vertical) {
+            div Task (hidden=true) {
+                string description = ""
+            }
+            <Task> my_task {
+                string description = "Hello"
+            }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+
+        // Find the instance 'my_task' under Outer
+        let outer = &nodes[0];
+        let instance = outer.children.iter().find(|c| c.name == "my_task").expect("instance present");
+        // Because parent layout is vertical, effective layout for children should be horizontal
+        assert_eq!(instance.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
     }
 
     #[test]

@@ -308,7 +308,29 @@ impl ActionExecutor {
         match action.node_type.as_str() {
             "set" => {
                 let target = Self::require_string(&action.parameters, "path")?;
-                let value = Self::require_value(&action.parameters, "value")?;
+                // Optional mode: "value" (default) evaluates and writes the result; "formula" copies raw formula
+                let mode = match action.parameters.get("mode") {
+                    Some(OverseerValue::String(s)) => s.to_lowercase(),
+                    _ => "value".to_string(),
+                };
+                let value = if mode == "formula" {
+                    // Copy raw value exactly as provided
+                    Self::require_value(&action.parameters, "value")?
+                } else {
+                    // Always evaluate a Formula now in the owner's context to avoid stale _computed_value
+                    if let Some(OverseerValue::Formula(expr)) = action.parameters.get("value") {
+                        let snapshot = nodes.clone();
+                        let ctx = EvaluationContext::new(owner_path.to_vec(), &snapshot);
+                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                    } else if let Some(v) = action.parameters.get("value") {
+                        v.clone()
+                    } else if let Some(v) = Self::get_effective(&action.parameters, "value") {
+                        // Fallback to any precomputed value if present
+                        v.clone()
+                    } else {
+                        return Err(OverseerError::ValidationError("Missing parameter 'value'".to_string()));
+                    }
+                };
                 Self::set_value(nodes, owner_indices, owner_path, &target, value)
             }
             "inc" => {

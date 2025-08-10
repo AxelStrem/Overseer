@@ -160,6 +160,7 @@ body {
     background: var(--surface-color);
     border: 1px solid var(--border-color);
     border-radius: 8px;
+    padding-top: 8px; /* ensure content isn’t glued to top */
 }
 
 .overseer-list h3 {
@@ -194,6 +195,14 @@ body {
     flex-direction: column;
 }
 
+/* When parent aligns center/far, ensure inner containers don't stick to top */
+.overseer-div.align-center > .overseer-div:first-child,
+.overseer-div.align-far > .overseer-div:first-child,
+.overseer-list.align-center > .overseer-div:first-child,
+.overseer-list.align-far > .overseer-div:first-child {
+    align-self: stretch;
+}
+
 /* Fallback for generic layout classes */
 .layout-horizontal {
     display: flex;
@@ -215,6 +224,12 @@ body {
 .overseer-field {
     border-radius: 6px;
     transition: background-color 0.2s;
+}
+
+/* Add a little breathing room at the very top when the first child has no margin-top */
+.overseer-div > :first-child,
+.overseer-list > :first-child {
+    margin-top: 8px !important;
 }
 
 .overseer-field:hover {
@@ -264,6 +279,11 @@ body {
 .timer-field .field-value {
     color: var(--secondary-color);
     font-variant-numeric: tabular-nums;
+}
+
+.timer-field .field-value:empty::after {
+    content: '\2014'; /* em dash placeholder */
+    color: var(--text-secondary);
 }
 
 .text-content {

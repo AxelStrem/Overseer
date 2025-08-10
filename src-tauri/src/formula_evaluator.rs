@@ -1507,6 +1507,24 @@ impl FormulaEvaluator {
                     debug_evaluator!("[EVAL] avg => {:?}", res);
                     return Ok(res);
                 }
+                "first" => {
+                    // Returns the first item in the list as a value; if Node, returns its effective value
+                    // Optional arg first(default) to return default when list is empty
+                    let default = if let Some(arg0) = call.args.get(0) { Some(Self::evaluate_expression(arg0, context)?) } else { None };
+                    if let Some(item) = list.first() {
+                        let v = match item {
+                            ListItem::Value(v) => v.clone(),
+                            ListItem::Node(n) => {
+                                if let Some(v) = Self::get_effective_param(&n.parameters, "value") { v.clone() } else { OverseerValue::String("null".to_string()) }
+                            }
+                        };
+                        debug_evaluator!("[EVAL] first => {:?}", v);
+                        return Ok(v);
+                    }
+                    let out = default.unwrap_or_else(|| OverseerValue::String("null".to_string()));
+                    debug_evaluator!("[EVAL] first(empty) => {:?}", out);
+                    return Ok(out);
+                }
                 other => return Err(OverseerError::FormulaError(format!("Unknown method: {}", other))),
             }
         }
@@ -1697,6 +1715,34 @@ mod tests {
         let total = root.get_accessible_children().into_iter().find(|c| c.name == "total").unwrap();
         let computed = total.parameters.get("_computed_value").cloned().unwrap();
         assert_eq!(computed, OverseerValue::Integer(35));
+    }
+
+    #[test]
+    fn test_pipeline_filter_map_first_lookup_by_key() {
+        let input = r#"
+        div Root {
+            list Exercises (entry=<Exercise>) {
+                - { string id = "a" string description = "Push Ups" }
+                - { string id = "b" string description = "Squats" }
+            }
+            div Record {
+                string exercise_id = "b"
+                string description = $(/Exercises.filter(|x| x/id == ../exercise_id).map(|x| x/description).first(""))
+            }
+            div Exercise (hidden=true) {
+                string id = ""
+                string description = ""
+            }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let root = &nodes[0];
+        // Navigate to Record/description
+        let record = root.get_accessible_children().into_iter().find(|c| c.name == "Record").unwrap();
+        let desc = record.get_accessible_children().into_iter().find(|c| c.name == "description").unwrap();
+        let computed = desc.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(computed, OverseerValue::String("Squats".to_string()));
     }
 
     #[test]
