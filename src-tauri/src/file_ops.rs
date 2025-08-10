@@ -156,10 +156,14 @@ impl OverseerFileHandler {
                 }
             }
 
-            // Handle node name - skip if it's "-" (unnamed node marker)
+            // Handle node name - skip if it's "-" (unnamed node marker) or if it's auto-defaulted (name == type)
             if !node.name.is_empty() && node.name != "-" {
-                output.push(' ');
-                output.push_str(&node.name);
+                // If the name is exactly the same as the type, treat it as auto-defaulted and omit it.
+                let auto_defaulted = node.name == node.node_type;
+                if !auto_defaulted {
+                    output.push(' ');
+                    output.push_str(&node.name);
+                }
             }
         }
         
@@ -222,6 +226,12 @@ impl OverseerFileHandler {
             // Children under a list node are list-body items (render as '-')
             let children_in_list_body = node.node_type == "list";
             for child in &node.children {
+                // Skip template-derived children unless they were explicitly overridden
+                let is_template_child = matches!(child.parameters.get("_template_node"), Some(OverseerValue::Boolean(true)));
+                let has_override = matches!(child.parameters.get("_override_present"), Some(OverseerValue::Boolean(true)));
+                if is_template_child && !has_override {
+                    continue;
+                }
                 Self::serialize_node_context(child, output, indent_level + 1, children_in_list_body)?;
             }
             output.push_str(&format!("{}}}\n", indent));

@@ -777,21 +777,68 @@ impl ActionExecutor {
         None
     }
 
-    // Create a list item by cloning template definition (shallow clone children and params)
+    // Create a list item by cloning template definition and marking template-derived fields
     fn clone_from_template(template: &OverseerNode) -> OverseerNode {
+        // Start parameters with template defaults and add _template_ markers so serializer can skip them
+        let mut params = template.parameters.clone();
+        // Record original type of the template (e.g., div, list) so renderer/layout can treat as container
+        params.insert("_original_type".to_string(), OverseerValue::String(template.node_type.clone()));
+        // Add per-parameter template markers (skip internal keys)
+        let keys: Vec<String> = params
+            .keys()
+            .filter(|k| !k.starts_with('_'))
+            .cloned()
+            .collect();
+        for k in keys {
+            if let Some(v) = params.get(&k).cloned() {
+                params.insert(format!("_template_{}", k), v);
+            }
+        }
+
+        // Clone children and mark entire subtree as template-derived so we don't save inherited fields
+        let mut children = template.children.clone();
+        for ch in children.iter_mut() {
+            Self::mark_template_child_recursive_action(ch);
+        }
+
         OverseerNode {
             name: template.name.clone(),
             node_type: template.name.clone(),
             template: None,
-            parameters: template.parameters.clone(),
-            children: template.children.clone(),
+            parameters: params,
+            children,
             is_hierarchy_transparent: template.is_hierarchy_transparent,
+        }
+    }
+
+    // Mark a node and its subtree as template-derived for serializer filtering
+    fn mark_template_child_recursive_action(node: &mut OverseerNode) {
+        node
+            .parameters
+            .insert("_template_node".to_string(), OverseerValue::Boolean(true));
+        let keys: Vec<String> = node
+            .parameters
+            .keys()
+            .filter(|k| !k.starts_with('_'))
+            .cloned()
+            .collect();
+        for k in keys {
+            if let Some(v) = node.parameters.get(&k).cloned() {
+                node.parameters.insert(format!("_template_{}", k), v);
+            }
+        }
+        for ch in node.children.iter_mut() {
+            Self::mark_template_child_recursive_action(ch);
         }
     }
 
     fn set_field_value_on_item(item: &mut OverseerNode, field: &str, value: OverseerValue) {
         if let Some(child) = item.children.iter_mut().find(|c| c.name == field) {
             child.parameters.insert("value".to_string(), value);
+            // Mark explicit override so serializer will persist this child even if template-derived
+            child
+                .parameters
+                .insert("_override_present".to_string(), OverseerValue::Boolean(true));
         } else {
             // Add simple string field if missing
             let new_field = OverseerNode {

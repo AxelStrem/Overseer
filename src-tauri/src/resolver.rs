@@ -134,6 +134,10 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         children: template_node.children.clone(),
                                         is_hierarchy_transparent: template_node.is_hierarchy_transparent,
                                     };
+                                    // Mark all cloned children as template-derived so serializer can omit them unless overridden
+                                    for child in resolved_item.children.iter_mut() {
+                                        mark_template_child_recursive(child);
+                                    }
                                     let overrides: HashMap<String, &OverseerNode> = list_item
                                         .children
                                         .iter()
@@ -268,10 +272,19 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
             merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
 
             node.parameters = merged_params;
-            // Keep only the instance's own children (overrides); do not copy all template fields.
-            // This matches the current behavior expected by tests: only overridden fields are present.
+            // Clone template children and then merge overrides from the instance, just like list entries
             let instance_children = node.children.clone();
-            node.children = instance_children;
+            node.children = template_node.children.clone();
+            for child in node.children.iter_mut() {
+                mark_template_child_recursive(child);
+            }
+            if !instance_children.is_empty() {
+                let overrides: HashMap<String, &OverseerNode> = instance_children
+                    .iter()
+                    .map(|o| (o.name.clone(), o))
+                    .collect();
+                merge_node(node, &overrides);
+            }
 
             // Recursively infer '-' types based on template structure
             infer_dash_types_from_template(node, &template_node);
@@ -482,6 +495,8 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 template_field
                     .parameters
                     .insert("value".to_string(), val.clone());
+                // Mark this child as explicitly overridden so serializer will persist it
+                template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
             }
 
             // If this field is a list, handle entry inheritance and recursive merge
@@ -502,10 +517,12 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 // Recursively resolve/merge children for nested lists
                 if !override_field.children.is_empty() {
                     template_field.children = override_field.children.clone();
+                    template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                 }
             } else if !override_field.children.is_empty() {
                 // For non-list fields, just override children
                 template_field.children = override_field.children.clone();
+                template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
             }
             // Ensure node_type is preserved from template (do not overwrite)
             } else {
@@ -520,6 +537,24 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 ov_name
             );
         }
+    }
+}
+
+/// Mark a node and its subtree as template-derived by adding _template_ markers for present params
+fn mark_template_child_recursive(node: &mut OverseerNode) {
+    // Mark a simple flag to indicate this whole node is from a template
+    node.parameters.insert("_template_node".to_string(), OverseerValue::Boolean(true));
+    // For all existing parameters, add a _template_ marker so serializer excludes them by default
+    let keys: Vec<String> = node.parameters.keys().cloned().collect();
+    for k in keys {
+        if !k.starts_with("_") { // avoid internal keys
+            if let Some(v) = node.parameters.get(&k).cloned() {
+                node.parameters.insert(format!("_template_{}", k), v);
+            }
+        }
+    }
+    for child in node.children.iter_mut() {
+        mark_template_child_recursive(child);
     }
 }
 
@@ -724,16 +759,15 @@ mod tests {
             println!("  Child {}: {} (type: {})", i, child.name, child.node_type);
         }
         
-        assert_eq!(resolved_task.node_type, "Task");
-        // NOTE: Current template resolution only copies overridden fields, not all template fields
-        // This is a limitation we could fix later, but for now test the current behavior
-        assert_eq!(resolved_task.children.len(), 1);
-        
-        let description = &resolved_task.children[0];
-        assert_eq!(description.parameters.get("value"), Some(&OverseerValue::String("My custom task".to_string())));
-        
-        // The checkbox field is not copied because it wasn't overridden
-        // This is the current behavior - could be improved to copy all template fields
+    assert_eq!(resolved_task.node_type, "Task");
+    // New behavior: copy all template fields, then merge overrides
+    assert_eq!(resolved_task.children.len(), 2);
+    // description should be overridden
+    let description = resolved_task.get_accessible_children().into_iter().find(|c| c.name == "description").unwrap();
+    assert_eq!(description.parameters.get("value"), Some(&OverseerValue::String("My custom task".to_string())));
+    // checkbox should be present with default value from template
+    let complete = resolved_task.get_accessible_children().into_iter().find(|c| c.name == "complete").unwrap();
+    assert_eq!(complete.parameters.get("value"), Some(&OverseerValue::Boolean(false)));
     }
 
     #[test]

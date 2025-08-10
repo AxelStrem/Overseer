@@ -65,6 +65,11 @@ pub enum FormulaExpression {
         then_branch: Box<FormulaExpression>,
         else_branch: Box<FormulaExpression>,
     },
+    // Follow a child path from an expression that resolves to a node, e.g., expr/child/grand
+    PathFollow {
+        base: Box<FormulaExpression>,
+        segments: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -254,6 +259,28 @@ impl FormulaEvaluator {
                     Self::evaluate_expression(else_branch, context)
                 }
             }
+            FormulaExpression::PathFollow { base, segments } => {
+                // Resolve base to a node, then follow child segments and return final node's value
+                if let Some(mut cur) = Self::eval_expr_to_node(base, context) {
+                    let mut p = context.node_path.clone();
+                    for seg in segments {
+                        if let Some(next) = cur.get_accessible_children().into_iter().find(|c| &c.name == seg) {
+                            p.push(next.name.clone());
+                            cur = next;
+                        } else {
+                            return Err(OverseerError::FormulaError(format!("Path segment not found: {}", seg)));
+                        }
+                    }
+                    if let Some(v) = Self::get_effective_param(&cur.parameters, "value") { return Ok(v.clone()); }
+                    if let Some(OverseerValue::Formula(f)) = cur.parameters.get("value") {
+                        let child_ctx = EvaluationContext::new_with_current(cur, p, context.document_root);
+                        return FormulaEvaluator::evaluate_formula(f, &child_ctx);
+                    }
+                    // If no value, return a null-ish string for now
+                    return Ok(OverseerValue::String("null".to_string()));
+                }
+                Err(OverseerError::FormulaError("Base of path does not resolve to a node".to_string()))
+            }
         }
     }
 
@@ -397,21 +424,34 @@ impl FormulaEvaluator {
             let mut found_start = context.current_node;
             let first_seg = &segments[0];
             let mut end = context.node_path.len();
+            let mut found = false;
             while end > 0 {
                 if let Some(candidate) = Self::resolve_path_to_node(&context.node_path[..end].to_vec(), context.document_root) {
                     if candidate.get_accessible_children().into_iter().any(|c| &c.name == first_seg) {
                         found_start = candidate;
                         base_path = context.node_path[..end].to_vec();
                         debug_evaluator!("[EVAL] '/' anchored base {:?} chosen for first seg '{}'", base_path, first_seg);
+                        found = true;
                         break;
                     }
                 }
                 end -= 1;
             }
+        let mut skip_first = false;
+        if !found {
+                // Fallback: treat as absolute root path if a top-level node matches first segment
+                if let Some(root_match) = context.document_root.iter().find(|n| &n.name == first_seg) {
+                    found_start = root_match;
+                    base_path = vec![first_seg.clone()];
+                    debug_evaluator!("[EVAL] '/' absolute base {:?} chosen at root for first seg '{}'", base_path, first_seg);
+            skip_first = true;
+                }
+            }
             // Traverse all but last via children names from found_start
             let mut current = found_start;
             let mut p = base_path.clone();
-            for seg in &segments[..segments.len().saturating_sub(1)] {
+        let start_idx = if skip_first { 1 } else { 0 };
+        for seg in &segments[start_idx..segments.len().saturating_sub(1)] {
                 if let Some(next) = current.get_accessible_children().into_iter().find(|c| &c.name == seg) {
                     p.push(next.name.clone());
                     current = next;
@@ -652,16 +692,25 @@ impl FormulaEvaluator {
             let mut p = context.node_path.clone();
             let first = &segments[0];
             let mut end = context.node_path.len();
+            let mut found = false;
             while end > 0 {
                 if let Some(candidate) = Self::resolve_path_to_node(&context.node_path[..end].to_vec(), context.document_root) {
                     if candidate.get_accessible_children().into_iter().any(|c| &c.name == first) {
-                        start = candidate; p = context.node_path[..end].to_vec(); break;
+                        start = candidate; p = context.node_path[..end].to_vec(); found = true; break;
                     }
                 }
                 end -= 1;
             }
+        let mut skip_first = false;
+        if !found {
+                if let Some(root_match) = context.document_root.iter().find(|n| &n.name == first) {
+            start = root_match; p = vec![first.clone()]; skip_first = true;
+                    debug_evaluator!("[EVAL] '/' absolute base {:?} for param chosen at root for first seg '{}'", p, first);
+                }
+            }
             let mut node = start;
-            for seg in segments {
+        let start_idx = if skip_first { 1 } else { 0 };
+        for seg in &segments[start_idx..] {
                 if let Some(next) = node.get_accessible_children().into_iter().find(|c| &c.name == seg) { p.push(next.name.clone()); node = next; }
                 else { return Err(OverseerError::FormulaError(format!("Path segment not found: {}", seg))); }
             }
@@ -1261,6 +1310,12 @@ fn unary_expression(input: &str) -> IResult<&str, FormulaExpression> {
             other => other,
         };
     }
+    // Parse zero or more path tail segments like /child/grand after a method chain or any expr
+    let (input, tail_segments) = many0(preceded(char('/'), take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-')))(input)?;
+    if !tail_segments.is_empty() {
+        let segs = tail_segments.into_iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        expr = FormulaExpression::PathFollow { base: Box::new(expr), segments: segs };
+    }
     for _ in 0..bangs.len() {
         expr = FormulaExpression::UnaryOp { operator: UnaryOperator::Not, expr: Box::new(expr) };
     }
@@ -1447,6 +1502,38 @@ impl FormulaEvaluator {
                     list = out;
                     debug_evaluator!("[EVAL] After map: list size {}", list.len());
                 }
+                "find" => {
+                    // find(keyValue) — requires current list base to be a container with parameter 'key'
+                    let key_val_expr = call.args.get(0).ok_or_else(|| OverseerError::FormulaError("find() requires 1 argument".to_string()))?;
+                    let target_key_value = Self::evaluate_expression(key_val_expr, context)?;
+                    // Determine key field name from base container
+                    let key_field = if let Some(base_node) = Self::eval_expr_to_node(base, context) {
+                        if let Some(OverseerValue::String(k)) = base_node.parameters.get("key") { k.clone() } else { return Err(OverseerError::ValidationError("find() base does not declare a key parameter".to_string())); }
+                    } else { return Err(OverseerError::ValidationError("find() base must be a node (list/container)".to_string())); };
+                    // Scan list for the first item whose child named key_field has value == target_key_value
+                    let mut found: Option<ListItem> = None;
+                    for item in list.into_iter() {
+                        match &item {
+                            ListItem::Node(n) => {
+                                if let Some(child) = n.get_accessible_children().into_iter().find(|c| c.name == key_field) {
+                                    if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
+                                        // Relaxed equality: use compare_values to allow int<->string numeric equality, etc.
+                                        if Self::compare_values(v, &target_key_value).map(|ord| ord == std::cmp::Ordering::Equal).unwrap_or(false) {
+                                            found = Some(ListItem::Node(n));
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            ListItem::Value(_) => { /* skip values for find over nodes */ }
+                        }
+                    }
+                    list = match found {
+                        Some(x) => vec![x],
+                        None => vec![],
+                    };
+                    debug_evaluator!("[EVAL] find => {}", list.len());
+                }
                 "filter" => {
                     let lambda = call.args.get(0).ok_or_else(|| OverseerError::FormulaError("filter() requires 1 argument".to_string()))?;
                     let mut out: Vec<ListItem> = Vec::new();
@@ -1583,6 +1670,47 @@ impl FormulaEvaluator {
                 }
                 None
             }
+            FormulaExpression::MethodChain { base, calls } => {
+                // Resolve base container node
+                let base_node = Self::eval_expr_to_node(base, context)?;
+                // Start from base's accessible children
+                let mut nodes: Vec<&OverseerNode> = base_node.get_accessible_children();
+                let mut current_container = base_node;
+                for call in calls {
+                    match call.name.as_str() {
+                        "find" => {
+                            // Evaluate key value to match
+                            let key_val_expr = call.args.get(0)?;
+                            let target = Self::evaluate_expression(key_val_expr, context).ok()?;
+                            // Determine key field name from the base container (or most recent container)
+                            let key_field = if let Some(OverseerValue::String(k)) = current_container.parameters.get("key") { k } else { return None; };
+                            // Find first child whose key_field child value == target
+                            let mut found: Option<&OverseerNode> = None;
+                            for n in nodes.into_iter() {
+                                if let Some(ch) = n.get_accessible_children().into_iter().find(|c| &c.name == key_field) {
+                                    if let Some(v) = Self::get_effective_param(&ch.parameters, "value") {
+                                        // Relaxed equality using compare_values
+                                        if Self::compare_values(v, &target).map(|ord| ord == std::cmp::Ordering::Equal).unwrap_or(false) { found = Some(n); break; }
+                                    }
+                                }
+                            }
+                            if let Some(f) = found {
+                                // After find, treat result as a singleton list and container becomes the found node
+                                nodes = vec![f];
+                                current_container = f;
+                            } else {
+                                nodes = vec![]; // no match
+                            }
+                        }
+                        _ => {
+                            // Unsupported for node resolution; bail
+                            return None;
+                        }
+                    }
+                }
+                // If chain narrowed to a single node, return it
+                if nodes.len() == 1 { Some(nodes[0]) } else { None }
+            }
             _ => None,
         }
     }
@@ -1591,20 +1719,28 @@ impl FormulaEvaluator {
         if path.is_empty() { return None; }
         if path[0] == "/" {
             // Find nearest ancestor containing first segment
-            let segments = &path[1..];
+        let segments = &path[1..];
             if segments.is_empty() { return None; }
             let mut start = context.current_node;
             let mut p_end = context.node_path.len();
+            let mut found = false;
             while p_end > 0 {
                 if let Some(candidate) = Self::resolve_path_to_node(&context.node_path[..p_end].to_vec(), context.document_root) {
                     if candidate.get_accessible_children().into_iter().any(|c| c.name == segments[0]) {
-                        start = candidate; break;
+                        start = candidate; found = true; break;
                     }
                 }
                 p_end -= 1;
             }
+        let mut skip_first = false;
+        if !found {
+                if let Some(root_match) = context.document_root.iter().find(|n| n.name == segments[0]) {
+            start = root_match; skip_first = true;
+                }
+            }
             let mut current = start;
-            for seg in segments {
+        let start_idx = if skip_first { 1 } else { 0 };
+        for seg in &segments[start_idx..] {
                 current = current.get_accessible_children().into_iter().find(|c| &c.name == seg)?;
             }
             return Some(current);
@@ -1743,6 +1879,90 @@ mod tests {
         let desc = record.get_accessible_children().into_iter().find(|c| c.name == "description").unwrap();
         let computed = desc.parameters.get("_computed_value").cloned().unwrap();
         assert_eq!(computed, OverseerValue::String("Squats".to_string()));
+    }
+
+    #[test]
+    fn test_find_method_uses_list_key_and_path_follow() {
+        let input = r#"
+        div Root {
+            div Exercise (hidden=true) {
+                string id = ""
+                string description = ""
+            }
+            list Exercises (entry=<Exercise>, key="id") {
+                - { string id = "a" string description = "Push Ups" }
+                - { string id = "b" string description = "Squats" }
+            }
+            div Record {
+                string id = "b"
+                string desc = $(/Exercises.find(../id)/description)
+            }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let record = root.get_accessible_children().into_iter().find(|c| c.name == "Record").unwrap();
+        let desc = record.get_accessible_children().into_iter().find(|c| c.name == "desc").unwrap();
+        let computed = desc.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(computed, OverseerValue::String("Squats".to_string()));
+    }
+
+    #[test]
+    fn test_find_with_integer_keys_and_string_lookup() {
+        let input = r#"
+        div Root {
+            div Exercise (hidden=true) {
+                int id = 0
+                string description = ""
+            }
+            list Exercises (entry=<Exercise>, key="id") {
+                - { int id = 1 string description = "One" }
+                - { int id = 2 string description = "Two" }
+            }
+            div Record {
+                // Lookup id provided as a string; should match integer id via relaxed equality
+                string id = "2"
+                string desc = $(/Exercises.find(../id)/description)
+            }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let record = root.get_accessible_children().into_iter().find(|c| c.name == "Record").unwrap();
+        let desc = record.get_accessible_children().into_iter().find(|c| c.name == "desc").unwrap();
+        let computed = desc.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(computed, OverseerValue::String("Two".to_string()));
+    }
+
+    #[test]
+    fn test_absolute_path_with_tab_and_find() {
+        let input = r#"
+        tab exercise_tracker {
+            div ExerciseRecord {
+                int eid = 2
+                string description = $(/exercise_tracker/Exercises.find(eid)/description)
+            }
+            div (hidden=true) {
+                div Exercise {
+                    int id = 0
+                    string description = ""
+                }
+            }
+            list Exercises (entry=<Exercise>, key="id") {
+                - { int id = 1 string description = "A" }
+                - { int id = 2 string description = "B" }
+            }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let tab = &nodes[0];
+        let record = tab.get_accessible_children().into_iter().find(|c| c.name == "ExerciseRecord").unwrap();
+        let desc = record.get_accessible_children().into_iter().find(|c| c.name == "description").unwrap();
+        let computed = desc.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(computed, OverseerValue::String("B".to_string()));
     }
 
     #[test]
