@@ -555,8 +555,6 @@ export class OverseerRenderer {
         container.appendChild(value)
 
         const params = node.parameters || {}
-        const active = (params.active && (params.active.Boolean === true || params.active === true)) || false
-
         const extractAt = () => {
             const comp = params._computed_at
             const raw = params.at
@@ -574,51 +572,75 @@ export class OverseerRenderer {
         }
 
         const timerFormat = (this.getParameterValue(node, 'format') || '').toString().toLowerCase()
+        const elapsedMode = (this.getParameterValue(node, 'mode') || '').toString().toLowerCase() === 'elapsed'
+        const getOffsetMs = () => {
+            const raw = this.getParameterValue(node, 'offset')
+            if (raw === null || raw === undefined) return 0
+            if (typeof raw === 'number') return Math.floor(raw * 1000)
+            const s = String(raw).trim().toLowerCase()
+            if (s.endsWith('ms')) return parseInt(s.slice(0, -2), 10) || 0
+            if (s.endsWith('s')) return (parseInt(s.slice(0, -1), 10) || 0) * 1000
+            if (s.endsWith('m')) return (parseInt(s.slice(0, -1), 10) || 0) * 60_000
+            if (s.endsWith('h')) return (parseInt(s.slice(0, -1), 10) || 0) * 3_600_000
+            if (s.endsWith('d')) return (parseInt(s.slice(0, -1), 10) || 0) * 86_400_000
+            const n = parseInt(s, 10); if (!isNaN(n)) return n * 1000
+            return 0
+        }
+
         const formatRemaining = (ms) => {
-            if (ms <= 0) return timerFormat === 'seconds' ? '0' : '00:00'
-            // Use ceiling to avoid an immediate drop right after render
-            const totalSec = Math.ceil(ms / 1000)
+            const sign = ms >= 0 ? 1 : -1
+            const absMs = Math.abs(ms)
+            if (absMs <= 0) return timerFormat === 'seconds' ? '0' : '00:00'
+            const totalSec = Math.ceil(absMs / 1000)
             const days = Math.floor(totalSec / 86400)
             const hrsTotal = Math.floor(totalSec / 3600)
             const hrs = Math.floor((totalSec % 86400) / 3600)
             const mins = Math.floor((totalSec % 3600) / 60)
             const secs = totalSec % 60
+            const prefix = sign < 0 ? '-' : ''
             switch (timerFormat) {
                 case 'seconds':
-                    return String(totalSec)
+                    return prefix + String(totalSec)
                 case 'hh:mm:ss':
-                    return `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
                 case 'mm:ss':
                 case '': // default concise
-                    if (days > 0) return `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                    if (hrsTotal > 0) return `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                    return `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    if (days > 0) return prefix + `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    if (hrsTotal > 0) return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    return prefix + `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
                 case 'long':
-                    return days > 0
+                    return prefix + (days > 0
                         ? `${days} day${days>1?'s':''} ${hrs} hour${hrs!==1?'s':''} ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
                         : (hrsTotal > 0
                             ? `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                            : `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`)
+                            : `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`))
                 default:
-                    if (days > 0) return `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                    if (hrsTotal > 0) return `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                    return `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    if (days > 0) return prefix + `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    if (hrsTotal > 0) return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    return prefix + `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
             }
         }
 
         const atStr = extractAt()
         let intervalId = null
         const update = () => {
-            if (!atStr) { value.textContent = active ? '—' : ''; return }
+            // Respect active flag: show nothing when inactive
+            const activeParam = this.getParameterValue(node, 'active')
+            const isActive = activeParam === true || String(activeParam).toLowerCase() === 'true'
+            if (!isActive) { value.textContent = ''; return }
+            if (!atStr) { value.textContent = '—'; return }
             const due = Date.parse(atStr)
             if (isNaN(due)) { value.textContent = '—'; return }
-            const rem = due - Date.now()
-            value.textContent = formatRemaining(rem)
+            if (elapsedMode) {
+                const elapsed = Date.now() - due
+                value.textContent = formatRemaining(elapsed)
+            } else {
+                const rem = (due + getOffsetMs()) - Date.now()
+                value.textContent = formatRemaining(rem)
+            }
         }
         update()
-        // Smooth live update each second while visible
         intervalId = setInterval(update, 1000)
-        // Clean up when element is removed
         const obs = new MutationObserver(() => {
             if (!document.body.contains(container)) { clearInterval(intervalId); obs.disconnect() }
         })

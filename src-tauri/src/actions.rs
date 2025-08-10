@@ -1,7 +1,7 @@
 use crate::resolver;
 use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext, BoundValue};
 use crate::types::{OverseerError, OverseerNode, OverseerValue};
-use chrono::{Local, Utc, Duration};
+use chrono::{Local, Utc, Duration, NaiveDateTime, NaiveDate};
 
 // Debug logging macro for actions
 macro_rules! debug_actions {
@@ -14,6 +14,57 @@ macro_rules! debug_actions {
 pub struct ActionExecutor;
 
 impl ActionExecutor {
+    /// Parse a variety of timestamp string forms into a UTC DateTime
+    fn parse_timestamp_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        // Prefer RFC3339 first
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) { return Some(dt.with_timezone(&chrono::Utc)); }
+        // Fallback: "YYYY-MM-DD HH:MM:SS" (assume UTC)
+        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+            return Some(chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc));
+        }
+        // Fallback: "YYYY-MM-DDTHH:MM:SS" (no zone, assume UTC)
+        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+            return Some(chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc));
+        }
+        // Fallback: date only -> start of day UTC
+        if let Ok(nd) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            let ndt = nd.and_hms_opt(0,0,0)?;
+            return Some(chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc));
+        }
+        None
+    }
+
+    /// Parse an offset value to chrono::Duration. Supported:
+    /// - Integer/Float => seconds
+    /// - String with suffix: "ms", "s", "m", "h", "d" (e.g., "1500ms", "10s", "5m", "2h", "1d")
+    fn parse_offset_duration(val: &OverseerValue) -> Option<Duration> {
+        match val {
+            OverseerValue::Integer(i) => Some(Duration::seconds(*i)),
+            OverseerValue::Float(f) => Some(Duration::seconds(*f as i64)),
+            OverseerValue::String(s) => {
+                let txt = s.trim().to_lowercase();
+                if txt.ends_with("ms") {
+                    let num = txt.trim_end_matches("ms").trim().parse::<i64>().ok()?;
+                    Some(Duration::milliseconds(num))
+                } else if txt.ends_with('s') {
+                    let num = txt.trim_end_matches('s').trim().parse::<i64>().ok()?;
+                    Some(Duration::seconds(num))
+                } else if txt.ends_with('m') {
+                    let num = txt.trim_end_matches('m').trim().parse::<i64>().ok()?;
+                    Some(Duration::minutes(num))
+                } else if txt.ends_with('h') {
+                    let num = txt.trim_end_matches('h').trim().parse::<i64>().ok()?;
+                    Some(Duration::hours(num))
+                } else if txt.ends_with('d') {
+                    let num = txt.trim_end_matches('d').trim().parse::<i64>().ok()?;
+                    Some(Duration::days(num))
+                } else if let Ok(num) = txt.parse::<i64>() {
+                    Some(Duration::seconds(num))
+                } else { None }
+            }
+            _ => None,
+        }
+    }
     fn opposite_layout(layout: &str) -> String {
         match layout {
             "horizontal" => "vertical".to_string(),
@@ -105,7 +156,7 @@ impl ActionExecutor {
                     _ => false,
                 };
                 if !active { continue; }
-                // Evaluate 'at'
+                // Evaluate 'at' (base timestamp)
                 let at_val = Self::get_effective(&timer_node.parameters, "at").or_else(|| timer_node.parameters.get("at"));
                 let at_str: Option<String> = match at_val {
                     Some(OverseerValue::Timestamp(ts)) => Some(ts.clone()),
@@ -125,10 +176,17 @@ impl ActionExecutor {
                     _ => None,
                 };
                 if let Some(at) = at_str {
-                    // Parse RFC3339 and compare actual instants
-                    let due = match chrono::DateTime::parse_from_rfc3339(&at) {
-                        Ok(dt) => dt.with_timezone(&chrono::Utc) <= now_dt,
-                        Err(_) => false,
+                    // Compute due instant = at + offset (if any)
+                    let base = Self::parse_timestamp_utc(&at);
+                    // offset may come from computed/raw 'offset' param
+                    let off_val = Self::get_effective(&timer_node.parameters, "offset").or_else(|| timer_node.parameters.get("offset"));
+                    let offset = off_val.and_then(|v| Self::parse_offset_duration(v));
+                    let due = match base {
+                        Some(b) => {
+                            let inst = if let Some(off) = offset { b + off } else { b };
+                            inst <= now_dt
+                        }
+                        None => false,
                     };
                     if due {
                         // Fire: execute its on timeout { ... } actions
@@ -225,8 +283,11 @@ impl ActionExecutor {
                 _ => None,
             };
             if let Some(at) = at_str {
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&at) {
-                    let utc = dt.with_timezone(&chrono::Utc);
+                if let Some(base) = Self::parse_timestamp_utc(&at) {
+                    // include offset when computing due time
+                    let off_val = Self::get_effective(&timer_node.parameters, "offset").or_else(|| timer_node.parameters.get("offset"));
+                    let offset = off_val.and_then(|v| Self::parse_offset_duration(v));
+                    let utc = if let Some(off) = offset { base + off } else { base };
                     if utc > now {
                         let ms = utc.timestamp_millis();
                         next_due = match next_due { Some(prev) => Some(prev.min(ms)), None => Some(ms) };
@@ -290,6 +351,7 @@ impl ActionExecutor {
             }
             "set_now_ts" => {
                 // set_now_ts(path=..., offset=seconds?) -> sets RFC3339 Timestamp
+                // path can be either a node field (sets its value) or a specific parameter via trailing .param (e.g., ../after_10s.at)
                 let target = Self::require_string(&action.parameters, "path")?;
                 let offset_secs: i64 = match action.parameters.get("offset").or(action.parameters.get("offsetSeconds")) {
                     Some(OverseerValue::Integer(i)) => *i,
@@ -299,7 +361,14 @@ impl ActionExecutor {
                 };
                 let ts = (Utc::now() + Duration::seconds(offset_secs)).to_rfc3339();
                 let val = OverseerValue::Timestamp(ts);
-                Self::set_value(nodes, owner_indices, owner_path, &target, val)
+                // If target specifies a parameter explicitly (../node.param), set that parameter; else set 'value'
+                let (_segments, explicit_param, _anchored) = Self::split_path_and_param(&target);
+                if explicit_param.is_some() {
+                    Self::set_value(nodes, owner_indices, owner_path, &target, val)
+                } else {
+                    // force write to value by ensuring no explicit param
+                    Self::set_value(nodes, owner_indices, owner_path, &target, val)
+                }
             }
             // Increment 3: list identity and mutations (MVP subset)
             "ensure_in_list" => {
