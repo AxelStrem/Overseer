@@ -44,25 +44,20 @@ impl ActionExecutor {
         let owner: &mut OverseerNode = unsafe { &mut *owner_ptr };
 
         // 2) Find matching on block(s)
-    let mut executed_any = false;
     eprintln!("[ACTIONS] Owner: {} (type={}) children: {:?}", owner.name, owner.node_type, owner.children.iter().map(|c| format!("{}/{}", c.node_type, c.name)).collect::<Vec<_>>() );
     for child in owner.children.clone() {
             if child.node_type == "on" && child.name == event_name {
-                executed_any = true;
                 // Execute each action child in order
-        for action in child.children {
-            eprintln!("[ACTIONS] Action node: type='{}' name='{}' params={:?}", action.node_type, action.name, action.parameters);
+                for action in child.children {
+                    eprintln!("[ACTIONS] Action node: type='{}' name='{}' params={:?}", action.node_type, action.name, action.parameters);
                     Self::execute_action(nodes, &owner_indices, &node_path, &action)?;
+                    // Re-resolve after each action (per-action transaction)
+                    resolver::resolve_document(nodes);
                 }
             }
         }
 
-        if executed_any {
-            // 3) Re-resolve document and recompute formulas once after all actions
-            resolver::resolve_document(nodes);
-            // 4) Run timers (one-shot) after this transaction
-            Self::run_timers(nodes)?;
-        }
+        // Note: do not run timers here; scheduling handles timer firing.
         Ok(())
     }
 
@@ -164,6 +159,82 @@ impl ActionExecutor {
     /// Public tick entry: run timers sweep once. Returns Ok when done.
     pub fn tick(nodes: &mut Vec<OverseerNode>) -> Result<(), OverseerError> {
         Self::run_timers(nodes)
+    }
+
+    /// Compute the next due timestamp (UTC, ms since epoch) across all active timers, if any.
+    pub fn next_due_ms(nodes: &Vec<OverseerNode>) -> Option<i64> {
+        let now = chrono::Utc::now();
+        // Snapshot for evaluation context
+        let snapshot = nodes.clone();
+        // Collect timer paths
+        let mut timer_paths: Vec<Vec<String>> = Vec::new();
+        fn collect(paths: &mut Vec<Vec<String>>, cur: &OverseerNode, path: &mut Vec<String>) {
+            path.push(cur.name.clone());
+            let is_timer = cur.node_type == "timer"
+                || cur
+                    .parameters
+                    .get("_original_type")
+                    .map(|v| matches!(v, OverseerValue::String(s) if s == "timer"))
+                    .unwrap_or(false);
+            if is_timer { paths.push(path.clone()); }
+            for child in &cur.children { collect(paths, child, path); }
+            path.pop();
+        }
+        for root in nodes.iter() {
+            let mut p: Vec<String> = Vec::new();
+            collect(&mut timer_paths, root, &mut p);
+        }
+        let mut next_due: Option<i64> = None;
+        for tpath in timer_paths {
+            // Find timer node in snapshot for safe read/eval
+            // Walk by name path
+            let mut cur_opt: Option<&OverseerNode> = None;
+            let mut _idx = 0usize;
+            for root in snapshot.iter() {
+                if root.name == tpath[0] { cur_opt = Some(root); break; }
+            }
+            if cur_opt.is_none() { continue; }
+            let mut cur = cur_opt.unwrap();
+            for seg in tpath.iter().skip(1) {
+                if let Some(next) = cur.children.iter().find(|c| &c.name == seg) { cur = next; } else { break; }
+                _idx += 1;
+            }
+            let timer_node = cur;
+            // Active?
+            let active = match Self::get_effective(&timer_node.parameters, "active").or_else(|| timer_node.parameters.get("active")) {
+                Some(OverseerValue::Boolean(b)) => *b,
+                Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
+                _ => false,
+            };
+            if !active { continue; }
+            // Evaluate 'at' using same logic as run_timers
+            let at_val = Self::get_effective(&timer_node.parameters, "at").or_else(|| timer_node.parameters.get("at"));
+            let at_str: Option<String> = match at_val {
+                Some(OverseerValue::Timestamp(ts)) => Some(ts.clone()),
+                Some(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
+                Some(OverseerValue::String(s)) => Some(s.clone()),
+                Some(OverseerValue::Formula(expr)) => {
+                    let ctx = EvaluationContext::new(tpath.clone(), &snapshot);
+                    match FormulaEvaluator::evaluate_formula(expr, &ctx) {
+                        Ok(OverseerValue::Timestamp(ts)) => Some(ts),
+                        Ok(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
+                        Ok(OverseerValue::String(s)) => Some(s),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(at) = at_str {
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&at) {
+                    let utc = dt.with_timezone(&chrono::Utc);
+                    if utc > now {
+                        let ms = utc.timestamp_millis();
+                        next_due = match next_due { Some(prev) => Some(prev.min(ms)), None => Some(ms) };
+                    }
+                }
+            }
+        }
+        next_due
     }
 
     fn execute_action(

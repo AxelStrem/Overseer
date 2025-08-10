@@ -260,6 +260,12 @@ body {
     color: var(--secondary-color);
 }
 
+/* Timer Field */
+.timer-field .field-value {
+    color: var(--secondary-color);
+    font-variant-numeric: tabular-nums;
+}
+
 .text-content {
     line-height: 1.6;
     white-space: pre-wrap;

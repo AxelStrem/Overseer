@@ -37,10 +37,14 @@ export class OverseerRenderer {
         const childName = childNode?.name
         const childType = (childNode?.node_type || childNode?.type || '').toLowerCase()
 
-        // Hide timers entirely (non-visual control node)
-        if (childType === 'timer') return false
+    // Timer nodes are visual now; don't filter them out
         // Hide any event handler containers and action statements anywhere
         if (this.isEventHandlerName(childName) || this.isActionName(childName)) return false
+        // Respect hidden=true on child nodes
+        try {
+            const hid = this.getParameterValue(childNode, 'hidden')
+            if (hid === true || String(hid).toLowerCase() === 'true') return false
+        } catch(_) {}
         // For buttons specifically, do not render any children other than explicit visual content (none today)
         if (parentType === 'button') return false
         return true
@@ -103,15 +107,22 @@ export class OverseerRenderer {
             return
         }
 
+        // Global hidden parameter: skip rendering entire subtree if hidden=true
+        try {
+            const hiddenParam = this.getParameterValue(node, 'hidden')
+            if (hiddenParam === true || String(hiddenParam).toLowerCase() === 'true') {
+                return
+            }
+        } catch (_) { /* no-op */ }
+
         const element = this.createNodeElement(node)
         console.log('Created element:', element)
 
         if (element) {
-            // Attach path metadata for event handling
+            // Attach path metadata for event handling (DOM-only; do not mutate node)
             try {
-                node.__overseer_path = Array.isArray(path) ? [...path] : []
                 if (element.dataset) {
-                    element.dataset.path = JSON.stringify(node.__overseer_path)
+                    element.dataset.path = JSON.stringify(Array.isArray(path) ? path : [])
                 }
             } catch (_) { /* no-op */ }
 
@@ -197,8 +208,7 @@ export class OverseerRenderer {
 
         switch (nodeType.toLowerCase()) {
             case 'timer':
-                // Non-visual control node; do not render anything in the DOM
-                return document.createDocumentFragment();
+                return this.createTimerElement(node)
             case 'tab':
                 return this.createTabElement(node)
             case 'div':
@@ -216,6 +226,8 @@ export class OverseerRenderer {
                 return this.createNumberElement(node)
             case 'date':
                 return this.createDateElement(node)
+            case 'timestamp':
+                return this.createTimestampElement(node)
             case 'bool':
                 return this.createBooleanElement(node)
             case 'button':
@@ -274,12 +286,7 @@ export class OverseerRenderer {
         if (node.name) {
             div.setAttribute('data-name', node.name)
         }
-        
-        // Check if this is a hidden div (template)
-        if (node.parameters && (node.parameters.hidden === true || node.parameters.hidden === 'true' || 
-            (node.parameters.hidden && node.parameters.hidden.Boolean === true))) {
-            div.style.display = 'none'
-        }
+    // legacy div hidden handling removed in favor of global hidden check
         
         // Apply layout (use effective layout calculated by resolver, or fall back to explicit parameter)
         const layout = this.getEffectiveLayout(node)
@@ -508,6 +515,120 @@ export class OverseerRenderer {
         return container
     }
 
+    createTimestampElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field date-field'
+
+        const labelText = this.getParameterValue(node, 'label');
+        if (labelText) {
+            const label = document.createElement('label')
+            label.textContent = labelText
+            container.appendChild(label)
+        }
+
+        const value = document.createElement('span')
+        value.className = 'field-value'
+        value.textContent = this.getNodeValue(node) || ''
+
+        container.appendChild(value)
+
+        this.applyFieldDefaultStyles(container, node)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    // Timer: show remaining time until 'at', updating live; optional label/format params
+    createTimerElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field timer-field'
+
+        const labelText = this.getParameterValue(node, 'label')
+        if (labelText) {
+            const label = document.createElement('label')
+            label.textContent = labelText
+            container.appendChild(label)
+        }
+
+        const value = document.createElement('span')
+        value.className = 'field-value'
+        value.textContent = ''
+        container.appendChild(value)
+
+        const params = node.parameters || {}
+        const active = (params.active && (params.active.Boolean === true || params.active === true)) || false
+
+        const extractAt = () => {
+            const comp = params._computed_at
+            const raw = params.at
+            const pick = (x) => {
+                if (!x) return null
+                if (typeof x === 'string') return x
+                if (typeof x === 'object') {
+                    if (x.Timestamp) return x.Timestamp
+                    if (x.String) return x.String
+                    if (x.Date) return `${x.Date}T00:00:00Z`
+                }
+                return null
+            }
+            return pick(comp) || pick(raw)
+        }
+
+        const timerFormat = (this.getParameterValue(node, 'format') || '').toString().toLowerCase()
+        const formatRemaining = (ms) => {
+            if (ms <= 0) return timerFormat === 'seconds' ? '0' : '00:00'
+            // Use ceiling to avoid an immediate drop right after render
+            const totalSec = Math.ceil(ms / 1000)
+            const days = Math.floor(totalSec / 86400)
+            const hrsTotal = Math.floor(totalSec / 3600)
+            const hrs = Math.floor((totalSec % 86400) / 3600)
+            const mins = Math.floor((totalSec % 3600) / 60)
+            const secs = totalSec % 60
+            switch (timerFormat) {
+                case 'seconds':
+                    return String(totalSec)
+                case 'hh:mm:ss':
+                    return `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                case 'mm:ss':
+                case '': // default concise
+                    if (days > 0) return `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    if (hrsTotal > 0) return `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    return `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                case 'long':
+                    return days > 0
+                        ? `${days} day${days>1?'s':''} ${hrs} hour${hrs!==1?'s':''} ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                        : (hrsTotal > 0
+                            ? `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                            : `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`)
+                default:
+                    if (days > 0) return `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    if (hrsTotal > 0) return `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+                    return `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
+            }
+        }
+
+        const atStr = extractAt()
+        let intervalId = null
+        const update = () => {
+            if (!atStr) { value.textContent = active ? '—' : ''; return }
+            const due = Date.parse(atStr)
+            if (isNaN(due)) { value.textContent = '—'; return }
+            const rem = due - Date.now()
+            value.textContent = formatRemaining(rem)
+        }
+        update()
+        // Smooth live update each second while visible
+        intervalId = setInterval(update, 1000)
+        // Clean up when element is removed
+        const obs = new MutationObserver(() => {
+            if (!document.body.contains(container)) { clearInterval(intervalId); obs.disconnect() }
+        })
+        obs.observe(document.body, { childList: true, subtree: true })
+
+        this.applyFieldDefaultStyles(container, node)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
     createBooleanElement(node) {
         const container = document.createElement('div')
         container.className = 'overseer-field boolean-field'
@@ -589,11 +710,11 @@ export class OverseerRenderer {
             container.appendChild(checkbox)
         }
 
-        // Handle checkbox changes
+        // Handle checkbox changes with default events: toggle, check, uncheck
         checkbox.addEventListener('change', async () => {
             if (DEBUG_MODE) console.log('Checkbox changed:', node.name, checkbox.checked)
             this.updateNodeValue(node, checkbox.checked)
-            
+
             // Mark document as modified
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
@@ -602,8 +723,20 @@ export class OverseerRenderer {
             if (window.app && window.app.reevaluateDocument) {
                 window.app.reevaluateDocument()
             }
-            // Emit change event for actions
-            try { await this.emitEvent(node, checkbox, 'change') } catch(_) {}
+            // Determine which events are defined to avoid unnecessary backend calls
+            const hasHandler = (evt) => Array.isArray(node.children) && node.children.some(c => (c.name||'').toLowerCase() === evt)
+            const eventsToEmit = ['toggle']
+            if (checkbox.checked) eventsToEmit.push('check')
+            else eventsToEmit.push('uncheck')
+            for (const evt of eventsToEmit) {
+                if (hasHandler(evt)) {
+                    try { await this.emitEvent(node, checkbox, evt) } catch(_) {}
+                }
+            }
+            // Also keep legacy 'change' if present
+            if (hasHandler('change')) {
+                try { await this.emitEvent(node, checkbox, 'change') } catch(_) {}
+            }
         })
 
         // Apply default field styling if no explicit parameters are set
@@ -1118,8 +1251,31 @@ export class OverseerRenderer {
             return node
         }
 
-        // Prefer computed value if present
-    if (node.parameters && node.parameters["_computed_value"] !== undefined) {
+        // Prefer raw value if present and not a Formula; otherwise prefer computed
+        if (node.parameters && node.parameters["value"] !== undefined) {
+            const raw = node.parameters["value"]
+            const isFormula = typeof raw === 'object' && raw !== null && raw.Formula !== undefined
+            if (!isFormula) {
+                if (typeof raw === 'string') {
+                    const nt = (node.node_type || node.type || '').toLowerCase()
+                    if (nt === 'timestamp') return this.formatTimestampValue(node, raw)
+                    return raw
+                }
+                if (typeof raw === 'object' && raw !== null) {
+                    if (raw.String !== undefined) return raw.String
+                    if (raw.Integer !== undefined) return raw.Integer.toString()
+                    if (raw.Float !== undefined) return raw.Float.toString()
+                    if (raw.Boolean !== undefined) return raw.Boolean.toString()
+                    if (raw.Date !== undefined) return raw.Date
+                    if (raw.Timestamp !== undefined) return this.formatTimestampValue(node, raw.Timestamp)
+                }
+                return String(raw)
+            }
+            // If it's a Formula, fall through to computed if available
+        }
+
+        // Use computed value if present
+        if (node.parameters && node.parameters["_computed_value"] !== undefined) {
             const value = node.parameters["_computed_value"]
             if (typeof value === 'string') return value
             if (typeof value === 'object') {
@@ -1128,7 +1284,7 @@ export class OverseerRenderer {
                 if (value.Float !== undefined) return value.Float.toString()
                 if (value.Boolean !== undefined) return value.Boolean.toString()
                 if (value.Date !== undefined) return value.Date
-        if (value.Timestamp !== undefined) return value.Timestamp
+                if (value.Timestamp !== undefined) return this.formatTimestampValue(node, value.Timestamp)
                 if (value.Formula !== undefined) return value.Formula
             }
             return value.toString()
@@ -1138,14 +1294,19 @@ export class OverseerRenderer {
         if (node.parameters && node.parameters["value"] !== undefined) {
             const value = node.parameters["value"]
             console.log('[DEBUG] getNodeValue: found parameters["value"]:', value, 'in node:', node);
-            if (typeof value === 'string') return value
+            if (typeof value === 'string') {
+                // If this node is a timestamp-typed field, format string value as timestamp
+                const nt = (node.node_type || node.type || '').toLowerCase()
+                if (nt === 'timestamp') return this.formatTimestampValue(node, value)
+                return value
+            }
             if (typeof value === 'object') {
                 if (value.String !== undefined) return value.String
                 if (value.Integer !== undefined) return value.Integer.toString()
                 if (value.Float !== undefined) return value.Float.toString()
                 if (value.Boolean !== undefined) return value.Boolean.toString()
                 if (value.Date !== undefined) return value.Date
-                if (value.Timestamp !== undefined) return value.Timestamp
+                if (value.Timestamp !== undefined) return this.formatTimestampValue(node, value.Timestamp)
                 if (value.Formula !== undefined) return value.Formula
             }
             return value.toString()
@@ -1161,7 +1322,7 @@ export class OverseerRenderer {
                 if (node.value.Float !== undefined) return node.value.Float.toString()
                 if (node.value.Boolean !== undefined) return node.value.Boolean.toString()
                 if (node.value.Date !== undefined) return node.value.Date
-                if (node.value.Timestamp !== undefined) return node.value.Timestamp
+                if (node.value.Timestamp !== undefined) return this.formatTimestampValue(node, node.value.Timestamp)
                 if (node.value.Formula !== undefined) return node.value.Formula
             }
             return node.value.toString()
@@ -1186,6 +1347,69 @@ export class OverseerRenderer {
 
         console.log('[DEBUG] getNodeValue: no value found for node:', node);
         return null
+    }
+
+    // Format a RFC3339 timestamp string according to node parameters 'format' or 'precision'
+    // format overrides precision when provided.
+    // Supported precision: 'seconds' (default), 'minutes', 'hours', 'days'
+    // Supported format: 'datetime' (YYYY-MM-DD HH:MM:SS), 'date', 'time', 'iso'
+    formatTimestampValue(node, rfc3339) {
+        if (!rfc3339 || typeof rfc3339 !== 'string') return rfc3339
+        // Extract format and precision preferences (computed or raw)
+        const formatPref = (this.getParameterValue(node, 'format') || '').toString().toLowerCase()
+        const precision = (this.getParameterValue(node, 'precision') || 'seconds').toString().toLowerCase()
+        // Normalize: split date/time and strip fractional seconds and zone
+        // Examples: 2025-08-10T04:25:22.045348200+00:00 -> [date, time+zone]
+        const parts = rfc3339.split('T')
+        if (parts.length < 2) return rfc3339
+        const date = parts[0]
+        // time part may include fractional and timezone
+        let timeAndZone = parts[1]
+        // Remove timezone part (Z or ±hh:mm)
+        timeAndZone = timeAndZone.replace(/Z|[+-]\d{2}:?\d{2}$/i, '')
+        // Remove trailing timezone if with colon e.g., +00:00 (handled above), fallback remove last 6 if still present
+        timeAndZone = timeAndZone.replace(/[+-]\d{2}:\d{2}$/, '')
+        // Split hh:mm:ss(.fraction)?
+        let [hh='00', mm='00', ssFrac='00'] = timeAndZone.split(':')
+        // Separate seconds and fraction
+        let ss = ssFrac
+        const dotIdx = ss.indexOf('.')
+        if (dotIdx !== -1) ss = ss.substring(0, dotIdx)
+
+        // Apply explicit format if provided
+        switch (formatPref) {
+            case 'date':
+                return `${date}`
+            case 'time':
+                return `${hh.padStart(2,'0')}:${mm.padStart(2,'0')}:${ss.padStart(2,'0')}`
+            case 'iso': {
+                // Trim to seconds and force 'Z' style
+                return `${date}T${hh.padStart(2,'0')}:${mm.padStart(2,'0')}:${ss.padStart(2,'0')}Z`
+            }
+            case 'datetime':
+                // fall through to precision default below
+                break
+            default:
+                // no explicit format -> use precision rules
+                break
+        }
+
+        // Apply precision
+        switch (precision) {
+            case 'days':
+            case 'day':
+                return `${date}`
+            case 'hours':
+            case 'hour':
+                return `${date} ${hh.padStart(2,'0')}:00:00`
+            case 'minutes':
+            case 'minute':
+                return `${date} ${hh.padStart(2,'0')}:${mm.padStart(2,'0')}:00`
+            case 'seconds':
+            case 'second':
+            default:
+                return `${date} ${hh.padStart(2,'0')}:${mm.padStart(2,'0')}:${ss.padStart(2,'0')}`
+        }
     }
 
     // Helper function to extract parameter values from OverseerValue objects
@@ -1240,23 +1464,19 @@ export class OverseerRenderer {
 
     // Helper to compute a stable name-based path from the current DOM render context
     buildNodePath(node) {
-        // Walk up via dataset breadcrumbs we attach during render
-        const names = []
-        let cur = node
-        // We rely on a temporary property set during traversal
-        while (cur && cur.__overseer_path && Array.isArray(cur.__overseer_path)) {
-            // The first time it's the full path; break to avoid duplicates
-            return [...cur.__overseer_path]
-        }
-        // Fallback: try to reconstruct from nearest parent DOM element breadcrumbs
+        // Prefer dataset.path created during render
         try {
-            const el = this._lastCreatedElement || null
-            if (el && el.dataset && el.dataset.path) {
-                return JSON.parse(el.dataset.path)
+            if (node && node.dataset && node.dataset.path) {
+                return JSON.parse(node.dataset.path)
             }
         } catch (_) { /* ignore */ }
-        // Worst case, return just the node's own name
-        return [node.name || node.node_type || node.type || 'root']
+        // Fallback: attempt to find nearest ancestor with data-path
+        try {
+            let el = node
+            while (el && !el.dataset?.path) el = el.parentElement
+            if (el && el.dataset && el.dataset.path) return JSON.parse(el.dataset.path)
+        } catch (_) { /* ignore */ }
+        return ['root']
     }
 
     // Detects whether the raw parameter (not computed) is a Formula
@@ -1476,6 +1696,8 @@ export class OverseerRenderer {
         window.app.currentDocument = updated
         window.app.renderer.renderDocument(updated)
         window.app.markDocumentModified && window.app.markDocumentModified()
+    // Reschedule timers based on the new document state
+    try { window.app.startScheduler && window.app.startScheduler() } catch(_) {}
     }
 
     // Helper function to update a node's value in the document structure

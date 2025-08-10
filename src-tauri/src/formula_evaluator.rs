@@ -102,13 +102,20 @@ pub struct FormulaEvaluator;
 impl FormulaEvaluator {
     /// Helper: get effective parameter value preferring computed shadow
     fn get_effective_param<'p>(params: &'p std::collections::HashMap<String, OverseerValue>, key: &str) -> Option<&'p OverseerValue> {
+        // Semantics: prefer the raw parameter when it is not a Formula; otherwise use computed shadow.
         if key == "value" {
-            if let Some(v) = params.get("_computed_value") { return Some(v); }
+            if let Some(raw) = params.get("value") {
+                if !matches!(raw, OverseerValue::Formula(_)) {
+                    return Some(raw);
+                }
+            }
+            if let Some(comp) = params.get("_computed_value") { return Some(comp); }
+            return params.get("value");
         } else {
             let shadow = format!("_computed_{}", key);
             if let Some(v) = params.get(&shadow) { return Some(v); }
+            return params.get(key);
         }
-        params.get(key)
     }
     /// Evaluate a formula expression string within the given context
     pub fn evaluate_formula(

@@ -309,23 +309,99 @@ tab Main {
     startScheduler() {
         this.stopScheduler()
         if (!this.currentDocument) return
-        const tick = async () => {
-            try {
-                if (!this.currentDocument) return
-                const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
-                if (updated) {
-                    this.currentDocument = updated
-                    this.renderer.renderDocument(updated)
-                }
-            } catch (e) {
-                // Non-fatal; keep ticking
-                if (DEBUG_MODE) console.warn('scheduler tick error:', e)
-            }
+
+        const docsEqual = (a, b) => {
+            try { return JSON.stringify(a) === JSON.stringify(b) } catch (_) { return false }
         }
-        // Kick once immediately then every second
-        tick()
-        this._scheduler.id = setInterval(tick, this._scheduler.periodMs)
-        // Pause when window not focused to save CPU
+
+        // Scan currentDocument for active timers and compute the next due time
+        const extractAtMs = (params) => {
+            if (!params) return null
+            const comp = params._computed_at
+            const raw = params.at
+            const toMs = (s) => {
+                if (!s || typeof s !== 'string') return null
+                const ms = Date.parse(s)
+                return isNaN(ms) ? null : ms
+            }
+            // Prefer computed
+            if (comp !== undefined && comp !== null) {
+                if (typeof comp === 'string') return toMs(comp)
+                if (typeof comp === 'object') {
+                    if (comp.Timestamp) return toMs(comp.Timestamp)
+                    if (comp.String) return toMs(comp.String)
+                    if (comp.Date) return toMs(`${comp.Date}T00:00:00Z`)
+                }
+            }
+            // Fallback to raw param
+            if (raw !== undefined && raw !== null) {
+                if (typeof raw === 'string') return toMs(raw)
+                if (typeof raw === 'object') {
+                    if (raw.Timestamp) return toMs(raw.Timestamp)
+                    if (raw.String) return toMs(raw.String)
+                    if (raw.Date) return toMs(`${raw.Date}T00:00:00Z`)
+                }
+            }
+            return null
+        }
+
+        const findNextDue = (doc) => {
+            let nextTs = null
+            const walk = (nodes, ctxPath=[]) => {
+                for (const n of nodes || []) {
+                    const t = (n.node_type || n.type || '').toLowerCase()
+                    if (t === 'timer') {
+                        const params = n.parameters || {}
+                        const active = (params.active && (params.active.Boolean === true || params.active === true)) || false
+                        if (!active) { /* skip */ }
+                        else {
+                            const ms = extractAtMs(params)
+                            if (ms !== null) {
+                                if (nextTs === null || ms < nextTs) nextTs = ms
+                            }
+                        }
+                    }
+                    if (Array.isArray(n.children) && n.children.length) walk(n.children, ctxPath.concat(n.name||n.node_type||n.type||''))
+                }
+            }
+            walk(doc)
+            return nextTs
+        }
+
+    const scheduleNext = async () => {
+            if (!this.currentDocument) return
+        // Prefer backend calculation to stay consistent with formula evaluation
+        let nextMs = null
+        try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
+        if (nextMs == null) nextMs = findNextDue(this.currentDocument)
+        if (!nextMs) return
+        const now = Date.now()
+        let delay = nextMs - now
+            // Only schedule for future; if due/past, process almost immediately (debounced)
+            if (delay < 0) delay = 0
+            // Add small debounce to let system settle
+            delay += 500
+        this._scheduler.id = setTimeout(async () => {
+                try {
+                    if (!this.currentDocument) return
+                    const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
+                    if (updated && !docsEqual(updated, this.currentDocument)) {
+                        this.currentDocument = updated
+                        this.renderer.renderDocument(updated)
+                    }
+                } catch (e) {
+                    if (DEBUG_MODE) console.warn('scheduler tick error:', e)
+                } finally {
+                    // Schedule again for the next due timer if any
+            scheduleNext()
+                }
+            }, delay)
+        }
+
+        // Kick off scheduling
+    scheduleNext()
+
+        // Re-schedule lifecycle with window focus/blur
         window.addEventListener('blur', () => this.stopScheduler(), { once: true })
         window.addEventListener('focus', () => this.startScheduler(), { once: true })
     }

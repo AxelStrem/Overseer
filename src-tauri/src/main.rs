@@ -80,6 +80,11 @@ async fn scheduler_tick(mut nodes: Vec<OverseerNode>) -> Result<Vec<OverseerNode
     Ok(nodes)
 }
 
+#[command]
+async fn get_next_timer_due_ms(nodes: Vec<OverseerNode>) -> Result<Option<i64>> {
+    Ok(ActionExecutor::next_due_ms(&nodes))
+}
+
 fn main() {
     // Set WebView2 fixed version path with debug cache folder
     let debug_cache_folder = std::env::current_exe()
@@ -106,7 +111,8 @@ fn main() {
             parse_overseer_content,
             find_overseer_files,
             execute_overseer_event,
-            scheduler_tick
+            scheduler_tick,
+            get_next_timer_due_ms
         ])
         .run(tauri::generate_context!()) {
         Ok(_) => {},
