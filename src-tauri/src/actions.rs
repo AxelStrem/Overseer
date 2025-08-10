@@ -1,7 +1,7 @@
 use crate::resolver;
 use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext, BoundValue};
 use crate::types::{OverseerError, OverseerNode, OverseerValue};
-use chrono::{Local, Utc};
+use chrono::{Local, Utc, Duration};
 
 // Debug logging macro for actions
 macro_rules! debug_actions {
@@ -60,8 +60,110 @@ impl ActionExecutor {
         if executed_any {
             // 3) Re-resolve document and recompute formulas once after all actions
             resolver::resolve_document(nodes);
+            // 4) Run timers (one-shot) after this transaction
+            Self::run_timers(nodes)?;
         }
         Ok(())
+    }
+
+    /// Scan the document for timer nodes and fire any whose condition is met.
+    /// Semantics: A timer node is any node with original_type 'timer' or name 'timer' containing
+    /// parameters: active=true and at=<timestamp or formula producing Timestamp/Date>.
+    /// On fire: execute its on timeout { ... } block, then set active=false (one-shot) and re-resolve once.
+    fn run_timers(nodes: &mut Vec<OverseerNode>) -> Result<(), OverseerError> {
+    // Snapshot of now (UTC)
+    let now_dt = chrono::Utc::now();
+        // Collect paths to timers to avoid borrow issues
+        let mut timer_paths: Vec<Vec<String>> = Vec::new();
+        fn collect(paths: &mut Vec<Vec<String>>, cur: &OverseerNode, path: &mut Vec<String>) {
+            path.push(cur.name.clone());
+            // Identify timer by node_type or original type param
+            let is_timer = cur.node_type == "timer"
+                || cur
+                    .parameters
+                    .get("_original_type")
+                    .map(|v| matches!(v, OverseerValue::String(s) if s == "timer"))
+                    .unwrap_or(false);
+            if is_timer {
+                paths.push(path.clone());
+            }
+            for child in &cur.children { collect(paths, child, path); }
+            path.pop();
+        }
+        for root in nodes.iter() {
+            let mut p: Vec<String> = Vec::new();
+            collect(&mut timer_paths, root, &mut p);
+        }
+
+    let mut any_fired = false;
+    // Use snapshot for safe evaluation contexts
+    let snapshot = nodes.clone();
+        // Evaluate and fire timers
+        for tpath in timer_paths {
+            // Resolve node by path
+            if let Some((ptr, _idx)) = Self::get_node_mut_by_path(nodes, &tpath) {
+                let timer_node: &mut OverseerNode = unsafe { &mut *ptr };
+                // Check active
+                let active = match Self::get_effective(&timer_node.parameters, "active").or_else(|| timer_node.parameters.get("active")) {
+                    Some(OverseerValue::Boolean(b)) => *b,
+                    Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
+                    _ => false,
+                };
+                if !active { continue; }
+                // Evaluate 'at'
+                let at_val = Self::get_effective(&timer_node.parameters, "at").or_else(|| timer_node.parameters.get("at"));
+                let at_str: Option<String> = match at_val {
+                    Some(OverseerValue::Timestamp(ts)) => Some(ts.clone()),
+                    Some(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
+                    Some(OverseerValue::String(s)) => Some(s.clone()),
+                    Some(OverseerValue::Formula(expr)) => {
+                        // Evaluate formula in context of this timer
+                        // Build a minimal context using document snapshot and path
+                        let ctx = EvaluationContext::new(tpath.clone(), &snapshot);
+                        match FormulaEvaluator::evaluate_formula(expr, &ctx) {
+                            Ok(OverseerValue::Timestamp(ts)) => Some(ts),
+                            Ok(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
+                            Ok(OverseerValue::String(s)) => Some(s),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(at) = at_str {
+                    // Parse RFC3339 and compare actual instants
+                    let due = match chrono::DateTime::parse_from_rfc3339(&at) {
+                        Ok(dt) => dt.with_timezone(&chrono::Utc) <= now_dt,
+                        Err(_) => false,
+                    };
+                    if due {
+                        // Fire: execute its on timeout { ... } actions
+                        let actions: Vec<OverseerNode> = timer_node
+                            .children
+                            .iter()
+                            .filter(|c| c.node_type == "on" && c.name == "timeout")
+                            .flat_map(|on| on.children.clone())
+                            .collect();
+                        if !actions.is_empty() {
+                            for action in actions {
+                                Self::execute_action(nodes, &[], &tpath, &action)?;
+                            }
+                            // Deactivate timer
+                            timer_node.parameters.insert("active".to_string(), OverseerValue::Boolean(false));
+                            any_fired = true;
+                        }
+                    }
+                }
+            }
+        }
+        if any_fired {
+            resolver::resolve_document(nodes);
+        }
+        Ok(())
+    }
+
+    /// Public tick entry: run timers sweep once. Returns Ok when done.
+    pub fn tick(nodes: &mut Vec<OverseerNode>) -> Result<(), OverseerError> {
+        Self::run_timers(nodes)
     }
 
     fn execute_action(
@@ -113,6 +215,19 @@ impl ActionExecutor {
                 };
                 let now = if clock == "utc" { Utc::now().date_naive() } else { Local::now().date_naive() };
                 let val = OverseerValue::Date(now.to_string());
+                Self::set_value(nodes, owner_indices, owner_path, &target, val)
+            }
+            "set_now_ts" => {
+                // set_now_ts(path=..., offset=seconds?) -> sets RFC3339 Timestamp
+                let target = Self::require_string(&action.parameters, "path")?;
+                let offset_secs: i64 = match action.parameters.get("offset").or(action.parameters.get("offsetSeconds")) {
+                    Some(OverseerValue::Integer(i)) => *i,
+                    Some(OverseerValue::Float(f)) => *f as i64,
+                    Some(OverseerValue::String(s)) => s.parse::<i64>().unwrap_or(0),
+                    _ => 0,
+                };
+                let ts = (Utc::now() + Duration::seconds(offset_secs)).to_rfc3339();
+                let val = OverseerValue::Timestamp(ts);
                 Self::set_value(nodes, owner_indices, owner_path, &target, val)
             }
             // Increment 3: list identity and mutations (MVP subset)
@@ -339,7 +454,7 @@ impl ActionExecutor {
     fn find_indices_by_name_path(nodes: &Vec<OverseerNode>, path: &[String]) -> Option<Vec<usize>> {
         if path.is_empty() { return None; }
         let mut indices: Vec<usize> = Vec::new();
-        let mut cur_slice: &[OverseerNode] = nodes.as_slice();
+    let cur_slice: &[OverseerNode] = nodes.as_slice();
         // root
         let mut pos = cur_slice.iter().position(|n| n.name == path[0])?;
         indices.push(pos);
@@ -372,8 +487,8 @@ impl ActionExecutor {
         path: &[String],
     ) -> Option<(*mut OverseerNode, Vec<usize>)> {
         if path.is_empty() { return None; }
-        let mut indices: Vec<usize> = Vec::new();
-        let mut cur: *mut OverseerNode = std::ptr::null_mut();
+    let mut indices: Vec<usize> = Vec::new();
+    let mut cur: *mut OverseerNode;
         // Find root index
         let root_idx = nodes.iter().position(|n| n.name == path[0])?;
         indices.push(root_idx);
@@ -517,7 +632,7 @@ impl ActionExecutor {
             child.parameters.insert("value".to_string(), value);
         } else {
             // Add simple string field if missing
-            let mut new_field = OverseerNode {
+            let new_field = OverseerNode {
                 name: field.to_string(),
                 node_type: "string".to_string(),
                 template: None,
@@ -816,6 +931,7 @@ impl ActionExecutor {
             OverseerValue::String(s) => s.clone(),
             OverseerValue::Boolean(b) => b.to_string(),
             OverseerValue::Date(d) => d.clone(),
+            OverseerValue::Timestamp(ts) => ts.clone(),
             OverseerValue::Color(c) => format!("{:?}", c),
             OverseerValue::CssSize(s) => format!("{:?}", s),
             OverseerValue::BorderStyle(s) => format!("{:?}", s),
@@ -829,6 +945,7 @@ impl ActionExecutor {
 mod tests {
     use super::*;
     use crate::parser::parse_document;
+    use crate::resolver::resolve_document;
 
     #[test]
     fn test_inc_action_on_click() {
@@ -1019,5 +1136,60 @@ mod tests {
             it.children.iter().find(|f| f.name=="id").and_then(|f| f.parameters.get("value")).and_then(|v| if let OverseerValue::String(s)=v { Some(s.clone()) } else { None }).unwrap_or_default()
         }).collect();
         assert_eq!(ids, vec!["b".to_string(), "c".to_string(), "a".to_string()]);
+    }
+
+    #[test]
+    fn test_timer_inactive_does_not_fire() {
+        let input = r#"
+        div Root {
+            int A = 0
+            string T = $(now())
+            timer t1 (active=false, at=$(../T)) { on timeout { inc(path="/Root/A", by=1) } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        // Tick should not change A since timer is inactive
+        let _ = ActionExecutor::tick(&mut nodes);
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let a = root.children.iter().find(|c| c.name == "A").unwrap();
+        assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(0)));
+    }
+
+    #[test]
+    fn test_timer_fires_and_deactivates() {
+        let input = r#"
+        div Root {
+            int A = 0
+            string T = "2000-01-01T00:00:00Z"
+            timer t1 (active=true, at=$(../T)) { on timeout { inc(path="/Root/A", by=1) } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let _ = ActionExecutor::tick(&mut nodes);
+        // After tick, A should be 1 and timer inactive
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let a = root.children.iter().find(|c| c.name == "A").unwrap();
+        assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(1)));
+    let timer = root.children.iter().find(|c| c.node_type == "timer").unwrap();
+        assert_eq!(timer.parameters.get("active"), Some(&OverseerValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_timer_future_does_not_fire_until_due() {
+        let input = r#"
+        div Root {
+            int A = 0
+            string T = "2999-01-01T00:00:00Z"
+            timer t1 (active=true, at=$(../T)) { on timeout { inc(path="/Root/A", by=1) } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let _ = ActionExecutor::tick(&mut nodes);
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let a = root.children.iter().find(|c| c.name == "A").unwrap();
+        assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(0)));
     }
 }

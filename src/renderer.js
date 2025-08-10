@@ -11,6 +11,41 @@ export class OverseerRenderer {
         this.tabContainer = document.getElementById('tab-container')
     }
 
+    // Non-visual node helpers
+    isEventHandlerName(name) {
+        if (!name) return false
+        const n = String(name).toLowerCase()
+        // Common UI events supported by Overseer actions
+        const eventNames = [
+            'click','change','timeout','submit','dblclick','hover','keydown','keyup','input','tick'
+        ]
+        return eventNames.includes(n)
+    }
+
+    isActionName(name) {
+        if (!name) return false
+        const n = String(name).toLowerCase()
+        // Action nodes are not visual; keep this list in sync with backend
+        const actionNames = [
+            'set','inc','dec','toggle','clear','ensure_in_list','ensure','remove','append','move','sort','set_now','set_now_ts','activate','deactivate'
+        ]
+        return actionNames.includes(n)
+    }
+
+    shouldRenderChild(parentNode, childNode) {
+        const parentType = (parentNode?.node_type || parentNode?.type || '').toLowerCase()
+        const childName = childNode?.name
+        const childType = (childNode?.node_type || childNode?.type || '').toLowerCase()
+
+        // Hide timers entirely (non-visual control node)
+        if (childType === 'timer') return false
+        // Hide any event handler containers and action statements anywhere
+        if (this.isEventHandlerName(childName) || this.isActionName(childName)) return false
+        // For buttons specifically, do not render any children other than explicit visual content (none today)
+        if (parentType === 'button') return false
+        return true
+    }
+
     renderDocument(overseerDocument) {
         console.log('Rendering document:', overseerDocument)
         console.log('Document type:', typeof overseerDocument)
@@ -127,11 +162,12 @@ export class OverseerRenderer {
                         : (ownRawFormulaText ?? parentRawFormulaText ?? null)
                 }
 
-                // Render children
-        if (node.children && Array.isArray(node.children)) {
-                    console.log('Rendering', node.children.length, 'children for node:', node)
-                    for (const child of node.children) {
-            const childPath = [...path, (child.name || child.node_type || child.type || 'child')]
+                // Render children (filter out non-visual action/event nodes)
+                if (node.children && Array.isArray(node.children)) {
+                    const filteredChildren = node.children.filter(ch => this.shouldRenderChild(node, ch))
+                    console.log('Rendering', filteredChildren.length, 'children for node:', node)
+                    for (const child of filteredChildren) {
+                        const childPath = [...path, (child.name || child.node_type || child.type || 'child')]
                         if (DEBUG_MODE) {
                             try {
                                 const dbgParent = node.name || node.node_type || node.type || 'unknown'
@@ -139,7 +175,7 @@ export class OverseerRenderer {
                                 console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
                             } catch (_) { /* no-op */ }
                         }
-            this.renderNode(child, element, nextInherited, childPath)
+                        this.renderNode(child, element, nextInherited, childPath)
                     }
                 } else {
                     console.log('No children for node:', node)
@@ -160,6 +196,9 @@ export class OverseerRenderer {
         }
 
         switch (nodeType.toLowerCase()) {
+            case 'timer':
+                // Non-visual control node; do not render anything in the DOM
+                return document.createDocumentFragment();
             case 'tab':
                 return this.createTabElement(node)
             case 'div':
@@ -505,11 +544,18 @@ export class OverseerRenderer {
     }
 
     createButtonElement(node) {
-        const button = document.createElement('button')
-        button.className = 'overseer-button'
-        // Button label comes from explicit 'label' parameter; do not use node name
-        const labelText = this.getParameterValue(node, 'label')
-        button.textContent = labelText ? String(labelText) : ''
+    const button = document.createElement('button')
+    button.className = 'overseer-button'
+    // Button label comes from explicit 'label' parameter; do not use node name
+    const labelText = this.getParameterValue(node, 'label')
+    // Use a span wrapper to avoid stray artifacts from text nodes in some engines
+    const labelSpan = document.createElement('span')
+    labelSpan.className = 'overseer-button-label'
+    labelSpan.textContent = labelText ? String(labelText) : ''
+    button.appendChild(labelSpan)
+    // Guard: ensure no internal children (like event handlers/actions) are appended
+    // If any children exist, they are non-visual and handled by emitEvent only
+    // We intentionally do not render node.children for buttons
         // Wire to backend actions on click (path is read from dataset set by renderNode)
         button.addEventListener('click', async () => {
             try {
@@ -1073,7 +1119,7 @@ export class OverseerRenderer {
         }
 
         // Prefer computed value if present
-        if (node.parameters && node.parameters["_computed_value"] !== undefined) {
+    if (node.parameters && node.parameters["_computed_value"] !== undefined) {
             const value = node.parameters["_computed_value"]
             if (typeof value === 'string') return value
             if (typeof value === 'object') {
@@ -1082,6 +1128,7 @@ export class OverseerRenderer {
                 if (value.Float !== undefined) return value.Float.toString()
                 if (value.Boolean !== undefined) return value.Boolean.toString()
                 if (value.Date !== undefined) return value.Date
+        if (value.Timestamp !== undefined) return value.Timestamp
                 if (value.Formula !== undefined) return value.Formula
             }
             return value.toString()
@@ -1098,6 +1145,7 @@ export class OverseerRenderer {
                 if (value.Float !== undefined) return value.Float.toString()
                 if (value.Boolean !== undefined) return value.Boolean.toString()
                 if (value.Date !== undefined) return value.Date
+                if (value.Timestamp !== undefined) return value.Timestamp
                 if (value.Formula !== undefined) return value.Formula
             }
             return value.toString()
@@ -1113,6 +1161,7 @@ export class OverseerRenderer {
                 if (node.value.Float !== undefined) return node.value.Float.toString()
                 if (node.value.Boolean !== undefined) return node.value.Boolean.toString()
                 if (node.value.Date !== undefined) return node.value.Date
+                if (node.value.Timestamp !== undefined) return node.value.Timestamp
                 if (node.value.Formula !== undefined) return node.value.Formula
             }
             return node.value.toString()
@@ -1142,7 +1191,7 @@ export class OverseerRenderer {
     // Helper function to extract parameter values from OverseerValue objects
     getParameterValue(node, parameterName) {
         // Prefer computed parameter if present
-        if (node.parameters && node.parameters[`_computed_${parameterName}`] !== undefined) {
+    if (node.parameters && node.parameters[`_computed_${parameterName}`] !== undefined) {
             const paramValue = node.parameters[`_computed_${parameterName}`]
             if (typeof paramValue === 'string') return paramValue
             if (typeof paramValue === 'object' && paramValue !== null) {
@@ -1151,6 +1200,7 @@ export class OverseerRenderer {
                 if (paramValue.Float !== undefined) return paramValue.Float
                 if (paramValue.Boolean !== undefined) return paramValue.Boolean
                 if (paramValue.Date !== undefined) return paramValue.Date
+        if (paramValue.Timestamp !== undefined) return paramValue.Timestamp
                 if (paramValue.Formula !== undefined) return paramValue.Formula
                 if (paramValue.Color !== undefined) return paramValue.Color
                 if (paramValue.CssSize !== undefined) return paramValue.CssSize
@@ -1177,6 +1227,7 @@ export class OverseerRenderer {
             if (paramValue.Float !== undefined) return paramValue.Float
             if (paramValue.Boolean !== undefined) return paramValue.Boolean
             if (paramValue.Date !== undefined) return paramValue.Date
+            if (paramValue.Timestamp !== undefined) return paramValue.Timestamp
             if (paramValue.Formula !== undefined) return paramValue.Formula
             if (paramValue.Color !== undefined) return paramValue.Color
             if (paramValue.CssSize !== undefined) return paramValue.CssSize

@@ -14,6 +14,7 @@ class OverseerApp {
         this.isDocumentModified = false
         this.fileManager = new FileManager()
         this.renderer = new OverseerRenderer()
+    this._scheduler = { id: null, periodMs: 1000 }
         
         // Make app instance available globally for renderer
         window.app = this
@@ -127,6 +128,9 @@ class OverseerApp {
             
             // Final status update handled by updateTitle()
             if (DEBUG_MODE) this.setStatus('File loaded successfully - DEBUG VERSION')
+            
+            // Start periodic scheduler tick
+            this.startScheduler()
             
         } catch (error) {
             if (DEBUG_MODE) this.setStatus(`DEBUG: Error occurred - ${error.message}`)
@@ -300,6 +304,37 @@ tab Main {
         
         // Show the target screen
         document.getElementById(screenId).classList.add('active')
+    }
+
+    startScheduler() {
+        this.stopScheduler()
+        if (!this.currentDocument) return
+        const tick = async () => {
+            try {
+                if (!this.currentDocument) return
+                const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
+                if (updated) {
+                    this.currentDocument = updated
+                    this.renderer.renderDocument(updated)
+                }
+            } catch (e) {
+                // Non-fatal; keep ticking
+                if (DEBUG_MODE) console.warn('scheduler tick error:', e)
+            }
+        }
+        // Kick once immediately then every second
+        tick()
+        this._scheduler.id = setInterval(tick, this._scheduler.periodMs)
+        // Pause when window not focused to save CPU
+        window.addEventListener('blur', () => this.stopScheduler(), { once: true })
+        window.addEventListener('focus', () => this.startScheduler(), { once: true })
+    }
+
+    stopScheduler() {
+        if (this._scheduler && this._scheduler.id) {
+            clearInterval(this._scheduler.id)
+            this._scheduler.id = null
+        }
     }
 
     setStatus(message, info = '', type = 'info') {

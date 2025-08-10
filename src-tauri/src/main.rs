@@ -73,6 +73,13 @@ async fn execute_overseer_event(
     Ok(nodes)
 }
 
+#[command]
+async fn scheduler_tick(mut nodes: Vec<OverseerNode>) -> Result<Vec<OverseerNode>> {
+    // Run a timer sweep; this may mutate the document and re-resolve inside
+    ActionExecutor::tick(&mut nodes)?;
+    Ok(nodes)
+}
+
 fn main() {
     // Set WebView2 fixed version path with debug cache folder
     let debug_cache_folder = std::env::current_exe()
@@ -98,7 +105,8 @@ fn main() {
             serialize_overseer_nodes,
             parse_overseer_content,
             find_overseer_files,
-            execute_overseer_event
+            execute_overseer_event,
+            scheduler_tick
         ])
         .run(tauri::generate_context!()) {
         Ok(_) => {},

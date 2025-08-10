@@ -237,6 +237,7 @@ impl OverseerFileHandler {
             OverseerValue::Float(f) => f.to_string(),
             OverseerValue::Boolean(b) => b.to_string(),
             OverseerValue::Date(d) => format!("\"{}\"", d),
+            OverseerValue::Timestamp(ts) => format!("\"{}\"", ts),
             OverseerValue::Formula(f) => format!("$({})", f),
             OverseerValue::Template(t) => format!("<{}>", t),
             OverseerValue::Color(color) => match color {

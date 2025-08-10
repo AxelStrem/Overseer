@@ -804,7 +804,31 @@ impl FormulaEvaluator {
         if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
             unreachable!("Boolean ops handled earlier")
         }
-        // For comparisons and arithmetic, convert both to numbers for now (step 4.1 scope)
+        // For comparisons, use rich comparison semantics
+        if matches!(
+            operator,
+            BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::LessThan
+                | BinaryOperator::LessThanOrEqual
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterThanOrEqual
+        ) {
+            use std::cmp::Ordering;
+            let ord = Self::compare_values(left, right)?;
+            let res = match operator {
+                BinaryOperator::Equal => OverseerValue::Boolean(ord == Ordering::Equal),
+                BinaryOperator::NotEqual => OverseerValue::Boolean(ord != Ordering::Equal),
+                BinaryOperator::LessThan => OverseerValue::Boolean(ord == Ordering::Less),
+                BinaryOperator::LessThanOrEqual => OverseerValue::Boolean(ord == Ordering::Less || ord == Ordering::Equal),
+                BinaryOperator::GreaterThan => OverseerValue::Boolean(ord == Ordering::Greater),
+                BinaryOperator::GreaterThanOrEqual => OverseerValue::Boolean(ord == Ordering::Greater || ord == Ordering::Equal),
+                _ => unreachable!(),
+            };
+            return Ok(res);
+        }
+
+        // For arithmetic, convert both to numbers
         let left_num = Self::value_to_number(left)?;
         let right_num = Self::value_to_number(right)?;
 
@@ -850,6 +874,31 @@ impl FormulaEvaluator {
         })
     }
 
+    /// Compare values (numbers/strings/bools/dates/timestamps) with sensible defaults.
+    fn compare_values(a: &OverseerValue, b: &OverseerValue) -> Result<std::cmp::Ordering, OverseerError> {
+        use std::cmp::Ordering;
+        Ok(match (a, b) {
+            (OverseerValue::Integer(x), OverseerValue::Integer(y)) => x.cmp(y),
+            (OverseerValue::Float(x), OverseerValue::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+            (OverseerValue::Integer(x), OverseerValue::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(Ordering::Equal),
+            (OverseerValue::Float(x), OverseerValue::Integer(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(Ordering::Equal),
+            (OverseerValue::String(x), OverseerValue::String(y)) => x.cmp(y),
+            (OverseerValue::Boolean(x), OverseerValue::Boolean(y)) => x.cmp(y),
+            (OverseerValue::Date(x), OverseerValue::Date(y)) => x.cmp(y),
+            (OverseerValue::Timestamp(x), OverseerValue::Timestamp(y)) => x.cmp(y),
+            // Mixed date/timestamp: coerce date to start-of-day timestamp
+            (OverseerValue::Date(x), OverseerValue::Timestamp(y)) => Self::date_to_timestamp(x).cmp(y),
+            (OverseerValue::Timestamp(x), OverseerValue::Date(y)) => x.cmp(&Self::date_to_timestamp(y)),
+            // Fallback to string representations
+            _ => Self::value_to_string(a).cmp(&Self::value_to_string(b)),
+        })
+    }
+
+    fn date_to_timestamp(date: &str) -> String {
+        if date.contains('T') { return date.to_string(); }
+        format!("{}T00:00:00Z", date)
+    }
+
     /// Convert an OverseerValue to a number for arithmetic/comparisons
     fn value_to_number(value: &OverseerValue) -> Result<f64, OverseerError> {
         match value {
@@ -877,6 +926,8 @@ impl FormulaEvaluator {
                 else if let Ok(n) = s.parse::<f64>() { Ok(n != 0.0) }
                 else { Err(OverseerError::FormulaError(format!("Cannot convert '{}' to bool", s))) }
             }
+            OverseerValue::Date(d) => Ok(!d.is_empty()),
+            OverseerValue::Timestamp(ts) => Ok(!ts.is_empty()),
             _ => Err(OverseerError::FormulaError("Cannot convert value to bool".to_string())),
         }
     }
@@ -895,7 +946,32 @@ impl FormulaEvaluator {
                 let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                 Ok(OverseerValue::Date(today))
             }
+            "now" => {
+                if !args.is_empty() {
+                    return Err(OverseerError::FormulaError("now() takes no arguments".to_string()));
+                }
+                let now = chrono::Utc::now().to_rfc3339();
+                Ok(OverseerValue::Timestamp(now))
+            }
             _ => Err(OverseerError::FormulaError(format!("Unknown function: {}", name))),
+        }
+    }
+}
+
+impl FormulaEvaluator {
+    fn value_to_string(v: &OverseerValue) -> String {
+        match v {
+            OverseerValue::Integer(i) => i.to_string(),
+            OverseerValue::Float(f) => f.to_string(),
+            OverseerValue::String(s) => s.clone(),
+            OverseerValue::Boolean(b) => b.to_string(),
+            OverseerValue::Date(d) => d.clone(),
+            OverseerValue::Timestamp(ts) => ts.clone(),
+            OverseerValue::Color(c) => format!("{:?}", c),
+            OverseerValue::CssSize(s) => format!("{:?}", s),
+            OverseerValue::BorderStyle(s) => format!("{:?}", s),
+            OverseerValue::Formula(s) => s.clone(),
+            OverseerValue::Template(s) => s.clone(),
         }
     }
 }

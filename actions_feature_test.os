@@ -49,4 +49,25 @@ div ActionFeatureTest (layout = vertical, spacing=md) {
     button append_name (label="Append 'Alice'") {
         on click { append(list="/ActionFeatureTest/Names", value="Alice") }
     }
+
+    // Timer demo
+    div TimerDemo {
+        int A (label="Counter A") = 0
+    // Initialize T with a static timestamp; button will set it to now()+10s when needed
+    string T (label="Trigger Timestamp") = "2000-01-01T00:00:00Z"
+        // Timer nodes: fire when now() >= T; one-shot (deactivate on fire)
+        timer after_10s (active=false, at=$(../T)) {
+            on timeout { inc(path="/ActionFeatureTest/TimerDemo/A", by=1) }
+        }
+        // A second timer to demonstrate multiple timers in one container
+        timer after_20s (active=false, at=$(../T)) {
+            on timeout { inc(path="/ActionFeatureTest/TimerDemo/A", by=1) }
+        }
+    button add10_activate (label="Add 10s to T and activate 10s timer") {
+            on click {
+                set_now_ts(path="/ActionFeatureTest/TimerDemo/T", offset=10)
+        set(path="/ActionFeatureTest/TimerDemo/after_10s.active", value=true)
+            }
+        }
+    }
 }

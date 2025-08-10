@@ -76,6 +76,7 @@ pub enum OverseerValue {
     Float(f64),
     Boolean(bool),
     Date(String), // We'll use string representation for now
+    Timestamp(String), // RFC3339 timestamp string (UTC recommended)
     Formula(String), // Formula expressions like $(...)
     Template(String), // For <...> syntax in parameters, e.g. entry=<../Template>
     Color(Color), // Colors in various formats

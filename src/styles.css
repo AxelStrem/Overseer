@@ -291,7 +291,8 @@ body {
 .overseer-button {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 0; /* avoid stray inline gap artifacts next to text */
+    overflow: hidden; /* hide any stray inline decorations */
     padding: 8px 16px;
     margin-bottom: 8px; /* default vertical spacing; inline styles can override */
     margin-right: 8px;  /* helpful spacing in horizontal layouts */
@@ -306,6 +307,19 @@ body {
     text-decoration: none;
     transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
     outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: none;
+    border-image: none;
+    list-style: none;
+    background-clip: padding-box;
+}
+
+/* Ensure no pseudo content renders beside labels in some engines */
+.overseer-button::before,
+.overseer-button::after {
+    content: none !important;
+    display: none !important;
 }
 
 .overseer-button:hover {
@@ -323,6 +337,11 @@ body {
 .overseer-button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+.overseer-button .overseer-button-label {
+    display: inline-block;
+    line-height: 1.2;
 }
 
 /* Charts */
