@@ -79,6 +79,114 @@ impl OverseerFileHandler {
         }
     }
 
+    /// Merge comments and some whitespace from the original content into the regenerated content.
+    /// Strategy:
+    /// - Capture leading comment block at file start.
+    /// - For each non-comment line in original, associate any immediately preceding contiguous
+    ///   comment lines (//...) as that line's leading comment block. Also capture any inline
+    ///   end-of-line comment on the anchor line itself.
+    /// - When emitting regenerated lines, insert the captured leading block at the top, and for
+    ///   each matching anchor line (by text before //, trimmed), insert the associated comment
+    ///   block above and append the inline comment if present and not already present.
+    /// Notes:
+    /// - Best-effort only; if anchors don't match (content shifted/changed), comments may be dropped.
+    /// - This function is pure text-based and does not require AST changes.
+    pub fn merge_comments(original: &str, regenerated: &str) -> String {
+        use std::collections::{HashMap, HashSet};
+        fn anchor_key(line: &str) -> String {
+            let mut s = line.to_string();
+            if let Some(idx) = s.find("//") {
+                s.truncate(idx);
+            }
+            s.trim_end().to_string()
+        }
+
+        let mut leading_block: Vec<String> = Vec::new();
+        let mut map_block: HashMap<String, Vec<String>> = HashMap::new();
+        let mut map_inline: HashMap<String, String> = HashMap::new();
+        let mut pending_block: Vec<String> = Vec::new();
+        let mut seen_non_comment = false;
+
+        for line in original.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                if !seen_non_comment {
+                    leading_block.push(line.to_string());
+                } else {
+                    pending_block.push(line.to_string());
+                }
+                continue;
+            }
+
+            // Non-comment line (could be blank or code)
+            if trimmed.is_empty() {
+                // Treat as spacer; keep it inside pending block only if we already started a block
+                if !pending_block.is_empty() {
+                    pending_block.push(line.to_string());
+                } else if !seen_non_comment && !leading_block.is_empty() {
+                    // Preserve a single blank after leading block
+                    leading_block.push(line.to_string());
+                }
+                continue;
+            }
+
+            // Now an anchor line
+            let key = anchor_key(line);
+            if !pending_block.is_empty() && !key.is_empty() && !map_block.contains_key(&key) {
+                map_block.insert(key.clone(), std::mem::take(&mut pending_block));
+            } else {
+                pending_block.clear();
+            }
+            // Capture inline comment if present and not yet set
+            if let Some(idx) = line.find("//") {
+                let inline = &line[idx..];
+                if !key.is_empty() && !map_inline.contains_key(&key) {
+                    map_inline.insert(key.clone(), inline.to_string());
+                }
+            }
+            seen_non_comment = true;
+        }
+
+        // Build merged output
+        let mut out = String::new();
+        let mut inserted_leading = false;
+        let mut used_blocks: HashSet<String> = HashSet::new();
+
+        for (i, line) in regenerated.lines().enumerate() {
+            if i == 0 && !inserted_leading && !leading_block.is_empty() {
+                for l in &leading_block { out.push_str(l); out.push('\n'); }
+                inserted_leading = true;
+            }
+            let key = anchor_key(line);
+            if !key.is_empty() {
+                if let Some(block) = map_block.get(&key) {
+                    if !used_blocks.contains(&key) {
+                        for l in block { out.push_str(l); out.push('\n'); }
+                        used_blocks.insert(key.clone());
+                    }
+                }
+                // Append line, possibly with inline comment
+                if let Some(inl) = map_inline.get(&key) {
+                    if line.contains("//") {
+                        // already has comment; just write as-is
+                        out.push_str(line);
+                        out.push('\n');
+                    } else {
+                        // add a space before inline for readability
+                        out.push_str(line);
+                        if !line.ends_with(' ') { out.push(' '); }
+                        out.push_str(inl);
+                        out.push('\n');
+                    }
+                    continue;
+                }
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+
+        out
+    }
     pub async fn save_overseer_file(path: &str, nodes: &[OverseerNode]) -> Result<()> {
         FileOperations::validate_file_path(path)?;
         
@@ -137,6 +245,8 @@ impl OverseerFileHandler {
                 // Handle node type or template path
                 if let Some(template_path) = &node.template {
                     output.push_str(&format!("<{}>", template_path));
+                } else if let Some(OverseerValue::Template(tpl)) = node.parameters.get("_template_origin") {
+                    output.push_str(&format!("<{}>", tpl));
                 } else {
                     // Check if this node had its type resolved and restore original
                     if let Some(OverseerValue::String(original_type)) = node.parameters.get("_original_type") {
@@ -225,12 +335,44 @@ impl OverseerFileHandler {
             output.push_str(" {\n");
             // Children under a list node are list-body items (render as '-')
             let children_in_list_body = node.node_type == "list";
+            // Suppress template-derived children for any node that originated from a template (standalone instances or list entries)
+            let suppress_template_children = node.template.is_some() || matches!(node.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)));
             for child in &node.children {
                 // Skip template-derived children unless they were explicitly overridden
-                let is_template_child = matches!(child.parameters.get("_template_node"), Some(OverseerValue::Boolean(true)));
-                let has_override = matches!(child.parameters.get("_override_present"), Some(OverseerValue::Boolean(true)));
-                if is_template_child && !has_override {
+                let is_template_child_flag = matches!(child.parameters.get("_template_node"), Some(OverseerValue::Boolean(true)));
+                let has_template_param_markers = child.parameters.keys().any(|k| k.starts_with("_template_"));
+                let is_template_child = is_template_child_flag || has_template_param_markers;
+                // Only treat as includeable if it was explicitly overridden by the source, not just equal/diff logic
+                let has_explicit_override = matches!(child.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true)));
+                // Additional safety: in a template instance, only consider overrides that were explicitly named in the instance source
+                let mut listed_in_instance_overrides = true;
+                if suppress_template_children {
+                    if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
+                        let names: Vec<&str> = list.split(',').filter(|s| !s.is_empty()).collect();
+                        listed_in_instance_overrides = names.iter().any(|n| *n == child.name);
+                    }
+                }
+                if suppress_template_children && is_template_child && (!has_explicit_override || !listed_in_instance_overrides) {
                     continue;
+                }
+                // For template instances/clones, if a child was overridden with only a simple value, prefer the concise "- name = value" form
+    if suppress_template_children && has_explicit_override && listed_in_instance_overrides {
+                    let has_value = child.parameters.contains_key("value");
+                    let non_internal_non_value_params = child.parameters.iter().filter(|(k, _)| {
+                        let ks = k.as_str();
+                        // allow 'value' only; ignore internal keys starting with '_'
+                        !ks.starts_with('_') && ks != "value"
+                    }).count();
+                    let only_value_override = has_value && non_internal_non_value_params == 0 && child.children.is_empty();
+                    // Guard: only treat as an explicit value override if the template value marker was removed.
+                    let has_template_value_marker = child.parameters.contains_key("_template_value");
+                    if only_value_override && !has_template_value_marker {
+            eprintln!("[SER] concise emit: name='{}' explicit={} tmpl_marker_removed={} suppress={} is_templ_child={} non_val_params={} has_val={}",
+                  child.name, has_explicit_override, !has_template_value_marker, suppress_template_children, is_template_child, non_internal_non_value_params, has_value);
+                        let val = child.parameters.get("value").unwrap();
+                        output.push_str(&format!("{}    - {} = {}\n", indent, child.name, Self::serialize_value(val)));
+                        continue;
+                    }
                 }
                 Self::serialize_node_context(child, output, indent_level + 1, children_in_list_body)?;
             }

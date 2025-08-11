@@ -684,7 +684,21 @@ impl ActionExecutor {
         let node = Self::get_node_mut_by_indices(nodes, &indices)
             .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
         let key = explicit_param.unwrap_or_else(|| "value".to_string());
-        node.parameters.insert(key, value);
+        // Equality-aware override: don't mark as override if value is unchanged
+        let same = node.parameters.get(&key).map_or(false, |v| v == &value);
+        node.parameters.insert(key.clone(), value.clone());
+        // If overriding a parameter that had a template marker, remove the marker so it persists
+        let marker = format!("_template_{}", key);
+        if !same { node.parameters.remove(&marker); }
+        // If overriding the 'value' of a template-derived child, mark explicit override for serializer
+        if key == "value" {
+            if !same {
+                node.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                node.parameters.remove("_template_value");
+            }
+            // Clear any stale computed value
+            node.parameters.remove("_computed_value");
+        }
         Ok(())
     }
 
@@ -783,6 +797,8 @@ impl ActionExecutor {
         let mut params = template.parameters.clone();
         // Record original type of the template (e.g., div, list) so renderer/layout can treat as container
         params.insert("_original_type".to_string(), OverseerValue::String(template.node_type.clone()));
+    // Mark that this node originates from a template so serializer can suppress inherited children
+    params.insert("_from_template".to_string(), OverseerValue::Boolean(true));
         // Add per-parameter template markers (skip internal keys)
         let keys: Vec<String> = params
             .keys()
@@ -799,16 +815,20 @@ impl ActionExecutor {
         let mut children = template.children.clone();
         for ch in children.iter_mut() {
             Self::mark_template_child_recursive_action(ch);
+            Self::clear_computed_recursive(ch);
         }
 
-        OverseerNode {
+        let mut node = OverseerNode {
             name: template.name.clone(),
             node_type: template.name.clone(),
             template: None,
             parameters: params,
             children,
             is_hierarchy_transparent: template.is_hierarchy_transparent,
-        }
+        };
+        // Also clear computed params at the root clone
+        Self::clear_computed_recursive(&mut node);
+        node
     }
 
     // Mark a node and its subtree as template-derived for serializer filtering
@@ -839,6 +859,10 @@ impl ActionExecutor {
             child
                 .parameters
                 .insert("_override_present".to_string(), OverseerValue::Boolean(true));
+            // Remove template marker for value on this field if present
+            child.parameters.remove("_template_value");
+            // Clear any stale computed value on this field
+            child.parameters.remove("_computed_value");
         } else {
             // Add simple string field if missing
             let new_field = OverseerNode {
@@ -855,6 +879,20 @@ impl ActionExecutor {
             };
             item.children.push(new_field);
         }
+    }
+
+    // Remove any computed shadow parameters so formulas recompute in the new instance context
+    fn clear_computed_recursive(node: &mut OverseerNode) {
+        let keys: Vec<String> = node
+            .parameters
+            .keys()
+            .filter(|k| k.starts_with("_computed_"))
+            .cloned()
+            .collect();
+        for k in keys { node.parameters.remove(&k); }
+        // Special-case top-level computed value
+        node.parameters.remove("_computed_value");
+        for ch in node.children.iter_mut() { Self::clear_computed_recursive(ch); }
     }
 
     fn value_equals(a: &OverseerValue, b: &OverseerValue) -> bool {
@@ -1067,11 +1105,11 @@ impl ActionExecutor {
             .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
         if list_node.node_type != "list" { return Err(OverseerError::ValidationError("sort.target is not a list".to_string())); }
 
-        // Prepare evaluation context base for by_expr; we'll bind 'x' to each item
-        // For current_node in base context, use the list node snapshot for relative paths
-        let list_snapshot = &snapshot[indices[0]]; // root of path's first segment
-        // Re-traverse to get the exact list snapshot node reference for context
-        let mut cur: &OverseerNode = list_snapshot;
+    // Prepare evaluation context base for by_expr; we'll bind 'x' to each item
+    // For current_node in base context, use the list node snapshot for relative paths
+    let list_snapshot = &snapshot[indices[0]]; // root of path's first segment
+    // Re-traverse to get the exact list snapshot node reference for context
+    let mut cur: &OverseerNode = list_snapshot;
         for idx in &indices[1..] {
             cur = &cur.children[*idx];
         }

@@ -12,7 +12,7 @@ mod actions;
 
 use types::*;
 use actions::ActionExecutor;
-use file_ops::FileOperations;
+use file_ops::{FileOperations, OverseerFileHandler};
 use parser::parse_document;
 
 #[command]
@@ -29,7 +29,19 @@ async fn load_overseer_file(path: String) -> Result<String> {
 
 #[command]
 async fn save_overseer_file(path: String, content: String) -> Result<()> {
-    match FileOperations::write_file(&path, &content).await {
+    // Best-effort: if content parses, re-serialize to canonical form first,
+    // then merge comments from the original text into regenerated output.
+    let regenerated = match parse_document(&content) {
+        Ok((_rem, mut nodes)) => {
+            resolver::resolve_document(&mut nodes);
+            match OverseerFileHandler::serialize_nodes(&nodes) {
+                Ok(s) => OverseerFileHandler::merge_comments(&content, &s),
+                Err(_) => content.clone(),
+            }
+        }
+        Err(_) => content.clone(),
+    };
+    match FileOperations::write_file(&path, &regenerated).await {
         Ok(_) => Ok(()),
         Err(e) => Err(OverseerError::IoError(format!("Failed to save file: {}", e))),
     }

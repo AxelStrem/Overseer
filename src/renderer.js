@@ -935,8 +935,11 @@ export class OverseerRenderer {
                 // In tight layout mode, use minimal or no padding
                 element.style.padding = '0px'
             } else {
-                // Apply default padding for containers (div/list) unless explicitly set to 0
-                if (node.node_type === 'div' || node.node_type === 'list') {
+                // Apply default padding for containers (div/list) or template instances that originated from them
+                const originalType = (this.getParameterValue(node, '_original_type') || '').toString().toLowerCase()
+                const isContainerNow = (node.node_type === 'div' || node.node_type === 'list')
+                const wasContainerTemplate = (originalType === 'div' || originalType === 'list')
+                if (isContainerNow || wasContainerTemplate) {
                     element.style.padding = '16px'
                 }
             }
@@ -952,8 +955,13 @@ export class OverseerRenderer {
                                 node.parameters['margin-left'] !== undefined ||
                                 node.parameters['margin-right'] !== undefined
         
-        if (!hasExplicitMargin && (node.node_type === 'div' || node.node_type === 'list')) {
-            element.style.marginBottom = '16px'
+        if (!hasExplicitMargin) {
+            const originalType = (this.getParameterValue(node, '_original_type') || '').toString().toLowerCase()
+            const isContainerNow = (node.node_type === 'div' || node.node_type === 'list')
+            const wasContainerTemplate = (originalType === 'div' || originalType === 'list')
+            if (isContainerNow || wasContainerTemplate) {
+                element.style.marginBottom = '16px'
+            }
         }
 
         if (spacing !== null) {
