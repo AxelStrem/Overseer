@@ -1,3 +1,11 @@
+// Disappearing comments on save (low priority)
+// Description: When saving from the app, comments in the original file may be lost.
+// Root cause: The save flow merges comments using the UI-provided regenerated content as
+// the merge source rather than reading the on-disk original. As a result, comment blocks
+// are not available for merging back.
+// Status: Low priority; defer fix. Proposed fix is to have the backend read current
+// on-disk file for the merge source (fallback to UI content if unreadable/new file).
+
 // Known Bugs and Issues Tracker
 // Created: 2025-07-26
 // Purpose: Track bugs and issues found during development

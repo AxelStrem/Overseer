@@ -226,9 +226,9 @@ body {
     transition: background-color 0.2s;
 }
 
-/* Add a little breathing room at the very top when the first child has no margin-top */
-.overseer-div > :first-child,
-.overseer-list > :first-child {
+/* Add a little breathing room at the very top only for vertical layout */
+.overseer-div.layout-vertical > :first-child,
+.overseer-list.layout-vertical > :first-child {
     margin-top: 8px !important;
 }
 

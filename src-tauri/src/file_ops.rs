@@ -98,7 +98,27 @@ impl OverseerFileHandler {
             if let Some(idx) = s.find("//") {
                 s.truncate(idx);
             }
-            s.trim_end().to_string()
+            // Normalize whitespace differences so anchors match even if formatting changes:
+            // 1) Collapse all runs of whitespace to a single space
+            // 2) Remove any single space immediately before '(' to treat "Name(" and "Name (" the same
+            let mut norm = String::with_capacity(s.len());
+            let mut prev_space = false;
+            for ch in s.chars() {
+                if ch.is_whitespace() {
+                    if !prev_space {
+                        norm.push(' ');
+                        prev_space = true;
+                    }
+                } else {
+                    norm.push(ch);
+                    prev_space = false;
+                }
+            }
+            // Trim trailing spaces
+            while norm.ends_with(' ') { norm.pop(); }
+            // Remove spaces before '(' characters
+            let norm = norm.replace(" (", "(");
+            norm
         }
 
         let mut leading_block: Vec<String> = Vec::new();
@@ -187,6 +207,8 @@ impl OverseerFileHandler {
 
         out
     }
+
+    
     pub async fn save_overseer_file(path: &str, nodes: &[OverseerNode]) -> Result<()> {
         FileOperations::validate_file_path(path)?;
         
@@ -217,17 +239,73 @@ impl OverseerFileHandler {
         let indent = "    ".repeat(indent_level); // Use 4 spaces for indentation
         output.push_str(&indent);
         
-        // Handle list body items which start with '-'
+        // Handle list-style items which start with '-'
         if in_list_body || node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-") {
-            output.push_str("- ");
-            // Simple value list item: - "value"
-            if let Some(value) = node.parameters.get("value") {
-                output.push_str(&Self::serialize_value(value));
-                output.push('\n');
+            // Special handling for real list bodies vs non-list contexts
+            if in_list_body {
+                // Determine if this is a simple primitive list item (only when not template-derived)
+                let is_template_instance = node.template.is_some() || matches!(node.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)));
+                if let Some(value) = node.parameters.get("value") {
+                    // Only emit as simple value when NOT a template instance (true primitive lists)
+                    if !is_template_instance {
+                        output.push_str("- ");
+                        output.push_str(&Self::serialize_value(value));
+                        output.push('\n');
+                        return Ok(());
+                    }
+                }
+                // Complex/template-based item: emit as "- { ... }" and use the standard child emission (with concise override rules)
+                output.push_str("- {\n");
+                // Suppress template-derived children for instances and emit concise overrides
+                let suppress_template_children = node.template.is_some() || matches!(node.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)));
+                for child in &node.children {
+                    let is_template_child_flag = matches!(child.parameters.get("_template_node"), Some(OverseerValue::Boolean(true)));
+                    let has_template_param_markers = child.parameters.keys().any(|k| k.starts_with("_template_"));
+                    let is_template_child = is_template_child_flag || has_template_param_markers;
+                    let has_explicit_override = matches!(child.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true)));
+                    let mut listed_in_instance_overrides = true;
+                    if suppress_template_children {
+                        if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
+                            let names: Vec<&str> = list.split(',').filter(|s| !s.is_empty()).collect();
+                            listed_in_instance_overrides = names.iter().any(|n| *n == child.name);
+                        }
+                    }
+                    if suppress_template_children && is_template_child && (!has_explicit_override || !listed_in_instance_overrides) {
+                        continue;
+                    }
+                    if suppress_template_children && has_explicit_override && listed_in_instance_overrides {
+                        let has_value = child.parameters.contains_key("value");
+                        let non_internal_non_value_params = child.parameters.iter().filter(|(k, _)| {
+                            let ks = k.as_str();
+                            !ks.starts_with('_') && ks != "value"
+                        }).count();
+                        let only_value_override = has_value && non_internal_non_value_params == 0 && child.children.is_empty();
+                        let has_template_value_marker = child.parameters.contains_key("_template_value");
+                        if only_value_override && !has_template_value_marker {
+                            let val = child.parameters.get("value").unwrap();
+                            output.push_str(&format!("{}    - {} = {}\n", indent, child.name, Self::serialize_value(val)));
+                            continue;
+                        }
+                    }
+                    // Fallback: serialize child normally inside the block
+                    Self::serialize_node_context(child, output, indent_level + 1, false)?;
+                }
+                output.push_str(&format!("{}}}\n", indent));
                 return Ok(());
+            } else {
+                // Non-list context override: allow "- name = value" syntax
+                if let Some(value) = node.parameters.get("value") {
+                    if !node.name.is_empty() {
+                        output.push_str("- ");
+                        output.push_str(&node.name);
+                        output.push_str(" = ");
+                        output.push_str(&Self::serialize_value(value));
+                        output.push('\n');
+                        return Ok(());
+                    }
+                }
+                // Else: fall through to normal serialization
             }
-            // Complex object list item: - { ... }
-            // Fall through to handle as block
         } else {
             // For children of list items, always use "-" even if the type was resolved
             if in_list_body {
@@ -469,5 +547,55 @@ impl OverseerFileHandler {
                 },
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_merge_comments {
+    use super::*;
+
+    #[test]
+    fn preserves_standalone_comment_before_block_with_param_spacing_change() {
+        let original = r#"div T {
+    int A = 1
+    int B = 2
+    int C = 3
+}
+<T> I {
+    - A = 3
+    - B = 2
+}
+
+// List as an example of correct behavior:
+list L(entry=<T>) {
+    - {
+        - A = 3
+        - B = 2
+    }
+}
+"#;
+        // Regenerated content may insert a space before '(' in parameter list
+        let regenerated = r#"div T {
+    int A = 1
+    int B = 2
+    int C = 3
+}
+<T> I {
+    - A = 3
+    - B = 2
+}
+list L (entry=<T>) {
+    - {
+        - A = 3
+        - B = 2
+    }
+}
+"#;
+        let merged = OverseerFileHandler::merge_comments(original, regenerated);
+        assert!(merged.contains("// List as an example of correct behavior:"), "Expected the standalone comment to be preserved in merged output.\nMerged:\n{}", merged);
+        // Ensure the comment appears before the list line
+        let pos_comment = merged.find("// List as an example of correct behavior:").unwrap();
+        let pos_list = merged.find("list L (entry=<T>)").unwrap_or_else(|| merged.find("list L(entry=<T>)").unwrap());
+        assert!(pos_comment < pos_list, "Comment should precede the list anchor line");
     }
 }

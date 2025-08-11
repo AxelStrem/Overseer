@@ -451,7 +451,7 @@ impl ActionExecutor {
                 Self::remove_from_list(nodes, owner_path, &list_path, &key_field, &key_value)
             }
             "append" => {
-                // append(list=/path, template=<...>?) for template lists
+                // append(list=/path, template=<...>?){ overrides... } for template lists
                 // or append(list=/path, value=...) for simple-type lists
                 let list_path = Self::require_string(&action.parameters, "list").or_else(|_| Self::require_string(&action.parameters, "to"))?;
                 // Optional template override
@@ -473,7 +473,9 @@ impl ActionExecutor {
                     _ => None,
                 };
                 let value_opt = action.parameters.get("value").cloned();
-                Self::append_to_list(nodes, owner_path, &list_path, template_name_opt.as_deref(), value_opt)
+                // Pass action block overrides to append semantics
+                let overrides = action.children.clone();
+                Self::append_to_list(nodes, owner_path, &list_path, template_name_opt.as_deref(), value_opt, &overrides)
             }
             "move" => {
                 // move(from=/list, keyField=..., keyValue=..., to=/targetList?, at=index?)
@@ -795,8 +797,13 @@ impl ActionExecutor {
     fn clone_from_template(template: &OverseerNode) -> OverseerNode {
         // Start parameters with template defaults and add _template_ markers so serializer can skip them
         let mut params = template.parameters.clone();
-        // Record original type of the template (e.g., div, list) so renderer/layout can treat as container
-        params.insert("_original_type".to_string(), OverseerValue::String(template.node_type.clone()));
+        // Preserve original container type if present on the template (e.g., an instance carries _original_type="div").
+        // Fallback to template.node_type when no explicit original type is recorded.
+        let orig_ty = match template.parameters.get("_original_type") {
+            Some(OverseerValue::String(s)) => s.clone(),
+            _ => template.node_type.clone(),
+        };
+        params.insert("_original_type".to_string(), OverseerValue::String(orig_ty));
     // Mark that this node originates from a template so serializer can suppress inherited children
     params.insert("_from_template".to_string(), OverseerValue::Boolean(true));
         // Add per-parameter template markers (skip internal keys)
@@ -818,6 +825,10 @@ impl ActionExecutor {
             Self::clear_computed_recursive(ch);
         }
 
+        // Preserve the instantiated type semantics: if this template node represents an instance of a component
+        // (node_type == template.name) and carries _original_type indicating the container kind (e.g., div),
+        // keep node_type equal to the component name (like list/template instantiation does) so fields are found
+        // by name, but also record _original_type for layout/rendering. This mirrors resolver behavior for instances.
         let mut node = OverseerNode {
             name: template.name.clone(),
             node_type: template.name.clone(),
@@ -830,6 +841,8 @@ impl ActionExecutor {
         Self::clear_computed_recursive(&mut node);
         node
     }
+
+    
 
     // Mark a node and its subtree as template-derived for serializer filtering
     fn mark_template_child_recursive_action(node: &mut OverseerNode) {
@@ -856,13 +869,23 @@ impl ActionExecutor {
         if let Some(child) = item.children.iter_mut().find(|c| c.name == field) {
             child.parameters.insert("value".to_string(), value);
             // Mark explicit override so serializer will persist this child even if template-derived
-            child
-                .parameters
-                .insert("_override_present".to_string(), OverseerValue::Boolean(true));
+            child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+            child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
             // Remove template marker for value on this field if present
             child.parameters.remove("_template_value");
             // Clear any stale computed value on this field
             child.parameters.remove("_computed_value");
+            // Track override at parent level for completeness
+            let entry = item
+                .parameters
+                .entry("_explicit_overrides".to_string())
+                .or_insert(OverseerValue::String(String::new()));
+            if let OverseerValue::String(s) = entry {
+                if !s.split(',').any(|n| n == field) {
+                    if !s.is_empty() { s.push(','); }
+                    s.push_str(field);
+                }
+            }
         } else {
             // Add simple string field if missing
             let new_field = OverseerNode {
@@ -872,12 +895,25 @@ impl ActionExecutor {
                 parameters: {
                     let mut m = std::collections::HashMap::new();
                     m.insert("value".to_string(), value);
+                    m.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                    m.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
                     m
                 },
                 children: Vec::new(),
                 is_hierarchy_transparent: false,
             };
             item.children.push(new_field);
+            // Track override at parent level
+            let entry = item
+                .parameters
+                .entry("_explicit_overrides".to_string())
+                .or_insert(OverseerValue::String(String::new()));
+            if let OverseerValue::String(s) = entry {
+                if !s.split(',').any(|n| n == field) {
+                    if !s.is_empty() { s.push(','); }
+                    s.push_str(field);
+                }
+            }
         }
     }
 
@@ -978,7 +1014,8 @@ impl ActionExecutor {
         owner_path: &[String],
         list_path: &str,
         template_name: Option<&str>,
-        value_opt: Option<OverseerValue>,
+    value_opt: Option<OverseerValue>,
+    overrides: &Vec<OverseerNode>,
     ) -> Result<(), OverseerError> {
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let snapshot = nodes.clone();
@@ -1008,6 +1045,8 @@ impl ActionExecutor {
                         let opp = Self::opposite_layout(parent_eff);
                         new_item.parameters.insert("_effective_layout".to_string(), OverseerValue::String(opp));
                     }
+                    // Apply evaluated overrides from action block
+                    Self::apply_overrides_evaluated(&mut new_item, overrides, owner_path, &snapshot)?;
                     list_node.children.push(new_item);
                 }
                 OverseerValue::String(type_name) => {
@@ -1030,6 +1069,112 @@ impl ActionExecutor {
             return Err(OverseerError::ValidationError("append: list has no entry parameter".to_string()));
         }
         Ok(())
+    }
+
+    // Evaluate formulas in value/params against owner_path context and apply into target
+    fn apply_overrides_evaluated(
+        target: &mut OverseerNode,
+        overrides: &Vec<OverseerNode>,
+        owner_path: &[String],
+        snapshot: &Vec<OverseerNode>,
+    ) -> Result<(), OverseerError> {
+        for ov in overrides {
+            let name = ov.name.clone();
+            // Find or create corresponding child in target
+            let idx_opt = target.children.iter().position(|c| c.name == name);
+            if let Some(idx) = idx_opt {
+                // Merge parameters (evaluate any Formula)
+                let child = target.children.get_mut(idx).unwrap();
+                // Apply parameters
+                for (k, v) in ov.parameters.iter() {
+                    let eval = Self::evaluate_in_context(v, owner_path, snapshot)?;
+                    child.parameters.insert(k.clone(), eval);
+                }
+                // Mark explicit override and clear template marker for value, if present
+                child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
+                child.parameters.remove("_template_value");
+                // Track at parent level
+                let entry = target
+                    .parameters
+                    .entry("_explicit_overrides".to_string())
+                    .or_insert(OverseerValue::String(String::new()));
+                if let OverseerValue::String(s) = entry {
+                    if !s.split(',').any(|n| n == name) {
+                        if !s.is_empty() { s.push(','); }
+                        s.push_str(&name);
+                    }
+                }
+                // Recurse into children overrides
+                if !ov.children.is_empty() {
+                    Self::apply_overrides_evaluated(child, &ov.children, owner_path, snapshot)?;
+                }
+            } else {
+                // Create new child with inferred type from override/value
+                let mut new_child = OverseerNode {
+                    name: name.clone(),
+                    node_type: ov.node_type.clone(),
+                    template: None,
+                    parameters: Default::default(),
+                    children: Vec::new(),
+                    is_hierarchy_transparent: false,
+                };
+                // Copy/evaluate params
+                for (k, v) in ov.parameters.iter() {
+                    let eval = Self::evaluate_in_context(v, owner_path, snapshot)?;
+                    new_child.parameters.insert(k.clone(), eval);
+                }
+                new_child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                new_child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
+                new_child.parameters.remove("_template_value");
+                // Recurse
+                if !ov.children.is_empty() {
+                    Self::apply_overrides_evaluated(&mut new_child, &ov.children, owner_path, snapshot)?;
+                }
+                // Infer node type from evaluated value if empty
+                if new_child.node_type.is_empty() {
+                    if let Some(val) = new_child.parameters.get("value") {
+                        new_child.node_type = match val {
+                            OverseerValue::Integer(_) => "int".to_string(),
+                            OverseerValue::Float(_) => "float".to_string(),
+                            OverseerValue::Boolean(_) => "bool".to_string(),
+                            OverseerValue::String(_) => "string".to_string(),
+                            OverseerValue::Date(_) => "date".to_string(),
+                            OverseerValue::Timestamp(_) => "timestamp".to_string(),
+                            _ => new_child.node_type.clone(),
+                        };
+                    }
+                }
+                target.children.push(new_child);
+                // Track at parent level
+                let entry = target
+                    .parameters
+                    .entry("_explicit_overrides".to_string())
+                    .or_insert(OverseerValue::String(String::new()));
+                if let OverseerValue::String(s) = entry {
+                    if !s.split(',').any(|n| n == name) {
+                        if !s.is_empty() { s.push(','); }
+                        s.push_str(&name);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn evaluate_in_context(
+        val: &OverseerValue,
+        owner_path: &[String],
+        snapshot: &Vec<OverseerNode>,
+    ) -> Result<OverseerValue, OverseerError> {
+        match val {
+            OverseerValue::Formula(expr) => {
+                let ctx = EvaluationContext::new(owner_path.to_vec(), snapshot);
+                let evaluated = FormulaEvaluator::evaluate_formula(expr, &ctx)?;
+                Ok(evaluated)
+            }
+            other => Ok(other.clone()),
+        }
     }
 
     fn move_in_list(
@@ -1438,5 +1583,70 @@ mod tests {
         let root = nodes.iter().find(|n| n.name == "Root").unwrap();
         let a = root.children.iter().find(|c| c.name == "A").unwrap();
         assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(0)));
+    }
+}
+
+// Additional tests for helpers
+#[cfg(test)]
+mod tests_clone_from_template {
+    use super::*;
+    use crate::parser::parse_document;
+    use crate::resolver::resolve_document;
+    use crate::file_ops::OverseerFileHandler;
+
+    #[test]
+    fn preserves_original_type_when_cloning_instance_template() {
+        // Create a pseudo instance-like template with node_type "ComponentName" but _original_type "div"
+        let mut t = OverseerNode {
+            name: "ComponentName".to_string(),
+            node_type: "ComponentName".to_string(),
+            template: None,
+            parameters: Default::default(),
+            children: vec![],
+            is_hierarchy_transparent: false,
+        };
+        t.parameters.insert("_original_type".to_string(), OverseerValue::String("div".to_string()));
+        let cloned = ActionExecutor::clone_from_template(&t);
+        assert_eq!(cloned.parameters.get("_original_type"), Some(&OverseerValue::String("div".to_string())));
+        // node_type should remain the component name for consistency with instances
+        assert_eq!(cloned.node_type, "ComponentName");
+    }
+
+    #[test]
+    fn append_with_overrides_serializes_as_object_not_primitive() {
+        let input = r#"
+        div Root {
+            div T { int i = 10 int ii = $(2*i) }
+            button B { on click { append(list="/Root/L") { - i = 20 } } }
+            button C { on click { append(list="/Root/L") { - i = 30 } } }
+            int x = 50
+            button D (label="button 3") {
+                on click { append(list="/Root/L") { - i = $(x) } }
+            }
+            list L (entry=<T>, layout="horizontal") { }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        // Click B, C, D to append three items
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Root".into(), "B".into()], "click").is_ok());
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Root".into(), "C".into()], "click").is_ok());
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Root".into(), "D".into()], "click").is_ok());
+        // Serialize and verify list entries are objects with named field overrides
+        let s = OverseerFileHandler::serialize_nodes(&nodes).unwrap();
+    assert!(s.contains("list L ("));
+    assert!(s.contains("entry=<T>"));
+    assert!(s.contains("layout=\"horizontal\""));
+        // Ensure we do not emit primitive entries like "- 20"/"- 30"/"- 50"
+        assert!(!s.contains("\n    - 20\n"), "Should not serialize primitive '- 20' entries.\n{}", s);
+        assert!(!s.contains("\n    - 30\n"), "Should not serialize primitive '- 30' entries.\n{}", s);
+        assert!(!s.contains("\n    - 50\n"), "Should not serialize primitive '- 50' entries.\n{}", s);
+        // Should contain object block entries with named override lines
+    // Check entries have object blocks and named overrides without relying on exact whitespace
+    let dash_block_count = s.matches("\n        - {").count() + s.matches("\n    - {").count();
+    assert!(dash_block_count >= 3, "Expected at least three '- {{ ... }}' blocks.\n{}", s);
+    assert!(s.contains("- i = 20"), "Expected an override '- i = 20'.\n{}", s);
+    assert!(s.contains("- i = 30"), "Expected an override '- i = 30'.\n{}", s);
+    assert!(s.contains("- i = 50"), "Expected an override '- i = 50'.\n{}", s);
     }
 }
