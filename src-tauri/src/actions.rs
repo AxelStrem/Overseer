@@ -978,6 +978,10 @@ impl ActionExecutor {
             let opp = Self::opposite_layout(parent_eff);
             new_item.parameters.insert("_effective_layout".to_string(), OverseerValue::String(opp));
         }
+    // Assign a unique instance name mirroring resolver reload semantics (e.g., T__1, T__2)
+    // This prevents duplicate sibling names that break name-based path resolution during formula evaluation.
+    let ordinal = list_node.children.len() + 1; // 1-based index after append
+    new_item.name = format!("{}__{}", template_def.name, ordinal);
         list_node.children.push(new_item);
         Ok(())
     }
@@ -1045,6 +1049,10 @@ impl ActionExecutor {
                         let opp = Self::opposite_layout(parent_eff);
                         new_item.parameters.insert("_effective_layout".to_string(), OverseerValue::String(opp));
                     }
+                    // Assign a unique instance name (e.g., T__1, T__2) to avoid duplicate sibling names.
+                    // Using current length+1 reflects the creation order and matches resolver's reload naming convention.
+                    let ordinal = list_node.children.len() + 1;
+                    new_item.name = format!("{}__{}", template_def.name, ordinal);
                     // Apply evaluated overrides from action block
                     Self::apply_overrides_evaluated(&mut new_item, overrides, owner_path, &snapshot)?;
                     list_node.children.push(new_item);
@@ -1053,7 +1061,7 @@ impl ActionExecutor {
                     // Simple type list requires a value
                     let val = value_opt.ok_or_else(|| OverseerError::ValidationError("append.value required for simple list".to_string()))?;
                     let mut item = OverseerNode {
-                        name: "".to_string(),
+                        name: format!("{}__{}", type_name, list_node.children.len() + 1),
                         node_type: type_name.clone(),
                         template: None,
                         parameters: Default::default(),
