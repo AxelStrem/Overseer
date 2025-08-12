@@ -1846,18 +1846,24 @@ impl FormulaEvaluator {
     }
 }
 
-/// Parse function calls like today()
+/// Parse function calls like today() or days_since(arg1, arg2)
 fn function_call(input: &str) -> IResult<&str, FormulaExpression> {
+    use nom::multi::separated_list0;
     map(
         tuple((
-
             take_while1(|c: char| c.is_alphabetic() || c == '_'),
-            delimited(char('('), multispace0, char(')')),
-
+            delimited(
+                char('('),
+                opt(separated_list0(
+                    delimited(multispace0, char(','), multispace0),
+                    expression,
+                )),
+                char(')')
+            ),
         )),
-        |(name, _): (&str, &str)| FormulaExpression::FunctionCall {
+        |(name, args_opt): (&str, Option<Vec<FormulaExpression>>)| FormulaExpression::FunctionCall {
             name: name.to_string(),
-            args: vec![], // No arguments for now
+            args: args_opt.unwrap_or_else(|| vec![]),
         },
     )(input)
 }

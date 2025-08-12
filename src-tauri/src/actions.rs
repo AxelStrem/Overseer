@@ -1598,6 +1598,37 @@ mod tests {
     }
 
     #[test]
+    fn test_inherited_background_not_persisted_after_action_and_save() {
+        use crate::file_ops::OverseerFileHandler;
+        // Simulate an Exercise with inherited background-color and a Done button that sets a timestamp
+        let input = r#"
+        div Exercise (background-color=#ffcccc) {
+            div History {
+                list items(entry=div) {
+                    div Entry1 { string when = "2024-01-01" }
+                }
+            }
+            timestamp last_done (mode="elapsed")
+            button Done { on click { set_now_ts(path="../last_done") } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolver::resolve_document(&mut nodes);
+        // Click Done
+        let path = vec!["Exercise".to_string(), "Done".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        // Re-resolve after mutation (mimic UI loop)
+        resolver::resolve_document(&mut nodes);
+        // Serialize and ensure children of History do not persist inherited background-color
+        let out = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        // Only the parent Exercise should carry background-color param
+        assert!(out.contains("div Exercise (background-color=#ffcccc)"));
+        let mentions = out.matches("background-color").count();
+        assert_eq!(mentions, 1, "inherited background-color must not be written on children after actions");
+    }
+
+    #[test]
     fn test_timer_fires_and_deactivates() {
         let input = r#"
         div Root {

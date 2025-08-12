@@ -456,10 +456,6 @@ fn resolve_parameter_inheritance(nodes: &mut Vec<OverseerNode>, parent_params: &
                     // Mark as template-derived so serializer will not persist inherited styling
                     node.parameters.insert(format!("_template_{}", param_name), parent_value.clone());
                 }
-            } else {
-                // If the node explicitly sets this param, ensure we don't carry a stale template marker for it
-                let marker = format!("_template_{}", param_name);
-                node.parameters.remove(&marker);
             }
         }
         
@@ -1007,5 +1003,27 @@ mod tests {
         // Children should not have background-color persisted
         let child_bc_mentions = out.matches("background-color").count();
         assert_eq!(child_bc_mentions, 1, "inherited background-color should not be serialized on children");
+    }
+
+    #[test]
+    fn test_background_color_formula_computes() {
+        // Use r## to allow embedded sequences like "#abcd" without terminating the raw string
+        let input = r##"
+        div D (background-color=$(days_since(test_date) >= 1 ? "#4b0a0aff" : "#bba0a0ff")) {
+            timestamp test_date(mode="elapsed") = "2025-08-10T19:33:55.706634+00:00"
+        }
+        "##;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let d = &nodes[0];
+        // Should have a computed background-color shadow
+        assert!(d.parameters.contains_key("_computed_background-color"));
+        let comp = d.parameters.get("_computed_background-color").unwrap();
+        // Since test_date is at least 1 day before now, expect the first color branch
+        match comp {
+            OverseerValue::Color(Color::Hex(hex)) => assert_eq!(hex, "#4b0a0aff"),
+            OverseerValue::String(s) => assert_eq!(s, "#4b0a0aff"),
+            _ => panic!("unexpected computed color: {:?}", comp),
+        }
     }
 }
