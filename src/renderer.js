@@ -51,10 +51,12 @@ export class OverseerRenderer {
     }
 
     renderDocument(overseerDocument) {
-        console.log('Rendering document:', overseerDocument)
-        console.log('Document type:', typeof overseerDocument)
-        console.log('Document is array:', Array.isArray(overseerDocument))
-        console.log('Document length:', overseerDocument?.length)
+        if (DEBUG_MODE) {
+            console.log('Rendering document:', overseerDocument)
+            console.log('Document type:', typeof overseerDocument)
+            console.log('Document is array:', Array.isArray(overseerDocument))
+            console.log('Document length:', overseerDocument?.length)
+        }
 
         // Clear previous content
         this.contentDisplay.innerHTML = ''
@@ -75,7 +77,7 @@ export class OverseerRenderer {
         }
 
         if (Array.isArray(overseerDocument)) {
-            console.log('Processing array document with', overseerDocument.length, 'nodes')
+            if (DEBUG_MODE) console.log('Processing array document with', overseerDocument.length, 'nodes')
 
             if (overseerDocument.length === 0) {
                 this.contentDisplay.innerHTML += '<p>Document is empty (no nodes parsed)</p>'
@@ -84,11 +86,11 @@ export class OverseerRenderer {
 
             // Document is an array of root nodes
             for (let i = 0; i < overseerDocument.length; i++) {
-                console.log(`Rendering node ${i}:`, overseerDocument[i])
+                if (DEBUG_MODE) console.log(`Rendering node ${i}:`, overseerDocument[i])
                 this.renderNode(overseerDocument[i], this.contentDisplay, {}, [overseerDocument[i].name || overseerDocument[i].node_type || overseerDocument[i].type || `root_${i}`])
             }
         } else if (overseerDocument && typeof overseerDocument === 'object') {
-            console.log('Processing single root node:', overseerDocument)
+            if (DEBUG_MODE) console.log('Processing single root node:', overseerDocument)
             // Single root node
             this.renderNode(overseerDocument, this.contentDisplay, {}, [overseerDocument.name || overseerDocument.node_type || overseerDocument.type || 'root'])
         } else {
@@ -96,11 +98,11 @@ export class OverseerRenderer {
             this.contentDisplay.innerHTML += '<p>Unexpected document format</p>'
         }
 
-        console.log('Content display after rendering:', this.contentDisplay.innerHTML)
+    if (DEBUG_MODE) console.log('Content display after rendering:', this.contentDisplay.innerHTML)
     }
 
     renderNode(node, container, inheritedStyles = {}, path = []) {
-        console.log('renderNode called with:', node, 'container:', container)
+    if (DEBUG_MODE) console.log('renderNode called with:', node, 'container:', container)
 
         if (!node || typeof node !== 'object') {
             console.warn('Invalid node:', node)
@@ -116,7 +118,7 @@ export class OverseerRenderer {
         } catch (_) { /* no-op */ }
 
         const element = this.createNodeElement(node)
-        console.log('Created element:', element)
+    if (DEBUG_MODE) console.log('Created element:', element)
 
         if (element) {
             // Attach path metadata for event handling (DOM-only; do not mutate node)
@@ -127,7 +129,7 @@ export class OverseerRenderer {
             } catch (_) { /* no-op */ }
 
             container.appendChild(element)
-            console.log('Appended element to container')
+            if (DEBUG_MODE) console.log('Appended element to container')
 
             // Apply background-color fallback from parent if this node has none
             try {
@@ -176,7 +178,7 @@ export class OverseerRenderer {
                 // Render children (filter out non-visual action/event nodes)
                 if (node.children && Array.isArray(node.children)) {
                     const filteredChildren = node.children.filter(ch => this.shouldRenderChild(node, ch))
-                    console.log('Rendering', filteredChildren.length, 'children for node:', node)
+                    if (DEBUG_MODE) console.log('Rendering', filteredChildren.length, 'children for node:', node)
                     for (const child of filteredChildren) {
                         const childPath = [...path, (child.name || child.node_type || child.type || 'child')]
                         if (DEBUG_MODE) {
@@ -189,11 +191,11 @@ export class OverseerRenderer {
                         this.renderNode(child, element, nextInherited, childPath)
                     }
                 } else {
-                    console.log('No children for node:', node)
+                    if (DEBUG_MODE) console.log('No children for node:', node)
                 }
-            } catch (e) { console.warn('Style inheritance error:', e) }
+            } catch (e) { if (DEBUG_MODE) console.warn('Style inheritance error:', e) }
         } else {
-            console.warn('Failed to create element for node:', node)
+            if (DEBUG_MODE) console.warn('Failed to create element for node:', node)
         }
     }
 
@@ -201,9 +203,11 @@ export class OverseerRenderer {
         // Handle both possible node structures
         let nodeType = node.node_type || node.type || node.name || 'div'
 
-        console.log('[DEBUG] createNodeElement:', { nodeType, node });
-        if (node.children && Array.isArray(node.children)) {
-            console.log(`[DEBUG] Node ${nodeType} has ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
+        if (DEBUG_MODE) {
+            console.log('[DEBUG] createNodeElement:', { nodeType, node });
+            if (node.children && Array.isArray(node.children)) {
+                console.log(`[DEBUG] Node ${nodeType} has ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
+            }
         }
 
         switch (nodeType.toLowerCase()) {
@@ -319,7 +323,7 @@ export class OverseerRenderer {
         const listItem = document.createElement('div')
         listItem.className = 'overseer-list-item'
 
-        console.log('[DEBUG] createListItemElement:', { nodeType: node.node_type, node });
+    if (DEBUG_MODE) console.log('[DEBUG] createListItemElement:', { nodeType: node.node_type, node });
 
         // Check if this is a simple value list item (has a value parameter but no children)
         const hasValue = node.parameters && node.parameters["value"] !== undefined
@@ -327,7 +331,7 @@ export class OverseerRenderer {
         
         if (hasValue && !hasChildren) {
             // This is a simple value list item like - "some string"
-            console.log('[DEBUG] List item is simple value node:', node);
+            if (DEBUG_MODE) console.log('[DEBUG] List item is simple value node:', node);
             const value = this.getNodeValue(node)
             if (value !== null && value !== undefined) {
                 const valueElement = document.createElement('span')
@@ -342,7 +346,7 @@ export class OverseerRenderer {
             
             if (valueTypes.includes(nodeType)) {
                 let valueElement
-                console.log('[DEBUG] List item is typed value node, extracting value:', node);
+                if (DEBUG_MODE) console.log('[DEBUG] List item is typed value node, extracting value:', node);
                 switch (nodeType) {
                     case 'string':
                         valueElement = this.createStringElement(node)
@@ -369,9 +373,9 @@ export class OverseerRenderer {
                 // Let the generic renderNode() flow render node.children exactly once
                 // so inherited background-color is computed consistently per parent.
                 if (hasChildren) {
-                    console.log(`[DEBUG] List item is complex node with ${node.children.length} children (deferred to renderNode):`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
+                    if (DEBUG_MODE) console.log(`[DEBUG] List item is complex node with ${node.children.length} children (deferred to renderNode):`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
                 } else {
-                    console.log('[DEBUG] List item has no value or children:', node);
+                    if (DEBUG_MODE) console.log('[DEBUG] List item has no value or children:', node);
                 }
             }
         }

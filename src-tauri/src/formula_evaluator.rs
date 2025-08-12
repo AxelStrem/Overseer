@@ -992,7 +992,7 @@ impl FormulaEvaluator {
     fn evaluate_function_call(
         name: &str,
         args: &[FormulaExpression],
-        _context: &EvaluationContext,
+        context: &EvaluationContext,
     ) -> Result<OverseerValue, OverseerError> {
         match name {
             "today" => {
@@ -1008,6 +1008,41 @@ impl FormulaEvaluator {
                 }
                 let now = chrono::Utc::now().to_rfc3339();
                 Ok(OverseerValue::Timestamp(now))
+            }
+            // days_since(ts): returns whole days between now() and the given timestamp/date/string
+            "days_since" => {
+                if args.len() != 1 {
+                    return Err(OverseerError::FormulaError("days_since(x) takes exactly 1 argument".to_string()));
+                }
+                let val = Self::evaluate_expression(&args[0], context)?;
+                // Helper: parse timestamp or date into chrono::DateTime<Utc>
+                fn parse_to_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+                    // Try RFC3339 first
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                        return Some(dt.with_timezone(&chrono::Utc));
+                    }
+                    // Try date-only
+                    if let Ok(nd) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                        let ndt = nd.and_hms_opt(0, 0, 0)?;
+                        let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                        return Some(dt);
+                    }
+                    None
+                }
+                let ts_opt: Option<chrono::DateTime<chrono::Utc>> = match val {
+                    OverseerValue::Timestamp(ref s) => parse_to_utc(s),
+                    OverseerValue::Date(ref d) => parse_to_utc(d),
+                    OverseerValue::String(ref s) => parse_to_utc(s),
+                    _ => None,
+                };
+                if let Some(ts) = ts_opt {
+                    let now = chrono::Utc::now();
+                    let dur = now.signed_duration_since(ts);
+                    let days = dur.num_days();
+                    Ok(OverseerValue::Integer(days))
+                } else {
+                    Err(OverseerError::FormulaError("days_since: unable to parse timestamp/date".to_string()))
+                }
             }
             _ => Err(OverseerError::FormulaError(format!("Unknown function: {}", name))),
         }

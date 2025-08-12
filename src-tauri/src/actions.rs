@@ -6,7 +6,7 @@ use chrono::{Local, Utc, Duration, NaiveDateTime, NaiveDate};
 // Debug logging macro for actions
 macro_rules! debug_actions {
     ($($arg:tt)*) => {
-        #[cfg(feature = "debug-resolver")] // reuse resolver flag for now
+        #[cfg(feature = "debug-actions")]
         println!($($arg)*);
     };
 }
@@ -78,12 +78,12 @@ impl ActionExecutor {
         node_path: &[String],
         event_name: &str,
     ) -> Result<(), OverseerError> {
-        debug_actions!("[ACTIONS] execute_event at {:?} on '{}'", node_path, event_name);
+    debug_actions!("[ACTIONS] execute_event at {:?} on '{}'", node_path, event_name);
         // 1) Locate owning node mutably by path
         let (owner_ptr, owner_indices) = match Self::get_node_mut_by_path(nodes, node_path) {
             Some(res) => res,
             None => {
-                eprintln!("[ACTIONS] Owner node not found at path {:?}", node_path);
+                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] Owner node not found at path {:?}", node_path);
                 return Err(OverseerError::ValidationError(format!(
                     "Owner node not found at path {:?}",
                     node_path
@@ -95,12 +95,12 @@ impl ActionExecutor {
         let owner: &mut OverseerNode = unsafe { &mut *owner_ptr };
 
         // 2) Find matching on block(s)
-    eprintln!("[ACTIONS] Owner: {} (type={}) children: {:?}", owner.name, owner.node_type, owner.children.iter().map(|c| format!("{}/{}", c.node_type, c.name)).collect::<Vec<_>>() );
+    #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] Owner: {} (type={}) children: {:?}", owner.name, owner.node_type, owner.children.iter().map(|c| format!("{}/{}", c.node_type, c.name)).collect::<Vec<_>>() );
     for child in owner.children.clone() {
             if child.node_type == "on" && child.name == event_name {
                 // Execute each action child in order
                 for action in child.children {
-                    eprintln!("[ACTIONS] Action node: type='{}' name='{}' params={:?}", action.node_type, action.name, action.parameters);
+                    #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] Action node: type='{}' name='{}' params={:?}", action.node_type, action.name, action.parameters);
                     Self::execute_action(nodes, &owner_indices, &node_path, &action)?;
                     // Re-resolve after each action (per-action transaction)
                     resolver::resolve_document(nodes);
@@ -607,7 +607,7 @@ impl ActionExecutor {
                 }
             }
             if !valid { continue; }
-            eprintln!("[ACTIONS] resolve_target_indices: base={:?} segs={:?} => abs={:?}", base, segments, abs);
+            #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] resolve_target_indices: base={:?} segs={:?} => abs={:?}", base, segments, abs);
             if let Some(indices) = Self::find_indices_by_name_path(nodes, &abs) {
                 return Some(indices);
             }
@@ -617,16 +617,59 @@ impl ActionExecutor {
 
     fn find_indices_by_name_path(nodes: &Vec<OverseerNode>, path: &[String]) -> Option<Vec<usize>> {
         if path.is_empty() { return None; }
+        // Helper: DFS to find a descendant by name through transparent nodes, returning index chain from 'cur'
+        fn find_child_chain(cur: &OverseerNode, target: &str) -> Option<Vec<usize>> {
+            for (i, ch) in cur.children.iter().enumerate() {
+                if ch.name == target {
+                    return Some(vec![i]);
+                }
+                if ch.is_hierarchy_transparent {
+                    if let Some(mut sub) = find_child_chain(ch, target) {
+                        let mut out = vec![i];
+                        out.append(&mut sub);
+                        return Some(out);
+                    }
+                }
+            }
+            None
+        }
+        // Helper: search from roots for first segment, allowing transparent wrappers
+        fn find_root_chain(nodes: &Vec<OverseerNode>, target: &str) -> Option<Vec<usize>> {
+            for (i, n) in nodes.iter().enumerate() {
+                if n.name == target { return Some(vec![i]); }
+                if let Some(mut sub) = find_child_chain(n, target) {
+                    let mut out = vec![i];
+                    out.append(&mut sub);
+                    return Some(out);
+                }
+            }
+            None
+        }
+
         let mut indices: Vec<usize> = Vec::new();
-    let cur_slice: &[OverseerNode] = nodes.as_slice();
-        // root
-        let mut pos = cur_slice.iter().position(|n| n.name == path[0])?;
-        indices.push(pos);
-        let mut cur: &OverseerNode = &cur_slice[pos];
+        // Find first segment anywhere in the (transparent-flattened) roots
+        let mut chain = find_root_chain(nodes, &path[0])?;
+        indices.append(&mut chain);
+        // Walk remaining segments, allowing transparent traversal at each step
+        let mut cur: &OverseerNode = {
+            let mut node_ref: &OverseerNode = &nodes[indices[0]];
+            for idx in indices.iter().skip(1) { node_ref = &node_ref.children[*idx]; }
+            node_ref
+        };
         for name in &path[1..] {
-            pos = cur.children.iter().position(|c| c.name == *name)?;
-            indices.push(pos);
-            cur = &cur.children[pos];
+            if cur.name == *name {
+                // Path segment refers to current node; continue
+                continue;
+            }
+            if let Some(mut sub) = find_child_chain(cur, name) {
+                indices.append(&mut sub);
+                // advance cur to new node
+                let mut node_ref: &OverseerNode = &nodes[indices[0]];
+                for idx in indices.iter().skip(1) { node_ref = &node_ref.children[*idx]; }
+                cur = node_ref;
+            } else {
+                return None;
+            }
         }
         Some(indices)
     }
@@ -650,19 +693,17 @@ impl ActionExecutor {
         nodes: &mut Vec<OverseerNode>,
         path: &[String],
     ) -> Option<(*mut OverseerNode, Vec<usize>)> {
-        if path.is_empty() { return None; }
-    let mut indices: Vec<usize> = Vec::new();
+    if path.is_empty() { return None; }
     let mut cur: *mut OverseerNode;
-        // Find root index
-        let root_idx = nodes.iter().position(|n| n.name == path[0])?;
-        indices.push(root_idx);
-        cur = &mut nodes[root_idx] as *mut _;
-        for name in &path[1..] {
+        // Reuse transparent-aware name path resolution to compute indices, then fetch pointer
+    let indices = Self::find_indices_by_name_path(nodes, path)?;
+        // Walk indices to yield a mutable pointer
+        cur = &mut nodes[indices[0]] as *mut _;
+        for idx in indices.iter().skip(1) {
             unsafe {
                 let cur_ref = &mut *cur;
-                let pos = cur_ref.children.iter().position(|c| c.name == *name)?;
-                indices.push(pos);
-                cur = &mut cur_ref.children[pos] as *mut _;
+                if *idx >= cur_ref.children.len() { return None; }
+                cur = &mut cur_ref.children[*idx] as *mut _;
             }
         }
         Some((cur, indices))
@@ -679,7 +720,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                eprintln!("[ACTIONS] set: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] set: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };
@@ -715,7 +756,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                eprintln!("[ACTIONS] inc: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] inc: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };
@@ -746,7 +787,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                eprintln!("[ACTIONS] toggle: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] toggle: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };
@@ -773,7 +814,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                eprintln!("[ACTIONS] clear: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] clear: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };
@@ -1656,5 +1697,53 @@ mod tests_clone_from_template {
     assert!(s.contains("- i = 20"), "Expected an override '- i = 20'.\n{}", s);
     assert!(s.contains("- i = 30"), "Expected an override '- i = 30'.\n{}", s);
     assert!(s.contains("- i = 50"), "Expected an override '- i = 50'.\n{}", s);
+    }
+}
+
+#[cfg(test)]
+mod tests_append_naming_and_transparency {
+    use super::*;
+    use crate::parser::parse_document;
+
+    #[test]
+    fn append_assigns_unique_names() {
+        let input = r#"div T { int i = 10 int ii = $(2*i) }
+list L (entry=<T>) { }
+button B { on click { append (template="<T>", list="/L") { - i = 20 } } }
+button B2 { on click { append (template="<T>", list="/L") { - i = 25 } } }
+"#;
+        let mut nodes = parse_document(input).unwrap().1;
+        // Click B then B2
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["B".into()], "click").is_ok());
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["B2".into()], "click").is_ok());
+        // Find list L
+        let l = nodes.iter().find(|n| n.name=="L").unwrap();
+        assert_eq!(l.children.len(), 2);
+        assert_eq!(l.children[0].name, "T__1");
+        assert_eq!(l.children[1].name, "T__2");
+        // Values should be set on their own children
+        let i1 = l.children[0].children.iter().find(|c| c.name=="i").unwrap();
+        let i2 = l.children[1].children.iter().find(|c| c.name=="i").unwrap();
+        assert_eq!(i1.parameters.get("value"), Some(&OverseerValue::Integer(20)));
+        assert_eq!(i2.parameters.get("value"), Some(&OverseerValue::Integer(25)));
+    }
+
+    #[test]
+    fn transparent_unnamed_nodes_in_paths() {
+        // Unnamed div should be transparent for path resolution when targeting L and buttons
+        let input = r#"div (hidden=true) {
+    div ExerciseRecord { int x = 1 }
+    div ExerciseRecordSample { int y = 2 }
+}
+list L (entry=<ExerciseRecord>) { }
+button Add { on click { append (template="<ExerciseRecord>", list="/L") { - x = 3 } } }
+"#;
+        let mut nodes = parse_document(input).unwrap().1;
+        // Should be able to click Add even though templates are under unnamed div
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Add".into()], "click").is_ok());
+        let l = nodes.iter().find(|n| n.name=="L").unwrap();
+        assert_eq!(l.children.len(), 1);
+        let x = l.children[0].children.iter().find(|c| c.name=="x").unwrap();
+        assert_eq!(x.parameters.get("value"), Some(&OverseerValue::Integer(3)));
     }
 }

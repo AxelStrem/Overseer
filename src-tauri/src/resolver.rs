@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use crate::types::{OverseerNode, OverseerValue, Color, CssSize};
 use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext};
 use std::collections::HashMap;
@@ -17,8 +18,11 @@ fn find_template_by_name(nodes: &[OverseerNode], template_name: &str) -> Option<
         // Any node can be a template if its name matches
         if node.name == template_name {
             debug_resolver!("[RESOLVER] Found template: {} (type: {}) with {} children", node.name, node.node_type, node.children.len());
-            for child in &node.children {
-                debug_resolver!("[RESOLVER]   Template field: {} (type: {})", child.name, child.node_type);
+            #[cfg(feature = "debug-resolver")]
+            {
+                for child in &node.children {
+                    println!("[RESOLVER]   Template field: {} (type: {})", child.name, child.node_type);
+                }
             }
             return Some(node.clone());
         }
@@ -144,10 +148,10 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         mark_template_child_recursive(child);
                                         // Ensure override markers are clean on fresh clones; only true overrides will set these later
                                         if child.parameters.remove("_explicit_child_override").is_some() {
-                                            eprintln!("[RES] cleaned _explicit_child_override on clone child '{}')", child.name);
+                                            debug_resolver!("[RESOLVER] cleaned _explicit_child_override on clone child '{}')", child.name);
                                         }
                                         if child.parameters.remove("_override_present").is_some() {
-                                            eprintln!("[RES] cleaned _override_present on clone child '{}')", child.name);
+                                            debug_resolver!("[RESOLVER] cleaned _override_present on clone child '{}')", child.name);
                                         }
                                     }
                                     let overrides: HashMap<String, &OverseerNode> = list_item
@@ -179,7 +183,7 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                 } else if let Some(val) = list_item.parameters.get("value") {
                                     debug_resolver!("[RESOLVER]     Simple value list item: {:?}", val);
                                     // Simple value: create a node of the template's type, with value
-                    let mut resolved_item = OverseerNode {
+                    let resolved_item = OverseerNode {
                                         name: {
                                             let n = list_item.name.clone();
                                             if n.is_empty() || n == "-" { format!("{}__{}", template_node.name, idx + 1) } else { n }
@@ -298,10 +302,10 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                 mark_template_child_recursive(child);
                 // Ensure override markers are clean on fresh clones; only true overrides will set these later
                 if child.parameters.remove("_explicit_child_override").is_some() {
-                    eprintln!("[RES] cleaned _explicit_child_override on inst child '{}')", child.name);
+                    debug_resolver!("[RESOLVER] cleaned _explicit_child_override on inst child '{}')", child.name);
                 }
                 if child.parameters.remove("_override_present").is_some() {
-                    eprintln!("[RES] cleaned _override_present on inst child '{}')", child.name);
+                    debug_resolver!("[RESOLVER] cleaned _override_present on inst child '{}')", child.name);
                 }
             }
             if !instance_children.is_empty() {
@@ -310,7 +314,7 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                     .map(|o| (o.name.clone(), o))
                     .collect();
                 let override_names: Vec<String> = overrides.keys().cloned().collect();
-                eprintln!("[RES] instance '{}' overrides: {:?}", node.name, override_names);
+                debug_resolver!("[RESOLVER] instance '{}' overrides: {:?}", node.name, override_names);
                 // Record explicit override names on the instance for serializer to consult
                 node.parameters.insert("_explicit_overrides".to_string(), OverseerValue::String(override_names.join(",")));
                 merge_node(node, &overrides);
@@ -449,13 +453,19 @@ fn resolve_parameter_inheritance(nodes: &mut Vec<OverseerNode>, parent_params: &
                 if let Some(parent_value) = parent_params.get(*param_name) {
                     debug_resolver!("[RESOLVER] Inheriting {} = {:?} for node {}", param_name, parent_value, node.name);
                     node.parameters.insert(param_name.to_string(), parent_value.clone());
+                    // Mark as template-derived so serializer will not persist inherited styling
+                    node.parameters.insert(format!("_template_{}", param_name), parent_value.clone());
                 }
+            } else {
+                // If the node explicitly sets this param, ensure we don't carry a stale template marker for it
+                let marker = format!("_template_{}", param_name);
+                node.parameters.remove(&marker);
             }
         }
         
         // Build inherited parameters map for children (including this node's parameters)
         let mut inherited_params = parent_params.clone();
-        for (key, value) in &node.parameters {
+    for (key, value) in &node.parameters {
             if inheritable_params.contains(&key.as_str()) {
                 inherited_params.insert(key.clone(), value.clone());
             }
@@ -477,7 +487,7 @@ fn find_accessible_child_path(node: &OverseerNode, target_name: &str) -> Option<
             return Some(vec![i]);
         }
         if child.is_hierarchy_transparent {
-            if let Some(mut subpath) = find_accessible_child_path(child, target_name) {
+                    if let Some(mut subpath) = find_accessible_child_path(child, target_name) {
                 let mut path = vec![i];
                 path.append(&mut subpath);
                 return Some(path);
@@ -533,7 +543,7 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 // Treat presence in source as an explicit override even if equal to template default
                 template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                 template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                eprintln!("[RES] set explicit override (value) on '{}'", template_field.name);
+                debug_resolver!("[RESOLVER] set explicit override (value) on '{}'", template_field.name);
                 // Remove template marker for value if present so serializers won't treat it as inherited
                 if template_field.parameters.contains_key("_template_value") {
                     template_field.parameters.remove("_template_value");
@@ -560,7 +570,7 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                     template_field.children = override_field.children.clone();
                     template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                     template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                    eprintln!("[RES] set explicit override (list children) on '{}'", template_field.name);
+                    debug_resolver!("[RESOLVER] set explicit override (list children) on '{}'", template_field.name);
                 }
             } else if !override_field.children.is_empty() {
                 // For non-list fields, override children only if they differ from template
@@ -569,7 +579,7 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                     template_field.children = override_field.children.clone();
                     template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                     template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                    eprintln!("[RES] set explicit override (children) on '{}'", template_field.name);
+                    debug_resolver!("[RESOLVER] set explicit override (children) on '{}'", template_field.name);
                 } else {
                     debug_resolver!("[RESOLVER]     Override children identical to template; skipping override marking");
                 }
@@ -973,5 +983,29 @@ mod tests {
         let count_int_c = out.matches("int C").count();
         assert_eq!(count_int_c, 1, "inherited C must not be serialized inside instance");
         assert!(!out.contains("- C = 3"), "concise override for C must not appear since C was not overridden");
+    }
+
+    #[test]
+    fn test_inherited_styling_not_serialized_on_children() {
+        use crate::file_ops::OverseerFileHandler;
+        let input = r#"
+        div Exercise (background-color=#ffcccc) {
+            string Name = "Pushups"
+            div History {
+                list items(entry=div) {
+                    div E1 { string when = "2024-01-01" }
+                    div E2 { string when = "2024-01-02" }
+                }
+            }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let out = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        // Parent Exercise should have background-color emitted once
+        assert!(out.contains("div Exercise (background-color=#ffcccc)"));
+        // Children should not have background-color persisted
+        let child_bc_mentions = out.matches("background-color").count();
+        assert_eq!(child_bc_mentions, 1, "inherited background-color should not be serialized on children");
     }
 }

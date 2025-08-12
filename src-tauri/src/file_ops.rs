@@ -3,6 +3,14 @@ use std::collections::HashMap;
 use tokio::fs;
 use crate::types::*;
 
+// Debug logging macro for serializer (module scope). Reuse existing 'debug-resolver' feature to avoid adding new Cargo feature.
+macro_rules! debug_serializer {
+    ($($arg:tt)*) => {
+    #[cfg(feature = "debug-resolver")]
+        eprintln!($($arg)*);
+    };
+}
+
 pub struct FileOperations;
 
 impl FileOperations {
@@ -444,9 +452,9 @@ impl OverseerFileHandler {
                     let only_value_override = has_value && non_internal_non_value_params == 0 && child.children.is_empty();
                     // Guard: only treat as an explicit value override if the template value marker was removed.
                     let has_template_value_marker = child.parameters.contains_key("_template_value");
-                    if only_value_override && !has_template_value_marker {
-            eprintln!("[SER] concise emit: name='{}' explicit={} tmpl_marker_removed={} suppress={} is_templ_child={} non_val_params={} has_val={}",
-                  child.name, has_explicit_override, !has_template_value_marker, suppress_template_children, is_template_child, non_internal_non_value_params, has_value);
+              if only_value_override && !has_template_value_marker {
+        debug_serializer!("[SER] concise emit: name='{}' explicit={} tmpl_marker_removed={} suppress={} is_templ_child={} non_val_params={} has_val={}",
+            child.name, has_explicit_override, !has_template_value_marker, suppress_template_children, is_template_child, non_internal_non_value_params, has_value);
                         let val = child.parameters.get("value").unwrap();
                         output.push_str(&format!("{}    - {} = {}\n", indent, child.name, Self::serialize_value(val)));
                         continue;
