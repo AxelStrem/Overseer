@@ -1626,16 +1626,42 @@ impl FormulaEvaluator {
                     return Ok(res);
                 }
                 "max" => {
-                    let mut m: Option<f64> = None;
-                    for item in &list { if let Some(num) = Self::item_to_number(item) { m = Some(m.map_or(num, |cur| cur.max(num))); } }
-                    let res = match m { Some(v) => Self::normalize_number(v), None => OverseerValue::String("null".to_string()) };
+                    // Prefer generic comparison using compare_values so timestamps/dates/strings work.
+                    // If items are numeric-only, result will still be numeric.
+                    let mut best: Option<OverseerValue> = None;
+                    for item in &list {
+                        if let Some(v) = Self::item_to_value(item) {
+                            best = Some(match best {
+                                None => v,
+                                Some(cur) => {
+                                    match Self::compare_values(&v, &cur) {
+                                        Ok(std::cmp::Ordering::Greater) => v,
+                                        _ => cur,
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    let res = best.unwrap_or_else(|| OverseerValue::String("null".to_string()));
                     debug_evaluator!("[EVAL] max => {:?}", res);
                     return Ok(res);
                 }
                 "min" => {
-                    let mut m: Option<f64> = None;
-                    for item in &list { if let Some(num) = Self::item_to_number(item) { m = Some(m.map_or(num, |cur| cur.min(num))); } }
-                    let res = match m { Some(v) => Self::normalize_number(v), None => OverseerValue::String("null".to_string()) };
+                    let mut best: Option<OverseerValue> = None;
+                    for item in &list {
+                        if let Some(v) = Self::item_to_value(item) {
+                            best = Some(match best {
+                                None => v,
+                                Some(cur) => {
+                                    match Self::compare_values(&v, &cur) {
+                                        Ok(std::cmp::Ordering::Less) => v,
+                                        _ => cur,
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    let res = best.unwrap_or_else(|| OverseerValue::String("null".to_string()));
                     debug_evaluator!("[EVAL] min => {:?}", res);
                     return Ok(res);
                 }
@@ -1676,6 +1702,18 @@ impl FormulaEvaluator {
             ListItem::Value(v) => Self::value_to_number(v).ok(),
             ListItem::Node(n) => {
                 if let Some(v) = Self::get_effective_param(&n.parameters, "value") { Self::value_to_number(v).ok() } else { None }
+            }
+        }
+    }
+
+    /// Extract a value suitable for generic comparison from a list item.
+    /// - For Value items, use as-is.
+    /// - For Node items, use the effective "value" parameter if present; otherwise None.
+    fn item_to_value(item: &ListItem) -> Option<OverseerValue> {
+        match item {
+            ListItem::Value(v) => Some(v.clone()),
+            ListItem::Node(n) => {
+                if let Some(v) = Self::get_effective_param(&n.parameters, "value") { Some(v.clone()) } else { None }
             }
         }
     }
@@ -2166,5 +2204,34 @@ mod tests {
         let done = root.get_accessible_children().into_iter().find(|c| c.name == "done").unwrap();
         let computed = done.parameters.get("_computed_value").cloned().unwrap();
         assert_eq!(computed, OverseerValue::Integer(2));
+    }
+
+    #[test]
+    fn test_latest_timestamp_via_history_filter_map_max() {
+        // Verify that max() works on timestamps to compute latest record time for an exercise id
+        let input = r#"
+        div Root {
+            div Exercise (hidden=true) {
+                int id = 2
+                timestamp last_done = $(/History.filter(|x| x/eid == ../id).map(|x| x/time).max())
+            }
+            div ExerciseRecord (hidden=true) {
+                int eid = 0
+                timestamp time = now()
+            }
+            list History (entry=<ExerciseRecord>) {
+                - { int eid = 1 timestamp time = "2025-08-10T19:33:55.706634+00:00" }
+                - { int eid = 2 timestamp time = "2025-08-12T09:20:47.374048300+00:00" }
+                - { int eid = 2 timestamp time = "2025-08-12T10:53:02.760779800+00:00" }
+            }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let ex = root.get_accessible_children().into_iter().find(|c| c.name == "Exercise").unwrap();
+        let last_done = ex.get_accessible_children().into_iter().find(|c| c.name == "last_done").unwrap();
+    let computed = last_done.parameters.get("_computed_value").cloned().unwrap();
+    assert_eq!(computed, OverseerValue::String("2025-08-12T10:53:02.760779800+00:00".to_string()));
     }
 }
