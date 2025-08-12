@@ -81,6 +81,9 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     
     // After parameter inheritance, evaluate formulas
     evaluate_formulas_in_document(nodes);
+
+    // After formulas, compute UI sort keys for lists (presentation-only; do not reorder children)
+    compute_list_ui_sort_keys(nodes);
 }
 
 /// Resolves templates for a single node and its children.
@@ -641,8 +644,8 @@ unsafe fn recursively_evaluate_node_formulas(
     document_root: &[OverseerNode],
 ) {
     let node: &mut OverseerNode = &mut *node_ptr;
-    let parent_ref: Option<&OverseerNode> = if parent_ptr.is_null() { None } else { Some(&*parent_ptr) };
-    let context = EvaluationContext::new_with_current_and_parent(node, parent_ref, current_path.to_vec(), document_root);
+    let _parent_ref: Option<&OverseerNode> = if parent_ptr.is_null() { None } else { Some(&*parent_ptr) };
+    let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
 
     // Evaluate formulas in this node's parameters, but preserve original values.
     // Store computed results under shadow keys: _computed_<key> (or _computed_value for value).
@@ -679,6 +682,61 @@ unsafe fn recursively_evaluate_node_formulas(
 }
 
 // Note: child formula evaluation is handled via recursively_evaluate_node_formulas above
+
+/// Compute UI sort keys for list items when a list declares sort_by (lambda or expression)
+fn compute_list_ui_sort_keys(nodes: &mut Vec<OverseerNode>) {
+    let snapshot = nodes.clone();
+    let len = nodes.len();
+    for i in 0..len {
+        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
+        unsafe { recursively_compute_sort_keys(node_ptr, std::ptr::null(), &mut current_path, &snapshot); }
+    }
+}
+
+unsafe fn recursively_compute_sort_keys(
+    node_ptr: *mut OverseerNode,
+    parent_ptr: *const OverseerNode,
+    current_path: &mut Vec<String>,
+    document_root: &[OverseerNode],
+) {
+    use crate::types::OverseerValue;
+    use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
+
+    let node: &mut OverseerNode = &mut *node_ptr;
+    let parent_ref: Option<&OverseerNode> = if parent_ptr.is_null() { None } else { Some(&*parent_ptr) };
+
+    // For list nodes, if sort_by parameter is present (as Formula or String), compute per-item keys
+    if node.node_type == "list" {
+        if let Some(sort_expr_val) = node.parameters.get("sort_by") {
+            let sort_src = match sort_expr_val {
+                OverseerValue::Formula(s) => s.as_str(),
+                OverseerValue::String(s) => s.as_str(),
+                _ => "",
+            };
+            if !sort_src.is_empty() {
+                for (idx, child) in node.children.iter_mut().enumerate() {
+                    // Build context for evaluating against the child; bind as current and provide parent
+                    let mut path = current_path.clone();
+                    path.push(child.name.clone());
+                    let ctx = EvaluationContext::new_with_current_and_parent(child, Some(&*node_ptr), path, document_root);
+                    let key = FormulaEvaluator::evaluate_lambda_on_item(sort_src, &ctx, child)
+                        .unwrap_or(OverseerValue::Integer(idx as i64));
+                    // Store as internal UI-only key
+                    child.parameters.insert("_ui_sort_key".to_string(), key);
+                }
+            }
+        }
+    }
+
+    // Recurse into children
+    for c in 0..node.children.len() {
+        let child_ptr: *mut OverseerNode = &mut node.children[c] as *mut _;
+        current_path.push((&*child_ptr).name.clone());
+        recursively_compute_sort_keys(child_ptr, node as *const OverseerNode, current_path, document_root);
+        current_path.pop();
+    }
+}
 
 #[cfg(test)]
 mod tests {

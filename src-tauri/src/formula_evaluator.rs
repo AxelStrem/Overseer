@@ -105,6 +105,23 @@ pub enum UnaryOperator {
 pub struct FormulaEvaluator;
 
 impl FormulaEvaluator {
+    /// Evaluate a lambda (or general expression) against a list item by binding the item as `x`.
+    /// If `lambda_src` parses as a Lambda, it will be invoked; otherwise the expression is evaluated
+    /// with implicit `x` bound to the item (consistent with map/filter implicit forms).
+    pub fn evaluate_lambda_on_item(
+        lambda_src: &str,
+        context: &EvaluationContext,
+        item_node: &OverseerNode,
+    ) -> Result<OverseerValue, OverseerError> {
+        let expr = match Self::parse_expression(lambda_src) {
+            Ok(e) => e,
+            Err(_) => return Err(OverseerError::FormulaError("invalid formula error".to_string())),
+        };
+        match &expr {
+            FormulaExpression::Lambda { .. } => Self::eval_lambda(&expr, None, Some(item_node), None, context),
+            _ => Self::eval_lambda(&expr, None, Some(item_node), None, context),
+        }
+    }
     /// Helper: get effective parameter value preferring computed shadow
     fn get_effective_param<'p>(params: &'p std::collections::HashMap<String, OverseerValue>, key: &str) -> Option<&'p OverseerValue> {
         // Semantics: prefer the raw parameter when it is not a Formula; otherwise use computed shadow.

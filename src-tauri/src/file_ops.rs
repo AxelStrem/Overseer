@@ -364,11 +364,11 @@ impl OverseerFileHandler {
         }
         
         // Handle parameters (excluding the special 'value' parameter for fields)
-        let regular_params: HashMap<String, OverseerValue> = node.parameters.iter()
+    let regular_params: HashMap<String, OverseerValue> = node.parameters.iter()
             .filter(|(k, _)| {
                 let key = k.as_str();
                 // Always exclude 'value' parameter and internal computed parameters (except _template_ markers)
-                if key == "value" || key == "_original_type" || (key.starts_with("_") && !key.starts_with("_template_")) {
+        if key == "value" || key == "_original_type" || (key.starts_with("_") && !key.starts_with("_template_")) {
                     return false;
                 }
                 

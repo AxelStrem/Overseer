@@ -133,6 +133,7 @@ export class OverseerRenderer {
 
             // Apply background-color fallback from parent if this node has none
             try {
+                const nodeTypeLower = (node.node_type || node.type || '').toLowerCase()
                 const ownBg = this.getParameterValue(node, 'background-color')
                 const hasComputedBg = !!(node?.parameters && node.parameters['_computed_background-color'] !== undefined)
                 const hasRawFormulaBg = this.parameterHasFormula(node, 'background-color')
@@ -159,7 +160,6 @@ export class OverseerRenderer {
                 }
 
                 // Avoid forcing inherit on controls/fields so built-in styles remain visible
-                const nodeTypeLower = (node.node_type || node.type || '').toLowerCase()
                 const skipBgInherit = ['button','checkbox','string','text','int','float','bool','date'].includes(nodeTypeLower)
                 if ((treatAsNoOwnBg || forceInheritFromParent) && !skipBgInherit) {
                     // Force CSS inheritance from the actual DOM parent for containers only
@@ -177,19 +177,38 @@ export class OverseerRenderer {
 
                 // Render children (filter out non-visual action/event nodes)
                 if (node.children && Array.isArray(node.children)) {
-                    const filteredChildren = node.children.filter(ch => this.shouldRenderChild(node, ch))
-                    if (DEBUG_MODE) console.log('Rendering', filteredChildren.length, 'children for node:', node)
-                    for (const child of filteredChildren) {
-                        const childPath = [...path, (child.name || child.node_type || child.type || 'child')]
-                        if (DEBUG_MODE) {
-                            try {
-                                const dbgParent = node.name || node.node_type || node.type || 'unknown'
-                                const dbgChild = child?.name || child?.node_type || child?.type || 'unknown'
-                                console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
-                            } catch (_) { /* no-op */ }
+                    // For list nodes, render in UI-sorted order using _ui_sort_key
+                    const renderChildren = () => {
+                        let children = node.children
+                        if (nodeTypeLower === 'list') {
+                            children = node.children
+                                .map((ch, idx) => ({ ch, idx }))
+                                .sort((a, b) => {
+                                    const ka = (a.ch?.parameters && a.ch.parameters['_ui_sort_key'] !== undefined) ? a.ch.parameters['_ui_sort_key'] : a.idx
+                                    const kb = (b.ch?.parameters && b.ch.parameters['_ui_sort_key'] !== undefined) ? b.ch.parameters['_ui_sort_key'] : b.idx
+                                    const va = this.coerceSortKey(ka)
+                                    const vb = this.coerceSortKey(kb)
+                                    if (va < vb) return -1
+                                    if (va > vb) return 1
+                                    return a.idx - b.idx
+                                })
+                                .map(x => x.ch)
                         }
-                        this.renderNode(child, element, nextInherited, childPath)
+                        const filteredChildren = children.filter(ch => this.shouldRenderChild(node, ch))
+                        if (DEBUG_MODE) console.log('Rendering', filteredChildren.length, 'children for node:', node)
+                        for (const child of filteredChildren) {
+                            const childPath = [...path, (child.name || child.node_type || child.type || 'child')]
+                            if (DEBUG_MODE) {
+                                try {
+                                    const dbgParent = node.name || node.node_type || node.type || 'unknown'
+                                    const dbgChild = child?.name || child?.node_type || child?.type || 'unknown'
+                                    console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
+                                } catch (_) { /* no-op */ }
+                            }
+                            this.renderNode(child, element, nextInherited, childPath)
+                        }
                     }
+                    renderChildren()
                 } else {
                     if (DEBUG_MODE) console.log('No children for node:', node)
                 }
@@ -313,10 +332,26 @@ export class OverseerRenderer {
         const layout = this.getEffectiveLayout(node)
         list.classList.add(`layout-${layout}`)
         
-        // Apply spacing and margins  
+    // Apply spacing and margins  
     this.applyLayoutStyles(list, node)
     this.applyNodeStyles(list, node)
         return list
+    }
+
+    coerceSortKey(key) {
+        // Support numbers and string keys; fall back to string comparison
+        if (key === null || key === undefined) return Number.MAX_SAFE_INTEGER
+        if (typeof key === 'number') return key
+        // If OverseerValue serialized object, try common shapes
+        if (typeof key === 'object') {
+            if (key.Integer !== undefined) return Number(key.Integer)
+            if (key.Float !== undefined) return Number(key.Float)
+            if (key.String !== undefined) return String(key.String)
+            // try toString last
+            try { return String(key) } catch (_) { return Number.MAX_SAFE_INTEGER }
+        }
+        const n = Number(key)
+        return isNaN(n) ? String(key) : n
     }
 
     createListItemElement(node) {
