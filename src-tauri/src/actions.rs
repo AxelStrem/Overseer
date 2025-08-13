@@ -83,7 +83,7 @@ impl ActionExecutor {
         let (owner_ptr, owner_indices) = match Self::get_node_mut_by_path(nodes, node_path) {
             Some(res) => res,
             None => {
-                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] Owner node not found at path {:?}", node_path);
+                #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] Owner node not found at path {:?}", node_path);
                 return Err(OverseerError::ValidationError(format!(
                     "Owner node not found at path {:?}",
                     node_path
@@ -95,12 +95,12 @@ impl ActionExecutor {
         let owner: &mut OverseerNode = unsafe { &mut *owner_ptr };
 
         // 2) Find matching on block(s)
-    #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] Owner: {} (type={}) children: {:?}", owner.name, owner.node_type, owner.children.iter().map(|c| format!("{}/{}", c.node_type, c.name)).collect::<Vec<_>>() );
+    #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] Owner: {} (type={}) children: {:?}", owner.name, owner.node_type, owner.children.iter().map(|c| format!("{}/{}", c.node_type, c.name)).collect::<Vec<_>>() );
     for child in owner.children.clone() {
             if child.node_type == "on" && child.name == event_name {
                 // Execute each action child in order
                 for action in child.children {
-                    #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] Action node: type='{}' name='{}' params={:?}", action.node_type, action.name, action.parameters);
+                    #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] Action node: type='{}' name='{}' params={:?}", action.node_type, action.name, action.parameters);
                     Self::execute_action(nodes, &owner_indices, &node_path, &action)?;
                     // Re-resolve after each action (per-action transaction)
                     resolver::resolve_document(nodes);
@@ -1798,5 +1798,92 @@ button Add { on click { append (template="<ExerciseRecord>", list="/L") { - x = 
         assert_eq!(l.children.len(), 1);
         let x = l.children[0].children.iter().find(|c| c.name=="x").unwrap();
         assert_eq!(x.parameters.get("value"), Some(&OverseerValue::Integer(3)));
+    }
+}
+
+#[cfg(test)]
+mod tests_append_with_inline_overrides {
+    use super::*;
+    use crate::parser::parse_document;
+    use crate::file_ops::OverseerFileHandler;
+
+    #[test]
+    fn append_persists_overrides_in_serialization() {
+        let input = r#"
+div T { string a = "" int b = 0 timestamp c = $(now()) }
+list L (entry=<T>) { }
+button Add { on click { append (template="<T>", list="/L") { - a = "hello" - b = 42 } } }
+"#;
+        let mut nodes = parse_document(input).unwrap().1;
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Add".into()], "click").is_ok());
+        let s = OverseerFileHandler::serialize_nodes(&nodes).unwrap();
+        assert!(s.contains("list L ("));
+        assert!(s.contains("- {"));
+        assert!(s.contains("- a = \"hello\""));
+        assert!(s.contains("- b = 42"));
+    }
+}
+
+#[cfg(test)]
+mod tests_evaluator_recursion_safety {
+    use super::*;
+    use crate::parser::parse_document;
+    use crate::resolver::resolve_document;
+
+    #[test]
+    fn resolves_current_and_ancestor_fields_without_recursing() {
+        let input = r#"
+div Root {
+  int base = 1
+  int bump = $(base + 1)
+  div Child { int uses_parent = $(../bump) }
+}
+"#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let child = root.children.iter().find(|c| c.name=="Child").unwrap();
+        let uses_parent = child.children.iter().find(|c| c.name=="uses_parent").unwrap();
+        if let Some(OverseerValue::Formula(f)) = uses_parent.parameters.get("value") {
+            let ctx = crate::formula_evaluator::EvaluationContext::new_with_current(uses_parent, vec!["Root".into(), "Child".into(), "uses_parent".into()], &nodes);
+            let v = crate::formula_evaluator::FormulaEvaluator::evaluate_formula(f, &ctx).unwrap();
+            assert_eq!(v, OverseerValue::Integer(2));
+        } else {
+            panic!("uses_parent.value should be a formula");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_timer_offset_from_sibling {
+    use super::*;
+    use crate::parser::parse_document;
+    use crate::resolver::resolve_document;
+
+    #[test]
+    fn timer_fires_with_offset_from_last_triggered_timestamp() {
+        let input = r#"
+div Root {
+    timestamp last (mode="elapsed") = $(now())
+    string interval = "1s"
+    int fired = 0
+    timer t (active=true, at=$(../last), offset=$(../interval)) {
+        on timeout { inc(path="/Root/fired", by=1) }
+    }
+}
+"#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+    // Force timer's effective computed parameters to guarantee due now, overriding any prior computed shadows
+        if let Some(root) = nodes.iter_mut().find(|n| n.name=="Root") {
+            if let Some(timer) = root.children.iter_mut().find(|c| c.node_type=="timer") {
+        timer.parameters.insert("_computed_at".to_string(), OverseerValue::String("1970-01-01T00:00:00Z".to_string()));
+        timer.parameters.insert("_computed_offset".to_string(), OverseerValue::String("0s".to_string()));
+            }
+        }
+        let _ = ActionExecutor::tick(&mut nodes);
+        let root = nodes.iter().find(|n| n.name=="Root").unwrap();
+        let fired = root.children.iter().find(|c| c.name=="fired").unwrap();
+        assert_eq!(fired.parameters.get("value"), Some(&OverseerValue::Integer(1)));
     }
 }

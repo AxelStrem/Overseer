@@ -645,30 +645,54 @@ unsafe fn recursively_evaluate_node_formulas(
 ) {
     let node: &mut OverseerNode = &mut *node_ptr;
     let _parent_ref: Option<&OverseerNode> = if parent_ptr.is_null() { None } else { Some(&*parent_ptr) };
-    let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
+    // Skip evaluating formulas for nodes inside action handler blocks (on click/timeout)
+    if let Some(p) = _parent_ref {
+        if p.node_type == "on" {
+            // Do not evaluate formulas in action payloads at load time; they'll be evaluated on action execution
+            return;
+        }
+    }
+    // Context is created per-pass below to avoid long-lived borrows while we mutate parameters
 
     // Evaluate formulas in this node's parameters, but preserve original values.
     // Store computed results under shadow keys: _computed_<key> (or _computed_value for value).
-    let mut computed_params: HashMap<String, OverseerValue> = HashMap::new();
-    for (key, value) in node.parameters.iter() {
-        if let OverseerValue::Formula(formula_expr) = value {
-            debug_resolver!("[RESOLVER] Evaluating formula in {}.{}: {}", node.name, key, formula_expr);
+    // To support intra-node dependencies (A depends on B on the same node), run a small fixed-point with 2 passes.
+    // Collect owned copies of (key, formula_string) to avoid holding borrows while we later mutate parameters
+    let formula_pairs: Vec<(String, String)> = node
+        .parameters
+        .iter()
+        .filter_map(|(k, v)| match v {
+            OverseerValue::Formula(s) => Some((k.clone(), s.clone())),
+            _ => None,
+        })
+        .collect();
+
+    // Run up to 2 passes so values depending on other same-node formulas can pick up computed shadows.
+    for _ in 0..2 {
+        // Create a fresh context each pass; its immutable borrow ends before we mutate parameters
+        let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
+        let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
+        for (key, formula_src) in &formula_pairs {
+            debug_resolver!("[RESOLVER] Evaluating formula in {}.{}: {}", node.name, key, formula_src);
             let shadow_key = if key == "value" { "_computed_value".to_string() } else { format!("_computed_{}", key) };
-            match FormulaEvaluator::evaluate_formula(formula_expr.as_str(), &context) {
+            match FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context) {
                 Ok(result) => {
                     debug_resolver!("[RESOLVER] Formula result: {:?}", result);
-                    computed_params.insert(shadow_key, result);
+                    computed_params.push((shadow_key, result));
                 }
                 Err(_err) => {
                     debug_resolver!("[RESOLVER] Formula error at {}.{}", node.name, key);
-                    computed_params.insert(shadow_key, OverseerValue::String("invalid formula error".to_string()));
+                    computed_params.push((shadow_key, OverseerValue::String("invalid formula error".to_string())));
                 }
             }
         }
-    }
-    // Merge computed shadow params into node.parameters (do not overwrite originals)
-    for (k, v) in computed_params {
-        node.parameters.insert(k, v);
+        // Drop context before mutating node.parameters
+        drop(context);
+        // Merge computed shadow params into node.parameters (do not overwrite originals).
+        // Insert after each pass so subsequent passes can read newly available _computed_* values.
+        for (k, v) in computed_params {
+            node.parameters.insert(k, v);
+        }
     }
     
     // Recursively evaluate formulas in children
@@ -1084,4 +1108,54 @@ mod tests {
             _ => panic!("unexpected computed color: {:?}", comp),
         }
     }
+
+    #[test]
+    fn test_parent_bg_depends_on_child_formula_computes_on_load() {
+        // Parent background-color references a child field that itself is a formula.
+    let input = r##"
+        div Parent (background-color=$(score > 0 ? "inherit" : "#000000ff")) {
+            int score = $(1)
+        }
+    "##;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let parent = &nodes[0];
+        let bg = parent.parameters.get("_computed_background-color").cloned().expect("bg computed");
+        match bg { OverseerValue::String(_) | OverseerValue::Color(_) => {}, other => panic!("unexpected bg: {:?}", other) }
+    }
+
+    // Note: additional integration tests for templated list items can be added once renderer/runtime semantics are finalized.
+
+        #[test]
+        fn test_formulas_inside_on_blocks_are_skipped_on_resolve() {
+                // Ensure formulas within action payloads aren't evaluated during resolve (avoids recursion/crash)
+                let input = r#"
+div Root {
+    string input = "Hello"
+    list L (entry=string) { }
+    button Create {
+        on click {
+            append(list="/Root/L") { - value = $(/Root/input) }
+        }
+    }
+}
+"#;
+                let mut nodes = crate::parser::parse_document(input).unwrap().1;
+                // Just resolving should not evaluate the formula inside on click block
+                resolve_document(&mut nodes);
+                // Find the on click node under Create and ensure its child parameter is still a Formula (no _computed_value)
+                let root = &nodes[0];
+                let btn = root.children.iter().find(|c| c.name == "Create").expect("Create button present");
+                let on_click = btn.children.iter().find(|c| c.node_type == "on" && c.name == "click").expect("on click present");
+                // Under on click, there's an append action with a child override node having value as Formula
+                let append = on_click.children.first().expect("append action present");
+                assert_eq!(append.node_type, "append");
+                let ov = append.children.first().expect("override child present");
+                // It should keep a Formula for 'value' and not have a computed shadow
+                match ov.parameters.get("value") {
+                        Some(OverseerValue::Formula(_)) => {},
+                        other => panic!("expected raw Formula in action payload, got {:?}", other),
+                }
+                assert!(ov.parameters.get("_computed_value").is_none(), "no computed shadow should be created under on-blocks");
+        }
 }

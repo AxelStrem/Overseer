@@ -124,7 +124,8 @@ impl FormulaEvaluator {
     }
     /// Helper: get effective parameter value preferring computed shadow
     fn get_effective_param<'p>(params: &'p std::collections::HashMap<String, OverseerValue>, key: &str) -> Option<&'p OverseerValue> {
-        // Semantics: prefer the raw parameter when it is not a Formula; otherwise use computed shadow.
+        // Semantics: for 'value', prefer raw when it's not a Formula; if it's a Formula and no computed shadow yet,
+        // return None so callers can decide to evaluate the raw formula in the correct context (avoids stale ordering).
         if key == "value" {
             if let Some(raw) = params.get("value") {
                 if !matches!(raw, OverseerValue::Formula(_)) {
@@ -132,7 +133,8 @@ impl FormulaEvaluator {
                 }
             }
             if let Some(comp) = params.get("_computed_value") { return Some(comp); }
-            return params.get("value");
+            // Do NOT return the raw Formula here; let callers evaluate it when needed
+            return None;
         } else {
             let shadow = format!("_computed_{}", key);
             if let Some(v) = params.get(&shadow) { return Some(v); }
@@ -288,11 +290,12 @@ impl FormulaEvaluator {
                             return Err(OverseerError::FormulaError(format!("Path segment not found: {}", seg)));
                         }
                     }
-                    if let Some(v) = Self::get_effective_param(&cur.parameters, "value") { return Ok(v.clone()); }
+                    // Prefer evaluating a raw value formula if present
                     if let Some(OverseerValue::Formula(f)) = cur.parameters.get("value") {
                         let child_ctx = EvaluationContext::new_with_current(cur, p, context.document_root);
                         return FormulaEvaluator::evaluate_formula(f, &child_ctx);
                     }
+                    if let Some(v) = Self::get_effective_param(&cur.parameters, "value") { return Ok(v.clone()); }
                     // If no value, return a null-ish string for now
                     return Ok(OverseerValue::String("null".to_string()));
                 }
@@ -319,13 +322,9 @@ impl FormulaEvaluator {
                 }
             };
         }
-        // 1) Try current node's parameters by exact field name
-        // Prefer evaluating a raw formula directly to avoid using a stale _computed_* from a previous pass
-        if let Some(OverseerValue::Formula(formula_expr)) = context.current_node.parameters.get(field_name) {
-            let child_ctx = EvaluationContext::new(context.node_path.clone(), context.document_root);
-            return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-        }
-        if let Some(val) = Self::get_effective_param(&context.current_node.parameters, field_name) {
+    // 1) Try current node's parameters by exact field name
+    // Safety-first: use effective/computed value to avoid self-recursive evaluation.
+    if let Some(val) = Self::get_effective_param(&context.current_node.parameters, field_name) {
             return Ok(val.clone());
         }
 
@@ -337,15 +336,16 @@ impl FormulaEvaluator {
             .find(|c| c.name == field_name)
         {
             debug_evaluator!("[EVAL] Found child '{}' under current node", field_name);
-            // Prefer evaluating the child's raw value formula first (fresh), then fall back to effective
+            // Prefer effective/computed value first to avoid triggering recursive dependencies
+            if let Some(val) = Self::get_effective_param(&child.parameters, "value") {
+                return Ok(val.clone());
+            }
+            // If no effective/computed value exists (e.g., child hasn't been resolved yet), evaluate raw value formula
             if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
                 let mut path = context.node_path.clone();
                 path.push(child.name.clone());
                 let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
                 return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-            }
-            if let Some(val) = Self::get_effective_param(&child.parameters, "value") {
-                return Ok(val.clone());
             }
         }
 
@@ -356,25 +356,22 @@ impl FormulaEvaluator {
                 let ancestor_path = &context.node_path[..end];
                 if let Some(ancestor) = FormulaEvaluator::resolve_path_to_node(ancestor_path, context.document_root) {
             debug_evaluator!("[EVAL] Searching ancestor {:?} for '{}'", ancestor_path, field_name);
-                    // a) Ancestor parameters by key
-                    if let Some(OverseerValue::Formula(formula_expr)) = ancestor.parameters.get(field_name) {
-                        let child_ctx = EvaluationContext::new(context.node_path.clone(), context.document_root);
-                        return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                    }
+                    // a) Ancestor parameters by key: use effective/computed only (avoid evaluating raw formulas here)
                     if let Some(val) = Self::get_effective_param(&ancestor.parameters, field_name) {
                         return Ok(val.clone());
                     }
                     // b) Child of ancestor by name
                     if let Some(child) = ancestor.get_accessible_children().into_iter().find(|c| c.name == field_name) {
                         debug_evaluator!("[EVAL] Found ancestor child '{}' under {:?}", field_name, ancestor_path);
+                        if let Some(val) = Self::get_effective_param(&child.parameters, "value") {
+                            return Ok(val.clone());
+                        }
+                        // Only if no effective/computed value exists, evaluate raw value formula for ancestor child
                         if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
                             let mut path = ancestor_path.to_vec();
                             path.push(child.name.clone());
                             let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
                             return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                        }
-                        if let Some(val) = Self::get_effective_param(&child.parameters, "value") {
-                            return Ok(val.clone());
                         }
                     }
                     // c) Deep search under ancestor (first match)

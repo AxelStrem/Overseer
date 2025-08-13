@@ -131,57 +131,50 @@ export class OverseerRenderer {
             container.appendChild(element)
             if (DEBUG_MODE) console.log('Appended element to container')
 
-            // Apply background-color fallback from parent if this node has none
+            // Apply background-color with correct precedence:
+            // 1) Own computed background-color when present
+            // 2) If no computed and raw is a literal color, use it
+            // 3) Otherwise inherit from parent (except for control elements)
             try {
                 const nodeTypeLower = (node.node_type || node.type || '').toLowerCase()
-                const ownBg = this.getParameterValue(node, 'background-color')
                 const hasComputedBg = !!(node?.parameters && node.parameters['_computed_background-color'] !== undefined)
                 const hasRawFormulaBg = this.parameterHasFormula(node, 'background-color')
-                const ownRawFormulaText = this.getRawFormulaText(node, 'background-color')
-                const parentRawFormulaText = inheritedStyles?.rawBgFormula ?? null
-                const isInheritedSameFormula = !!(hasRawFormulaBg && parentRawFormulaText && ownRawFormulaText === parentRawFormulaText)
+                const ownBgAny = this.getParameterValue(node, 'background-color')
 
-                // If there's no computed bg and the raw param is a Formula, treat as missing to allow inheritance
-                const treatAsNoOwnBg = (ownBg === null) || (!hasComputedBg && hasRawFormulaBg)
-                // If this node carries the same raw formula as parent, prefer parent's computed bg
-                const forceInheritFromParent = isInheritedSameFormula
-                const effectiveBg = forceInheritFromParent
-                    ? (inheritedStyles.backgroundColor ?? null)
-                    : (!treatAsNoOwnBg && ownBg !== null
-                        ? this.convertColorValue(ownBg)
-                        : (inheritedStyles.backgroundColor ?? null))
+                // Compute own effective background only if we can trust it (computed or literal)
+                const ownEffectiveBg = hasComputedBg
+                    ? this.convertColorValue(ownBgAny)
+                    : (!hasRawFormulaBg && ownBgAny !== null && ownBgAny !== undefined
+                        ? this.convertColorValue(ownBgAny)
+                        : null)
+
+                // Controls/fields should not force inherit to keep native look unless explicitly set
+                const skipBgInherit = ['button','checkbox','string','text','int','float','bool','date','timestamp'].includes(nodeTypeLower)
+                const effectiveBg = (ownEffectiveBg !== null && ownEffectiveBg !== undefined)
+                    ? ownEffectiveBg
+                    : (!skipBgInherit ? (inheritedStyles.backgroundColor ?? null) : null)
 
                 if (DEBUG_MODE) {
                     try {
                         const dbgName = node.name || node.node_type || node.type || 'unknown'
                         console.log(`[BG] enter node=${dbgName} type=${node.node_type || node.type} parentBg=${inheritedStyles?.backgroundColor ?? 'null'}`)
-                        console.log(`[BG] node=${dbgName} ownBg=${ownBg ? JSON.stringify(ownBg) : 'null'} computed=${hasComputedBg} rawFormula=${hasRawFormulaBg} sameAsParent=${isInheritedSameFormula} useParentFallback=${treatAsNoOwnBg || forceInheritFromParent} effectiveBg=${effectiveBg ?? 'null'}`)
+                        console.log(`[BG] node=${dbgName} ownAny=${ownBgAny ? JSON.stringify(ownBgAny) : 'null'} computed=${hasComputedBg} rawFormula=${hasRawFormulaBg} ownEffective=${ownEffectiveBg ?? 'null'} effectiveBg=${effectiveBg ?? 'null'}`)
                     } catch (_) { /* no-op */ }
                 }
 
-                // Avoid forcing inherit on controls/fields so built-in styles remain visible
-                const skipBgInherit = ['button','checkbox','string','text','int','float','bool','date','timestamp'].includes(nodeTypeLower)
-                if ((treatAsNoOwnBg || forceInheritFromParent) && !skipBgInherit) {
-                    // Force CSS inheritance from the actual DOM parent for containers only
+                // Apply final decision: inherit explicitly for containers without own bg
+                if ((ownEffectiveBg === null || ownEffectiveBg === undefined) && !skipBgInherit) {
                     element.style.backgroundColor = 'inherit'
                 }
-
-                // Always apply the effective background color if we resolved one.
-                // This ensures immediate visual updates after actions, reorders, or time-based changes.
                 if (effectiveBg !== null && effectiveBg !== undefined) {
                     try { element.style.backgroundColor = effectiveBg } catch (_) {}
-                } else if (hasComputedBg && ownBg !== null && !forceInheritFromParent) {
-                    // Fallback: if we have an own computed background but no effective (unlikely), apply own.
-                    try { element.style.backgroundColor = this.convertColorValue(ownBg) } catch (_) {}
                 }
 
                 // Prepare styles to pass to children (inherit current effective bg)
                 const nextInherited = {
                     backgroundColor: effectiveBg,
-                    // Propagate raw formula string consistently
-                    rawBgFormula: forceInheritFromParent
-                        ? (parentRawFormulaText ?? null)
-                        : (ownRawFormulaText ?? parentRawFormulaText ?? null)
+                    // Keep legacy key for potential future use; not used for decisions now
+                    rawBgFormula: null
                 }
 
                 // Render children (filter out non-visual action/event nodes)
