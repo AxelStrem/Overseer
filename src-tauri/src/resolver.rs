@@ -82,8 +82,205 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     // After parameter inheritance, evaluate formulas
     evaluate_formulas_in_document(nodes);
 
+    // After formulas, compute chart series for charts/plots (MVP)
+    compute_chart_series(nodes);
+
     // After formulas, compute UI sort keys for lists (presentation-only; do not reorder children)
     compute_list_ui_sort_keys(nodes);
+}
+
+/// Compute chart plot series by evaluating per-item x/y expressions on a source container.
+fn compute_chart_series(nodes: &mut Vec<OverseerNode>) {
+    let snapshot = nodes.clone();
+    let len = nodes.len();
+    for i in 0..len {
+        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
+        unsafe { recursively_compute_chart_series(node_ptr, std::ptr::null(), &mut current_path, &snapshot); }
+    }
+}
+
+unsafe fn recursively_compute_chart_series(
+    node_ptr: *mut OverseerNode,
+    _parent_ptr: *const OverseerNode,
+    current_path: &mut Vec<String>,
+    document_root: &[OverseerNode],
+) {
+    use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
+    use crate::types::OverseerValue;
+
+    let node: &mut OverseerNode = &mut *node_ptr;
+
+    // Process chart nodes: collect bounds across plots
+    if node.node_type == "chart" {
+        let mut global_min_x: Option<f64> = None;
+        let mut global_max_x: Option<f64> = None;
+        let mut global_min_y: Option<f64> = None;
+        let mut global_max_y: Option<f64> = None;
+
+        // Iterate plot children
+        for plot in node.children.iter_mut().filter(|c| c.node_type == "plot") {
+            // Resolve source path
+            let source_path = match plot.parameters.get("source") {
+                Some(OverseerValue::String(s)) => s.clone(),
+                // Allow formula yielding a string path (optional)
+                Some(OverseerValue::Formula(f)) => {
+                    // Use path-based context to avoid borrowing `node` immutably while it's mut borrowed
+                    let ctx = EvaluationContext::new(current_path.clone(), document_root);
+                    match FormulaEvaluator::evaluate_formula(f, &ctx) {
+                        Ok(OverseerValue::String(s)) => s,
+                        _ => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            if let Some((source_path_vec, source_ref)) = resolve_path_from(document_root, current_path, &source_path) {
+                // Iterate items (accessible children)
+                let items = source_ref.get_accessible_children();
+                let mut series: Vec<(f64, f64)> = Vec::new();
+
+                // Fetch x/y expressions
+                let x_src = match plot.parameters.get("x") {
+                    Some(OverseerValue::Formula(s)) => Some(s.as_str()),
+                    Some(OverseerValue::String(s)) => Some(s.as_str()),
+                    _ => None,
+                };
+                let y_src = match plot.parameters.get("y") {
+                    Some(OverseerValue::Formula(s)) => Some(s.as_str()),
+                    Some(OverseerValue::String(s)) => Some(s.as_str()),
+                    _ => None,
+                };
+                if x_src.is_none() || y_src.is_none() { continue; }
+                let x_src = x_src.unwrap();
+                let y_src = y_src.unwrap();
+
+                for item in items {
+                    // Build item path for context
+                    let mut item_path = source_path_vec.clone();
+                    item_path.push(item.name.clone());
+                    let ctx = EvaluationContext::new_with_current_and_parent(item, Some(source_ref), item_path, document_root);
+
+                    let x_val = FormulaEvaluator::evaluate_lambda_on_item(x_src, &ctx, item).ok();
+                    let y_val = FormulaEvaluator::evaluate_lambda_on_item(y_src, &ctx, item).ok();
+
+                    if let (Some(xv), Some(yv)) = (to_f64(x_val), to_f64(y_val)) {
+                        if xv.is_finite() && yv.is_finite() {
+                            // Update bounds
+                            global_min_x = Some(global_min_x.map_or(xv, |m| m.min(xv)));
+                            global_max_x = Some(global_max_x.map_or(xv, |m| m.max(xv)));
+                            global_min_y = Some(global_min_y.map_or(yv, |m| m.min(yv)));
+                            global_max_y = Some(global_max_y.map_or(yv, |m| m.max(yv)));
+                            series.push((xv, yv));
+                        }
+                    }
+                }
+
+                // Store series as JSON string
+                let json = series_to_json(&series);
+                plot.parameters.insert("_computed_series".to_string(), OverseerValue::String(json));
+            }
+        }
+
+        // Store computed bounds on the chart
+        if let (Some(xmin), Some(xmax), Some(ymin), Some(ymax)) = (global_min_x, global_max_x, global_min_y, global_max_y) {
+            node.parameters.insert("_computed_x_min".to_string(), OverseerValue::Float(xmin));
+            node.parameters.insert("_computed_x_max".to_string(), OverseerValue::Float(xmax));
+            node.parameters.insert("_computed_y_min".to_string(), OverseerValue::Float(ymin));
+            node.parameters.insert("_computed_y_max".to_string(), OverseerValue::Float(ymax));
+        }
+    }
+
+    // Recurse
+    for idx in 0..node.children.len() {
+        let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
+        current_path.push((&*child_ptr).name.clone());
+        recursively_compute_chart_series(child_ptr, node as *const OverseerNode, current_path, document_root);
+        current_path.pop();
+    }
+
+    // Helpers local to this function
+    fn to_f64(v: Option<OverseerValue>) -> Option<f64> {
+        match v? {
+            OverseerValue::Integer(i) => Some(i as f64),
+            OverseerValue::Float(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    fn series_to_json(series: &Vec<(f64, f64)>) -> String {
+        let mut s = String::from("[");
+        for (i, (x, y)) in series.iter().enumerate() {
+            if i > 0 { s.push(','); }
+            s.push_str(&format!("[{},{}]", x, y));
+        }
+        s.push(']');
+        s
+    }
+}
+
+/// Resolve a simple path string from the current node path to a node and return both its path vec and ref.
+/// Supports:
+/// - Absolute paths starting with '/': resolved from root ("/Root/Child")
+/// - Relative paths with optional leading '../'
+    fn resolve_path_from<'a>(
+    document_root: &'a [OverseerNode],
+    current_path: &[String],
+    path: &str,
+) -> Option<(Vec<String>, &'a OverseerNode)> {
+    // Build starting path
+        let segments: Vec<&str> = path.split('/').collect();
+    if path.starts_with('/') {
+        // Absolute: first segment is empty, skip it and start from root
+        if segments.len() < 2 { return None; }
+        let mut out: Vec<String> = Vec::new();
+        // First real segment must match a root node
+        let first = segments[1];
+        let root = document_root.iter().find(|n| n.name == first)?;
+        out.push(first.to_string());
+        let mut current = root;
+        for seg in &segments[2..] {
+            if seg.is_empty() { continue; }
+            if let Some(next) = current.get_accessible_children().into_iter().find(|c| c.name == *seg) {
+                out.push(seg.to_string());
+                current = next;
+            } else { return None; }
+        }
+        return Some((out, current));
+    } else {
+        // Relative: start from current_path, apply '../' hops, then descend
+        let mut base: Vec<String> = current_path.to_vec();
+        // Remove current node (we want to resolve from the chart node's parent for sibling lookup)
+        if !base.is_empty() { base.pop(); }
+        let mut idx = 0usize;
+        while idx < segments.len() && segments[idx] == ".." {
+            if base.is_empty() { return None; }
+            base.pop();
+            idx += 1;
+        }
+        // Resolve base to node
+        let mut current = resolve_path_vec_to_node(document_root, &base)?;
+        let mut out = base;
+        for seg in &segments[idx..] {
+            if seg.is_empty() { continue; }
+            if let Some(next) = current.get_accessible_children().into_iter().find(|c| c.name == *seg) {
+                out.push(seg.to_string());
+                current = next;
+            } else { return None; }
+        }
+        return Some((out, current));
+    }
+}
+
+fn resolve_path_vec_to_node<'a>(root: &'a [OverseerNode], segments: &[String]) -> Option<&'a OverseerNode> {
+    if segments.is_empty() { return None; }
+    let mut current = root.iter().find(|n| n.name == segments[0])?;
+    for seg in &segments[1..] {
+        if let Some(next) = current.get_accessible_children().into_iter().find(|c| c.name == *seg) {
+            current = next;
+        } else { return None; }
+    }
+    Some(current)
 }
 
 /// Resolves templates for a single node and its children.
@@ -639,12 +836,12 @@ fn evaluate_formulas_in_document(nodes: &mut Vec<OverseerNode>) {
 /// It maintains the path to the current node, which is crucial for the EvaluationContext.
 unsafe fn recursively_evaluate_node_formulas(
     node_ptr: *mut OverseerNode,
-    parent_ptr: *const OverseerNode,
+    _parent_ptr: *const OverseerNode,
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
 ) {
     let node: &mut OverseerNode = &mut *node_ptr;
-    let _parent_ref: Option<&OverseerNode> = if parent_ptr.is_null() { None } else { Some(&*parent_ptr) };
+    let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() { None } else { Some(&*_parent_ptr) };
     // Skip evaluating formulas for nodes inside action handler blocks (on click/timeout)
     if let Some(p) = _parent_ref {
         if p.node_type == "on" {
@@ -720,7 +917,7 @@ fn compute_list_ui_sort_keys(nodes: &mut Vec<OverseerNode>) {
 
 unsafe fn recursively_compute_sort_keys(
     node_ptr: *mut OverseerNode,
-    parent_ptr: *const OverseerNode,
+    _parent_ptr: *const OverseerNode,
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
 ) {
@@ -728,7 +925,6 @@ unsafe fn recursively_compute_sort_keys(
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
 
     let node: &mut OverseerNode = &mut *node_ptr;
-    let parent_ref: Option<&OverseerNode> = if parent_ptr.is_null() { None } else { Some(&*parent_ptr) };
 
     // For list nodes, if sort_by parameter is present (as Formula or String), compute per-item keys
     if node.node_type == "list" {
@@ -1122,6 +1318,40 @@ mod tests {
         let parent = &nodes[0];
         let bg = parent.parameters.get("_computed_background-color").cloned().expect("bg computed");
         match bg { OverseerValue::String(_) | OverseerValue::Color(_) => {}, other => panic!("unexpected bg: {:?}", other) }
+    }
+
+    #[test]
+    fn test_chart_series_computed_simple() {
+        let input = r#"
+        div Root {
+            div Data {
+                div a { int t = 1 int v = 2 }
+                div b { int t = 2 int v = 3 }
+            }
+            chart C {
+                plot P1 (source="/Root/Data", x=$(x/t), y=$(x/v), color=red)
+            }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let chart = root.get_accessible_children().into_iter().find(|c| c.node_type == "chart").unwrap();
+        // Bounds should exist
+        assert!(matches!(chart.parameters.get("_computed_x_min"), Some(OverseerValue::Float(1.0))));
+        assert!(matches!(chart.parameters.get("_computed_x_max"), Some(OverseerValue::Float(2.0))));
+        assert!(matches!(chart.parameters.get("_computed_y_min"), Some(OverseerValue::Float(2.0))));
+        assert!(matches!(chart.parameters.get("_computed_y_max"), Some(OverseerValue::Float(3.0))));
+        // Plot series should be computed
+        let plot = chart.children.iter().find(|c| c.name == "P1").unwrap();
+        let series = plot.parameters.get("_computed_series").cloned().unwrap();
+        match series {
+            OverseerValue::String(s) => {
+                assert!(s.contains("[1,2]"));
+                assert!(s.contains("[2,3]"));
+            }
+            _ => panic!("expected string json series"),
+        }
     }
 
     // Note: additional integration tests for templated list items can be added once renderer/runtime semantics are finalized.

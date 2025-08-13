@@ -906,21 +906,151 @@ export class OverseerRenderer {
     createChartElement(node) {
         const container = document.createElement('div')
         container.className = 'overseer-chart'
-        
+    // Legend (shown above the canvas)
+    const legend = document.createElement('div')
+    legend.className = 'overseer-chart-legend'
+    container.appendChild(legend)
+
         const canvas = document.createElement('canvas')
         container.appendChild(canvas)
-        
-        // TODO: Implement chart rendering with Chart.js
-        canvas.width = 400
-        canvas.height = 200
-        
+        // Size: default or from style width/height (fallback to 400x200)
+        const width = parseInt(this.getParameterValue(node, 'width')) || 400
+        const height = parseInt(this.getParameterValue(node, 'height')) || 200
+        canvas.width = width
+        canvas.height = height
+
         const ctx = canvas.getContext('2d')
-        ctx.fillStyle = '#f0f0f0'
-        ctx.fillRect(0, 0, 400, 200)
-        ctx.fillStyle = '#333'
-        ctx.font = '16px Arial'
-        ctx.fillText('Chart: ' + (node.name || 'Unnamed'), 10, 30)
-        ctx.fillText('(Chart.js integration pending)', 10, 60)
+        // Try to read computed bounds
+    let xmin = parseFloat(this.getParameterValue(node, 'domain-x-min'))
+    let xmax = parseFloat(this.getParameterValue(node, 'domain-x-max'))
+    let ymin = parseFloat(this.getParameterValue(node, 'domain-y-min'))
+    let ymax = parseFloat(this.getParameterValue(node, 'domain-y-max'))
+    // fallback to computed bounds
+    if (isNaN(xmin)) xmin = parseFloat(this.getParameterValue(node, '_computed_x_min'))
+    if (isNaN(xmax)) xmax = parseFloat(this.getParameterValue(node, '_computed_x_max'))
+    if (isNaN(ymin)) ymin = parseFloat(this.getParameterValue(node, '_computed_y_min'))
+    if (isNaN(ymax)) ymax = parseFloat(this.getParameterValue(node, '_computed_y_max'))
+
+        const hasBounds = [xmin, xmax, ymin, ymax].every(v => !isNaN(v)) && xmax > xmin && ymax > ymin
+        const pad = 28 // inner padding for axes
+        
+        // Background
+        ctx.fillStyle = '#1e1e1e'
+        ctx.fillRect(0, 0, width, height)
+        
+        if (hasBounds) {
+            // Styles and geometry
+            const axisColor = this.getParameterValue(node, 'axis-color') || '#666'
+            const gridColor = this.getParameterValue(node, 'grid-color') || '#333'
+            const plotW = width - 2 * pad
+            const plotH = height - 2 * pad
+            const ticks = 5
+            const sx = (x) => pad + ((x - xmin) / (xmax - xmin)) * plotW
+            const sy = (y) => height - pad - ((y - ymin) / (ymax - ymin)) * plotH
+
+            // Build legend from plot children
+            const plots = (node.children || []).filter(c => (c.node_type||'').toLowerCase() === 'plot')
+            legend.innerHTML = ''
+            const visibility = new Map()
+            plots.forEach((plot) => {
+                const color = this.getParameterValue(plot, 'color') || '#4A90E2'
+                const label = this.getParameterValue(plot, 'label') || plot.name || 'Series'
+                const item = document.createElement('span')
+                item.className = 'legend-item'
+                const swatch = document.createElement('span')
+                swatch.className = 'legend-swatch'
+                swatch.style.backgroundColor = this.convertColorValue(color)
+                const text = document.createElement('span')
+                text.className = 'legend-text'
+                text.textContent = String(label)
+                item.appendChild(swatch)
+                item.appendChild(text)
+                legend.appendChild(item)
+                visibility.set(plot, true)
+                item.addEventListener('click', () => {
+                    const next = !visibility.get(plot)
+                    visibility.set(plot, next)
+                    item.classList.toggle('off', !next)
+                    drawAll()
+                })
+            })
+
+            const drawAll = () => {
+                // Clear and background
+                ctx.fillStyle = '#1e1e1e'
+                ctx.fillRect(0, 0, width, height)
+
+                // Grid
+                ctx.lineWidth = 1
+                ctx.strokeStyle = gridColor
+                ctx.beginPath()
+                for (let i = 1; i < ticks; i++) {
+                    const x = pad + (i * plotW) / ticks
+                    ctx.moveTo(x, pad)
+                    ctx.lineTo(x, height - pad)
+                }
+                for (let i = 1; i < ticks; i++) {
+                    const y = pad + (i * plotH) / ticks
+                    ctx.moveTo(pad, y)
+                    ctx.lineTo(width - pad, y)
+                }
+                ctx.stroke()
+
+                // Axes
+                ctx.strokeStyle = axisColor
+                ctx.beginPath()
+                ctx.moveTo(pad, height - pad)
+                ctx.lineTo(width - pad, height - pad)
+                ctx.moveTo(pad, height - pad)
+                ctx.lineTo(pad, pad)
+                ctx.stroke()
+
+                // Tick labels
+                ctx.fillStyle = '#ccc'
+                ctx.font = '11px system-ui, Arial'
+                ctx.textAlign = 'center'
+                for (let i = 0; i <= ticks; i++) {
+                    const xv = xmin + (i * (xmax - xmin)) / ticks
+                    const x = pad + (i * plotW) / ticks
+                    ctx.fillText(String(Number(xv.toFixed(2))), x, height - pad + 14)
+                }
+                ctx.textAlign = 'right'
+                for (let i = 0; i <= ticks; i++) {
+                    const yv = ymin + (i * (ymax - ymin)) / ticks
+                    const y = height - pad - (i * plotH) / ticks
+                    ctx.fillText(String(Number(yv.toFixed(2))), pad - 6, y + 3)
+                }
+
+                // Series
+                for (const plot of plots) {
+                    if (!visibility.get(plot)) continue
+                    const seriesJson = this.getParameterValue(plot, '_computed_series')
+                    if (!seriesJson) continue
+                    let series
+                    try { series = JSON.parse(seriesJson) } catch (_) { continue }
+                    if (!Array.isArray(series) || series.length === 0) continue
+                    const color = this.getParameterValue(plot, 'color') || '#4A90E2'
+                    ctx.strokeStyle = this.convertColorValue(color)
+                    ctx.lineWidth = 2
+                    ctx.beginPath()
+                    for (let i = 0; i < series.length; i++) {
+                        const [x, y] = series[i]
+                        const px = sx(Number(x)), py = sy(Number(y))
+                        if (i === 0) ctx.moveTo(px, py)
+                        else ctx.lineTo(px, py)
+                    }
+                    ctx.stroke()
+                }
+            }
+
+            drawAll()
+        } else {
+            // Fallback placeholder when series not computed yet
+            ctx.fillStyle = '#ccc'
+            ctx.font = '14px system-ui, Arial'
+            ctx.fillText('Chart: ' + (node.name || 'Unnamed'), 10, 26)
+            ctx.fillText('(no series yet — add plot nodes with source/x/y)', 10, 48)
+        }
         
         this.applyNodeStyles(container, node)
         return container
