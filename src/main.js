@@ -373,8 +373,21 @@ tab Main {
         // Prefer backend calculation to stay consistent with formula evaluation
         let nextMs = null
         try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
-        if (nextMs == null) nextMs = findNextDue(this.currentDocument)
-        if (!nextMs) return
+                if (nextMs == null) nextMs = findNextDue(this.currentDocument)
+                // If there are no timers, still refresh formulas periodically (e.g., days_since)
+                // Use a gentle cadence (e.g., 60s) to avoid heavy CPU usage.
+                const periodicRefreshMs = 60000
+                if (!nextMs) {
+                    this._scheduler.id = setTimeout(async () => {
+                        try {
+                            if (!this.currentDocument) return
+                            await this.reevaluateDocument()
+                        } finally {
+                            scheduleNext()
+                        }
+                    }, periodicRefreshMs)
+                    return
+                }
         const now = Date.now()
         let delay = nextMs - now
             // Only schedule for future; if due/past, process almost immediately (debounced)

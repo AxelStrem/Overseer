@@ -6,7 +6,7 @@ use chrono::{Local, Utc, Duration, NaiveDateTime, NaiveDate};
 // Debug logging macro for actions
 macro_rules! debug_actions {
     ($($arg:tt)*) => {
-        #[cfg(feature = "debug-actions")]
+    #[cfg(feature = "debug-resolver")]
         println!($($arg)*);
     };
 }
@@ -107,6 +107,10 @@ impl ActionExecutor {
                 }
             }
         }
+
+        // Final resolve to ensure all computed values reflect the end-of-event state.
+        // This avoids any perceived one-step lag for formulas dependent on multiple actions in a block.
+        resolver::resolve_document(nodes);
 
         // Note: do not run timers here; scheduling handles timer firing.
         Ok(())
@@ -400,11 +404,17 @@ impl ActionExecutor {
                     _ => "".to_string(),
                 };
                 let key_value = match action.parameters.get("keyValue") {
+                    Some(OverseerValue::Formula(expr)) => {
+                        let snapshot = nodes.clone();
+                        let ctx = EvaluationContext::new(owner_path.to_vec(), &snapshot);
+                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                    }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
                     Some(OverseerValue::Integer(i)) => OverseerValue::Integer(*i),
                     Some(OverseerValue::Float(f)) => OverseerValue::Float(*f),
                     Some(OverseerValue::Boolean(b)) => OverseerValue::Boolean(*b),
                     Some(OverseerValue::Date(d)) => OverseerValue::Date(d.clone()),
+                    Some(OverseerValue::Timestamp(ts)) => OverseerValue::Timestamp(ts.clone()),
                     _ => return Err(OverseerError::ValidationError("ensure_in_list.keyValue required".to_string())),
                 };
                 // Template to clone
@@ -441,11 +451,17 @@ impl ActionExecutor {
                     _ => "".to_string(),
                 };
                 let key_value = match action.parameters.get("keyValue") {
+                    Some(OverseerValue::Formula(expr)) => {
+                        let snapshot = nodes.clone();
+                        let ctx = EvaluationContext::new(owner_path.to_vec(), &snapshot);
+                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                    }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
                     Some(OverseerValue::Integer(i)) => OverseerValue::Integer(*i),
                     Some(OverseerValue::Float(f)) => OverseerValue::Float(*f),
                     Some(OverseerValue::Boolean(b)) => OverseerValue::Boolean(*b),
                     Some(OverseerValue::Date(d)) => OverseerValue::Date(d.clone()),
+                    Some(OverseerValue::Timestamp(ts)) => OverseerValue::Timestamp(ts.clone()),
                     _ => return Err(OverseerError::ValidationError("remove.keyValue required".to_string())),
                 };
                 Self::remove_from_list(nodes, owner_path, &list_path, &key_field, &key_value)
@@ -483,11 +499,17 @@ impl ActionExecutor {
                 let to_path = match action.parameters.get("to") { Some(OverseerValue::String(s)) => s.clone(), _ => from_path.clone() };
                 let key_field = match action.parameters.get("keyField") { Some(OverseerValue::String(s)) => s.clone(), _ => "".to_string() };
                 let key_value = match action.parameters.get("keyValue") {
+                    Some(OverseerValue::Formula(expr)) => {
+                        let snapshot = nodes.clone();
+                        let ctx = EvaluationContext::new(owner_path.to_vec(), &snapshot);
+                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                    }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
                     Some(OverseerValue::Integer(i)) => OverseerValue::Integer(*i),
                     Some(OverseerValue::Float(f)) => OverseerValue::Float(*f),
                     Some(OverseerValue::Boolean(b)) => OverseerValue::Boolean(*b),
                     Some(OverseerValue::Date(d)) => OverseerValue::Date(d.clone()),
+                    Some(OverseerValue::Timestamp(ts)) => OverseerValue::Timestamp(ts.clone()),
                     _ => return Err(OverseerError::ValidationError("move.keyValue required".to_string())),
                 };
                 let at_index = match action.parameters.get("at") {
@@ -607,7 +629,7 @@ impl ActionExecutor {
                 }
             }
             if !valid { continue; }
-            #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] resolve_target_indices: base={:?} segs={:?} => abs={:?}", base, segments, abs);
+                #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] resolve_target_indices: base={:?} segs={:?} => abs={:?}", base, segments, abs);
             if let Some(indices) = Self::find_indices_by_name_path(nodes, &abs) {
                 return Some(indices);
             }
@@ -720,7 +742,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] set: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] set: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };
@@ -756,7 +778,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] inc: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] inc: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };
@@ -787,7 +809,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] toggle: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] toggle: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };
@@ -814,7 +836,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                #[cfg(feature = "debug-actions")] eprintln!("[ACTIONS] clear: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] clear: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };

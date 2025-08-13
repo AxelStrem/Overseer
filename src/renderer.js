@@ -160,10 +160,19 @@ export class OverseerRenderer {
                 }
 
                 // Avoid forcing inherit on controls/fields so built-in styles remain visible
-                const skipBgInherit = ['button','checkbox','string','text','int','float','bool','date'].includes(nodeTypeLower)
+                const skipBgInherit = ['button','checkbox','string','text','int','float','bool','date','timestamp'].includes(nodeTypeLower)
                 if ((treatAsNoOwnBg || forceInheritFromParent) && !skipBgInherit) {
                     // Force CSS inheritance from the actual DOM parent for containers only
                     element.style.backgroundColor = 'inherit'
+                }
+
+                // Always apply the effective background color if we resolved one.
+                // This ensures immediate visual updates after actions, reorders, or time-based changes.
+                if (effectiveBg !== null && effectiveBg !== undefined) {
+                    try { element.style.backgroundColor = effectiveBg } catch (_) {}
+                } else if (hasComputedBg && ownBg !== null && !forceInheritFromParent) {
+                    // Fallback: if we have an own computed background but no effective (unlikely), apply own.
+                    try { element.style.backgroundColor = this.convertColorValue(ownBg) } catch (_) {}
                 }
 
                 // Prepare styles to pass to children (inherit current effective bg)
@@ -1131,19 +1140,22 @@ export class OverseerRenderer {
         // Apply basic styling parameters
         const params = node.parameters
         
-        // Legacy background support (keep for compatibility)
-        if (params.background) {
-            element.style.backgroundColor = params.background
-        }
-        
-        // New styling parameters (prefer computed values)
-        const bgColor = this.getParameterValue(node, 'background-color')
-        const hasComputedBg = !!(node?.parameters && node.parameters['_computed_background-color'] !== undefined)
-        const hasRawFormulaBg = this.parameterHasFormula(node, 'background-color')
-        if (bgColor !== null) {
-            // Avoid setting raw Formula as a CSS color; wait for computed value or inherit
-            if (!(hasRawFormulaBg && !hasComputedBg)) {
-                element.style.backgroundColor = this.convertColorValue(bgColor)
+        // Legacy background support (keep for compatibility) and computed background
+        // Do not override background already set by renderNode's effectiveBg logic.
+        if (!element.style.backgroundColor) {
+            if (params.background) {
+                element.style.backgroundColor = params.background
+            } else {
+                // New styling parameters (prefer computed values)
+                const bgColor = this.getParameterValue(node, 'background-color')
+                const hasComputedBg = !!(node?.parameters && node.parameters['_computed_background-color'] !== undefined)
+                const hasRawFormulaBg = this.parameterHasFormula(node, 'background-color')
+                if (bgColor !== null) {
+                    // Avoid setting raw Formula as a CSS color; wait for computed value or inherit
+                    if (!(hasRawFormulaBg && !hasComputedBg)) {
+                        element.style.backgroundColor = this.convertColorValue(bgColor)
+                    }
+                }
             }
         }
         
@@ -1309,6 +1321,17 @@ export class OverseerRenderer {
     convertColorValue(colorParam) {
         // Handle different color value types from the Rust backend
         if (typeof colorParam === 'string') {
+            // Support 8-digit hex (#RRGGBBAA) by converting to rgba() for wider compatibility
+            const hex = colorParam.trim()
+            const m = /^#([0-9a-fA-F]{8})$/.exec(hex)
+            if (m) {
+                const h = m[1]
+                const r = parseInt(h.slice(0, 2), 16)
+                const g = parseInt(h.slice(2, 4), 16)
+                const b = parseInt(h.slice(4, 6), 16)
+                const a = parseInt(h.slice(6, 8), 16) / 255
+                return `rgba(${r}, ${g}, ${b}, ${a})`
+            }
             return colorParam // Legacy string colors
         }
         
