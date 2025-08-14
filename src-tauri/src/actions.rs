@@ -14,6 +14,34 @@ macro_rules! debug_actions {
 pub struct ActionExecutor;
 
 impl ActionExecutor {
+    /// Build a disambiguated name path (using name#k when needed) from an indices chain
+    fn build_disambiguated_path(nodes: &Vec<OverseerNode>, indices: &[usize]) -> Vec<String> {
+        fn eff(n: &OverseerNode) -> &str { if !n.name.is_empty() { &n.name } else { &n.node_type } }
+        let mut out: Vec<String> = Vec::new();
+        if indices.is_empty() { return out; }
+        // root
+        let root_idx = indices[0];
+        if root_idx >= nodes.len() { return out; }
+        let root = &nodes[root_idx];
+        let mut count = 0usize;
+        for n in nodes.iter().take(root_idx) { if eff(n) == eff(root) { count += 1; } }
+        let mut seg = eff(root).to_string();
+        if count > 0 { seg = format!("{}#{}", seg, count); }
+        out.push(seg);
+        // descend
+        let mut cur: &OverseerNode = root;
+        for idx in indices.iter().skip(1) {
+            if *idx >= cur.children.len() { break; }
+            let child = &cur.children[*idx];
+            let base = eff(child);
+            let prior = cur.children.iter().take(*idx).filter(|c| eff(c) == base).count();
+            let mut seg = base.to_string();
+            if prior > 0 { seg = format!("{}#{}", seg, prior); }
+            out.push(seg);
+            cur = child;
+        }
+        out
+    }
     /// Parse a variety of timestamp string forms into a UTC DateTime
     fn parse_timestamp_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         // Prefer RFC3339 first
@@ -92,7 +120,9 @@ impl ActionExecutor {
         };
 
         // SAFETY: we use raw pointer to allow nested borrows during traversal of action children
-        let owner: &mut OverseerNode = unsafe { &mut *owner_ptr };
+    let owner: &mut OverseerNode = unsafe { &mut *owner_ptr };
+    // Build an internal, disambiguated path for evaluation contexts
+    let owner_eval_path = Self::build_disambiguated_path(&nodes.clone(), &owner_indices);
 
         // 2) Find matching on block(s)
     #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] Owner: {} (type={}) children: {:?}", owner.name, owner.node_type, owner.children.iter().map(|c| format!("{}/{}", c.node_type, c.name)).collect::<Vec<_>>() );
@@ -101,7 +131,7 @@ impl ActionExecutor {
                 // Execute each action child in order
                 for action in child.children {
                     #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] Action node: type='{}' name='{}' params={:?}", action.node_type, action.name, action.parameters);
-                    Self::execute_action(nodes, &owner_indices, &node_path, &action)?;
+                    Self::execute_action(nodes, &owner_indices, &owner_eval_path, &action)?;
                     // Re-resolve after each action (per-action transaction)
                     resolver::resolve_document(nodes);
                 }
@@ -493,6 +523,30 @@ impl ActionExecutor {
                 let overrides = action.children.clone();
                 Self::append_to_list(nodes, owner_path, &list_path, template_name_opt.as_deref(), value_opt, &overrides)
             }
+            "prepend" => {
+                // prepend(list=/path, template=<...>?){ overrides... } or value=... for simple lists
+                let list_path = Self::require_string(&action.parameters, "list").or_else(|_| Self::require_string(&action.parameters, "to"))?;
+                let template_name_opt: Option<String> = match action.parameters.get("template") {
+                    Some(OverseerValue::Template(t)) => {
+                        let raw = t.split('/').last().unwrap_or("");
+                        let trimmed = raw.trim();
+                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2 {
+                            Some(trimmed[1..trimmed.len()-1].to_string())
+                        } else { Some(trimmed.to_string()) }
+                    }
+                    Some(OverseerValue::String(s)) => {
+                        let raw = s.split('/').last().unwrap_or("");
+                        let trimmed = raw.trim();
+                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2 {
+                            Some(trimmed[1..trimmed.len()-1].to_string())
+                        } else { Some(trimmed.to_string()) }
+                    }
+                    _ => None,
+                };
+                let value_opt = action.parameters.get("value").cloned();
+                let overrides = action.children.clone();
+                Self::prepend_to_list(nodes, owner_path, &list_path, template_name_opt.as_deref(), value_opt, &overrides)
+            }
             "move" => {
                 // move(from=/list, keyField=..., keyValue=..., to=/targetList?, at=index?)
                 let from_path = Self::require_string(&action.parameters, "from")?;
@@ -639,10 +693,25 @@ impl ActionExecutor {
 
     fn find_indices_by_name_path(nodes: &Vec<OverseerNode>, path: &[String]) -> Option<Vec<usize>> {
         if path.is_empty() { return None; }
+        // Parse a segment of the form "name#k" into (name, ordinal)
+        fn parse_seg(seg: &str) -> (&str, Option<usize>) {
+            if let Some(hash_pos) = seg.rfind('#') {
+                let (base, ord_str) = seg.split_at(hash_pos);
+                if let Ok(k) = ord_str[1..].parse::<usize>() {
+                    return (base, Some(k));
+                }
+            }
+            (seg, None)
+        }
+        // Effective display name used by the frontend: prefer name, then node_type
+        fn eff_name(n: &OverseerNode) -> &str { if !n.name.is_empty() { &n.name } else { &n.node_type } }
+        fn matches_base(effective: &str, base: &str) -> bool {
+            effective == base || effective.starts_with(&format!("{}__", base))
+        }
         // Helper: DFS to find a descendant by name through transparent nodes, returning index chain from 'cur'
         fn find_child_chain(cur: &OverseerNode, target: &str) -> Option<Vec<usize>> {
             for (i, ch) in cur.children.iter().enumerate() {
-                if ch.name == target {
+                if matches_base(eff_name(ch), target) {
                     return Some(vec![i]);
                 }
                 if ch.is_hierarchy_transparent {
@@ -655,35 +724,66 @@ impl ActionExecutor {
             }
             None
         }
-        // Helper: search from roots for first segment, allowing transparent wrappers
-        fn find_root_chain(nodes: &Vec<OverseerNode>, target: &str) -> Option<Vec<usize>> {
-            for (i, n) in nodes.iter().enumerate() {
-                if n.name == target { return Some(vec![i]); }
-                if let Some(mut sub) = find_child_chain(n, target) {
-                    let mut out = vec![i];
-                    out.append(&mut sub);
-                    return Some(out);
+        // Helper: select the k-th direct child whose effective name matches target
+        fn find_kth_direct_child(cur: &OverseerNode, target: &str, k: usize) -> Option<usize> {
+            let mut count = 0usize;
+            for (i, ch) in cur.children.iter().enumerate() {
+                if matches_base(eff_name(ch), target) {
+                    if count == k { return Some(i); }
+                    count += 1;
                 }
             }
             None
+        }
+        // Helper: search from roots for first segment, allowing ordinal and transparent wrappers
+        fn find_root_chain(nodes: &Vec<OverseerNode>, first_seg: &str) -> Option<Vec<usize>> {
+            let (base, ord) = parse_seg(first_seg);
+            if let Some(k) = ord {
+                // k-th direct root with effective name == base
+                let mut count = 0usize;
+                for (i, n) in nodes.iter().enumerate() {
+                    if matches_base(eff_name(n), base) {
+                        if count == k { return Some(vec![i]); }
+                        count += 1;
+                    }
+                }
+                None
+            } else {
+                // No ordinal: try direct root first, else search through transparent wrappers
+                for (i, n) in nodes.iter().enumerate() {
+                    if matches_base(eff_name(n), base) { return Some(vec![i]); }
+                    if let Some(mut sub) = find_child_chain(n, base) {
+                        let mut out = vec![i];
+                        out.append(&mut sub);
+                        return Some(out);
+                    }
+                }
+                None
+            }
         }
 
         let mut indices: Vec<usize> = Vec::new();
         // Find first segment anywhere in the (transparent-flattened) roots
         let mut chain = find_root_chain(nodes, &path[0])?;
         indices.append(&mut chain);
-        // Walk remaining segments, allowing transparent traversal at each step
+        // Walk remaining segments, allowing transparent traversal and ordinal selection at each step
         let mut cur: &OverseerNode = {
             let mut node_ref: &OverseerNode = &nodes[indices[0]];
             for idx in indices.iter().skip(1) { node_ref = &node_ref.children[*idx]; }
             node_ref
         };
-        for name in &path[1..] {
-            if cur.name == *name {
-                // Path segment refers to current node; continue
+        for seg in &path[1..] {
+            let (base, ord) = parse_seg(seg);
+            if eff_name(cur) == base && ord.is_none() {
+                // Segment refers to current node by name; continue
                 continue;
             }
-            if let Some(mut sub) = find_child_chain(cur, name) {
+            let next_idx_opt = if let Some(k) = ord {
+                find_kth_direct_child(cur, base, k).map(|i| vec![i])
+            } else {
+                find_child_chain(cur, base)
+            };
+            if let Some(mut sub) = next_idx_opt {
                 indices.append(&mut sub);
                 // advance cur to new node
                 let mut node_ref: &OverseerNode = &nodes[indices[0]];
@@ -718,7 +818,20 @@ impl ActionExecutor {
     if path.is_empty() { return None; }
     let mut cur: *mut OverseerNode;
         // Reuse transparent-aware name path resolution to compute indices, then fetch pointer
-    let indices = Self::find_indices_by_name_path(nodes, path)?;
+    let indices = match Self::find_indices_by_name_path(nodes, path) {
+            Some(ix) => ix,
+            None => {
+                // Fallback 1: strip any ordinal suffix (#k) from segments and retry
+                let stripped: Vec<String> = path.iter().map(|s| s.split('#').next().unwrap_or("").to_string()).collect();
+                if let Some(ix2) = Self::find_indices_by_name_path(nodes, &stripped) { ix2 } else {
+                    // Fallback 2: strip instance suffixes ("__n") from segments and retry
+                    let base_only: Vec<String> = stripped.iter().map(|s| {
+                        if let Some(pos) = s.rfind("__") { s[..pos].to_string() } else { s.clone() }
+                    }).collect();
+                    Self::find_indices_by_name_path(nodes, &base_only)?
+                }
+            }
+        };
         // Walk indices to yield a mutable pointer
         cur = &mut nodes[indices[0]] as *mut _;
         for idx in indices.iter().skip(1) {
@@ -1142,6 +1255,66 @@ impl ActionExecutor {
         Ok(())
     }
 
+    fn prepend_to_list(
+        nodes: &mut Vec<OverseerNode>,
+        owner_path: &[String],
+        list_path: &str,
+        template_name: Option<&str>,
+        value_opt: Option<OverseerValue>,
+        overrides: &Vec<OverseerNode>,
+    ) -> Result<(), OverseerError> {
+        let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
+        let snapshot = nodes.clone();
+        let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
+            .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
+        let list_node = Self::get_node_mut_by_indices(nodes, &indices)
+            .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
+        if list_node.node_type != "list" { return Err(OverseerError::ValidationError("prepend.target is not a list".to_string())); }
+
+        if let Some(entry) = list_node.parameters.get("entry") {
+            match entry {
+                OverseerValue::Template(t) => {
+                    let chosen_template_name = if let Some(name) = template_name { name.to_string() } else {
+                        let raw = t.split('/').last().unwrap_or("");
+                        let trimmed = raw.trim();
+                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2 {
+                            trimmed[1..trimmed.len()-1].to_string()
+                        } else { trimmed.to_string() }
+                    };
+                    let template_def = Self::find_node_by_name(&snapshot, &chosen_template_name)
+                        .ok_or_else(|| OverseerError::ValidationError(format!("Template not found: {}", chosen_template_name)))?;
+                    let mut new_item = Self::clone_from_template(template_def);
+                    if let Some(OverseerValue::String(parent_eff)) = list_node.parameters.get("_effective_layout") {
+                        let opp = Self::opposite_layout(parent_eff);
+                        new_item.parameters.insert("_effective_layout".to_string(), OverseerValue::String(opp));
+                    }
+                    // Name as if appended to the front: use current length+1 to maintain unique names
+                    let ordinal = list_node.children.len() + 1;
+                    new_item.name = format!("{}__{}", template_def.name, ordinal);
+                    Self::apply_overrides_evaluated(&mut new_item, overrides, owner_path, &snapshot)?;
+                    list_node.children.insert(0, new_item);
+                }
+                OverseerValue::String(type_name) => {
+                    let val = value_opt.ok_or_else(|| OverseerError::ValidationError("prepend.value required for simple list".to_string()))?;
+                    let mut item = OverseerNode {
+                        name: format!("{}__{}", type_name, list_node.children.len() + 1),
+                        node_type: type_name.clone(),
+                        template: None,
+                        parameters: Default::default(),
+                        children: Vec::new(),
+                        is_hierarchy_transparent: false,
+                    };
+                    item.parameters.insert("value".to_string(), val);
+                    list_node.children.insert(0, item);
+                }
+                _ => return Err(OverseerError::ValidationError("prepend: unsupported entry type".to_string())),
+            }
+        } else {
+            return Err(OverseerError::ValidationError("prepend: list has no entry parameter".to_string()));
+        }
+        Ok(())
+    }
+
     // Evaluate formulas in value/params against owner_path context and apply into target
     fn apply_overrides_evaluated(
         target: &mut OverseerNode,
@@ -1550,6 +1723,50 @@ mod tests {
     }
 
     #[test]
+    fn test_prepend_to_template_list() {
+        let input = r#"
+        div Root {
+            div Task { string id = "" }
+            list Tasks (entry=<Task>, key="id") {
+                - Task { id = "b" }
+            }
+            button AddFirst { on click { prepend(list="/Root/Tasks", template="<Task>") { - id = "a" } } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolver::resolve_document(&mut nodes);
+        let path = vec!["Root".to_string(), "AddFirst".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let list = root.children.iter().find(|c| c.name == "Tasks").unwrap();
+        let first_id = list.children[0].children.iter().find(|f| f.name=="id").and_then(|f| f.parameters.get("value"));
+        assert_eq!(first_id, Some(&OverseerValue::String("a".to_string())));
+    }
+
+    #[test]
+    fn test_prepend_to_simple_list() {
+        let input = r#"
+        div Root {
+            list Names (entry=string) {
+                - "Bob"
+            }
+            button AddFirst { on click { prepend(list="/Root/Names", value="Alice") } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolver::resolve_document(&mut nodes);
+        let path = vec!["Root".to_string(), "AddFirst".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let list = root.children.iter().find(|c| c.name == "Names").unwrap();
+        let first = &list.children[0];
+        assert_eq!(first.node_type, "string");
+        assert_eq!(first.parameters.get("value"), Some(&OverseerValue::String("Alice".to_string())));
+    }
+
+    #[test]
     fn test_move_within_list_by_key() {
         let input = r#"
         div Root {
@@ -1685,6 +1902,41 @@ mod tests {
         let root = nodes.iter().find(|n| n.name == "Root").unwrap();
         let a = root.children.iter().find(|c| c.name == "A").unwrap();
         assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(0)));
+    }
+
+    #[test]
+    fn done_button_appends_under_unnamed_wrappers_with_ordinals() {
+        let input = r#"
+        div Root {
+            div (hidden=true) { div ExerciseRecord { int eid = 0 timestamp time = "" } }
+            div (hidden=true) {
+                div Exercise {
+                    int id = 0
+                    button done { on click { append(list="/Root/History", template="<ExerciseRecord>") { - eid = $(../id) - time = "t" } } }
+                }
+            }
+            list Exercises (entry=<Exercise>, key="id") {
+                - { int id = 1 }
+                - { int id = 2 }
+            }
+            list History (entry=<ExerciseRecord>, key="time") { }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+    // Click the Done button on the second Exercise instance (name is Exercise__2)
+    let path = vec!["Root".into(), "Exercises".into(), "Exercise__2".into(), "done".into()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        // Verify that one History entry was appended
+        let root = nodes.iter().find(|n| n.name=="Root").unwrap();
+        let hist = root.children.iter().find(|c| c.name=="History").unwrap();
+        assert_eq!(hist.node_type, "list");
+        assert_eq!(hist.children.len(), 1, "History should have one appended item");
+        // And the eid should match the clicked item's id (2)
+        let item = &hist.children[0];
+        let eid = item.children.iter().find(|f| f.name=="eid").and_then(|f| f.parameters.get("value")).cloned();
+        assert_eq!(eid, Some(OverseerValue::Integer(2)));
     }
 }
 

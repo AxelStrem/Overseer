@@ -923,13 +923,15 @@ export class OverseerRenderer {
     legend.className = 'overseer-chart-legend'
     container.appendChild(legend)
 
-        const canvas = document.createElement('canvas')
-        container.appendChild(canvas)
+    const canvas = document.createElement('canvas')
+    container.appendChild(canvas)
         // Size: support px and %; fallback to 400x200. Honor devicePixelRatio.
         // Size: support px/% and optional aspect-ratio; fallback to width x (width/aspect or width*0.5). Honor devicePixelRatio.
         const rawW = this.getParameterValue(node, 'width')
         const rawH = this.getParameterValue(node, 'height')
         const rawAR = this.getParameterValue(node, 'aspect-ratio')
+    // Track current DPR for crisp drawing; declare before computeSize to avoid TDZ issues
+    let currentDpr = Math.max(1, Math.floor(window.devicePixelRatio || 1))
         const parseAspectRatio = (v) => {
             if (v === null || v === undefined) return null
             if (typeof v === 'number') return v > 0 ? Number(v) : null
@@ -946,7 +948,7 @@ export class OverseerRenderer {
             const n = parseFloat(s)
             return isNaN(n) || n <= 0 ? null : n
         }
-        const aspect = parseAspectRatio(rawAR) // width/height
+    const aspect = parseAspectRatio(rawAR) // width/height
         const parseDim = (raw, parentPx, fallback) => {
             if (raw === null || raw === undefined) return fallback
             if (typeof raw === 'number') return Math.max(10, Math.floor(raw))
@@ -958,7 +960,7 @@ export class OverseerRenderer {
             const n = parseInt(s, 10)
             return isNaN(n) ? fallback : Math.max(10, n)
         }
-        let width = 400, height = 200
+    let width = 400, height = 200
         const computeSize = () => {
             // Use the container's content box as the reference for percentage sizes
             const rect = container.getBoundingClientRect()
@@ -986,15 +988,14 @@ export class OverseerRenderer {
             // Set CSS size so the element stretches, then set pixel size multiplied by DPR
             canvas.style.width = width + 'px'
             canvas.style.height = height + 'px'
-            const dpr = Math.max(1, window.devicePixelRatio || 1)
-            canvas.width = Math.floor(width * dpr)
-            canvas.height = Math.floor(height * dpr)
-            currentDpr = dpr
+        const dpr = Math.max(1, window.devicePixelRatio || 1)
+        canvas.width = Math.floor(width * dpr)
+        canvas.height = Math.floor(height * dpr)
+        currentDpr = dpr
         }
         computeSize()
 
     const ctx = canvas.getContext('2d')
-    let currentDpr = Math.max(1, Math.floor(window.devicePixelRatio || 1))
         // Try to read computed bounds
     let xmin = parseFloat(this.getParameterValue(node, 'domain-x-min'))
     let xmax = parseFloat(this.getParameterValue(node, 'domain-x-max'))
@@ -1392,6 +1393,45 @@ export class OverseerRenderer {
         this.applyMarginStyles(element, node)
         
         // Add more style mappings as needed
+    }
+
+    // Apply conservative default styles for fields (string/number/text/date/timestamp/bool/checkbox)
+    // without overriding explicit parameters. This mainly ensures labels/values are readable
+    // and laid out consistently even when no styling parameters are provided.
+    applyFieldDefaultStyles(container, node) {
+        try {
+            const params = node?.parameters || {}
+            const hasExplicitFont = params['font-color'] !== undefined || params['font-size'] !== undefined
+
+            // Ensure label spacing is pleasant
+            const label = container.querySelector('label')
+            if (label) {
+                if (!label.style.marginBottom) label.style.marginBottom = '4px'
+                if (!label.style.display) label.style.display = 'block'
+            }
+
+            // Value element defaults
+            const valueEl = container.querySelector('.field-value') || container.querySelector('.text-content')
+            if (valueEl) {
+                // Avoid collapsing to 0 height when empty
+                if (!valueEl.style.minHeight) valueEl.style.minHeight = '20px'
+                // Keep inline-block so borders/padding wrap text nicely
+                if (!valueEl.style.display) valueEl.style.display = 'inline-block'
+                // Inherit typography unless explicitly overridden later
+                if (!hasExplicitFont) {
+                    valueEl.style.color = 'inherit'
+                    valueEl.style.fontSize = 'inherit'
+                }
+            }
+
+            // Container baseline padding only if nothing else is set; layout/margin handled elsewhere
+            const hasExplicitPadding = params.padding !== undefined ||
+                params['padding-top'] !== undefined || params['padding-bottom'] !== undefined ||
+                params['padding-left'] !== undefined || params['padding-right'] !== undefined
+            if (!hasExplicitPadding) {
+                if (!container.style.padding) container.style.padding = '4px 6px'
+            }
+        } catch (_) { /* no-op */ }
     }
 
     applyMarginStyles(element, node) {

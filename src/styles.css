@@ -378,11 +378,13 @@ body {
     padding: 16px;
     margin-bottom: 16px;
     text-align: center;
+    overflow: hidden; /* ensure canvas never protrudes outside */
 }
 
 .overseer-chart canvas {
-    max-width: 100%;
-    height: auto;
+    display: block; /* avoid baseline gaps/stray lines */
+    width: 100%;
+    height: auto; /* JS will set explicit height when needed (e.g., 100%) */
 }
 
 /* Chart legend */

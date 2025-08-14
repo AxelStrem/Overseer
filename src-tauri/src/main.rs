@@ -80,6 +80,8 @@ async fn execute_overseer_event(
     node_path: Vec<String>,
     event_name: String,
 ) -> Result<Vec<OverseerNode>> {
+    #[cfg(feature = "debug-resolver")]
+    eprintln!("[TAURI] execute_overseer_event event='{}' path={:?}", event_name, node_path);
     // Execute actions for the event; this will mutate nodes and re-resolve once
     ActionExecutor::execute_event(&mut nodes, &node_path, &event_name)?;
     Ok(nodes)

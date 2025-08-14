@@ -120,24 +120,37 @@ unsafe fn recursively_compute_chart_series(
 
         // Iterate plot children
         for plot in node.children.iter_mut().filter(|c| c.node_type == "plot") {
-            // Resolve source path
-            let source_path = match plot.parameters.get("source") {
-                Some(OverseerValue::String(s)) => s.clone(),
-                // Allow formula yielding a string path (optional)
+            // Build an evaluation context for source resolution
+            let ctx = EvaluationContext::new(current_path.clone(), document_root);
+
+            // Resolve source: support plain path string OR a processed list via method chain
+            enum SourceItems<'a> { FromPath(Vec<String>, &'a OverseerNode), FromList(Vec<String>, Vec<&'a OverseerNode>) }
+            let source_items: Option<SourceItems> = match plot.parameters.get("source") {
+                Some(OverseerValue::String(s)) => {
+                    resolve_path_from(document_root, current_path, s).map(|(p, n)| SourceItems::FromPath(p, n))
+                }
                 Some(OverseerValue::Formula(f)) => {
-                    // Use path-based context to avoid borrowing `node` immutably while it's mut borrowed
-                    let ctx = EvaluationContext::new(current_path.clone(), document_root);
+                    // Try to evaluate to a string path first
                     match FormulaEvaluator::evaluate_formula(f, &ctx) {
-                        Ok(OverseerValue::String(s)) => s,
-                        _ => continue,
+                        Ok(OverseerValue::String(s)) => resolve_path_from(document_root, current_path, &s).map(|(p, n)| SourceItems::FromPath(p, n)),
+                        _ => {
+                            // Fall back: treat the formula as a list-source expression
+                            match FormulaEvaluator::evaluate_list_source_nodes(f, &ctx) {
+                                Ok((p, items)) => Some(SourceItems::FromList(p, items)),
+                                Err(_) => None,
+                            }
+                        }
                     }
                 }
-                _ => continue,
+                _ => None,
             };
 
-            if let Some((source_path_vec, source_ref)) = resolve_path_from(document_root, current_path, &source_path) {
-                // Iterate items (accessible children)
-                let items = source_ref.get_accessible_children();
+            if let Some(source_items) = source_items {
+                // Prepare item iteration and path seeds
+                let (source_path_vec, items, source_ref_opt): (Vec<String>, Vec<&OverseerNode>, Option<&OverseerNode>) = match source_items {
+                    SourceItems::FromPath(p, n) => (p.clone(), n.get_accessible_children(), Some(n)),
+                    SourceItems::FromList(p, list) => (p, list, None),
+                };
                 let mut series: Vec<(f64, f64)> = Vec::new();
 
                 // Fetch x/y expressions
@@ -159,7 +172,7 @@ unsafe fn recursively_compute_chart_series(
                     // Build item path for context
                     let mut item_path = source_path_vec.clone();
                     item_path.push(item.name.clone());
-                    let ctx = EvaluationContext::new_with_current_and_parent(item, Some(source_ref), item_path, document_root);
+                    let ctx = EvaluationContext::new_with_current_and_parent(item, source_ref_opt, item_path, document_root);
 
                     let x_val = FormulaEvaluator::evaluate_lambda_on_item(x_src, &ctx, item).ok();
                     let y_val = FormulaEvaluator::evaluate_lambda_on_item(y_src, &ctx, item).ok();
@@ -194,7 +207,21 @@ unsafe fn recursively_compute_chart_series(
     // Recurse
     for idx in 0..node.children.len() {
         let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
-        current_path.push((&*child_ptr).name.clone());
+        // Disambiguate duplicate sibling names by appending an ordinal index (name#k)
+        {
+            let child_ref = &*child_ptr;
+            let name = child_ref.name.clone();
+            let k = node.children
+                .iter()
+                .take(idx)
+                .filter(|c| c.name == name)
+                .count();
+            if k > 0 {
+                current_path.push(format!("{}#{}", name, k));
+            } else {
+                current_path.push(name);
+            }
+        }
         recursively_compute_chart_series(child_ptr, node as *const OverseerNode, current_path, document_root);
         current_path.pop();
     }
@@ -204,6 +231,36 @@ unsafe fn recursively_compute_chart_series(
         match v? {
             OverseerValue::Integer(i) => Some(i as f64),
             OverseerValue::Float(f) => Some(f),
+            // Accept numeric-looking strings directly
+            OverseerValue::String(s) => {
+                // Try plain number first
+                if let Ok(n) = s.parse::<f64>() { return Some(n); }
+                // Try RFC3339 timestamp
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
+                    return Some(dt.timestamp_millis() as f64);
+                }
+                // Try date-only YYYY-MM-DD -> midnight UTC
+                if let Ok(nd) = chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d") {
+                    if let Some(ndt) = nd.and_hms_opt(0, 0, 0) {
+                        let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                        return Some(dt.timestamp_millis() as f64);
+                    }
+                }
+                None
+            }
+            OverseerValue::Timestamp(ts) => {
+                // Parse to epoch ms via chrono if available
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&ts) {
+                    Some(dt.timestamp_millis() as f64)
+                } else { None }
+            }
+            OverseerValue::Date(d) => {
+                // Treat YYYY-MM-DD as midnight UTC
+                let ts = format!("{}T00:00:00Z", d);
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&ts) {
+                    Some(dt.timestamp_millis() as f64)
+                } else { None }
+            }
             _ => None,
         }
     }
@@ -896,7 +953,13 @@ unsafe fn recursively_evaluate_node_formulas(
     let child_len = node.children.len();
     for idx in 0..child_len {
         let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
-        current_path.push( (&*child_ptr).name.clone() );
+        // Disambiguate duplicate sibling names by appending ordinal (name#k)
+        {
+            let child_ref = &*child_ptr;
+            let name = child_ref.name.clone();
+            let k = node.children.iter().take(idx).filter(|c| c.name == name).count();
+            if k > 0 { current_path.push(format!("{}#{}", name, k)); } else { current_path.push(name); }
+        }
         recursively_evaluate_node_formulas(child_ptr, node as *const OverseerNode, current_path, document_root);
         current_path.pop();
     }
@@ -952,7 +1015,17 @@ unsafe fn recursively_compute_sort_keys(
     // Recurse into children
     for c in 0..node.children.len() {
         let child_ptr: *mut OverseerNode = &mut node.children[c] as *mut _;
-        current_path.push((&*child_ptr).name.clone());
+        {
+            let child_ref = &*child_ptr;
+            let name = child_ref.name.clone();
+            let k = node.children
+                .iter()
+                .take(c)
+                .filter(|c| c.name == name)
+                .count();
+            if k > 0 { current_path.push(format!("{}#{}", name, k)); }
+            else { current_path.push(name); }
+        }
         recursively_compute_sort_keys(child_ptr, node as *const OverseerNode, current_path, document_root);
         current_path.pop();
     }
@@ -1351,6 +1424,68 @@ mod tests {
                 assert!(s.contains("[2,3]"));
             }
             _ => panic!("expected string json series"),
+        }
+    }
+
+    #[test]
+    fn test_chart_series_with_timestamp_x_strings() {
+        let input = r#"
+        div Root {
+            list History (entry=record) {
+                - { string time = "2025-08-10T19:33:55.706634+00:00" float weight = 9.6 }
+                - { string time = "2025-08-12T10:53:02.760779800+00:00" float weight = 10.2 }
+            }
+            chart C {
+                plot P (source="/Root/History", x=$(|x| x/time), y=$(|x| x/weight))
+            }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        super::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let chart = root.get_accessible_children().into_iter().find(|c| c.node_type == "chart").unwrap();
+        // Bounds must be computed and increasing in x
+        let xmin = match chart.parameters.get("_computed_x_min") { Some(crate::types::OverseerValue::Float(f)) => *f, _ => -1.0 };
+        let xmax = match chart.parameters.get("_computed_x_max") { Some(crate::types::OverseerValue::Float(f)) => *f, _ => -1.0 };
+        assert!(xmax > xmin);
+        // Plot should have _computed_series
+        let plot = chart.children.iter().find(|c| c.node_type == "plot").unwrap();
+        let ser = plot.parameters.get("_computed_series");
+        assert!(matches!(ser, Some(crate::types::OverseerValue::String(_))));
+    }
+
+    #[test]
+    fn test_chart_series_with_processed_list_source() {
+        let input = r#"
+        div Root {
+            list History (entry=record) {
+                - { string time = "2025-08-10T19:33:55.706634+00:00" int reps = 12 }
+                - { string time = "2025-08-12T10:53:02.760779800+00:00" int reps = 18 }
+                - { string time = "2025-08-12T11:00:00.000000000+00:00" int reps = 22 }
+            }
+            chart C {
+                // Use a processed list: only items with reps > 15
+                plot P (source=$(/Root/History.filter(|x| x/reps > 15)), x=$(|x| x/time), y=$(|x| x/reps))
+            }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        super::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let chart = root.get_accessible_children().into_iter().find(|c| c.node_type == "chart").unwrap();
+        // Bounds must be computed
+        assert!(chart.parameters.get("_computed_x_min").is_some());
+        assert!(chart.parameters.get("_computed_x_max").is_some());
+        assert!(chart.parameters.get("_computed_y_min").is_some());
+        assert!(chart.parameters.get("_computed_y_max").is_some());
+        // Plot should have _computed_series with two points (reps 18 and 22)
+        let plot = chart.children.iter().find(|c| c.node_type == "plot").unwrap();
+        if let Some(OverseerValue::String(s)) = plot.parameters.get("_computed_series") {
+            // Count occurrences of opening bracket '[' minus 1 for the array start, or parse
+            let series: Vec<(f64, f64)> = serde_json::from_str(s).expect("valid series json");
+            assert_eq!(series.len(), 2);
+        } else {
+            panic!("expected _computed_series string");
         }
     }
 
