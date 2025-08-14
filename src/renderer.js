@@ -199,11 +199,23 @@ export class OverseerRenderer {
                         const filteredChildren = children.filter(ch => this.shouldRenderChild(node, ch))
                         if (DEBUG_MODE) console.log('Rendering', filteredChildren.length, 'children for node:', node)
                         for (const child of filteredChildren) {
-                            const childPath = [...path, (child.name || child.node_type || child.type || 'child')]
+                            // Build a logical, disambiguated path segment
+                            const segBase = (child.name || child.node_type || child.type || 'child')
+                            const isGenericTransparent = !!(child.is_hierarchy_transparent === true && (!child.name || String(child.name).toLowerCase() === String((child.node_type || child.type || '')).toLowerCase()))
+                            // Compute ordinal among raw siblings with same name to disambiguate duplicates (name#k)
+                            let seg = segBase
+                            if (!isGenericTransparent && Array.isArray(node.children)) {
+                                const idx = node.children.indexOf(child)
+                                if (idx >= 0) {
+                                    const k = node.children.slice(0, idx).filter(c => (c?.name || c?.node_type || c?.type) === segBase).length
+                                    if (k > 0) seg = `${segBase}#${k}`
+                                }
+                            }
+                            const childPath = isGenericTransparent ? path : [...path, seg]
                             if (DEBUG_MODE) {
                                 try {
                                     const dbgParent = node.name || node.node_type || node.type || 'unknown'
-                                    const dbgChild = child?.name || child?.node_type || child?.type || 'unknown'
+                                    const dbgChild = seg
                                     console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
                                 } catch (_) { /* no-op */ }
                             }
@@ -913,13 +925,76 @@ export class OverseerRenderer {
 
         const canvas = document.createElement('canvas')
         container.appendChild(canvas)
-        // Size: default or from style width/height (fallback to 400x200)
-        const width = parseInt(this.getParameterValue(node, 'width')) || 400
-        const height = parseInt(this.getParameterValue(node, 'height')) || 200
-        canvas.width = width
-        canvas.height = height
+        // Size: support px and %; fallback to 400x200. Honor devicePixelRatio.
+        // Size: support px/% and optional aspect-ratio; fallback to width x (width/aspect or width*0.5). Honor devicePixelRatio.
+        const rawW = this.getParameterValue(node, 'width')
+        const rawH = this.getParameterValue(node, 'height')
+        const rawAR = this.getParameterValue(node, 'aspect-ratio')
+        const parseAspectRatio = (v) => {
+            if (v === null || v === undefined) return null
+            if (typeof v === 'number') return v > 0 ? Number(v) : null
+            const s = String(v).trim()
+            if (!s) return null
+            // Formats: "16:9", "4/3", "1.777", "1:1"
+            if (s.includes(':') || s.includes('/')) {
+                const sep = s.includes(':') ? ':' : '/'
+                const [a, b] = s.split(sep)
+                const na = parseFloat(a), nb = parseFloat(b)
+                if (!isNaN(na) && !isNaN(nb) && nb > 0) return na / nb
+                return null
+            }
+            const n = parseFloat(s)
+            return isNaN(n) || n <= 0 ? null : n
+        }
+        const aspect = parseAspectRatio(rawAR) // width/height
+        const parseDim = (raw, parentPx, fallback) => {
+            if (raw === null || raw === undefined) return fallback
+            if (typeof raw === 'number') return Math.max(10, Math.floor(raw))
+            const s = String(raw).trim()
+            if (s.endsWith('%')) {
+                const p = parseFloat(s.slice(0, -1))
+                if (!isNaN(p)) return Math.max(10, Math.floor((parentPx * p) / 100))
+            }
+            const n = parseInt(s, 10)
+            return isNaN(n) ? fallback : Math.max(10, n)
+        }
+        let width = 400, height = 200
+        const computeSize = () => {
+            // Use the container's content box as the reference for percentage sizes
+            const rect = container.getBoundingClientRect()
+            // client sizes exclude borders and scrollbar; padding is fine as inner spacing
+            const parentW = container.parentElement ? container.parentElement.clientWidth : 0
+            const viewportW = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0)
+            const pw = Math.max(10, Math.floor(container.clientWidth || parentW || rect.width || viewportW || 0))
+            const phMeasured = Math.max(0, Math.floor(container.clientHeight || rect.height || 0))
+            width = parseDim(rawW, pw, pw || 400)
+            const defaultH = aspect ? Math.max(10, Math.round(width / aspect)) : Math.max(200, Math.round(width * 0.5))
+            // If height is %, but parent height is 0/unknown, fall back to aspect/default
+            const isPercentH = typeof rawH === 'string' && rawH.trim().endsWith('%')
+            if (rawH === null || rawH === undefined) {
+                height = defaultH
+            } else if (isPercentH && phMeasured <= 1) {
+                height = defaultH
+            } else {
+                height = parseDim(rawH, phMeasured, defaultH)
+            }
+            // Cap width to container (avoid overflow on 100%) and enforce a sensible floor
+            width = Math.max(50, Math.min(width, pw))
+            // Only cap height if we have a measurable container height (non-zero)
+            if (phMeasured > 1) height = Math.max(50, Math.min(height, phMeasured))
+            else height = Math.max(50, height)
+            // Set CSS size so the element stretches, then set pixel size multiplied by DPR
+            canvas.style.width = width + 'px'
+            canvas.style.height = height + 'px'
+            const dpr = Math.max(1, window.devicePixelRatio || 1)
+            canvas.width = Math.floor(width * dpr)
+            canvas.height = Math.floor(height * dpr)
+            currentDpr = dpr
+        }
+        computeSize()
 
-        const ctx = canvas.getContext('2d')
+    const ctx = canvas.getContext('2d')
+    let currentDpr = Math.max(1, Math.floor(window.devicePixelRatio || 1))
         // Try to read computed bounds
     let xmin = parseFloat(this.getParameterValue(node, 'domain-x-min'))
     let xmax = parseFloat(this.getParameterValue(node, 'domain-x-max'))
@@ -949,10 +1024,10 @@ export class OverseerRenderer {
             const sy = (y) => height - pad - ((y - ymin) / (ymax - ymin)) * plotH
 
             // Build legend from plot children
-            const plots = (node.children || []).filter(c => (c.node_type||'').toLowerCase() === 'plot')
+        const plots = (node.children || []).filter(c => (c.node_type||'').toLowerCase() === 'plot')
             legend.innerHTML = ''
-            const visibility = new Map()
-            plots.forEach((plot) => {
+        const visibility = new Map()
+        plots.forEach((plot) => {
                 const color = this.getParameterValue(plot, 'color') || '#4A90E2'
                 const label = this.getParameterValue(plot, 'label') || plot.name || 'Series'
                 const item = document.createElement('span')
@@ -976,6 +1051,10 @@ export class OverseerRenderer {
             })
 
             const drawAll = () => {
+                // Ensure drawing space matches DPR
+                // Reset then apply DPR scaling so 1 unit == 1 CSS pixel
+                ctx.setTransform(1, 0, 0, 1, 0, 0)
+                ctx.scale(currentDpr, currentDpr)
                 // Clear and background
                 ctx.fillStyle = '#1e1e1e'
                 ctx.fillRect(0, 0, width, height)
@@ -1044,6 +1123,9 @@ export class OverseerRenderer {
             }
 
             drawAll()
+            // Resize observer to keep canvas in sync with % dimensions
+            const ro = new ResizeObserver(() => { computeSize(); drawAll(); })
+            ro.observe(container)
         } else {
             // Fallback placeholder when series not computed yet
             ctx.fillStyle = '#ccc'
@@ -1093,139 +1175,10 @@ export class OverseerRenderer {
             }
         }
 
-        // Apply default padding unless explicitly overridden or in tight layout mode
-        
-        const hasExplicitPadding = node.parameters.padding !== undefined || 
-                                 node.parameters['padding-top'] !== undefined ||
-                                 node.parameters['padding-bottom'] !== undefined ||
-                                 node.parameters['padding-left'] !== undefined ||
-                                 node.parameters['padding-right'] !== undefined
-        
-        if (!hasExplicitPadding) {
-            if (isTightLayout) {
-                // In tight layout mode, use minimal or no padding
-                element.style.padding = '0px'
-            } else {
-                // Apply default padding for containers (div/list) or template instances that originated from them
-                const originalType = (this.getParameterValue(node, '_original_type') || '').toString().toLowerCase()
-                const isContainerNow = (node.node_type === 'div' || node.node_type === 'list')
-                const wasContainerTemplate = (originalType === 'div' || originalType === 'list')
-                if (isContainerNow || wasContainerTemplate) {
-                    element.style.padding = '16px'
-                }
-            }
-        } else {
-            // Apply explicit padding parameters
-            this.applyPaddingStyles(element, node)
-        }
-        
-        // Apply default margin unless explicitly set
-        const hasExplicitMargin = node.parameters.margin !== undefined ||
-                                node.parameters['margin-top'] !== undefined ||
-                                node.parameters['margin-bottom'] !== undefined ||
-                                node.parameters['margin-left'] !== undefined ||
-                                node.parameters['margin-right'] !== undefined
-        
-        if (!hasExplicitMargin) {
-            const originalType = (this.getParameterValue(node, '_original_type') || '').toString().toLowerCase()
-            const isContainerNow = (node.node_type === 'div' || node.node_type === 'list')
-            const wasContainerTemplate = (originalType === 'div' || originalType === 'list')
-            if (isContainerNow || wasContainerTemplate) {
-                element.style.marginBottom = '16px'
-            }
-        }
-
-        if (spacing !== null) {
-            const spacingValue = parseInt(spacing)
-            element.style.gap = `${spacingValue}px`
-        } else {
-            // Apply default spacing only if no explicit spacing parameter
-            element.style.gap = '8px'
-        }
-        
-        // Apply margins (for all elements)
-        this.applyMarginStyles(element, node)
-    }
-
-    applyMarginStyles(element, node) {
-        if (!node.parameters) return
-        
-        const params = node.parameters
-        
-        // Handle shorthand margin parameter
-        const margin = this.getParameterValue(node, 'margin')
-        if (margin !== null) {
-            const marginValue = parseInt(margin) || 0
-            element.style.margin = `${marginValue}px`
-        }
-        
-        // Handle individual margin parameters (these override shorthand)
-        const marginTop = this.getParameterValue(node, 'margin-top')
-        const marginBottom = this.getParameterValue(node, 'margin-bottom')
-        const marginLeft = this.getParameterValue(node, 'margin-left')
-        const marginRight = this.getParameterValue(node, 'margin-right')
-        
-        if (marginTop !== null) {
-            element.style.marginTop = `${parseInt(marginTop) || 0}px`
-        }
-        if (marginBottom !== null) {
-            element.style.marginBottom = `${parseInt(marginBottom) || 0}px`
-        }
-        if (marginLeft !== null) {
-            element.style.marginLeft = `${parseInt(marginLeft) || 0}px`
-        }
-        if (marginRight !== null) {
-            element.style.marginRight = `${parseInt(marginRight) || 0}px`
-        }
-    }
-
-    
-    applyPaddingStyles(element, node) {
-        if (!node.parameters) return
-        
-        // Handle shorthand padding parameter
-        const padding = this.getParameterValue(node, 'padding')
-        if (padding !== null) {
-            const paddingValue = parseInt(padding) || 0
-            element.style.padding = `${paddingValue}px`
-        }
-        
-        // Handle individual padding parameters (these override shorthand)
-        const paddingTop = this.getParameterValue(node, 'padding-top')
-        const paddingBottom = this.getParameterValue(node, 'padding-bottom')
-        const paddingLeft = this.getParameterValue(node, 'padding-left')
-        const paddingRight = this.getParameterValue(node, 'padding-right')
-        
-        if (paddingTop !== null) {
-            element.style.paddingTop = `${parseInt(paddingTop) || 0}px`
-        }
-        if (paddingBottom !== null) {
-            element.style.paddingBottom = `${parseInt(paddingBottom) || 0}px`
-        }
-        if (paddingLeft !== null) {
-            element.style.paddingLeft = `${parseInt(paddingLeft) || 0}px`
-        }
-        if (paddingRight !== null) {
-            element.style.paddingRight = `${parseInt(paddingRight) || 0}px`
-        }
-    }
-
-    
-    applyFieldDefaultStyles(element, node) {
-        if (!node.parameters) {
-            // Apply default field styling when no parameters
-            element.style.marginBottom = '12px'
-            element.style.padding = '8px'
-            return
-        }
+    // Apply default padding unless explicitly overridden or in tight layout mode
 
         
-        // Check if user wants zero spacing/margin layout (tight grid)
-        const spacing = this.getParameterValue(node, 'spacing')
-        const margin = this.getParameterValue(node, 'margin')
-        const isTightLayout = (spacing === 0 || margin === 0)
-        
-        // Check if any margin/padding parameters are explicitly set
+    // Check if any margin/padding parameters are explicitly set
         const hasExplicitMargin = node.parameters.margin !== undefined ||
                                 node.parameters['margin-top'] !== undefined ||
                                 node.parameters['margin-bottom'] !== undefined ||
@@ -1745,6 +1698,30 @@ export class OverseerRenderer {
 
     // Helper function to extract parameter values from OverseerValue objects
     getParameterValue(node, parameterName) {
+        // Special-case: internal computed fields already include the prefix
+        // e.g. '_computed_series', '_computed_x_min', etc. Read them directly.
+        try {
+            if (parameterName && parameterName.startsWith('_computed_')) {
+                if (node.parameters && node.parameters[parameterName] !== undefined) {
+                    const v = node.parameters[parameterName]
+                    if (typeof v === 'string') return v
+                    if (typeof v === 'object' && v !== null) {
+                        if (v.String !== undefined) return v.String
+                        if (v.Integer !== undefined) return v.Integer
+                        if (v.Float !== undefined) return v.Float
+                        if (v.Boolean !== undefined) return v.Boolean
+                        if (v.Date !== undefined) return v.Date
+                        if (v.Timestamp !== undefined) return v.Timestamp
+                        if (v.Formula !== undefined) return v.Formula
+                        if (v.Color !== undefined) return v.Color
+                        if (v.CssSize !== undefined) return v.CssSize
+                        if (v.BorderStyle !== undefined) return v
+                    }
+                    return v
+                }
+                return null
+            }
+        } catch(_) { /* fall through */ }
         // Prefer computed parameter if present
     if (node.parameters && node.parameters[`_computed_${parameterName}`] !== undefined) {
             const paramValue = node.parameters[`_computed_${parameterName}`]
@@ -2019,6 +1996,7 @@ export class OverseerRenderer {
         const path = (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
+    try { console.debug('[Overseer] emitEvent', eventName, 'path=', path) } catch(_) {}
         const updated = await invoke('execute_overseer_event', {
             nodes: window.app.currentDocument,
             nodePath: path,
