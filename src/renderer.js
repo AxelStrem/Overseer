@@ -1394,6 +1394,33 @@ export class OverseerRenderer {
         // Add more style mappings as needed
     }
 
+    applyMarginStyles(element, node) {
+        if (!node || !node.parameters) return
+        const get = (k) => this.getParameterValue(node, k)
+        const setSize = (prop, val) => {
+            if (val === null || val === undefined) return
+            if (typeof val === 'object') {
+                element.style[prop] = this.convertCssSizeValue(val)
+            } else {
+                element.style[prop] = String(val)
+            }
+        }
+        // Shorthand margin (can be a CSS string like "8px 4px")
+        const m = get('margin')
+        if (m !== null && m !== undefined) {
+            if (typeof m === 'string') {
+                element.style.margin = m
+            } else {
+                element.style.margin = this.convertCssSizeValue(m)
+            }
+        }
+        // Side-specific margins override shorthand
+        setSize('marginTop', get('margin-top'))
+        setSize('marginBottom', get('margin-bottom'))
+        setSize('marginLeft', get('margin-left'))
+        setSize('marginRight', get('margin-right'))
+    }
+
     convertColorValue(colorParam) {
         // Handle different color value types from the Rust backend
         if (typeof colorParam === 'string') {
