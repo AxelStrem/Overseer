@@ -23,6 +23,28 @@ class OverseerApp {
         this.showWelcomeScreen()
     }
 
+    // Normalize in-memory document before sending to Rust: convert certain raw booleans
+    // in parameters to OverseerValue-shaped objects expected by Serde, e.g., { Boolean: true }.
+    // We only touch known internal flags we might have set from the UI: _override_present, _explicit_child_override.
+    normalizeDocumentForSerialization(doc) {
+        const visit = (node) => {
+            if (!node || typeof node !== 'object') return
+            const p = node.parameters
+            if (p && typeof p === 'object') {
+                const fix = (k) => {
+                    if (p[k] === true) p[k] = { Boolean: true }
+                    if (p[k] === false) p[k] = { Boolean: false }
+                }
+                fix('_override_present')
+                fix('_explicit_child_override')
+            }
+            if (Array.isArray(node.children)) node.children.forEach(visit)
+        }
+        if (Array.isArray(doc)) doc.forEach(visit)
+        else visit(doc)
+        return doc
+    }
+
     initializeEventListeners() {
         // File operations
         document.getElementById('open-file-btn').addEventListener('click', () => this.openFile())
@@ -190,7 +212,7 @@ tab Main {
             
             // Serialize the current document state to Overseer DSL format
             const content = await invoke('serialize_overseer_nodes', { 
-                nodes: this.currentDocument 
+                nodes: this.normalizeDocumentForSerialization(this.currentDocument) 
             })
             
             // Save the serialized content
@@ -213,7 +235,7 @@ tab Main {
         try {
             if (!this.currentDocument) return
             // Serialize current nodes to DSL
-            const content = await invoke('serialize_overseer_nodes', { nodes: this.currentDocument })
+            const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
             // Parse + resolve + evaluate on backend
             const resolved = await invoke('parse_overseer_content', { content })
             // Replace current document and re-render

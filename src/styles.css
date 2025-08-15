@@ -341,6 +341,40 @@ body {
     background-clip: padding-box;
 }
 
+/* Icon-only buttons */
+.overseer-button.icon-button {
+    padding: 6px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.overseer-button.icon-button .overseer-button-label { display: none; }
+.icon { display: inline-block; width: 1em; height: 1em; }
+
+/* Minimal glyphs via borders (no external assets) */
+.glyph-cross { position: relative; width: 1em; height: 1em; }
+.glyph-cross::before, .glyph-cross::after { content: ''; position: absolute; top: 0; left: 50%; width: 2px; height: 100%; background: currentColor; }
+.glyph-cross::before { transform: translateX(-50%) rotate(45deg); }
+.glyph-cross::after { transform: translateX(-50%) rotate(-45deg); }
+
+.glyph-check { width: 1em; height: 1em; position: relative; }
+.glyph-check::after { content: ''; position: absolute; left: 0.2em; top: 0.45em; width: 0.6em; height: 0.25em; border-left: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); }
+
+.glyph-arrow-up::after,
+.glyph-arrow-down::after,
+.glyph-arrow-left::after,
+.glyph-arrow-right::after { content: ''; display: inline-block; width: 0.6em; height: 0.6em; border: 2px solid currentColor; border-left: 0; border-top: 0; }
+.glyph-arrow-up::after { transform: rotate(-135deg); }
+.glyph-arrow-down::after { transform: rotate(45deg); }
+.glyph-arrow-left::after { transform: rotate(135deg); }
+.glyph-arrow-right::after { transform: rotate(-45deg); }
+
+.glyph-ellipsis-h::after { content: '⋯'; font-size: 1.2em; line-height: 1; }
+.glyph-ellipsis-v::after { content: '⋮'; font-size: 1.2em; line-height: 1; }
+.glyph-burger::before, .glyph-burger::after, .glyph-burger span { content: ''; display: block; width: 1em; height: 2px; background: currentColor; margin: 2px 0; }
+
 /* Ensure no pseudo content renders beside labels in some engines */
 .overseer-button::before,
 .overseer-button::after {

@@ -316,7 +316,22 @@ export class OverseerRenderer {
         // Load button (emits 'load' event; backend handling will come later)
         const btn = document.createElement('button')
         btn.className = 'overseer-button'
-        btn.textContent = 'Load'
+        const icon = (this.getParameterValue(node, 'icon') || '').toString().trim().toLowerCase()
+        if (icon) {
+            btn.classList.add('icon-button')
+            const span = document.createElement('span')
+            span.className = `icon glyph-${icon}`
+            span.setAttribute('aria-hidden', 'true')
+            btn.appendChild(span)
+            const title = this.getParameterValue(node, 'label') || icon
+            if (title) btn.title = String(title)
+        } else {
+            const label = this.getParameterValue(node, 'label') || 'Load'
+            const labelSpan = document.createElement('span')
+            labelSpan.className = 'overseer-button-label'
+            labelSpan.textContent = label
+            btn.appendChild(labelSpan)
+        }
         btn.addEventListener('click', async () => {
             if (btn.disabled) return
             const prev = btn.textContent
@@ -325,7 +340,7 @@ export class OverseerRenderer {
             try {
                 await this.emitEvent(node, container, 'load')
             } catch (e) {
-                // swallow; backend surfaces errors via _mount_error
+                // backend surfaces errors via _mount_error
             } finally {
                 btn.disabled = false
                 btn.textContent = prev
@@ -895,18 +910,40 @@ export class OverseerRenderer {
     }
 
     createButtonElement(node) {
-    const button = document.createElement('button')
-    button.className = 'overseer-button'
-    // Button label comes from explicit 'label' parameter; do not use node name
-    const labelText = this.getParameterValue(node, 'label')
-    // Use a span wrapper to avoid stray artifacts from text nodes in some engines
-    const labelSpan = document.createElement('span')
-    labelSpan.className = 'overseer-button-label'
-    labelSpan.textContent = labelText ? String(labelText) : ''
-    button.appendChild(labelSpan)
-    // Guard: ensure no internal children (like event handlers/actions) are appended
-    // If any children exist, they are non-visual and handled by emitEvent only
-    // We intentionally do not render node.children for buttons
+        const button = document.createElement('button')
+        button.className = 'overseer-button'
+        // Support icon-only or icon+label buttons
+        const icon = (this.getParameterValue(node, 'icon') || '').toString().trim().toLowerCase()
+        const labelText = this.getParameterValue(node, 'label')
+        if (icon && (!labelText || String(labelText).trim() === '')) {
+            // Icon-only button
+            button.classList.add('icon-button')
+            const span = document.createElement('span')
+            span.className = `icon glyph-${icon}`
+            span.setAttribute('aria-hidden', 'true')
+            button.appendChild(span)
+            // Set tooltip from node name or icon name for accessibility
+            const title = node.name || icon
+            if (title) button.title = String(title)
+        } else {
+            // Label (and optional leading icon)
+            if (icon) {
+                const span = document.createElement('span')
+                span.className = `icon glyph-${icon}`
+                span.setAttribute('aria-hidden', 'true')
+                // small spacing between icon and text
+                span.style.marginRight = '6px'
+                button.appendChild(span)
+            }
+            const labelSpan = document.createElement('span')
+            labelSpan.className = 'overseer-button-label'
+            // Button label comes from explicit 'label' parameter; do not use node name
+            labelSpan.textContent = labelText ? String(labelText) : (icon ? '' : '')
+            button.appendChild(labelSpan)
+        }
+        // Guard: ensure no internal children (like event handlers/actions) are appended
+        // If any children exist, they are non-visual and handled by emitEvent only
+        // We intentionally do not render node.children for buttons
         // Wire to backend actions on click (path is read from dataset set by renderNode)
         button.addEventListener('click', async () => {
             try {
@@ -2142,6 +2179,30 @@ export class OverseerRenderer {
         if (!node.parameters) {
             node.parameters = {}
         }
+        // If this field is inherited from a template (no explicit override yet), convert it to an override
+        try {
+            const isTemplateChild = node?.parameters && (node.parameters._template_node === true || Object.keys(node.parameters).some(k => String(k).startsWith('_template_')))
+            const hasExplicitOverride = node?.parameters && (
+                node.parameters._explicit_child_override === true ||
+                (typeof node.parameters._explicit_child_override === 'object' && node.parameters._explicit_child_override?.Boolean === true) ||
+                node.parameters._override_present === true ||
+                (typeof node.parameters._override_present === 'object' && node.parameters._override_present?.Boolean === true)
+            )
+            if (isTemplateChild && !hasExplicitOverride) {
+                // Remove template markers that would make resolver/serializer drop edits
+                Object.keys(node.parameters).forEach(k => { if (k.startsWith('_template_')) delete node.parameters[k] })
+                delete node.parameters._template_node
+                // Use OverseerValue shape for booleans to match backend enum (externally tagged)
+                node.parameters._override_present = { Boolean: true }
+                node.parameters._explicit_child_override = { Boolean: true }
+                // Ensure parent tracks explicit override list if available
+                try {
+                    // Find parent path and update document in place if possible
+                    const path = this.buildNodePath(document.querySelector(`[data-path]`)) // fallback no-op
+                    // We defer strict parent tracking; serializer already consults _explicit_overrides where present
+                } catch (_) { /* no-op */ }
+            }
+        } catch (_) { /* ignore */ }
         
         // Handle boolean values (from checkboxes)
         if (typeof newValue === 'boolean') {

@@ -31,27 +31,29 @@ This document tracks the design and implementation of multiple-document support 
 
 ## Phases and Tasks
 
-### Phase 0 — Groundwork (Current)
+### Phase 0 — Groundwork (Completed)
 - [x] Write plan and progress tracker (this file)
-- [ ] Add DocumentManager module with stubs (open_document, get_index, query_files)
-- [ ] Add IndexCache module with stubs (load/save, get/update entry)
-- [ ] Wire modules in `main.rs` (no behavior change)
-- [ ] Build & keep green
+- [x] Add DocumentManager module with stubs (open_document, get_index, query_files)
+- [x] Add IndexCache module with stubs (load/save, get/update entry)
+- [x] Wire modules in `main.rs` (no behavior change)
+- [x] Build & keep green
 
 ### Phase 1 — DSL & Parser
-- [ ] Add `mount` node type with parameters (source,lazy,placeholder,preload)
+- [x] Add `mount` node type semantics (parameters: source, lazy, placeholder; validation in resolver)
 - [ ] Normalize cross-file path segments in parser and path utils
-- [ ] Add `files(pattern)` and reducers to formula evaluator (index-backed)
-- [ ] Unit tests for parsing
+- [x] Add `files(pattern)` stub to formula evaluator (enables reducers without I/O)
+- [ ] Unit tests for parsing (parser currently accepts `mount` via generic node parsing)
 
 ### Phase 2 — Resolver & Evaluator
 - [ ] Resolve file jumps in paths; prefer index for reads unless forced
-- [ ] Mount nodes: set `_mount_status` and `_summary_*`; no children in lazy state
-- [ ] Actions: add `load_mount`/`unload_mount`
-- [ ] Tests for mount lifecycle and cross-file deref
+- [x] Mount nodes: set `_mount_status` defaults (`unloaded`/`error`), preserve status across resolves
+- [x] Actions: add `load_mount`/`unload_mount` with robust error handling (`_mount_error`)
+- [x] Implicit default handling: mounts respond to `load`/`unload` without explicit `on` blocks
+- [x] Tests for mount lifecycle (same-doc, external), and error cases (missing file, bad internal path)
 
 ### Phase 3 — Renderer
-- [ ] Add visual mount component (placeholder, summary, buttons)
+- [x] Add visual mount component (placeholder, status, Load/Unload controls)
+- [x] Error UX: show `_mount_error` under status; disable Load while loading
 - [ ] Option: `openInTab=true` behavior
 
 ### Phase 4 — Index Content
@@ -75,5 +77,11 @@ This document tracks the design and implementation of multiple-document support 
 - Cycle detection strategy in mounts; UX for error state.
 - Where to store cache: per-user app data vs project-local `.overseer/`.
 
+## Implementation Notes (recent)
+- Relative mount paths are resolved relative to the opened document directory (CWD set on file open).
+- Mount source parsing supports `file.os/internal/path` and same-document internal paths.
+- On mount load failure, `_mount_status = "error"` and `_mount_error` detail the reason.
+
 ## Progress Notes
 - 2025-08-15: Draft plan created and accepted. Next: scaffold Phase 0 modules and keep build green.
+- 2025-08-15 (later): Phase 0 completed. Phase 1 (mount semantics + files() stub) in place. Phase 2 load/unload implemented with tests. Renderer shows status/error and safe Load.
