@@ -295,8 +295,9 @@ impl OverseerFileHandler {
                             continue;
                         }
                     }
-                    // Fallback: serialize child normally inside the block
-                    Self::serialize_node_context(child, output, indent_level + 1, false)?;
+                    // Fallback: serialize child normally inside the block, but as a child of a list item
+                    // so prefer auto-type ('-') to let the template re-deduce types on load.
+                    Self::serialize_node_context(child, output, indent_level + 1, true)?;
                 }
                 output.push_str(&format!("{}}}\n", indent));
                 return Ok(());
@@ -315,18 +316,9 @@ impl OverseerFileHandler {
                 // Else: fall through to normal serialization
             }
         } else {
-            // For children of list items, always use "-" even if the type was resolved
+            // For children of list items (including nested entries), always use "-" to keep auto-typed form
             if in_list_body {
-                // Check if this node had its type resolved from "-" and restore original
-                if let Some(OverseerValue::String(original_type)) = node.parameters.get("_original_type") {
-                    if original_type == "-" {
-                        output.push('-');
-                    } else {
-                        output.push_str(original_type);
-                    }
-                } else {
-                    output.push('-');
-                }
+                output.push('-');
             } else {
                 // Handle node type or template path
                 if let Some(template_path) = &node.template {

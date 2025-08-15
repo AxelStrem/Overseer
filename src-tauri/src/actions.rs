@@ -342,11 +342,9 @@ impl ActionExecutor {
                     // include offset when computing due time
                     let off_val = Self::get_effective(&timer_node.parameters, "offset").or_else(|| timer_node.parameters.get("offset"));
                     let offset = off_val.and_then(|v| Self::parse_offset_duration(v));
-                    let utc = if let Some(off) = offset { base + off } else { base };
-                    if utc > now {
-                        let ms = utc.timestamp_millis();
-                        next_due = match next_due { Some(prev) => Some(prev.min(ms)), None => Some(ms) };
-                    }
+                    let due_utc = if let Some(off) = offset { base + off } else { base };
+                    let ms = if due_utc > now { due_utc.timestamp_millis() } else { now.timestamp_millis() };
+                    next_due = match next_due { Some(prev) => Some(prev.min(ms)), None => Some(ms) };
                 }
             }
         }
@@ -1520,24 +1518,38 @@ impl ActionExecutor {
             if let Some(idx) = idx_opt {
                 // Merge parameters (evaluate any Formula)
                 let child = target.children.get_mut(idx).unwrap();
-                // Apply parameters
+                // Prune equal-to-template overrides for simple value equality
+                // If override sets only 'value' and equals the template's current child value, skip marking override
+                let only_value_override = ov.parameters.len() == 1 && ov.parameters.contains_key("value");
+                let mut applied_any = false;
                 for (k, v) in ov.parameters.iter() {
                     let eval = Self::evaluate_in_context(v, owner_path, snapshot)?;
+                    if k == "value" && only_value_override {
+                        if let Some(template_val) = child.parameters.get("value") {
+                            if Self::value_equals(&eval, template_val) {
+                                // Skip applying equal override
+                                continue;
+                            }
+                        }
+                    }
                     child.parameters.insert(k.clone(), eval);
+                    applied_any = true;
                 }
-                // Mark explicit override and clear template marker for value, if present
-                child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
-                child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                child.parameters.remove("_template_value");
-                // Track at parent level
-                let entry = target
-                    .parameters
-                    .entry("_explicit_overrides".to_string())
-                    .or_insert(OverseerValue::String(String::new()));
-                if let OverseerValue::String(s) = entry {
-                    if !s.split(',').any(|n| n == name) {
-                        if !s.is_empty() { s.push(','); }
-                        s.push_str(&name);
+                if applied_any {
+                    // Mark explicit override and clear template marker for value, if present
+                    child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                    child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
+                    child.parameters.remove("_template_value");
+                    // Track at parent level
+                    let entry = target
+                        .parameters
+                        .entry("_explicit_overrides".to_string())
+                        .or_insert(OverseerValue::String(String::new()));
+                    if let OverseerValue::String(s) = entry {
+                        if !s.split(',').any(|n| n == name) {
+                            if !s.is_empty() { s.push(','); }
+                            s.push_str(&name);
+                        }
                     }
                 }
                 // Recurse into children overrides
@@ -2245,7 +2257,6 @@ div Ext {
 mod tests_clone_from_template {
     use super::*;
     use crate::parser::parse_document;
-    use crate::resolver::resolve_document;
     use crate::file_ops::OverseerFileHandler;
 
     #[test]
