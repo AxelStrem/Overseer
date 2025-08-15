@@ -295,9 +295,9 @@ impl OverseerFileHandler {
                             continue;
                         }
                     }
-                    // Fallback: serialize child normally inside the block, but as a child of a list item
-                    // so prefer auto-type ('-') to let the template re-deduce types on load.
-                    Self::serialize_node_context(child, output, indent_level + 1, true)?;
+                    // Fallback: serialize child normally inside the block (not as list body)
+                    // so field lines and nested blocks render correctly.
+                    Self::serialize_node_context(child, output, indent_level + 1, false)?;
                 }
                 output.push_str(&format!("{}}}\n", indent));
                 return Ok(());
@@ -316,8 +316,22 @@ impl OverseerFileHandler {
                 // Else: fall through to normal serialization
             }
         } else {
-            // For children of list items (including nested entries), always use "-" to keep auto-typed form
+            // For children that belong to a list entry object (parent emitted as "- {")
+            // we want each field line to start as a list-style override "- name = value" when possible.
             if in_list_body {
+                // In list bodies, if this is a simple value field or a parameter-only node with value,
+                // write as an inline override: "- name = value" and return.
+                if let Some(val) = node.parameters.get("value") {
+                    if !node.name.is_empty() && node.children.is_empty() {
+                        output.push_str("- ");
+                        output.push_str(&node.name);
+                        output.push_str(" = ");
+                        output.push_str(&Self::serialize_value(val));
+                        output.push('\n');
+                        return Ok(());
+                    }
+                }
+                // Otherwise, for structural children, use '-' as the node type marker
                 output.push('-');
             } else {
                 // Handle node type or template path

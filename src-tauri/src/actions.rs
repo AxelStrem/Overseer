@@ -231,33 +231,54 @@ impl ActionExecutor {
                     _ => None,
                 };
                 if let Some(at) = at_str {
-                    // Compute due instant = at + offset (if any)
-                    let base = Self::parse_timestamp_utc(&at);
-                    // offset may come from computed/raw 'offset' param
+                    // Compute due instant(s) = at + k*offset (interval), if offset provided
+                    let base_opt = Self::parse_timestamp_utc(&at);
                     let off_val = Self::get_effective(&timer_node.parameters, "offset").or_else(|| timer_node.parameters.get("offset"));
                     let offset = off_val.and_then(|v| Self::parse_offset_duration(v));
-                    let due = match base {
-                        Some(b) => {
-                            let inst = if let Some(off) = offset { b + off } else { b };
-                            inst <= now_dt
-                        }
-                        None => false,
-                    };
-                    if due {
-                        // Fire: execute its on timeout { ... } actions
-                        let actions: Vec<OverseerNode> = timer_node
-                            .children
-                            .iter()
-                            .filter(|c| c.node_type == "on" && c.name == "timeout")
-                            .flat_map(|on| on.children.clone())
-                            .collect();
-                        if !actions.is_empty() {
-                            for action in actions {
-                                Self::execute_action(nodes, &[], &tpath, &action)?;
+                    if let Some(base) = base_opt {
+                        let mut fire_count = 0usize;
+                        let mut is_recurring = false;
+                        if let Some(off) = offset {
+                            let off_ms = off.num_milliseconds();
+                            if off_ms > 0 {
+                                is_recurring = true;
+                                // Calculate how many intervals are overdue
+                                let mut t = base + off;
+                                while t <= now_dt {
+                                    fire_count += 1;
+                                    t = t + off;
+                                    if fire_count > 1000 { break; }
+                                }
+                            } else if base <= now_dt { fire_count = 1; }
+                        } else if base <= now_dt { fire_count = 1; }
+
+                        if fire_count > 0 {
+                            let actions: Vec<OverseerNode> = timer_node
+                                .children
+                                .iter()
+                                .filter(|c| c.node_type == "on" && c.name == "timeout")
+                                .flat_map(|on| on.children.clone())
+                                .collect();
+                            if !actions.is_empty() {
+                                // Respect explicit one_shot flag when provided; default based on recurrence
+                                let one_shot = match Self::get_effective(&timer_node.parameters, "one_shot").or_else(|| timer_node.parameters.get("one_shot")) {
+                                    Some(OverseerValue::Boolean(b)) => *b,
+                                    Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
+                                    _ => !is_recurring,
+                                };
+                                // For recurring and not one-shot: fire multiple times to catch up; otherwise fire once.
+                                let repeats = if one_shot { fire_count.min(1) } else if is_recurring { fire_count } else { 1 };
+                                for _ in 0..repeats {
+                                    for action in &actions {
+                                        Self::execute_action(nodes, &[], &tpath, action)?;
+                                    }
+                                }
+                                // Deactivate when one_shot, otherwise remain active
+                                if one_shot {
+                                    timer_node.parameters.insert("active".to_string(), OverseerValue::Boolean(false));
+                                }
+                                any_fired = true;
                             }
-                            // Deactivate timer
-                            timer_node.parameters.insert("active".to_string(), OverseerValue::Boolean(false));
-                            any_fired = true;
                         }
                     }
                 }
@@ -2214,6 +2235,35 @@ div Ext {
         let root = nodes.iter().find(|n| n.name == "Root").unwrap();
         let a = root.children.iter().find(|c| c.name == "A").unwrap();
         assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(0)));
+    }
+
+    #[test]
+    fn test_timer_recurring_catch_up_fires_multiple_times_and_stays_active() {
+        // Setup: A recurring timer with 10s offset, and T set to now-30s, should fire ~3 times.
+        let input = r#"
+        div Root {
+            int A = 0
+            timestamp T
+            button Init { on click { set_now_ts(path="/Root/T", offset=-30) } }
+            timer gen (active=true, at=$(../T), offset="10s") { on timeout { inc(path="/Root/A", by=1) } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        // Prime T to now-30s
+        let path = vec!["Root".to_string(), "Init".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        resolve_document(&mut nodes);
+        // Run timers tick
+        let _ = ActionExecutor::tick(&mut nodes);
+        // Validate A incremented ~3 times and timer remains active (recurring)
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let a = root.children.iter().find(|c| c.name == "A").unwrap();
+        let val = match a.parameters.get("value") { Some(OverseerValue::Integer(i)) => *i, _ => 0 };
+        assert!(val >= 2 && val <= 5, "expected A between 2 and 5 inclusive, got {}", val);
+        let timer = root.children.iter().find(|c| c.node_type == "timer").unwrap();
+        assert_eq!(timer.parameters.get("active"), Some(&OverseerValue::Boolean(true)));
     }
 
     #[test]
