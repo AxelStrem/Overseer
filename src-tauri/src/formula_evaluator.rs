@@ -1715,11 +1715,29 @@ impl FormulaEvaluator {
         context: &EvaluationContext,
     ) -> Result<OverseerValue, OverseerError> {
     debug_evaluator!("[EVAL] evaluate_method_chain base {:?} calls {:?}", base, calls);
-    let base_node = match Self::eval_expr_to_node(base, context) {
-            Some(n) => n,
-            None => return Ok(OverseerValue::String("null".to_string())),
+    // Phase 1: special-case files(pattern) to support reducers without loading anything yet
+    let mut list: Vec<ListItem> = if let FormulaExpression::FunctionCall { name, args } = base {
+            if name == "files" {
+                // Evaluate pattern arg to ensure syntax is valid; ignore actual results (stub)
+                if let Some(arg0) = args.get(0) {
+                    let _ = Self::evaluate_expression(arg0, context).ok();
+                }
+                Vec::new() // empty list stub; reducers will operate on empty list
+            } else {
+                // Fallback to node-based chaining
+                let base_node = match Self::eval_expr_to_node(base, context) {
+                    Some(n) => n,
+                    None => return Ok(OverseerValue::String("null".to_string())),
+                };
+                base_node.get_accessible_children().into_iter().map(|n| ListItem::Node(n)).collect()
+            }
+        } else {
+            let base_node = match Self::eval_expr_to_node(base, context) {
+                Some(n) => n,
+                None => return Ok(OverseerValue::String("null".to_string())),
+            };
+            base_node.get_accessible_children().into_iter().map(|n| ListItem::Node(n)).collect()
         };
-    let mut list: Vec<ListItem> = base_node.get_accessible_children().into_iter().map(|n| ListItem::Node(n)).collect();
     debug_evaluator!("[EVAL] Initial list size: {}", list.len());
 
         for call in calls {

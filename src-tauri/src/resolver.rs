@@ -87,6 +87,41 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
 
     // After formulas, compute UI sort keys for lists (presentation-only; do not reorder children)
     compute_list_ui_sort_keys(nodes);
+
+    // Phase 1: initialize and validate mount nodes (lazy placeholders only)
+    initialize_and_validate_mount_nodes(nodes);
+}
+
+fn initialize_and_validate_mount_nodes(nodes: &mut [OverseerNode]) {
+    for i in 0..nodes.len() {
+        let ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+        unsafe { initialize_and_validate_mount_nodes_rec(ptr); }
+    }
+}
+
+unsafe fn initialize_and_validate_mount_nodes_rec(node_ptr: *mut OverseerNode) {
+    use crate::types::OverseerValue;
+    let node: &mut OverseerNode = &mut *node_ptr;
+    if node.node_type == "mount" {
+        // Default: unloaded (do not clobber if already set by actions)
+        if !node.parameters.contains_key("_mount_status") {
+            node.parameters.insert("_mount_status".to_string(), OverseerValue::String("unloaded".to_string()));
+        }
+        // Validate required 'source' parameter presence
+        let has_source = node.parameters.contains_key("source");
+        if !has_source {
+            node.parameters.insert("_mount_status".to_string(), OverseerValue::String("error".to_string()));
+            node.parameters.insert("_mount_error".to_string(), OverseerValue::String("mount: missing required 'source' parameter".to_string()));
+        }
+        // Default lazy=true if not provided; set as computed shadow so renderers can read via either path
+        if !node.parameters.contains_key("lazy") && !node.parameters.contains_key("_computed_lazy") {
+            node.parameters.insert("_computed_lazy".to_string(), OverseerValue::Boolean(true));
+        }
+    }
+    for idx in 0..node.children.len() {
+        let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
+        initialize_and_validate_mount_nodes_rec(child_ptr);
+    }
 }
 
 /// Compute chart plot series by evaluating per-item x/y expressions on a source container.
@@ -1376,6 +1411,42 @@ mod tests {
             OverseerValue::String(s) => assert_eq!(s, "#4b0a0aff"),
             _ => panic!("unexpected computed color: {:?}", comp),
         }
+    }
+
+    #[test]
+    fn test_mount_defaults_and_validation() {
+        let input = r#"
+        div Root {
+            mount M1 (source="history.os") { }
+            mount M2 { }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let m1 = root.get_accessible_children().into_iter().find(|c| c.name == "M1").unwrap();
+        let m2 = root.get_accessible_children().into_iter().find(|c| c.name == "M2").unwrap();
+        // M1: has source -> status defaults to 'unloaded'; lazy defaults true via _computed_lazy
+        assert_eq!(m1.parameters.get("_mount_status"), Some(&OverseerValue::String("unloaded".to_string())));
+        assert_eq!(m1.parameters.get("_computed_lazy"), Some(&OverseerValue::Boolean(true)));
+        // M2: missing source -> error status and _mount_error present
+        assert_eq!(m2.parameters.get("_mount_status"), Some(&OverseerValue::String("error".to_string())));
+        assert!(m2.parameters.get("_mount_error").is_some());
+    }
+
+    #[test]
+    fn test_files_function_stub_allows_count_reduce() {
+        let input = r#"
+        div Root {
+            int n = $(files("*.os").count())
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let n = root.get_accessible_children().into_iter().find(|c| c.name == "n").unwrap();
+        // Phase 1 stub returns empty list, so count is 0
+        assert_eq!(n.parameters.get("_computed_value"), Some(&OverseerValue::Integer(0)));
     }
 
     #[test]

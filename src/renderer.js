@@ -273,10 +273,70 @@ export class OverseerRenderer {
                 return this.createCheckboxElement(node)
             case 'chart':
                 return this.createChartElement(node)
+            case 'mount':
+                return this.createMountElement(node)
             default:
                 console.warn('Unknown node type:', nodeType)
                 return this.createDivElement(node)
         }
+    }
+
+    // Mount placeholder renderer (Phase 1): shows summary/placeholder, defers loading
+    createMountElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-div overseer-mount'
+
+        // Header/title from placeholder or source
+        const placeholder = this.getParameterValue(node, 'placeholder') || ''
+        const source = this.getParameterValue(node, 'source') || ''
+        const title = document.createElement('div')
+        title.className = 'mount-title'
+        title.textContent = placeholder ? String(placeholder) : (source ? String(source) : 'Mount')
+        container.appendChild(title)
+
+        // Status line (reflects _mount_status if present)
+        const status = document.createElement('div')
+        status.className = 'mount-status'
+        const st = this.getParameterValue(node, '_mount_status') || 'unloaded'
+        status.textContent = `Status: ${st}`
+        container.appendChild(status)
+
+        // Error details (if any)
+        const err = this.getParameterValue(node, '_mount_error')
+        if (err) {
+            const errDiv = document.createElement('div')
+            errDiv.className = 'mount-error'
+            errDiv.textContent = String(err)
+            // basic inline style to highlight error without relying on external CSS
+            errDiv.style.color = '#b00020'
+            errDiv.style.marginTop = '4px'
+            container.appendChild(errDiv)
+        }
+
+        // Load button (emits 'load' event; backend handling will come later)
+        const btn = document.createElement('button')
+        btn.className = 'overseer-button'
+        btn.textContent = 'Load'
+        btn.addEventListener('click', async () => {
+            if (btn.disabled) return
+            const prev = btn.textContent
+            btn.disabled = true
+            btn.textContent = 'Loading…'
+            try {
+                await this.emitEvent(node, container, 'load')
+            } catch (e) {
+                // swallow; backend surfaces errors via _mount_error
+            } finally {
+                btn.disabled = false
+                btn.textContent = prev
+            }
+        })
+        container.appendChild(btn)
+
+        // Apply general styles
+        this.applyLayoutStyles(container, node)
+        this.applyNodeStyles(container, node)
+        return container
     }
 
     createTabElement(node) {

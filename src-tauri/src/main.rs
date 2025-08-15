@@ -9,6 +9,7 @@ mod file_ops;
 pub mod resolver;
 mod formula_evaluator;
 mod actions;
+mod docmgr;
 
 use types::*;
 use actions::ActionExecutor;
@@ -17,6 +18,10 @@ use parser::parse_document;
 
 #[command]
 async fn load_overseer_file(path: String) -> Result<String> {
+    // Set process working directory to the file's parent so relative mount paths (e.g., "exercise.os") resolve
+    if let Ok(p) = std::path::PathBuf::from(&path).canonicalize() {
+        if let Some(parent) = p.parent() { let _ = std::env::set_current_dir(parent); }
+    }
     match FileOperations::read_file(&path).await {
         Ok(content) => {
             Ok(content)

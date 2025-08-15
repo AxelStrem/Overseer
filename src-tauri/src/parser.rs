@@ -125,6 +125,7 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     } else { 
         "".to_string() 
     };
+    // NOTE: For 'mount' nodes, parameters like source/lazy/placeholder will be validated later in resolver.
     let mut node = OverseerNode::new_with_type(final_node_type, node_name.map(|s| s.to_string()));
 
     node.template = template_path;

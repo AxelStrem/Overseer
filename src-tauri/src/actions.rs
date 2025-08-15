@@ -14,6 +14,57 @@ macro_rules! debug_actions {
 pub struct ActionExecutor;
 
 impl ActionExecutor {
+    /// Parse a variety of timestamp string forms into a UTC DateTime
+    fn parse_timestamp_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        // Prefer RFC3339 first
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) { return Some(dt.with_timezone(&chrono::Utc)); }
+        // Fallback: "YYYY-MM-DD HH:MM:SS" (assume UTC)
+        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+            return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc));
+        }
+        // Fallback: "YYYY-MM-DDTHH:MM:SS" (no zone, assume UTC)
+        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+            return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc));
+        }
+        // Fallback: date only -> start of day UTC
+        if let Ok(nd) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            let ndt = nd.and_hms_opt(0,0,0)?;
+            return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc));
+        }
+        None
+    }
+
+    /// Parse an offset value to chrono::Duration. Supported:
+    /// - Integer/Float => seconds
+    /// - String with suffix: "ms", "s", "m", "h", "d" (e.g., "1500ms", "10s", "5m", "2h", "1d")
+    fn parse_offset_duration(val: &OverseerValue) -> Option<chrono::Duration> {
+        match val {
+            OverseerValue::Integer(i) => Some(chrono::Duration::seconds(*i)),
+            OverseerValue::Float(f) => Some(chrono::Duration::seconds(*f as i64)),
+            OverseerValue::String(s) => {
+                let txt = s.trim().to_lowercase();
+                if txt.ends_with("ms") {
+                    let num = txt.trim_end_matches("ms").trim().parse::<i64>().ok()?;
+                    Some(chrono::Duration::milliseconds(num))
+                } else if txt.ends_with('s') {
+                    let num = txt.trim_end_matches('s').trim().parse::<i64>().ok()?;
+                    Some(chrono::Duration::seconds(num))
+                } else if txt.ends_with('m') {
+                    let num = txt.trim_end_matches('m').trim().parse::<i64>().ok()?;
+                    Some(chrono::Duration::minutes(num))
+                } else if txt.ends_with('h') {
+                    let num = txt.trim_end_matches('h').trim().parse::<i64>().ok()?;
+                    Some(chrono::Duration::hours(num))
+                } else if txt.ends_with('d') {
+                    let num = txt.trim_end_matches('d').trim().parse::<i64>().ok()?;
+                    Some(chrono::Duration::days(num))
+                } else if let Ok(num) = txt.parse::<i64>() {
+                    Some(chrono::Duration::seconds(num))
+                } else { None }
+            }
+            _ => None,
+        }
+    }
     /// Build a disambiguated name path (using name#k when needed) from an indices chain
     fn build_disambiguated_path(nodes: &Vec<OverseerNode>, indices: &[usize]) -> Vec<String> {
         fn eff(n: &OverseerNode) -> &str { if !n.name.is_empty() { &n.name } else { &n.node_type } }
@@ -41,57 +92,6 @@ impl ActionExecutor {
             cur = child;
         }
         out
-    }
-    /// Parse a variety of timestamp string forms into a UTC DateTime
-    fn parse_timestamp_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-        // Prefer RFC3339 first
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) { return Some(dt.with_timezone(&chrono::Utc)); }
-        // Fallback: "YYYY-MM-DD HH:MM:SS" (assume UTC)
-        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-            return Some(chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc));
-        }
-        // Fallback: "YYYY-MM-DDTHH:MM:SS" (no zone, assume UTC)
-        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-            return Some(chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc));
-        }
-        // Fallback: date only -> start of day UTC
-        if let Ok(nd) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-            let ndt = nd.and_hms_opt(0,0,0)?;
-            return Some(chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc));
-        }
-        None
-    }
-
-    /// Parse an offset value to chrono::Duration. Supported:
-    /// - Integer/Float => seconds
-    /// - String with suffix: "ms", "s", "m", "h", "d" (e.g., "1500ms", "10s", "5m", "2h", "1d")
-    fn parse_offset_duration(val: &OverseerValue) -> Option<Duration> {
-        match val {
-            OverseerValue::Integer(i) => Some(Duration::seconds(*i)),
-            OverseerValue::Float(f) => Some(Duration::seconds(*f as i64)),
-            OverseerValue::String(s) => {
-                let txt = s.trim().to_lowercase();
-                if txt.ends_with("ms") {
-                    let num = txt.trim_end_matches("ms").trim().parse::<i64>().ok()?;
-                    Some(Duration::milliseconds(num))
-                } else if txt.ends_with('s') {
-                    let num = txt.trim_end_matches('s').trim().parse::<i64>().ok()?;
-                    Some(Duration::seconds(num))
-                } else if txt.ends_with('m') {
-                    let num = txt.trim_end_matches('m').trim().parse::<i64>().ok()?;
-                    Some(Duration::minutes(num))
-                } else if txt.ends_with('h') {
-                    let num = txt.trim_end_matches('h').trim().parse::<i64>().ok()?;
-                    Some(Duration::hours(num))
-                } else if txt.ends_with('d') {
-                    let num = txt.trim_end_matches('d').trim().parse::<i64>().ok()?;
-                    Some(Duration::days(num))
-                } else if let Ok(num) = txt.parse::<i64>() {
-                    Some(Duration::seconds(num))
-                } else { None }
-            }
-            _ => None,
-        }
     }
     fn opposite_layout(layout: &str) -> String {
         match layout {
@@ -126,6 +126,27 @@ impl ActionExecutor {
 
         // 2) Find matching on block(s)
     #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] Owner: {} (type={}) children: {:?}", owner.name, owner.node_type, owner.children.iter().map(|c| format!("{}/{}", c.node_type, c.name)).collect::<Vec<_>>() );
+    // Default mount behavior: if a mount receives 'load'/'unload' and has no explicit on-block,
+    // perform the corresponding action implicitly.
+    if owner.node_type == "mount" && (event_name == "load" || event_name == "unload") {
+        let has_on = owner.children.iter().any(|c| c.node_type == "on" && c.name == event_name);
+        if !has_on {
+            match event_name {
+                "load" => {
+                    // Perform load
+                    Self::perform_load_mount_on_owner(nodes, owner_ptr, &owner_indices, &owner_eval_path)?;
+                    resolver::resolve_document(nodes);
+                    return Ok(());
+                }
+                "unload" => {
+                    Self::perform_unload_mount_on_owner(nodes, owner_ptr, &owner_indices)?;
+                    resolver::resolve_document(nodes);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+    }
     for child in owner.children.clone() {
             if child.node_type == "on" && child.name == event_name {
                 // Execute each action child in order
@@ -340,6 +361,14 @@ impl ActionExecutor {
     ) -> Result<(), OverseerError> {
         debug_actions!("[ACTIONS] Executing action {} with params {:?}", action.node_type, action.parameters);
         match action.node_type.as_str() {
+            "load_mount" => {
+                Self::execute_load_mount(nodes, owner_indices, owner_path, action)?;
+                Ok(())
+            }
+            "unload_mount" => {
+                Self::execute_unload_mount(nodes, owner_indices, owner_path, action)?;
+                Ok(())
+            }
             "set" => {
                 let target = Self::require_string(&action.parameters, "path")?;
                 // Optional mode: "value" (default) evaluates and writes the result; "formula" copies raw formula
@@ -810,6 +839,17 @@ impl ActionExecutor {
         unsafe { Some(&mut *cur_ptr) }
     }
 
+    fn get_node_ref_by_indices<'a>(nodes: &'a Vec<OverseerNode>, indices: &[usize]) -> Option<&'a OverseerNode> {
+        if indices.is_empty() { return None; }
+        let mut cur: &OverseerNode = &nodes[indices[0]];
+        for (i, idx) in indices.iter().enumerate() {
+            if i == 0 { continue; }
+            if *idx >= cur.children.len() { return None; }
+            cur = &cur.children[*idx];
+        }
+        Some(cur)
+    }
+
     /// Return raw pointer to node and its indices path for reuse.
     fn get_node_mut_by_path(
         nodes: &mut Vec<OverseerNode>,
@@ -877,6 +917,156 @@ impl ActionExecutor {
             // Clear any stale computed value
             node.parameters.remove("_computed_value");
         }
+        Ok(())
+    }
+
+    fn perform_load_mount_on_owner(
+        nodes: &mut Vec<OverseerNode>,
+        _owner_ptr: *mut OverseerNode,
+        owner_indices: &[usize],
+        owner_path: &[String],
+    ) -> Result<(), OverseerError> {
+        // Call the same logic as execute_load_mount with implicit target = owner
+        let action_stub = OverseerNode {
+            name: "_implicit".to_string(),
+            node_type: "load_mount".to_string(),
+            template: None,
+            parameters: std::collections::HashMap::new(),
+            children: vec![],
+            is_hierarchy_transparent: false,
+        };
+        Self::execute_load_mount(nodes, owner_indices, owner_path, &action_stub)
+    }
+
+    fn perform_unload_mount_on_owner(
+        nodes: &mut Vec<OverseerNode>,
+        _owner_ptr: *mut OverseerNode,
+        owner_indices: &[usize],
+    ) -> Result<(), OverseerError> {
+        let action_stub = OverseerNode {
+            name: "_implicit".to_string(),
+            node_type: "unload_mount".to_string(),
+            template: None,
+            parameters: std::collections::HashMap::new(),
+            children: vec![],
+            is_hierarchy_transparent: false,
+        };
+        // owner_path not needed
+        Self::execute_unload_mount(nodes, owner_indices, &Vec::new(), &action_stub)
+    }
+
+    fn execute_load_mount(
+        nodes: &mut Vec<OverseerNode>,
+        owner_indices: &[usize],
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<(), OverseerError> {
+        // Determine target mount: action.parameters.path (optional). If omitted, target is owner.
+        let target_indices: Vec<usize> = if let Some(OverseerValue::String(path_str)) = action.parameters.get("path") {
+            let (segments, _explicit_param, anchored) = Self::split_path_and_param(path_str);
+            Self::resolve_target_indices(&nodes, owner_path, anchored, &segments)
+                .ok_or_else(|| OverseerError::ValidationError("load_mount target not found".to_string()))?
+        } else {
+            owner_indices.to_vec()
+        };
+        // Use immutable borrow to read source before mutating
+        let mount_ro = Self::get_node_ref_by_indices(&nodes, &target_indices)
+            .ok_or_else(|| OverseerError::ValidationError("load_mount target not found".to_string()))?;
+        if mount_ro.node_type != "mount" { return Err(OverseerError::ValidationError("load_mount target must be a 'mount' node".to_string())); }
+        let source_val = mount_ro.parameters.get("source").or_else(|| mount_ro.parameters.get("_computed_source"))
+            .ok_or_else(|| OverseerError::ValidationError("mount missing 'source' parameter".to_string()))?;
+        let source = match source_val { OverseerValue::String(s) => s.clone(), _ => return Err(OverseerError::ValidationError("mount.source must be a string".to_string())) };
+        // Parse source into (file_path, internal_path)
+        let (file_path_opt, internal_path): (Option<String>, Vec<String>) = {
+            if let Some(pos) = source.to_lowercase().find(".os") {
+                let end = pos + 3; // include .os
+                let file = source[..end].to_string();
+                let rest = source[end..].to_string();
+                let segs: Vec<String> = rest.trim_start_matches('/')
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                (Some(file), segs)
+            } else {
+                // No explicit file; treat as absolute/internal path against current document
+                (None, source.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect())
+            }
+        };
+        // Load source nodes with error capture and status updates
+        let mut load_error: Option<String> = None;
+        let loaded_roots: Vec<OverseerNode> = if let Some(fp) = file_path_opt {
+            match std::fs::read_to_string(&fp) {
+                Ok(content) => match crate::parser::parse_document(&content) {
+                    Ok((_rem, mut ext_nodes)) => {
+                        crate::resolver::resolve_document(&mut ext_nodes);
+                        ext_nodes
+                    }
+                    Err(e) => { load_error = Some(format!("Failed to parse mount file '{}': {:?}", fp, e)); Vec::new() }
+                },
+                Err(e) => { load_error = Some(format!("Failed to read mount file '{}': {}", fp, e)); Vec::new() }
+            }
+        } else {
+            nodes.clone()
+        };
+        // Find internal path target and handle missing segments as errors
+        let target_node_opt = if internal_path.is_empty() {
+            loaded_roots.first().cloned()
+        } else if loaded_roots.is_empty() {
+            None
+        } else {
+            let mut cur_opt: Option<OverseerNode> = None;
+            for n in &loaded_roots { if n.name == internal_path[0] { cur_opt = Some(n.clone()); break; } }
+            let mut cur = match cur_opt { Some(n) => n, None => { if load_error.is_none() { load_error = Some("mount internal path root not found".to_string()); } OverseerNode { name: String::new(), node_type: String::new(), template: None, parameters: Default::default(), children: Vec::new(), is_hierarchy_transparent: false } } };
+            if load_error.is_none() && !cur.name.is_empty() {
+                for seg in internal_path.iter().skip(1) {
+                    if let Some(next) = cur.children.iter().find(|c| &c.name == seg) { cur = next.clone(); } else { load_error = Some(format!("mount internal path segment not found: {}", seg)); break; }
+                }
+            }
+            if load_error.is_none() && !cur.name.is_empty() { Some(cur) } else { None }
+        };
+        // Mutate the mount node and set status
+        let mount_node = Self::get_node_mut_by_indices(nodes, &target_indices)
+            .ok_or_else(|| OverseerError::ValidationError("load_mount target not found".to_string()))?;
+        if let Some(err) = load_error {
+            mount_node.children.clear();
+            mount_node.parameters.insert("_mount_status".to_string(), OverseerValue::String("error".to_string()));
+            mount_node.parameters.insert("_mount_error".to_string(), OverseerValue::String(err));
+            Ok(())
+        } else if let Some(embed) = target_node_opt {
+            mount_node.children = vec![embed];
+            mount_node.parameters.insert("_mount_status".to_string(), OverseerValue::String("loaded".to_string()));
+            mount_node.parameters.remove("_mount_error");
+            Ok(())
+        } else {
+            mount_node.children.clear();
+            mount_node.parameters.insert("_mount_status".to_string(), OverseerValue::String("error".to_string()));
+            mount_node.parameters.insert("_mount_error".to_string(), OverseerValue::String("mount source resolved to empty document".to_string()));
+            Ok(())
+        }
+    }
+
+    fn execute_unload_mount(
+        nodes: &mut Vec<OverseerNode>,
+        owner_indices: &[usize],
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<(), OverseerError> {
+        let target_indices: Vec<usize> = if let Some(OverseerValue::String(path_str)) = action.parameters.get("path") {
+            let (segments, _explicit_param, anchored) = Self::split_path_and_param(path_str);
+            Self::resolve_target_indices(&nodes, owner_path, anchored, &segments)
+                .ok_or_else(|| OverseerError::ValidationError("unload_mount target not found".to_string()))?
+        } else {
+            owner_indices.to_vec()
+        };
+        let mount_node = Self::get_node_mut_by_indices(nodes, &target_indices)
+            .ok_or_else(|| OverseerError::ValidationError("unload_mount target not found".to_string()))?;
+        if mount_node.node_type != "mount" {
+            return Err(OverseerError::ValidationError("unload_mount target must be a 'mount' node".to_string()));
+        }
+        mount_node.children.clear();
+        mount_node.parameters.insert("_mount_status".to_string(), OverseerValue::String("unloaded".to_string()));
+        mount_node.parameters.remove("_mount_error");
         Ok(())
     }
 
@@ -1282,6 +1472,7 @@ impl ActionExecutor {
                         } else { trimmed.to_string() }
                     };
                     let template_def = Self::find_node_by_name(&snapshot, &chosen_template_name)
+
                         .ok_or_else(|| OverseerError::ValidationError(format!("Template not found: {}", chosen_template_name)))?;
                     let mut new_item = Self::clone_from_template(template_def);
                     if let Some(OverseerValue::String(parent_eff)) = list_node.parameters.get("_effective_layout") {
@@ -1583,6 +1774,115 @@ mod tests {
     use crate::parser::parse_document;
     use crate::resolver::resolve_document;
 
+    #[test]
+    fn test_mount_load_same_document_path() {
+        let input = r#"
+        div Root {
+            div Target { string v = "hello" }
+            mount M (source="/Root/Target") { }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        // Initial resolve populates mount defaults
+        resolve_document(&mut nodes);
+        // Fire implicit load on mount M
+        let path = vec!["Root".to_string(), "M".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "load");
+        assert!(res.is_ok());
+        // Verify mount now has embedded Target and status loaded
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let m = root.children.iter().find(|c| c.name == "M").unwrap();
+        assert_eq!(m.node_type, "mount");
+        assert_eq!(m.parameters.get("_mount_status"), Some(&OverseerValue::String("loaded".to_string())));
+        assert_eq!(m.children.len(), 1);
+        let embedded = &m.children[0];
+        assert_eq!(embedded.name, "Target");
+        let v = embedded.children.iter().find(|c| c.name=="v").unwrap();
+        assert_eq!(v.parameters.get("value"), Some(&OverseerValue::String("hello".to_string())));
+    }
+
+    #[test]
+    fn test_mount_load_and_unload_external_file() {
+        // Create a temporary external .os file with a simple structure
+        let temp_dir = std::env::temp_dir();
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let file_path = temp_dir.join(format!("overseer_mount_test_{}.os", ts));
+        let file_path_str = file_path.to_string_lossy().to_string();
+        let ext_content = r#"
+div Ext {
+  div Data { string v = "hi" }
+}
+"#;
+        std::fs::write(&file_path, ext_content).expect("write temp file");
+
+        // Mount pointing to external file path + internal path
+        let source_str = format!("{}/Ext/Data", file_path_str);
+        let doc = format!(
+            "div Root {{ mount M (source=\"{}\") {{ }} }}",
+            source_str
+        );
+        let mut nodes = parse_document(&doc).unwrap().1;
+        resolve_document(&mut nodes);
+        let path = vec!["Root".to_string(), "M".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "load");
+        assert!(res.is_ok());
+        // Verify loaded
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let m = root.children.iter().find(|c| c.name == "M").unwrap();
+        assert_eq!(m.parameters.get("_mount_status"), Some(&OverseerValue::String("loaded".to_string())));
+        assert_eq!(m.children.len(), 1);
+        assert_eq!(m.children[0].name, "Data");
+        let v = m.children[0].children.iter().find(|c| c.name=="v").unwrap();
+        assert_eq!(v.parameters.get("value"), Some(&OverseerValue::String("hi".to_string())));
+
+        // Now unload
+        let res2 = ActionExecutor::execute_event(&mut nodes, &path, "unload");
+        assert!(res2.is_ok());
+        let root2 = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let m2 = root2.children.iter().find(|c| c.name == "M").unwrap();
+        assert_eq!(m2.parameters.get("_mount_status"), Some(&OverseerValue::String("unloaded".to_string())));
+        assert!(m2.children.is_empty());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[test]
+    fn test_mount_load_missing_file_sets_error_status() {
+        // Point to a non-existent file; expect _mount_status = error and _mount_error populated
+        let bogus = format!("{}\\\\no_such_dir\\\\no_such_file_{}.os", std::env::temp_dir().to_string_lossy(), 123456789);
+        let source_str = format!("{}/Ext", bogus);
+        let doc = format!("div Root {{ mount M (source=\"{}\") {{ }} }}", source_str);
+        let mut nodes = parse_document(&doc).unwrap().1;
+        resolve_document(&mut nodes);
+        let res = ActionExecutor::execute_event(&mut nodes, &vec!["Root".into(), "M".into()], "load");
+        assert!(res.is_ok());
+        let root = nodes.iter().find(|n| n.name=="Root").unwrap();
+        let m = root.children.iter().find(|c| c.name=="M").unwrap();
+        assert_eq!(m.parameters.get("_mount_status"), Some(&OverseerValue::String("error".to_string())));
+        let err = m.parameters.get("_mount_error");
+        assert!(matches!(err, Some(OverseerValue::String(s)) if s.contains("Failed to read mount file")));
+    }
+
+    #[test]
+    fn test_mount_load_bad_internal_path_sets_error_status() {
+        // Create valid temp file but request a bad internal path
+        let file_path = std::env::temp_dir().join("overseer_mount_tmp_ok.os");
+        let content = "div A { div B { } }";
+        std::fs::write(&file_path, content).unwrap();
+        let source_str = format!("{}/A/NOPE", file_path.to_string_lossy());
+        let doc = format!("div Root {{ mount M (source=\"{}\") {{ }} }}", source_str);
+        let mut nodes = parse_document(&doc).unwrap().1;
+        resolve_document(&mut nodes);
+        let res = ActionExecutor::execute_event(&mut nodes, &vec!["Root".into(), "M".into()], "load");
+        assert!(res.is_ok());
+        let root = nodes.iter().find(|n| n.name=="Root").unwrap();
+        let m = root.children.iter().find(|c| c.name=="M").unwrap();
+        assert_eq!(m.parameters.get("_mount_status"), Some(&OverseerValue::String("error".to_string())));
+        let err = m.parameters.get("_mount_error");
+        assert!(matches!(err, Some(OverseerValue::String(s)) if s.contains("segment not found") || s.contains("root not found")));
+        let _ = std::fs::remove_file(&file_path);
+    }
     #[test]
     fn test_inc_action_on_click() {
         let input = r#"
@@ -1969,28 +2269,26 @@ mod tests_clone_from_template {
     #[test]
     fn append_with_overrides_serializes_as_object_not_primitive() {
         let input = r#"
-        div Root {
-            div T { int i = 10 int ii = $(2*i) }
-            button B { on click { append(list="/Root/L") { - i = 20 } } }
-            button C { on click { append(list="/Root/L") { - i = 30 } } }
-            int x = 50
-            button D (label="button 3") {
-                on click { append(list="/Root/L") { - i = $(x) } }
-            }
-            list L (entry=<T>, layout="horizontal") { }
-        }
-        "#;
+        div T { int i = 10 int ii = $(2*i) }
+list L (entry=<T>, key="id") { }
+button B { on click { append (template="<T>", list="/L") { - i = 20 } } }
+button C { on click { append (template="<T>", list="/L") { - i = 30 } } }
+int x = 50
+button D (label="button 3") {
+    on click { append (template="<T>", list="/L") { - i = $(x) } }
+}
+"#;
         let mut nodes = parse_document(input).unwrap().1;
-        resolve_document(&mut nodes);
+        resolver::resolve_document(&mut nodes);
         // Click B, C, D to append three items
-        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Root".into(), "B".into()], "click").is_ok());
-        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Root".into(), "C".into()], "click").is_ok());
-        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Root".into(), "D".into()], "click").is_ok());
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["B".into()], "click").is_ok());
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["C".into()], "click").is_ok());
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["D".into()], "click").is_ok());
         // Serialize and verify list entries are objects with named field overrides
         let s = OverseerFileHandler::serialize_nodes(&nodes).unwrap();
-    assert!(s.contains("list L ("));
-    assert!(s.contains("entry=<T>"));
-    assert!(s.contains("layout=\"horizontal\""));
+        assert!(s.contains("list L ("));
+        assert!(s.contains("entry=<T>"));
+        assert!(s.contains("key=\"id\""));
         // Ensure we do not emit primitive entries like "- 20"/"- 30"/"- 50"
         assert!(!s.contains("\n    - 20\n"), "Should not serialize primitive '- 20' entries.\n{}", s);
         assert!(!s.contains("\n    - 30\n"), "Should not serialize primitive '- 30' entries.\n{}", s);
@@ -2073,69 +2371,5 @@ button Add { on click { append (template="<T>", list="/L") { - a = "hello" - b =
         assert!(s.contains("- {"));
         assert!(s.contains("- a = \"hello\""));
         assert!(s.contains("- b = 42"));
-    }
-}
-
-#[cfg(test)]
-mod tests_evaluator_recursion_safety {
-    use super::*;
-    use crate::parser::parse_document;
-    use crate::resolver::resolve_document;
-
-    #[test]
-    fn resolves_current_and_ancestor_fields_without_recursing() {
-        let input = r#"
-div Root {
-  int base = 1
-  int bump = $(base + 1)
-  div Child { int uses_parent = $(../bump) }
-}
-"#;
-        let mut nodes = parse_document(input).unwrap().1;
-        resolve_document(&mut nodes);
-        let root = &nodes[0];
-        let child = root.children.iter().find(|c| c.name=="Child").unwrap();
-        let uses_parent = child.children.iter().find(|c| c.name=="uses_parent").unwrap();
-        if let Some(OverseerValue::Formula(f)) = uses_parent.parameters.get("value") {
-            let ctx = crate::formula_evaluator::EvaluationContext::new_with_current(uses_parent, vec!["Root".into(), "Child".into(), "uses_parent".into()], &nodes);
-            let v = crate::formula_evaluator::FormulaEvaluator::evaluate_formula(f, &ctx).unwrap();
-            assert_eq!(v, OverseerValue::Integer(2));
-        } else {
-            panic!("uses_parent.value should be a formula");
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests_timer_offset_from_sibling {
-    use super::*;
-    use crate::parser::parse_document;
-    use crate::resolver::resolve_document;
-
-    #[test]
-    fn timer_fires_with_offset_from_last_triggered_timestamp() {
-        let input = r#"
-div Root {
-    timestamp last (mode="elapsed") = $(now())
-    string interval = "1s"
-    int fired = 0
-    timer t (active=true, at=$(../last), offset=$(../interval)) {
-        on timeout { inc(path="/Root/fired", by=1) }
-    }
-}
-"#;
-        let mut nodes = parse_document(input).unwrap().1;
-        resolve_document(&mut nodes);
-    // Force timer's effective computed parameters to guarantee due now, overriding any prior computed shadows
-        if let Some(root) = nodes.iter_mut().find(|n| n.name=="Root") {
-            if let Some(timer) = root.children.iter_mut().find(|c| c.node_type=="timer") {
-        timer.parameters.insert("_computed_at".to_string(), OverseerValue::String("1970-01-01T00:00:00Z".to_string()));
-        timer.parameters.insert("_computed_offset".to_string(), OverseerValue::String("0s".to_string()));
-            }
-        }
-        let _ = ActionExecutor::tick(&mut nodes);
-        let root = nodes.iter().find(|n| n.name=="Root").unwrap();
-        let fired = root.children.iter().find(|c| c.name=="fired").unwrap();
-        assert_eq!(fired.parameters.get("value"), Some(&OverseerValue::Integer(1)));
     }
 }

@@ -559,6 +559,23 @@ body {
     color: var(--warning-color);
 }
 
+/* Mount placeholder */
+.overseer-mount {
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.overseer-mount .mount-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.overseer-mount .mount-status {
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .toolbar {
