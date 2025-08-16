@@ -1,7 +1,7 @@
 use crate::resolver;
 use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext, BoundValue};
 use crate::types::{OverseerError, OverseerNode, OverseerValue};
-use chrono::{Local, Utc, Duration, NaiveDateTime, NaiveDate};
+use chrono::{Local, Utc, Duration};
 
 // Debug logging macro for actions
 macro_rules! debug_actions {
@@ -14,6 +14,68 @@ macro_rules! debug_actions {
 pub struct ActionExecutor;
 
 impl ActionExecutor {
+    /// Scheduler tick: scan and fire timers due as of now
+    pub fn tick(nodes: &mut Vec<OverseerNode>) -> Result<(), OverseerError> {
+        Self::run_timers(nodes)
+    }
+
+    /// Compute the next due time (epoch ms) for any active timer in the document.
+    /// Returns Some(now) if any timer is already due; None if there are no timers.
+    pub fn next_due_ms(nodes: &Vec<OverseerNode>) -> Option<i64> {
+        let now = chrono::Utc::now();
+        // Walk all nodes to find timers
+        fn collect<'a>(acc: &mut Vec<&'a OverseerNode>, cur: &'a OverseerNode) {
+            let is_timer = cur.node_type == "timer"
+                || cur
+                    .parameters
+                    .get("_original_type")
+                    .map(|v| matches!(v, OverseerValue::String(s) if s == "timer"))
+                    .unwrap_or(false);
+            if is_timer { acc.push(cur); }
+            for ch in &cur.children { collect(acc, ch); }
+        }
+        let mut timers: Vec<&OverseerNode> = Vec::new();
+        for root in nodes { collect(&mut timers, root); }
+
+        let mut next_ms: Option<i64> = None;
+        for t in timers {
+            // active?
+            let active = match t.parameters.get("active").or_else(|| t.parameters.get("_computed_active")) {
+                Some(OverseerValue::Boolean(b)) => *b,
+                Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
+                _ => false,
+            };
+            if !active { continue; }
+            // at
+            let at_val = t.parameters.get("at").or_else(|| t.parameters.get("_computed_at"));
+            let at_str: Option<String> = match at_val {
+                Some(OverseerValue::Timestamp(ts)) => Some(ts.clone()),
+                Some(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
+                Some(OverseerValue::String(s)) => Some(s.clone()),
+                _ => None,
+            };
+            let Some(at) = at_str.and_then(|s| Self::parse_timestamp_utc(&s)) else { continue; };
+            // offset
+            let off = t.parameters.get("offset").and_then(|v| Self::parse_offset_duration(v));
+            let due = if let Some(off) = off {
+                let ms = off.num_milliseconds();
+                if ms > 0 {
+                    if at > now { at } else {
+                        // find next tick >= now
+                        let mut tcur = at + off;
+                        while tcur < now { tcur = tcur + off; if tcur.timestamp_millis() - now.timestamp_millis() > 10_000_000_000 { break; } }
+                        if tcur < now { now } else { tcur }
+                    }
+                } else {
+                    // non-positive offsets act as one-shot at 'at'
+                    at
+                }
+            } else { at };
+            let due_ms = if due > now { due.timestamp_millis() } else { now.timestamp_millis() };
+            next_ms = Some(match next_ms { Some(prev) => prev.min(due_ms), None => due_ms });
+        }
+        next_ms
+    }
     /// Parse a variety of timestamp string forms into a UTC DateTime
     fn parse_timestamp_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         // Prefer RFC3339 first
@@ -196,13 +258,12 @@ impl ActionExecutor {
             collect(&mut timer_paths, root, &mut p);
         }
 
-    let mut any_fired = false;
     // Use snapshot for safe evaluation contexts
     let snapshot = nodes.clone();
         // Evaluate and fire timers
         for tpath in timer_paths {
             // Resolve node by path
-            if let Some((ptr, _idx)) = Self::get_node_mut_by_path(nodes, &tpath) {
+            if let Some((ptr, indices)) = Self::get_node_mut_by_path(nodes, &tpath) {
                 let timer_node: &mut OverseerNode = unsafe { &mut *ptr };
                 // Check active
                 let active = match Self::get_effective(&timer_node.parameters, "active").or_else(|| timer_node.parameters.get("active")) {
@@ -232,10 +293,9 @@ impl ActionExecutor {
                 };
                 if let Some(at) = at_str {
                     // Compute due instant(s) = at + k*offset (interval), if offset provided
-                    let base_opt = Self::parse_timestamp_utc(&at);
-                    let off_val = Self::get_effective(&timer_node.parameters, "offset").or_else(|| timer_node.parameters.get("offset"));
-                    let offset = off_val.and_then(|v| Self::parse_offset_duration(v));
-                    if let Some(base) = base_opt {
+                    if let Some(base) = Self::parse_timestamp_utc(&at) {
+                        let off_val = Self::get_effective(&timer_node.parameters, "offset").or_else(|| timer_node.parameters.get("offset"));
+                        let offset = off_val.and_then(|v| Self::parse_offset_duration(v));
                         let mut fire_count = 0usize;
                         let mut is_recurring = false;
                         if let Some(off) = offset {
@@ -268,108 +328,24 @@ impl ActionExecutor {
                                 };
                                 // For recurring and not one-shot: fire multiple times to catch up; otherwise fire once.
                                 let repeats = if one_shot { fire_count.min(1) } else if is_recurring { fire_count } else { 1 };
+                                let owner_path = Self::build_disambiguated_path(&nodes.clone(), &indices);
                                 for _ in 0..repeats {
                                     for action in &actions {
-                                        Self::execute_action(nodes, &[], &tpath, action)?;
+                                        Self::execute_action(nodes, &indices, &owner_path, action)?;
+                                        resolver::resolve_document(nodes);
                                     }
                                 }
-                                // Deactivate when one_shot, otherwise remain active
                                 if one_shot {
+                                    // Deactivate one-shot timers after firing
                                     timer_node.parameters.insert("active".to_string(), OverseerValue::Boolean(false));
                                 }
-                                any_fired = true;
                             }
                         }
                     }
                 }
             }
         }
-        if any_fired {
-            resolver::resolve_document(nodes);
-        }
         Ok(())
-    }
-
-    /// Public tick entry: run timers sweep once. Returns Ok when done.
-    pub fn tick(nodes: &mut Vec<OverseerNode>) -> Result<(), OverseerError> {
-        Self::run_timers(nodes)
-    }
-
-    /// Compute the next due timestamp (UTC, ms since epoch) across all active timers, if any.
-    pub fn next_due_ms(nodes: &Vec<OverseerNode>) -> Option<i64> {
-        let now = chrono::Utc::now();
-        // Snapshot for evaluation context
-        let snapshot = nodes.clone();
-        // Collect timer paths
-        let mut timer_paths: Vec<Vec<String>> = Vec::new();
-        fn collect(paths: &mut Vec<Vec<String>>, cur: &OverseerNode, path: &mut Vec<String>) {
-            path.push(cur.name.clone());
-            let is_timer = cur.node_type == "timer"
-                || cur
-                    .parameters
-                    .get("_original_type")
-                    .map(|v| matches!(v, OverseerValue::String(s) if s == "timer"))
-                    .unwrap_or(false);
-            if is_timer { paths.push(path.clone()); }
-            for child in &cur.children { collect(paths, child, path); }
-            path.pop();
-        }
-        for root in nodes.iter() {
-            let mut p: Vec<String> = Vec::new();
-            collect(&mut timer_paths, root, &mut p);
-        }
-        let mut next_due: Option<i64> = None;
-        for tpath in timer_paths {
-            // Find timer node in snapshot for safe read/eval
-            // Walk by name path
-            let mut cur_opt: Option<&OverseerNode> = None;
-            let mut _idx = 0usize;
-            for root in snapshot.iter() {
-                if root.name == tpath[0] { cur_opt = Some(root); break; }
-            }
-            if cur_opt.is_none() { continue; }
-            let mut cur = cur_opt.unwrap();
-            for seg in tpath.iter().skip(1) {
-                if let Some(next) = cur.children.iter().find(|c| &c.name == seg) { cur = next; } else { break; }
-                _idx += 1;
-            }
-            let timer_node = cur;
-            // Active?
-            let active = match Self::get_effective(&timer_node.parameters, "active").or_else(|| timer_node.parameters.get("active")) {
-                Some(OverseerValue::Boolean(b)) => *b,
-                Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
-                _ => false,
-            };
-            if !active { continue; }
-            // Evaluate 'at' using same logic as run_timers
-            let at_val = Self::get_effective(&timer_node.parameters, "at").or_else(|| timer_node.parameters.get("at"));
-            let at_str: Option<String> = match at_val {
-                Some(OverseerValue::Timestamp(ts)) => Some(ts.clone()),
-                Some(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
-                Some(OverseerValue::String(s)) => Some(s.clone()),
-                Some(OverseerValue::Formula(expr)) => {
-                    let ctx = EvaluationContext::new(tpath.clone(), &snapshot);
-                    match FormulaEvaluator::evaluate_formula(expr, &ctx) {
-                        Ok(OverseerValue::Timestamp(ts)) => Some(ts),
-                        Ok(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
-                        Ok(OverseerValue::String(s)) => Some(s),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            if let Some(at) = at_str {
-                if let Some(base) = Self::parse_timestamp_utc(&at) {
-                    // include offset when computing due time
-                    let off_val = Self::get_effective(&timer_node.parameters, "offset").or_else(|| timer_node.parameters.get("offset"));
-                    let offset = off_val.and_then(|v| Self::parse_offset_duration(v));
-                    let due_utc = if let Some(off) = offset { base + off } else { base };
-                    let ms = if due_utc > now { due_utc.timestamp_millis() } else { now.timestamp_millis() };
-                    next_due = match next_due { Some(prev) => Some(prev.min(ms)), None => Some(ms) };
-                }
-            }
-        }
-        next_due
     }
 
     fn execute_action(
@@ -952,10 +928,42 @@ impl ActionExecutor {
         if key == "value" {
             if !same {
                 node.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                node.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
                 node.parameters.remove("_template_value");
             }
             // Clear any stale computed value
             node.parameters.remove("_computed_value");
+            // Also record this child name on the nearest template instance ancestor's _explicit_overrides list,
+            // so serializers that consult this list will include it even when suppressing template children.
+            if !indices.is_empty() {
+                let child_name = node.name.clone();
+                // Drop child index to get parent, then walk up until a template-instance boundary if needed
+                let mut anc = indices.clone();
+                anc.pop();
+                while !anc.is_empty() {
+                    // Borrow-drop 'node' before taking another mutable borrow (scope ends here)
+                    // SAFETY: we immediately re-borrow below and never keep two &mut at the same time
+                    if let Some(parent) = Self::get_node_mut_by_indices(nodes, &anc) {
+                        let is_instance = matches!(parent.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)))
+                            || parent.parameters.contains_key("_template_origin");
+                        // Update explicit overrides list on this ancestor
+                        if is_instance {
+                            let entry = parent
+                                .parameters
+                                .entry("_explicit_overrides".to_string())
+                                .or_insert(OverseerValue::String(String::new()));
+                            if let OverseerValue::String(s) = entry {
+                                if !s.split(',').any(|n| n == child_name) {
+                                    if !s.is_empty() { s.push(','); }
+                                    s.push_str(&child_name);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    anc.pop();
+                }
+            }
         }
         Ok(())
     }
@@ -1152,7 +1160,8 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] toggle: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                // Always log in tests to help diagnose path resolution
+                eprintln!("[ACTIONS] toggle: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
         };
@@ -1165,7 +1174,40 @@ impl ActionExecutor {
             OverseerValue::Boolean(b) => OverseerValue::Boolean(!b),
             _ => return Err(OverseerError::ValidationError("toggle target must be boolean".to_string())),
         };
-        node.parameters.insert(key, new_val);
+        node.parameters.insert(key.clone(), new_val);
+        // Mark explicit override if this is a template-derived child and we're toggling its value
+        if key == "value" {
+            node.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+            node.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
+            node.parameters.remove("_template_value");
+            node.parameters.remove("_computed_value");
+            // Record on nearest template instance ancestor
+            if !indices.is_empty() {
+                let child_name = node.name.clone();
+                let mut anc = indices.clone();
+                anc.pop();
+                while !anc.is_empty() {
+                    if let Some(parent) = Self::get_node_mut_by_indices(nodes, &anc) {
+                        let is_instance = matches!(parent.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)))
+                            || parent.parameters.contains_key("_template_origin");
+                        if is_instance {
+                            let entry = parent
+                                .parameters
+                                .entry("_explicit_overrides".to_string())
+                                .or_insert(OverseerValue::String(String::new()));
+                            if let OverseerValue::String(s) = entry {
+                                if !s.split(',').any(|n| n == child_name) {
+                                    if !s.is_empty() { s.push(','); }
+                                    s.push_str(&child_name);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    anc.pop();
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2014,6 +2056,64 @@ div Ext {
         let err = m.parameters.get("_mount_error");
         assert!(matches!(err, Some(OverseerValue::String(s)) if s.contains("segment not found") || s.contains("root not found")));
         let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[test]
+    fn test_toggle_under_transparent_wrapper_persists() {
+        // Template with a transparent unnamed div containing a bool field; list of instances and a button to toggle.
+        let script = r#"
+        div R {
+            div Item { div { bool flag = false } }
+            list L (entry=<Item>) { - { } }
+            button B { on click { toggle(path="/R/L/Item/flag") } }
+        }
+        "#;
+        let mut nodes = parse_document(script).unwrap().1;
+        resolve_document(&mut nodes);
+        // Fire click on B -> should toggle the first item's flag to true and persist as explicit override
+        let path_btn = vec!["R".into(), "B".into()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path_btn, "click");
+        assert!(res.is_ok());
+        // Verify now true and marked as override
+        // Find node (transparency-aware and tolerant of instance suffixes like Item__1)
+        fn find<'a>(nodes: &'a [OverseerNode], path: &[&str]) -> Option<&'a OverseerNode> {
+            fn eff_name(n: &OverseerNode) -> &str { if !n.name.is_empty() { &n.name } else { &n.node_type } }
+            fn matches_base(effective: &str, base: &str) -> bool { effective == base || effective.starts_with(&format!("{}__", base)) }
+            fn find_from<'a>(node: &'a OverseerNode, segs: &[&str]) -> Option<&'a OverseerNode> {
+                if segs.is_empty() { return Some(node); }
+                let base = segs[0];
+                // Try direct children with base-name matching
+                for ch in &node.children {
+                    if matches_base(eff_name(ch), base) {
+                        return find_from(ch, &segs[1..]);
+                    }
+                }
+                // Traverse through transparent wrappers without consuming the segment
+                for ch in &node.children {
+                    if ch.is_hierarchy_transparent {
+                        if let Some(found) = find_from(ch, segs) { return Some(found); }
+                    }
+                }
+                None
+            }
+            if path.is_empty() { return None; }
+            // Start from roots
+            for n in nodes {
+                if matches_base(eff_name(n), path[0]) {
+                    if let Some(found) = find_from(n, &path[1..]) { return Some(found); }
+                }
+            }
+            None
+        }
+        let flag = find(&nodes, &["R","L","Item","flag"]).unwrap();
+        assert_eq!(flag.parameters.get("value"), Some(&OverseerValue::Boolean(true)));
+        assert_eq!(flag.parameters.get("_explicit_child_override"), Some(&OverseerValue::Boolean(true)));
+        // Round-trip through serialization + parse + resolve and ensure value stays true
+        let ser = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes).unwrap();
+        let (_rem, mut n3) = parse_document(&ser).unwrap();
+        resolve_document(&mut n3);
+        let flag2 = find(&n3, &["R","L","Item","flag"]).unwrap();
+        assert_eq!(flag2.parameters.get("value"), Some(&OverseerValue::Boolean(true)));
     }
     #[test]
     fn test_inc_action_on_click() {

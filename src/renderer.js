@@ -1130,15 +1130,25 @@ export class OverseerRenderer {
         }
     }
 
-    // If bounds are missing or look degenerate, use union-of-series
+    // Prefer union-of-series when no explicit domain is set; otherwise use computed.
     const explicitXProvided = !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-max')))
     const explicitYProvided = !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-max')))
+    const noExplicitDomain = !(explicitXProvided || explicitYProvided)
     const computedInvalid = !(isFinite(xmin) && isFinite(xmax) && isFinite(ymin) && isFinite(ymax)) || xmax <= xmin || ymax <= ymin
-    if ((computedInvalid || (!explicitXProvided && !explicitYProvided)) && seriesUnionBounds) {
-        xmin = seriesUnionBounds.xmin
-        xmax = seriesUnionBounds.xmax
-        ymin = seriesUnionBounds.ymin
-        ymax = seriesUnionBounds.ymax
+    if (seriesUnionBounds) {
+        if (noExplicitDomain) {
+            // Adopt union entirely to auto-fit to the real data range
+            xmin = seriesUnionBounds.xmin
+            xmax = seriesUnionBounds.xmax
+            ymin = seriesUnionBounds.ymin
+            ymax = seriesUnionBounds.ymax
+        } else if (computedInvalid) {
+            // Fallback: explicit was partial and computed invalid — still use union if available
+            xmin = seriesUnionBounds.xmin
+            xmax = seriesUnionBounds.xmax
+            ymin = seriesUnionBounds.ymin
+            ymax = seriesUnionBounds.ymax
+        }
     }
 
     // Cache last-good bounds across reevaluations using stable path key
@@ -1169,7 +1179,7 @@ export class OverseerRenderer {
         }
     }
 
-        const hasBounds = [xmin, xmax, ymin, ymax].every(v => !isNaN(v)) && xmax > xmin && ymax > ymin
+    const hasBounds = [xmin, xmax, ymin, ymax].every(v => isFinite(v)) && xmax > xmin && ymax > ymin
         // If bounds come from computed values and axis looks like time (epoch ms magnitude), pad a bit and format ticks as dates
         const xLooksLikeTime = hasBounds && Math.abs(xmax) > 1e10 && Math.abs(xmin) > 1e10
         if (hasBounds) {

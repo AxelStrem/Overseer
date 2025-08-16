@@ -92,10 +92,12 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     initialize_and_validate_mount_nodes(nodes);
 }
 
-fn initialize_and_validate_mount_nodes(nodes: &mut [OverseerNode]) {
-    for i in 0..nodes.len() {
-        let ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-        unsafe { initialize_and_validate_mount_nodes_rec(ptr); }
+// Initialize default values and validate mount nodes across the document tree
+fn initialize_and_validate_mount_nodes(nodes: &mut Vec<OverseerNode>) {
+    let len = nodes.len();
+    for i in 0..len {
+        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+        unsafe { initialize_and_validate_mount_nodes_rec(node_ptr); }
     }
 }
 
@@ -189,11 +191,13 @@ unsafe fn recursively_compute_chart_series(
                 let mut series: Vec<(f64, f64)> = Vec::new();
 
                 // Fetch x/y expressions
-                let x_src = match plot.parameters.get("x") {
-                    Some(OverseerValue::Formula(s)) => Some(s.as_str()),
-                    Some(OverseerValue::String(s)) => Some(s.as_str()),
-                    _ => None,
-                };
+                let x_src = if let Some(val) = plot.parameters.get("x") {
+                    match val {
+                        OverseerValue::Formula(s) => Some(s.as_str()),
+                        OverseerValue::String(s) => Some(s.as_str()),
+                        _ => None,
+                    }
+                } else { None };
                 let y_src = match plot.parameters.get("y") {
                     Some(OverseerValue::Formula(s)) => Some(s.as_str()),
                     Some(OverseerValue::String(s)) => Some(s.as_str()),
@@ -398,7 +402,7 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                         for (idx, list_item) in node.children.iter().enumerate() {
                             debug_resolver!("[RESOLVER]   Processing list item {}: {} (type: {})", idx, list_item.name, list_item.node_type);
                             // Handle both old "list_item" type and new "-" type (after parse_list_item removal)
-                            if list_item.node_type == "list_item" || (list_item.node_type == "-" && !list_item.children.is_empty()) {
+                            if list_item.node_type == "list_item" || list_item.node_type == "-" {
                                 if !list_item.children.is_empty() {
                                     debug_resolver!("[RESOLVER]     Complex list item with {} children", list_item.children.len());
                                     // Complex list item: create a node of the template's type
@@ -494,9 +498,46 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                     };
                                     resolved_children.push(resolved_item);
                                 } else {
-                                    debug_resolver!("[RESOLVER]     Fallback: cloning list item as-is");
-                                    // Fallback: just clone
-                                    resolved_children.push(list_item.clone());
+                                    // '-' with empty block and no value => instantiate default template clone; else, fallback clone
+                                    if list_item.node_type == "-" {
+                                        debug_resolver!("[RESOLVER]     Empty '-' item -> instantiate template '{}__{}'", template_node.name, idx + 1);
+                                        let mut resolved_item = OverseerNode {
+                                            name: {
+                                                let n = list_item.name.clone();
+                                                if n.is_empty() || n == "-" { format!("{}__{}", template_node.name, idx + 1) } else { n }
+                                            },
+                                            node_type: template_node.name.clone(),
+                                            template: None,
+                                            parameters: {
+                                                let mut merged_params = HashMap::new();
+                                                for (key, value) in &template_node.parameters {
+                                                    merged_params.insert(format!("_template_{}", key), value.clone());
+                                                    merged_params.insert(key.clone(), value.clone());
+                                                }
+                                                merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
+                                                merged_params.insert("_from_template".to_string(), OverseerValue::Boolean(true));
+                                                merged_params
+                                            },
+                                            children: template_node.children.clone(),
+                                            is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                        };
+                                        for child in resolved_item.children.iter_mut() {
+                                            mark_template_child_recursive(child);
+                                            if child.parameters.remove("_explicit_child_override").is_some() {
+                                                debug_resolver!("[RESOLVER] cleaned _explicit_child_override on clone child '{}')", child.name);
+                                            }
+                                            if child.parameters.remove("_override_present").is_some() {
+                                                debug_resolver!("[RESOLVER] cleaned _override_present on clone child '{}')", child.name);
+                                            }
+                                        }
+                                        // Recursively infer '-' types based on template structure
+                                        infer_dash_types_from_template(&mut resolved_item, &template_node);
+                                        resolved_children.push(resolved_item);
+                                    } else {
+                                        debug_resolver!("[RESOLVER]     Fallback: cloning list item as-is");
+                                        // Fallback: just clone
+                                        resolved_children.push(list_item.clone());
+                                    }
                                 }
                             } else {
                                 debug_resolver!("[RESOLVER]   Not a complex list_item, passing through: {} (type: {})", list_item.name, list_item.node_type);
@@ -730,8 +771,7 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
         _ => "horizontal".to_string(),
     }
 }
-
-/// Resolves parameter inheritance for styling properties
+                                
 fn resolve_parameter_inheritance(nodes: &mut Vec<OverseerNode>, parent_params: &HashMap<String, OverseerValue>) {
     for node in nodes.iter_mut() {
         // List of inheritable styling parameters
