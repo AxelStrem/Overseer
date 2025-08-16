@@ -1137,11 +1137,17 @@ export class OverseerRenderer {
     const computedInvalid = !(isFinite(xmin) && isFinite(xmax) && isFinite(ymin) && isFinite(ymax)) || xmax <= xmin || ymax <= ymin
     if (seriesUnionBounds) {
         if (noExplicitDomain) {
-            // Adopt union entirely to auto-fit to the real data range
+            // Adopt union entirely to auto-fit to the real data range, with a gentle pad
             xmin = seriesUnionBounds.xmin
             xmax = seriesUnionBounds.xmax
             ymin = seriesUnionBounds.ymin
             ymax = seriesUnionBounds.ymax
+            const dx = (xmax - xmin) || 1
+            const dy = (ymax - ymin) || 1
+            const padX = dx * 0.03
+            const padY = dy * 0.05
+            xmin -= padX; xmax += padX
+            ymin -= padY; ymax += padY
         } else if (computedInvalid) {
             // Fallback: explicit was partial and computed invalid — still use union if available
             xmin = seriesUnionBounds.xmin
@@ -1311,6 +1317,8 @@ export class OverseerRenderer {
                     if (!seriesJson) continue
                     let series
                     try { series = JSON.parse(seriesJson) } catch (_) { continue }
+                    // Ensure points are in ascending x order for a sensible line plot
+                    try { series.sort((a,b) => Number(a?.[0]) - Number(b?.[0])) } catch(_) {}
                     if (!Array.isArray(series) || series.length === 0) continue
                     const color = this.getParameterValue(plot, 'color') || '#4A90E2'
                     ctx.strokeStyle = this.convertColorValue(color)

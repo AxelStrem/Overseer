@@ -281,7 +281,10 @@ impl OverseerFileHandler {
                 // Suppress template-derived children for instances and emit concise overrides
                 let suppress_template_children = node.template.is_some() || matches!(node.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)));
                 // Pre-parse explicit override names list on the instance (if present)
-                let explicit_names: Option<Vec<String>> = if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
+                // NOTE: Do not use this list to filter which overrides to persist. Users can introduce
+                // new overrides at runtime (e.g., by editing a field), and this list may be stale.
+                // We keep parsing it for potential future use, but we won't gate emission on it.
+                let _explicit_names_ignored: Option<Vec<String>> = if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
                     let v: Vec<String> = list.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
                     Some(v)
                 } else { None };
@@ -290,27 +293,17 @@ impl OverseerFileHandler {
                     let has_template_param_markers = child.parameters.keys().any(|k| k.starts_with("_template_"));
                     let is_template_child = is_template_child_flag || has_template_param_markers;
                     let has_explicit_override = matches!(child.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true)));
-                    let mut listed_in_instance_overrides = true;
-                    if suppress_template_children {
-                        if let Some(names) = &explicit_names {
-                            if !names.is_empty() {
-                                listed_in_instance_overrides = names.iter().any(|n| n == &child.name);
-                            }
-                        }
-                    }
+                    // Previously we filtered explicit overrides against an instance-level list (_explicit_overrides).
+                    // This caused edits added later to be dropped. Do not gate on that list anymore.
 
                     // Special-case: if this child is a transparent wrapper and any of its descendants
                     // were explicitly overridden, emit those descendant overrides concisely here and skip the wrapper.
                     if suppress_template_children && is_template_child && child.is_hierarchy_transparent {
                         // Collect descendant value-only overrides that were explicitly listed
-                        fn collect_descendant_value_overrides<'a>(node: &'a OverseerNode, name_filter: &Option<Vec<String>>, out: &mut Vec<(&'a str, &'a OverseerValue)>) {
+                        fn collect_descendant_value_overrides<'a>(node: &'a OverseerNode, _name_filter_unused: &Option<Vec<String>>, out: &mut Vec<(&'a str, &'a OverseerValue)>) {
                             // Check current node
                             let has_explicit = matches!(node.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true)));
-                            let name_matches = match name_filter {
-                                Some(v) if !v.is_empty() => v.iter().any(|n| n == &node.name),
-                                _ => true,
-                            };
-                            if has_explicit && name_matches {
+                            if has_explicit {
                                 let has_value = node.parameters.contains_key("value");
                                 let non_internal_non_value_params = node.parameters.iter().filter(|(k, _)| {
                                     let ks = k.as_str();
@@ -324,11 +317,12 @@ impl OverseerFileHandler {
                             }
                             // Recurse
                             for ch in &node.children {
-                                collect_descendant_value_overrides(ch, name_filter, out);
+                                collect_descendant_value_overrides(ch, _name_filter_unused, out);
                             }
                         }
                         let mut desc_overrides: Vec<(&str, &OverseerValue)> = Vec::new();
-                        collect_descendant_value_overrides(child, &explicit_names, &mut desc_overrides);
+                        // Always collect any explicit descendant value overrides; do not filter by instance list.
+                        collect_descendant_value_overrides(child, &_explicit_names_ignored, &mut desc_overrides);
                         if !desc_overrides.is_empty() {
                             for (n, v) in desc_overrides {
                                 output.push_str(&format!("{}    - {} = {}\n", indent, n, Self::serialize_value(v)));
@@ -336,10 +330,11 @@ impl OverseerFileHandler {
                             continue; // Skip normal emission of the transparent wrapper
                         }
                     }
-                    if suppress_template_children && is_template_child && (!has_explicit_override || !listed_in_instance_overrides) {
+                    // Skip template-derived children that are not explicitly overridden
+                    if suppress_template_children && is_template_child && (!has_explicit_override) {
                         continue;
                     }
-                    if suppress_template_children && has_explicit_override && listed_in_instance_overrides {
+                    if suppress_template_children && has_explicit_override {
                         let has_value = child.parameters.contains_key("value");
                         let non_internal_non_value_params = child.parameters.iter().filter(|(k, _)| {
                             let ks = k.as_str();
