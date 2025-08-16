@@ -1798,41 +1798,39 @@ export class OverseerRenderer {
     }
 
     // Format a RFC3339 timestamp string according to node parameters 'format' or 'precision'
+    // Render in the user's local timezone (serialization remains UTC).
     // format overrides precision when provided.
     // Supported precision: 'seconds' (default), 'minutes', 'hours', 'days'
     // Supported format: 'datetime' (YYYY-MM-DD HH:MM:SS), 'date', 'time', 'iso'
     formatTimestampValue(node, rfc3339) {
         if (!rfc3339 || typeof rfc3339 !== 'string') return rfc3339
+        // Parse to a Date to get local components
+        const d = new Date(rfc3339)
+        if (isNaN(d.getTime())) return rfc3339
+        const pad = (n) => String(n).padStart(2, '0')
+        const Y = d.getFullYear()
+        const M = pad(d.getMonth() + 1)
+        const D = pad(d.getDate())
+        const h = pad(d.getHours())
+        const m = pad(d.getMinutes())
+        const s = pad(d.getSeconds())
+
+        const datePart = `${Y}-${M}-${D}`
+        const timePart = `${h}:${m}:${s}`
+
         // Extract format and precision preferences (computed or raw)
         const formatPref = (this.getParameterValue(node, 'format') || '').toString().toLowerCase()
         const precision = (this.getParameterValue(node, 'precision') || 'seconds').toString().toLowerCase()
-        // Normalize: split date/time and strip fractional seconds and zone
-        // Examples: 2025-08-10T04:25:22.045348200+00:00 -> [date, time+zone]
-        const parts = rfc3339.split('T')
-        if (parts.length < 2) return rfc3339
-        const date = parts[0]
-        // time part may include fractional and timezone
-        let timeAndZone = parts[1]
-        // Remove timezone part (Z or ±hh:mm)
-        timeAndZone = timeAndZone.replace(/Z|[+-]\d{2}:?\d{2}$/i, '')
-        // Remove trailing timezone if with colon e.g., +00:00 (handled above), fallback remove last 6 if still present
-        timeAndZone = timeAndZone.replace(/[+-]\d{2}:\d{2}$/, '')
-        // Split hh:mm:ss(.fraction)?
-        let [hh='00', mm='00', ssFrac='00'] = timeAndZone.split(':')
-        // Separate seconds and fraction
-        let ss = ssFrac
-        const dotIdx = ss.indexOf('.')
-        if (dotIdx !== -1) ss = ss.substring(0, dotIdx)
 
         // Apply explicit format if provided
         switch (formatPref) {
             case 'date':
-                return `${date}`
+                return datePart
             case 'time':
-                return `${hh.padStart(2,'0')}:${mm.padStart(2,'0')}:${ss.padStart(2,'0')}`
+                return timePart
             case 'iso': {
-                // Trim to seconds and force 'Z' style
-                return `${date}T${hh.padStart(2,'0')}:${mm.padStart(2,'0')}:${ss.padStart(2,'0')}Z`
+                // ISO-like local (no Z to avoid implying UTC)
+                return `${datePart}T${timePart}`
             }
             case 'datetime':
                 // fall through to precision default below
@@ -1842,21 +1840,21 @@ export class OverseerRenderer {
                 break
         }
 
-        // Apply precision
+        // Apply precision (local time)
         switch (precision) {
             case 'days':
             case 'day':
-                return `${date}`
+                return datePart
             case 'hours':
             case 'hour':
-                return `${date} ${hh.padStart(2,'0')}:00:00`
+                return `${datePart} ${h}:00:00`
             case 'minutes':
             case 'minute':
-                return `${date} ${hh.padStart(2,'0')}:${mm.padStart(2,'0')}:00`
+                return `${datePart} ${h}:${m}:00`
             case 'seconds':
             case 'second':
             default:
-                return `${date} ${hh.padStart(2,'0')}:${mm.padStart(2,'0')}:${ss.padStart(2,'0')}`
+                return `${datePart} ${timePart}`
         }
     }
 
