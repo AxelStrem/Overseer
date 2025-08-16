@@ -16,7 +16,7 @@ class OverseerApp {
     this.renderer = new OverseerRenderer()
     // Track active inline editors to pause background updates during editing
     this._activeEditors = 0
-    this._scheduler = { id: null, periodMs: 1000 }
+    this._scheduler = { id: null, periodMs: 1000, cachedNextMs: null }
     // Keep the raw original text for comment/whitespace merge on save
     this._originalText = null
         
@@ -416,10 +416,17 @@ tab Main {
 
     const scheduleNext = async () => {
             if (!this.currentDocument) return
-        // Prefer backend calculation to stay consistent with formula evaluation
+        // Prefer backend calculation to stay consistent with formula evaluation.
+        // While actively editing, avoid spamming the backend — reuse a cached value when available.
         let nextMs = null
-        try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
-                if (nextMs == null) nextMs = findNextDue(this.currentDocument)
+        if (this._activeEditors > 0 && this._scheduler.cachedNextMs != null) {
+            nextMs = this._scheduler.cachedNextMs
+        } else {
+            try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
+            if (nextMs == null) nextMs = findNextDue(this.currentDocument)
+            // Cache while editing to reduce churn
+            if (this._activeEditors > 0) this._scheduler.cachedNextMs = nextMs
+        }
                 // If there are no timers, still refresh formulas periodically (e.g., days_since)
                 // Use a gentle cadence (e.g., 60s) to avoid heavy CPU usage.
                 const periodicRefreshMs = 60000
@@ -427,7 +434,10 @@ tab Main {
                     this._scheduler.id = setTimeout(async () => {
                         try {
                             if (!this.currentDocument) return
-                            await this.reevaluateDocument()
+                            // Skip reevaluation while editing to avoid interrupting the user
+                            if ((this._activeEditors || 0) === 0) {
+                                await this.reevaluateDocument()
+                            }
                         } finally {
                             scheduleNext()
                         }
@@ -438,8 +448,9 @@ tab Main {
         let delay = nextMs - now
             // Only schedule for future; if due/past, process almost immediately (debounced)
             if (delay < 0) delay = 0
-            // Add small debounce to let system settle
-            delay += 500
+            // Add small debounce to let system settle; widen when editing to reduce churn
+            const baseDebounce = (this._activeEditors || 0) > 0 ? 2000 : 500
+            delay += baseDebounce
     this._scheduler.id = setTimeout(async () => {
                 try {
             if (!this.currentDocument) return
@@ -449,6 +460,8 @@ tab Main {
                     if (updated && !docsEqual(updated, this.currentDocument)) {
                         this.currentDocument = updated
                         this.renderer.renderDocument(updated)
+                        // Invalidate cached next due after a state change
+                        this._scheduler.cachedNextMs = null
                     }
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('scheduler tick error:', e)
@@ -469,8 +482,11 @@ tab Main {
 
     stopScheduler() {
         if (this._scheduler && this._scheduler.id) {
-            clearInterval(this._scheduler.id)
+            clearTimeout(this._scheduler.id)
             this._scheduler.id = null
+        }
+        if (this._scheduler) {
+            this._scheduler.cachedNextMs = null
         }
     }
 

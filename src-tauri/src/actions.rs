@@ -46,8 +46,8 @@ impl ActionExecutor {
                 _ => false,
             };
             if !active { continue; }
-            // at
-            let at_val = t.parameters.get("at").or_else(|| t.parameters.get("_computed_at"));
+            // at: prefer computed value to support formulas resolved by the resolver
+            let at_val = t.parameters.get("_computed_at").or_else(|| t.parameters.get("at"));
             let at_str: Option<String> = match at_val {
                 Some(OverseerValue::Timestamp(ts)) => Some(ts.clone()),
                 Some(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),

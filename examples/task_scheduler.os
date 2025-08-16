@@ -1,21 +1,21 @@
 tab Tasks {
     div (hidden=true) {
-        div ActiveTask (background-color=$(
+        div ActiveTask (layout="horizontal", padding=6, background-color=$(
             effective_priority > 100 ? "#320505ff" :
             (effective_priority > 50 ? "#2c2920ff" : "inherit")
-            ), spacing=0, layout="horizontal", padding=6) {
+            ), spacing=0) {
             int id (hidden=true) = 0
             int rid (hidden=true) = 0
             string description (margin=0, font-size=18px, label="") = ""
-            string comment (label="", margin=0) = ""
+            string comment (margin=0, label="") = ""
             int points (margin=0, label="Points") = 1
             int priority (hidden=true, margin=0) = 0
-            int priority_gain (margin=0, label="Daily Gain") = 0
-            timestamp task_created (hidden=true, mode="elapsed", margin=0, label="Since") = $(now())
+            int priority_gain (label="Daily Gain", margin=0) = 0
+            timestamp task_created (label="Since", margin=0, hidden=true, mode="elapsed") = $(now())
             int effective_priority (label="Priority") = $(priority + priority_gain * days_since(task_created))
             button Done (label="Done", margin=0) {
                 on click {
-                    append (template="<CompletedRecord>", list="/Tasks/Completed") {
+                    append (list="/Tasks/Completed", template="<CompletedRecord>") {
                         - description = $(../description)
                         - points = $(../points)
                         - completed_at = $(now())
@@ -24,29 +24,29 @@ tab Tasks {
                 }
             }
         }
-        div CompletedRecord (layout="horizontal", spacing=8, padding=4) {
-            string description (margin=0, label="") = ""
-            int points (margin=0, label="") = 1
-            timestamp completed_at (format="long", margin=0, label="Completed")
+        div CompletedRecord (spacing=8, layout="horizontal", padding=4) {
+            string description (label="", margin=0) = ""
+            int points (label="", margin=0) = 1
+            timestamp completed_at (format="long", label="Completed", margin=0)
         }
         <ActiveTask> ActiveSample {
         }
         <CompletedRecord> CompletedSample {
         }
-        div RecurringTask (padding=6, layout="horizontal", spacing=4) {
-            int rid (label="Recurrence Id", margin=0) = 1
-            string description (margin=0, label="Task") = ""
-            string comment (margin=0, label="Comment") = ""
-            int points (margin=0, label="Points") = 1
-            int base_priority (label="Base Priority", margin=0) = 0
-            int priority_gain (margin=0, label="Daily Gain") = 0
+        div RecurringTask (layout="horizontal", padding=6, spacing=4) {
+            int rid (margin=0, label="Recurrence Id") = 1
+            string description (label="Task", margin=0) = ""
+            string comment (label="Comment", margin=0) = ""
+            int points (label="Points", margin=0) = 1
+            int base_priority (margin=0, label="Base Priority") = 0
+            int priority_gain (label="Daily Gain", margin=0) = 0
             string mode (margin=0, label="Mode") = "interval"
-            string interval (label="Every", margin=0) = "7d"
+            string interval (margin=0, label="Every") = "7d"
             checkbox pause_when_active (label="Pause When Active", margin=0) = true
-            timestamp last_triggered_at (label="Since", margin=0, mode="elapsed") = $(now())
-            timer generator (offset=$(interval), at=$(../last_triggered_at), active=$(mode == "interval"), one_shot=$(../pause_when_active)) {
+            timestamp last_triggered_at (margin=0, mode="elapsed", label="Since") = $(now())
+            timer generator (one_shot=$(../pause_when_active), offset=$(interval), active=$(mode == "interval"), at=$(../last_triggered_at)) {
                 on timeout {
-                    append (list="/Tasks/Active", template="<ActiveTask>") {
+                    append (template="<ActiveTask>", list="/Tasks/Active") {
                         - description = $(../description)
                         - comment = $(../comment)
                         - points = $(../points)
@@ -60,7 +60,7 @@ tab Tasks {
                     set_now_ts (path="../last_triggered_at")
                 }
             }
-            button start (margin=0, label="Start / Resume") {
+            button start (label="Start / Resume", margin=0) {
                 on click {
                     set_now_ts (path="../last_triggered_at")
                     set (mode="value", path="../generator.active") = true
@@ -74,15 +74,15 @@ tab Tasks {
         }
     }
     div State (hidden=true) {
-        int next_id = 22
+        int next_id = 25
     }
-    div NewTask (spacing=6, padding=6, layout="horizontal") {
+    div NewTask (padding=6, spacing=6, layout="horizontal") {
         string description (margin=0, label="Task") = ""
-        string commentary (label="Comment", margin=0) = ""
-        int points (label="Points", margin=0) = 1
-        int priority (label="Priority", margin=0) = 0
-        int priority_gain (margin=0, label="Daily Gain") = 0
-        button Create (label="Create Task", margin=0) {
+        string commentary (margin=0, label="Comment") = ""
+        int points (margin=0, label="Points") = 1
+        int priority (margin=0, label="Priority") = 0
+        int priority_gain (label="Daily Gain", margin=0) = 0
+        button Create (margin=0, label="Create Task") {
             on click {
                 append (template="<ActiveSample>", list="/Tasks/Active") {
                     - description = $(../description)
@@ -95,9 +95,9 @@ tab Tasks {
                     - task_created = $(now())
                 }
                 inc (path="/Tasks/State/next_id")
-                set (mode="value", path="/Tasks/NewTask/description") = ""
+                set (path="/Tasks/NewTask/description", mode="value") = ""
                 set (mode="value", path="/Tasks/NewTask/commentary") = ""
-                set (mode="value", path="/Tasks/NewTask/points") = 1
+                set (path="/Tasks/NewTask/points", mode="value") = 1
                 set (mode="value", path="/Tasks/NewTask/priority") = 0
                 set (path="/Tasks/NewTask/priority_gain", mode="value") = 0
             }
@@ -124,7 +124,7 @@ tab Tasks {
             string comment = ""
             int points = 10
             int priority = 5
-            int priority_gain = 0
+            int priority_gain = 1
             timestamp task_created = "2025-08-15T18:26:39.002022400+00:00"
         }
         - {
@@ -158,26 +158,6 @@ tab Tasks {
             timestamp task_created = "2025-08-15T18:26:39.008926700+00:00"
         }
         - {
-            int id = 15
-            int rid = 6
-            string description = "Drum practice"
-            string comment = ""
-            int points = 2
-            int priority = 5
-            int priority_gain = 0
-            timestamp task_created = "2025-08-16T07:25:06.474571400+00:00"
-        }
-        - {
-            int id = 16
-            int rid = 7
-            string description = "Guitar practice"
-            string comment = "basic riffs"
-            int points = 2
-            int priority = 3
-            int priority_gain = 0
-            timestamp task_created = "2025-08-16T07:25:06.477242900+00:00"
-        }
-        - {
             int id = 17
             int rid = 8
             string description = "Work on project: VD Roguelike"
@@ -196,16 +176,6 @@ tab Tasks {
             int priority = 8
             int priority_gain = 0
             timestamp task_created = "2025-08-16T07:25:06.482365400+00:00"
-        }
-        - {
-            int id = 19
-            int rid = 10
-            string description = "Work on project: Overseer"
-            string comment = ""
-            int points = 5
-            int priority = 8
-            int priority_gain = 0
-            timestamp task_created = "2025-08-16T07:25:06.484988600+00:00"
         }
         - {
             int id = 20
@@ -227,8 +197,27 @@ tab Tasks {
             int priority_gain = 0
             timestamp task_created = "2025-08-16T07:25:06.490467500+00:00"
         }
+        - {
+            int id = 22
+            string description = "Verify the account"
+            string comment = "(exchange)"
+            timestamp task_created = "2025-08-16T14:42:35.917470800+00:00"
+            int effective_priority = $(priority + priority_gain * days_since(task_created))
+        }
+        - {
+            int id = 23
+            string description = "Start 3D treatment"
+            int priority = 10
+            timestamp task_created = "2025-08-16T14:45:29.984214400+00:00"
+        }
+        - {
+            int id = 24
+            string description = "Practice and record some vocals"
+            int priority = 10
+            timestamp task_created = "2025-08-16T18:26:00.088930300+00:00"
+        }
     }
-    list Completed (entry=<CompletedRecord>, spacing=4, layout="vertical") {
+    list Completed (layout="vertical", entry=<CompletedRecord>, spacing=4) {
         - {
             string description = "T2"
             int points = 1
@@ -249,8 +238,23 @@ tab Tasks {
             int points = 1
             timestamp completed_at = "2025-08-16T07:25:35.201689200+00:00"
         }
+        - {
+            string description = "Work on project: Overseer"
+            int points = 5
+            timestamp completed_at = "2025-08-16T14:41:00.745245400+00:00"
+        }
+        - {
+            string description = "Drum practice"
+            int points = 2
+            timestamp completed_at = "2025-08-16T18:24:03.447655200+00:00"
+        }
+        - {
+            string description = "Guitar practice"
+            int points = 2
+            timestamp completed_at = "2025-08-16T18:24:04.974514800+00:00"
+        }
     }
-    list Recurring (entry=<RecurringTask>, spacing=8, key="rid", layout="vertical") {
+    list Recurring (spacing=8, layout="vertical", key="rid", entry=<RecurringTask>) {
         - {
             int rid = 1
             string description = "Wash clothes"
@@ -289,7 +293,7 @@ tab Tasks {
         - {
             int rid = 4
             string description = "Evening routine"
-            string comment = "3D, BT"
+            string comment = "3D, BT, shower"
             int points = 1
             int base_priority = 10
             string mode = "interval"
