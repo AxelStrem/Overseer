@@ -32,15 +32,47 @@ async fn load_overseer_file(path: String) -> Result<String> {
     }
 }
 
+// Save by merging regenerated content with an explicit original text provided by the caller.
+// Useful for "Save As" or when the editor does not have comments in memory but the original file did.
+#[command]
+async fn save_overseer_file_with_original(path: String, regenerated: String, original: String) -> Result<()> {
+    // If regenerated parses, prefer canonical serialization before merging
+    let regenerated_canonical = match parse_document(&regenerated) {
+        Ok((_rem, mut nodes)) => {
+            resolver::resolve_document(&mut nodes);
+            file_ops::OverseerFileHandler::serialize_nodes(&nodes).unwrap_or(regenerated.clone())
+        }
+        Err(_) => regenerated.clone(),
+    };
+    let merged = file_ops::OverseerFileHandler::merge_comments(&original, &regenerated_canonical);
+    match FileOperations::write_file(&path, &merged).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(OverseerError::IoError(format!("Failed to save file: {}", e))),
+    }
+}
+
 #[command]
 async fn save_overseer_file(path: String, content: String) -> Result<()> {
     // Best-effort: if content parses, re-serialize to canonical form first,
-    // then merge comments from the original text into regenerated output.
+    // then merge comments from the ORIGINAL FILE ON DISK into regenerated output.
+    // This preserves user comments/whitespace that never enter the AST.
+    let original_text_on_disk: Option<String> = match file_ops::FileOperations::read_file(&path).await {
+        Ok(s) => Some(s),
+        Err(_) => None,
+    };
+
     let regenerated = match parse_document(&content) {
         Ok((_rem, mut nodes)) => {
             resolver::resolve_document(&mut nodes);
             match OverseerFileHandler::serialize_nodes(&nodes) {
-                Ok(s) => OverseerFileHandler::merge_comments(&content, &s),
+                Ok(s) => {
+                    if let Some(orig) = &original_text_on_disk {
+                        OverseerFileHandler::merge_comments(orig, &s)
+                    } else {
+                        // No original file yet (new file) — just use regenerated
+                        s
+                    }
+                }
                 Err(_) => content.clone(),
             }
         }
@@ -126,6 +158,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_overseer_file,
             save_overseer_file,
+            save_overseer_file_with_original,
             serialize_overseer_nodes,
             parse_overseer_content,
             find_overseer_files,

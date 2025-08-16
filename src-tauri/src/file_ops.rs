@@ -102,40 +102,40 @@ impl OverseerFileHandler {
     pub fn merge_comments(original: &str, regenerated: &str) -> String {
         use std::collections::{HashMap, HashSet};
         fn anchor_key(line: &str) -> String {
-            let mut s = line.to_string();
-            if let Some(idx) = s.find("//") {
-                s.truncate(idx);
+            // Remove inline comment
+            let mut s = line.split("//").next().unwrap_or("").trim().to_string();
+            if s.is_empty() { return String::new(); }
+            // Extract a stable signature: for node definitions use "type name" before '(', '{', or '='.
+            // For list overrides like "- name = value", use "- name".
+            if s.starts_with('-') {
+                // e.g., "- name =", "- {", or "- value"
+                if let Some(eq) = s.find('=') { return s[..eq].trim().to_string(); }
+                if let Some(br) = s.find('{') { return s[..br].trim().to_string(); }
+                return s.trim().to_string();
             }
-            // Normalize whitespace differences so anchors match even if formatting changes:
-            // 1) Collapse all runs of whitespace to a single space
-            // 2) Remove any single space immediately before '(' to treat "Name(" and "Name (" the same
-            let mut norm = String::with_capacity(s.len());
+            // Handle template instance lines like "<T> Name {" => use the part before '(' or '{'
+            let cut_pos = s.find('(').or_else(|| s.find('{')).or_else(|| s.find('='));
+            if let Some(pos) = cut_pos { s.truncate(pos); }
+            // Collapse runs of whitespace to a single space, and trim
+            let mut out = String::with_capacity(s.len());
             let mut prev_space = false;
             for ch in s.chars() {
                 if ch.is_whitespace() {
-                    if !prev_space {
-                        norm.push(' ');
-                        prev_space = true;
-                    }
-                } else {
-                    norm.push(ch);
-                    prev_space = false;
-                }
+                    if !prev_space { out.push(' '); prev_space = true; }
+                } else { out.push(ch); prev_space = false; }
             }
-            // Trim trailing spaces
-            while norm.ends_with(' ') { norm.pop(); }
-            // Remove spaces before '(' characters
-            let norm = norm.replace(" (", "(");
-            norm
+            while out.ends_with(' ') { out.pop(); }
+            out
         }
 
-        let mut leading_block: Vec<String> = Vec::new();
+    let mut leading_block: Vec<String> = Vec::new();
+    let mut trailing_block: Vec<String> = Vec::new();
         let mut map_block: HashMap<String, Vec<String>> = HashMap::new();
         let mut map_inline: HashMap<String, String> = HashMap::new();
         let mut pending_block: Vec<String> = Vec::new();
         let mut seen_non_comment = false;
 
-        for line in original.lines() {
+    for line in original.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with("//") {
                 if !seen_non_comment {
@@ -148,12 +148,12 @@ impl OverseerFileHandler {
 
             // Non-comment line (could be blank or code)
             if trimmed.is_empty() {
-                // Treat as spacer; keep it inside pending block only if we already started a block
-                if !pending_block.is_empty() {
-                    pending_block.push(line.to_string());
-                } else if !seen_non_comment && !leading_block.is_empty() {
-                    // Preserve a single blank after leading block
+                // Treat as spacer; associate with leading block until first non-comment,
+                // then with the next anchor via pending_block (even if it's the first spacer).
+                if !seen_non_comment {
                     leading_block.push(line.to_string());
+                } else {
+                    pending_block.push(line.to_string());
                 }
                 continue;
             }
@@ -175,12 +175,18 @@ impl OverseerFileHandler {
             seen_non_comment = true;
         }
 
+        // If original ended with a pending comment/spacer block not attached to any anchor,
+        // preserve it as a trailing block to append at file end.
+        if !pending_block.is_empty() {
+            trailing_block = std::mem::take(&mut pending_block);
+        }
+
         // Build merged output
         let mut out = String::new();
         let mut inserted_leading = false;
         let mut used_blocks: HashSet<String> = HashSet::new();
 
-        for (i, line) in regenerated.lines().enumerate() {
+    for (i, line) in regenerated.lines().enumerate() {
             if i == 0 && !inserted_leading && !leading_block.is_empty() {
                 for l in &leading_block { out.push_str(l); out.push('\n'); }
                 inserted_leading = true;
@@ -211,6 +217,14 @@ impl OverseerFileHandler {
             }
             out.push_str(line);
             out.push('\n');
+        }
+
+        // Append any trailing comment block preserved from original
+        if !trailing_block.is_empty() {
+            // Ensure a separating newline if regenerated didn't end with one
+            if !out.ends_with('\n') { out.push('\n'); }
+            // Avoid duplicating if the last non-empty line in out is identical to first of trailing block
+            for l in &trailing_block { out.push_str(l); out.push('\n'); }
         }
 
         out
@@ -266,6 +280,11 @@ impl OverseerFileHandler {
                 output.push_str("- {\n");
                 // Suppress template-derived children for instances and emit concise overrides
                 let suppress_template_children = node.template.is_some() || matches!(node.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)));
+                // Pre-parse explicit override names list on the instance (if present)
+                let explicit_names: Option<Vec<String>> = if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
+                    let v: Vec<String> = list.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+                    Some(v)
+                } else { None };
                 for child in &node.children {
                     let is_template_child_flag = matches!(child.parameters.get("_template_node"), Some(OverseerValue::Boolean(true)));
                     let has_template_param_markers = child.parameters.keys().any(|k| k.starts_with("_template_"));
@@ -273,9 +292,48 @@ impl OverseerFileHandler {
                     let has_explicit_override = matches!(child.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true)));
                     let mut listed_in_instance_overrides = true;
                     if suppress_template_children {
-                        if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
-                            let names: Vec<&str> = list.split(',').filter(|s| !s.is_empty()).collect();
-                            listed_in_instance_overrides = names.iter().any(|n| *n == child.name);
+                        if let Some(names) = &explicit_names {
+                            if !names.is_empty() {
+                                listed_in_instance_overrides = names.iter().any(|n| n == &child.name);
+                            }
+                        }
+                    }
+
+                    // Special-case: if this child is a transparent wrapper and any of its descendants
+                    // were explicitly overridden, emit those descendant overrides concisely here and skip the wrapper.
+                    if suppress_template_children && is_template_child && child.is_hierarchy_transparent {
+                        // Collect descendant value-only overrides that were explicitly listed
+                        fn collect_descendant_value_overrides<'a>(node: &'a OverseerNode, name_filter: &Option<Vec<String>>, out: &mut Vec<(&'a str, &'a OverseerValue)>) {
+                            // Check current node
+                            let has_explicit = matches!(node.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true)));
+                            let name_matches = match name_filter {
+                                Some(v) if !v.is_empty() => v.iter().any(|n| n == &node.name),
+                                _ => true,
+                            };
+                            if has_explicit && name_matches {
+                                let has_value = node.parameters.contains_key("value");
+                                let non_internal_non_value_params = node.parameters.iter().filter(|(k, _)| {
+                                    let ks = k.as_str();
+                                    !ks.starts_with('_') && ks != "value"
+                                }).count();
+                                let only_value_override = has_value && non_internal_non_value_params == 0 && node.children.is_empty();
+                                let has_template_value_marker = node.parameters.contains_key("_template_value");
+                                if only_value_override && !has_template_value_marker {
+                                    out.push((node.name.as_str(), node.parameters.get("value").unwrap()));
+                                }
+                            }
+                            // Recurse
+                            for ch in &node.children {
+                                collect_descendant_value_overrides(ch, name_filter, out);
+                            }
+                        }
+                        let mut desc_overrides: Vec<(&str, &OverseerValue)> = Vec::new();
+                        collect_descendant_value_overrides(child, &explicit_names, &mut desc_overrides);
+                        if !desc_overrides.is_empty() {
+                            for (n, v) in desc_overrides {
+                                output.push_str(&format!("{}    - {} = {}\n", indent, n, Self::serialize_value(v)));
+                            }
+                            continue; // Skip normal emission of the transparent wrapper
                         }
                     }
                     if suppress_template_children && is_template_child && (!has_explicit_override || !listed_in_instance_overrides) {
@@ -429,6 +487,11 @@ impl OverseerFileHandler {
             let children_in_list_body = node.node_type == "list";
             // Suppress template-derived children for any node that originated from a template (standalone instances or list entries)
             let suppress_template_children = node.template.is_some() || matches!(node.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)));
+            // Pre-parse explicit override names list on the instance (if present)
+            let explicit_names: Option<Vec<String>> = if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
+                let v: Vec<String> = list.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+                Some(v)
+            } else { None };
             for child in &node.children {
                 // Skip template-derived children unless they were explicitly overridden
                 let is_template_child_flag = matches!(child.parameters.get("_template_node"), Some(OverseerValue::Boolean(true)));
@@ -439,9 +502,45 @@ impl OverseerFileHandler {
                 // Additional safety: in a template instance, only consider overrides that were explicitly named in the instance source
                 let mut listed_in_instance_overrides = true;
                 if suppress_template_children {
-                    if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
-                        let names: Vec<&str> = list.split(',').filter(|s| !s.is_empty()).collect();
-                        listed_in_instance_overrides = names.iter().any(|n| *n == child.name);
+                    if let Some(names) = &explicit_names {
+                        if !names.is_empty() {
+                            listed_in_instance_overrides = names.iter().any(|n| n == &child.name);
+                        }
+                    }
+                }
+
+                // Special-case: if child is a transparent wrapper and any of its descendants were explicitly overridden,
+                // emit those descendant overrides concisely here and skip the wrapper itself.
+                if suppress_template_children && is_template_child && child.is_hierarchy_transparent {
+                    fn collect_descendant_value_overrides<'a>(node: &'a OverseerNode, name_filter: &Option<Vec<String>>, out: &mut Vec<(&'a str, &'a OverseerValue)>) {
+                        let has_explicit = matches!(node.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true)));
+                        let name_matches = match name_filter {
+                            Some(v) if !v.is_empty() => v.iter().any(|n| n == &node.name),
+                            _ => true,
+                        };
+                        if has_explicit && name_matches {
+                            let has_value = node.parameters.contains_key("value");
+                            let non_internal_non_value_params = node.parameters.iter().filter(|(k, _)| {
+                                let ks = k.as_str();
+                                !ks.starts_with('_') && ks != "value"
+                            }).count();
+                            let only_value_override = has_value && non_internal_non_value_params == 0 && node.children.is_empty();
+                            let has_template_value_marker = node.parameters.contains_key("_template_value");
+                            if only_value_override && !has_template_value_marker {
+                                out.push((node.name.as_str(), node.parameters.get("value").unwrap()));
+                            }
+                        }
+                        for ch in &node.children {
+                            collect_descendant_value_overrides(ch, name_filter, out);
+                        }
+                    }
+                    let mut desc_overrides: Vec<(&str, &OverseerValue)> = Vec::new();
+                    collect_descendant_value_overrides(child, &explicit_names, &mut desc_overrides);
+                    if !desc_overrides.is_empty() {
+                        for (n, v) in desc_overrides {
+                            output.push_str(&format!("{}    - {} = {}\n", indent, n, Self::serialize_value(v)));
+                        }
+                        continue;
                     }
                 }
                 if suppress_template_children && is_template_child && (!has_explicit_override || !listed_in_instance_overrides) {
@@ -611,5 +710,61 @@ list L (entry=<T>) {
         let pos_comment = merged.find("// List as an example of correct behavior:").unwrap();
         let pos_list = merged.find("list L (entry=<T>)").unwrap_or_else(|| merged.find("list L(entry=<T>)").unwrap());
         assert!(pos_comment < pos_list, "Comment should precede the list anchor line");
+    }
+
+    #[test]
+    fn round_trip_save_preserves_comments_and_whitespace() {
+        // Original text with header, inline, leading/trailing comment blocks and blank lines
+        let original = r#"// Header line 1
+// Header line 2
+
+div T {
+    // comment before field A
+    int A = 1 // inline A
+
+    // group comment
+    int B = 2
+}
+
+// Standalone comment before instance
+<T> I {
+    - A = 3 // override inline
+}
+
+// Trailing file comment
+"#;
+
+        // Parse, resolve, and regenerate canonical content
+        let (_rem, mut nodes) = crate::parser::parse_document(original).expect("parse");
+        crate::resolver::resolve_document(&mut nodes);
+        let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+
+        // Merge comments from original
+        let merged = OverseerFileHandler::merge_comments(original, &regenerated);
+
+        // Write to a temporary file and read back
+        let mut tmp = std::env::temp_dir();
+        tmp.push(format!("overseer_test_{}_{}.os", std::process::id(), rand_suffix()));
+        let tmp_path = tmp.to_string_lossy().to_string();
+        std::fs::write(&tmp_path, &merged).expect("write");
+        let roundtrip = std::fs::read_to_string(&tmp_path).expect("read");
+
+        // Assertions: header, inline, standalone, trailing comments survive
+        assert!(roundtrip.contains("// Header line 1"));
+        assert!(roundtrip.contains("// Header line 2"));
+        assert!(roundtrip.contains("// comment before field A"));
+        assert!(roundtrip.contains("// inline A"));
+        assert!(roundtrip.contains("// Standalone comment before instance"));
+        assert!(roundtrip.trim_end().ends_with("// Trailing file comment"));
+    // Ensure the spacer before the standalone comment remains
+    assert!(roundtrip.contains("}\n\n// Standalone"), "Expected a blank line before the standalone comment to be preserved. Got:\n{}", roundtrip);
+        // Clean up
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    fn rand_suffix() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        format!("{}", nanos)
     }
 }

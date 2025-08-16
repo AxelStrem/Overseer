@@ -13,8 +13,12 @@ class OverseerApp {
         this.currentDocument = null
         this.isDocumentModified = false
         this.fileManager = new FileManager()
-        this.renderer = new OverseerRenderer()
+    this.renderer = new OverseerRenderer()
+    // Track active inline editors to pause background updates during editing
+    this._activeEditors = 0
     this._scheduler = { id: null, periodMs: 1000 }
+    // Keep the raw original text for comment/whitespace merge on save
+    this._originalText = null
         
         // Make app instance available globally for renderer
         window.app = this
@@ -119,6 +123,7 @@ class OverseerApp {
 
             this.currentFile = filePath
             this.currentDocument = overseerDocument
+            this._originalText = content
             this.isDocumentModified = false
 
             // Update UI - remove direct file path update since updateTitle handles it now
@@ -214,12 +219,27 @@ tab Main {
             const content = await invoke('serialize_overseer_nodes', { 
                 nodes: this.normalizeDocumentForSerialization(this.currentDocument) 
             })
-            
-            // Save the serialized content
-            await invoke('save_overseer_file', { 
-                path: this.currentFile, 
-                content 
-            })
+
+            // If we have original raw text, use the merge-sav e API to preserve comments/whitespace
+            if (this._originalText != null) {
+                await invoke('save_overseer_file_with_original', {
+                    path: this.currentFile,
+                    regenerated: content,
+                    original: this._originalText
+                })
+                // After saving, refresh our original baseline from disk to keep merges stable
+                try {
+                    this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                } catch (_) { /* non-fatal */ }
+            } else {
+                // Fallback if no baseline is available (e.g., new unsaved file in memory)
+                await invoke('save_overseer_file', { 
+                    path: this.currentFile, 
+                    content 
+                })
+                // Try to set baseline now
+                try { this._originalText = await invoke('load_overseer_file', { path: this.currentFile }) } catch(_) {}
+            }
             
             // Mark document as saved
             this.isDocumentModified = false
@@ -234,6 +254,8 @@ tab Main {
     async reevaluateDocument() {
         try {
             if (!this.currentDocument) return
+            // If user is editing, defer reevaluation to avoid breaking edit state
+            if (this._activeEditors > 0) return
             // Serialize current nodes to DSL
             const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
             // Parse + resolve + evaluate on backend
@@ -271,7 +293,9 @@ tab Main {
             }
         }
 
-        await this.loadFile(this.currentFile)
+    await this.loadFile(this.currentFile)
+    // Update baseline from disk
+    try { this._originalText = await invoke('load_overseer_file', { path: this.currentFile }) } catch(_) {}
     }
 
     updateTitle() {
@@ -416,9 +440,11 @@ tab Main {
             if (delay < 0) delay = 0
             // Add small debounce to let system settle
             delay += 500
-        this._scheduler.id = setTimeout(async () => {
+    this._scheduler.id = setTimeout(async () => {
                 try {
-                    if (!this.currentDocument) return
+            if (!this.currentDocument) return
+            // If editing, skip applying updates now and reschedule soon
+            if (this._activeEditors > 0) { scheduleNext(); return }
                     const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
                     if (updated && !docsEqual(updated, this.currentDocument)) {
                         this.currentDocument = updated

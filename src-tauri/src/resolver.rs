@@ -1213,6 +1213,67 @@ mod tests {
     }
 
     #[test]
+    fn test_overrides_persist_through_unnamed_div_in_template() {
+        // Template Bug has an unnamed div grouping fields. Instance overrides should persist.
+        let input = r#"
+        div Bug {
+            string description = ""
+            div {
+                int storypoints = 1
+                int priority = 0
+                checkbox fixed = false
+            }
+        }
+
+        list BugList (entry=<Bug>) {
+            - {
+                - description = "override text"
+                - storypoints = 5
+                - priority = 2
+                - fixed = true
+            }
+        }
+        "#;
+
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+
+        // Find BugList list entry
+        let bug_list = nodes.iter().find(|n| n.name == "BugList").expect("list present");
+        assert_eq!(bug_list.node_type, "list");
+        assert_eq!(bug_list.children.len(), 1);
+        let item = &bug_list.children[0];
+        // After resolution, list entry should be of type Bug with fields accessible (transparent unnamed div)
+        assert_eq!(item.node_type, "Bug");
+        // Fetch children in a transparent-aware way and verify overrides
+    let children = item.get_accessible_children();
+    let desc = children.iter().copied().find(|c| c.name == "description").expect("description field");
+        assert_eq!(desc.parameters.get("value"), Some(&OverseerValue::String("override text".to_string())));
+    let sp = children.iter().copied().find(|c| c.name == "storypoints").expect("storypoints field");
+        assert_eq!(sp.parameters.get("value"), Some(&OverseerValue::Integer(5)));
+    let pr = children.iter().copied().find(|c| c.name == "priority").expect("priority field");
+        assert_eq!(pr.parameters.get("value"), Some(&OverseerValue::Integer(2)));
+    let fx = children.iter().copied().find(|c| c.name == "fixed").expect("fixed field");
+        assert_eq!(fx.parameters.get("value"), Some(&OverseerValue::Boolean(true)));
+
+        // Serialize and reparse to simulate a round-trip; overrides should persist
+        let ser = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes).unwrap();
+        let mut nodes2 = parse_document(&ser).unwrap().1;
+        resolve_document(&mut nodes2);
+        let bug_list2 = nodes2.iter().find(|n| n.name == "BugList").unwrap();
+        let item2 = &bug_list2.children[0];
+    let ch2 = item2.get_accessible_children();
+    let f_desc = ch2.iter().copied().find(|c| c.name == "description").expect("desc2");
+    assert_eq!(f_desc.parameters.get("value"), Some(&OverseerValue::String("override text".to_string())));
+    let f_sp = ch2.iter().copied().find(|c| c.name == "storypoints").expect("sp2");
+    assert_eq!(f_sp.parameters.get("value"), Some(&OverseerValue::Integer(5)));
+    let f_pr = ch2.iter().copied().find(|c| c.name == "priority").expect("pr2");
+    assert_eq!(f_pr.parameters.get("value"), Some(&OverseerValue::Integer(2)));
+    let f_fx = ch2.iter().copied().find(|c| c.name == "fixed").expect("fx2");
+    assert_eq!(f_fx.parameters.get("value"), Some(&OverseerValue::Boolean(true)));
+    }
+
+    #[test]
     fn test_effective_layout_on_template_instance_container() {
         // Template declares a div; instance should be treated as container using _original_type
         let input = r#"

@@ -9,6 +9,8 @@ export class OverseerRenderer {
     constructor() {
         this.contentDisplay = document.getElementById('content-display')
         this.tabContainer = document.getElementById('tab-container')
+    // Cache for charts keyed by stable node path string
+    this._chartCache = new Map()
     }
 
     // Non-visual node helpers
@@ -27,7 +29,7 @@ export class OverseerRenderer {
         const n = String(name).toLowerCase()
         // Action nodes are not visual; keep this list in sync with backend
         const actionNames = [
-            'set','inc','dec','toggle','clear','ensure_in_list','ensure','remove','append','move','sort','set_now','set_now_ts','activate','deactivate'
+            'set','inc','dec','toggle','clear','clear_list','ensure_in_list','ensure','remove','append','move','sort','set_now','set_now_ts','activate','deactivate'
         ]
         return actionNames.includes(n)
     }
@@ -108,6 +110,9 @@ export class OverseerRenderer {
             console.warn('Invalid node:', node)
             return
         }
+
+        // Record a stable render path on the node for downstream components (charts, events)
+        try { node.__overseer_path = Array.isArray(path) ? path.slice() : [] } catch (_) {}
 
         // Global hidden parameter: skip rendering entire subtree if hidden=true
         try {
@@ -1093,18 +1098,96 @@ export class OverseerRenderer {
         computeSize()
 
     const ctx = canvas.getContext('2d')
-        // Try to read computed bounds
+        // Try to read explicit and computed bounds; if missing or suspicious, derive from series
     let xmin = parseFloat(this.getParameterValue(node, 'domain-x-min'))
     let xmax = parseFloat(this.getParameterValue(node, 'domain-x-max'))
     let ymin = parseFloat(this.getParameterValue(node, 'domain-y-min'))
     let ymax = parseFloat(this.getParameterValue(node, 'domain-y-max'))
-    // fallback to computed bounds
     if (isNaN(xmin)) xmin = parseFloat(this.getParameterValue(node, '_computed_x_min'))
     if (isNaN(xmax)) xmax = parseFloat(this.getParameterValue(node, '_computed_x_max'))
     if (isNaN(ymin)) ymin = parseFloat(this.getParameterValue(node, '_computed_y_min'))
     if (isNaN(ymax)) ymax = parseFloat(this.getParameterValue(node, '_computed_y_max'))
 
+    // Gather series data from plots
+    const plotsAll = (node.children || []).filter(c => (c.node_type||'').toLowerCase() === 'plot')
+    let seriesUnionBounds = null
+    for (const plot of plotsAll) {
+        const seriesJson = this.getParameterValue(plot, '_computed_series')
+        if (!seriesJson) continue
+        let series
+        try { series = JSON.parse(seriesJson) } catch (_) { continue }
+        if (!Array.isArray(series) || series.length === 0) continue
+        for (const pt of series) {
+            const x = Number(pt[0]); const y = Number(pt[1])
+            if (!isFinite(x) || !isFinite(y)) continue
+            if (!seriesUnionBounds) seriesUnionBounds = { xmin: x, xmax: x, ymin: y, ymax: y }
+            else {
+                if (x < seriesUnionBounds.xmin) seriesUnionBounds.xmin = x
+                if (x > seriesUnionBounds.xmax) seriesUnionBounds.xmax = x
+                if (y < seriesUnionBounds.ymin) seriesUnionBounds.ymin = y
+                if (y > seriesUnionBounds.ymax) seriesUnionBounds.ymax = y
+            }
+        }
+    }
+
+    // If bounds are missing or look degenerate, use union-of-series
+    const explicitXProvided = !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-max')))
+    const explicitYProvided = !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-max')))
+    const computedInvalid = !(isFinite(xmin) && isFinite(xmax) && isFinite(ymin) && isFinite(ymax)) || xmax <= xmin || ymax <= ymin
+    if ((computedInvalid || (!explicitXProvided && !explicitYProvided)) && seriesUnionBounds) {
+        xmin = seriesUnionBounds.xmin
+        xmax = seriesUnionBounds.xmax
+        ymin = seriesUnionBounds.ymin
+        ymax = seriesUnionBounds.ymax
+    }
+
+    // Cache last-good bounds across reevaluations using stable path key
+    let cacheKey = null
+    try { cacheKey = JSON.stringify(node.__overseer_path || [node.name || node.node_type || 'chart']) } catch(_) { cacheKey = null }
+    const newGood = isFinite(xmin) && isFinite(xmax) && isFinite(ymin) && isFinite(ymax) && xmax > xmin && ymax > ymin
+    if (cacheKey) {
+        const prev = this._chartCache.get(cacheKey)
+        if (!newGood && prev && prev.bounds) {
+            ({ xmin, xmax, ymin, ymax } = prev.bounds)
+        }
+        // If the new computed (union) bounds are narrower than previous and user didn't set explicit domain, expand to previous
+        const noExplicit = !(explicitXProvided || explicitYProvided)
+        if (prev && prev.bounds && newGood && noExplicit) {
+            const prevB = prev.bounds
+            const spanX = xmax - xmin
+            const prevSpanX = prevB.xmax - prevB.xmin
+            if (prevSpanX > spanX) {
+                xmin = Math.min(xmin, prevB.xmin)
+                xmax = Math.max(xmax, prevB.xmax)
+            }
+            const spanY = ymax - ymin
+            const prevSpanY = prevB.ymax - prevB.ymin
+            if (prevSpanY > spanY) {
+                ymin = Math.min(ymin, prevB.ymin)
+                ymax = Math.max(ymax, prevB.ymax)
+            }
+        }
+    }
+
         const hasBounds = [xmin, xmax, ymin, ymax].every(v => !isNaN(v)) && xmax > xmin && ymax > ymin
+        // If bounds come from computed values and axis looks like time (epoch ms magnitude), pad a bit and format ticks as dates
+        const xLooksLikeTime = hasBounds && Math.abs(xmax) > 1e10 && Math.abs(xmin) > 1e10
+        if (hasBounds) {
+            // If user didn't set explicit domain params, gently pad computed bounds to include end points fully
+            const hasExplicitX = !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-max')))
+            const hasExplicitY = !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-max')))
+            if (!hasExplicitX) {
+                const dx = (xmax - xmin) || 1
+                const pad = dx * 0.05
+                xmin -= pad; xmax += pad
+            }
+            if (!hasExplicitY) {
+                const dy = (ymax - ymin) || 1
+                const pad = dy * 0.05
+                ymin = Math.min(ymin, ymin - pad)
+                ymax = Math.max(ymax, ymax + pad)
+            }
+        }
         const pad = 28 // inner padding for axes
         
         // Background
@@ -1122,7 +1205,7 @@ export class OverseerRenderer {
             const sy = (y) => height - pad - ((y - ymin) / (ymax - ymin)) * plotH
 
             // Build legend from plot children
-        const plots = (node.children || []).filter(c => (c.node_type||'').toLowerCase() === 'plot')
+    const plots = plotsAll
             legend.innerHTML = ''
         const visibility = new Map()
         plots.forEach((plot) => {
@@ -1186,16 +1269,29 @@ export class OverseerRenderer {
                 ctx.fillStyle = '#ccc'
                 ctx.font = '11px system-ui, Arial'
                 ctx.textAlign = 'center'
+                const fmtDate = (ms) => {
+                    const d = new Date(ms)
+                    // Use short locale date; include time only if span < 2 days
+                    const span = Math.abs(xmax - xmin)
+                    if (span <= 2 * 24 * 3600 * 1000) {
+                        return d.toLocaleString()
+                    }
+                    return d.toLocaleDateString()
+                }
                 for (let i = 0; i <= ticks; i++) {
                     const xv = xmin + (i * (xmax - xmin)) / ticks
                     const x = pad + (i * plotW) / ticks
-                    ctx.fillText(String(Number(xv.toFixed(2))), x, height - pad + 14)
+                    const label = xLooksLikeTime ? fmtDate(xv) : String(Number(xv.toFixed(2)))
+                    ctx.fillText(label, x, height - pad + 14)
                 }
                 ctx.textAlign = 'right'
+                const ySpan = Math.abs(ymax - ymin)
+                const yPrec = ySpan > 0 && (ySpan < 1e-2 || ySpan > 1e4) ? 0 : 2
                 for (let i = 0; i <= ticks; i++) {
                     const yv = ymin + (i * (ymax - ymin)) / ticks
                     const y = height - pad - (i * plotH) / ticks
-                    ctx.fillText(String(Number(yv.toFixed(2))), pad - 6, y + 3)
+                    const yl = yPrec === 0 ? String(Math.round(yv)) : String(Number(yv.toFixed(yPrec)))
+                    ctx.fillText(yl, pad - 6, y + 3)
                 }
 
                 // Series
@@ -1217,6 +1313,11 @@ export class OverseerRenderer {
                         else ctx.lineTo(px, py)
                     }
                     ctx.stroke()
+                }
+
+                // Update cache with last-good bounds after successful draw
+                if (cacheKey) {
+                    this._chartCache.set(cacheKey, { bounds: { xmin, xmax, ymin, ymax }, width, height, dpr: currentDpr })
                 }
             }
 
@@ -1986,13 +2087,14 @@ export class OverseerRenderer {
             input.rows = 3
         }
         
-        // Replace the element with the input
+    // Replace the element with the input
         element.style.display = 'none'
         element.parentNode.insertBefore(input, element.nextSibling)
         input.focus()
         input.select()
+    try { if (window.app) window.app._activeEditors = (window.app._activeEditors || 0) + 1 } catch(_) {}
         
-        const finishEditing = async () => {
+    const finishEditing = async () => {
             const newValue = input.value
             // Keep showing the previous computed value if a formula was entered/edited
             const prevDisplay = element.textContent
@@ -2019,11 +2121,12 @@ export class OverseerRenderer {
                 window.app.markDocumentModified()
             }
             // Trigger reevaluation so formulas and computed values refresh
-            if (window.app && window.app.reevaluateDocument) {
+            if (window.app && window.app.reevaluateDocument && (window.app._activeEditors || 0) === 0) {
                 window.app.reevaluateDocument()
             }
             // Emit change event for actions
             try { await this.emitEvent(node, element, 'change') } catch(_) {}
+            try { if (window.app && window.app._activeEditors > 0) window.app._activeEditors-- } catch(_) {}
         }
         
         input.addEventListener('blur', finishEditing)
@@ -2034,6 +2137,7 @@ export class OverseerRenderer {
             if (e.key === 'Escape') {
                 element.style.display = 'inline'
                 input.remove()
+                try { if (window.app && window.app._activeEditors > 0) window.app._activeEditors-- } catch(_) {}
             }
         })
     }
@@ -2086,8 +2190,9 @@ export class OverseerRenderer {
         
         // Insert editor container
         element.style.display = 'none'
-        element.parentNode.insertBefore(editorContainer, element.nextSibling)
+    element.parentNode.insertBefore(editorContainer, element.nextSibling)
         textarea.focus()
+    try { if (window.app) window.app._activeEditors = (window.app._activeEditors || 0) + 1 } catch(_) {}
         
         let isPreviewMode = false
         
@@ -2125,7 +2230,7 @@ export class OverseerRenderer {
                     window.app.markDocumentModified()
                 }
                 // Trigger reevaluation so formulas/computed params refresh
-                if (window.app && window.app.reevaluateDocument) {
+                if (window.app && window.app.reevaluateDocument && (window.app._activeEditors || 0) === 0) {
                     window.app.reevaluateDocument()
                 }
         // Emit change event for actions
@@ -2135,6 +2240,7 @@ export class OverseerRenderer {
             // Clean up
             element.style.display = 'block'
             editorContainer.remove()
+            try { if (window.app && window.app._activeEditors > 0) window.app._activeEditors-- } catch(_) {}
         }
         
         // Event handlers

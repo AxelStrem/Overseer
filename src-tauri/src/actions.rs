@@ -443,6 +443,27 @@ impl ActionExecutor {
                 let target = Self::require_string(&action.parameters, "path")?;
                 Self::clear_value(nodes, owner_indices, owner_path, &target)
             }
+            "clear_list" => {
+                // clear_list(path=...) empties the children of a list field
+                let target = Self::require_string(&action.parameters, "path")?;
+                let (segments, _explicit_param, anchored) = Self::split_path_and_param(&target);
+                let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
+                    Some(ix) => ix,
+                    None => {
+                        #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] clear_list: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                        return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
+                    }
+                };
+                let node = Self::get_node_mut_by_indices(nodes, &indices)
+                    .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+                if node.node_type != "list" {
+                    return Err(OverseerError::ValidationError("clear_list target must be a list".to_string()));
+                }
+                node.children.clear();
+                // Mark explicit so serializer persists empty explicit list on template instance
+                Self::mark_field_explicit_override(nodes, &indices);
+                Ok(())
+            }
             "set_now" => {
                 let target = Self::require_string(&action.parameters, "path")?;
                 let clock = match action.parameters.get("clock") {
@@ -1379,7 +1400,7 @@ impl ActionExecutor {
         key_value: &OverseerValue,
     ) -> Result<(), OverseerError> {
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
-        let indices = Self::resolve_target_indices(&nodes, owner_path, anchored, &segments)
+    let indices = Self::resolve_target_indices(&nodes, owner_path, anchored, &segments)
             .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
         let list_node = Self::get_node_mut_by_indices(nodes, &indices)
             .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
@@ -1394,6 +1415,8 @@ impl ActionExecutor {
 
         if let Some(pos) = list_node.children.iter().position(|it| Self::get_field_value(it, &effective_key_field).map_or(false, |v| Self::value_equals(v, key_value))) {
             list_node.children.remove(pos);
+            // Mark this list field as explicitly overridden so mutations persist on template instances
+            Self::mark_field_explicit_override(nodes, &indices);
         }
         Ok(())
     }
@@ -1441,6 +1464,8 @@ impl ActionExecutor {
                     // Apply evaluated overrides from action block
                     Self::apply_overrides_evaluated(&mut new_item, overrides, owner_path, &snapshot)?;
                     list_node.children.push(new_item);
+                    // Mark this list field as explicitly overridden so mutations persist on template instances
+                    Self::mark_field_explicit_override(nodes, &indices);
                 }
                 OverseerValue::String(type_name) => {
                     // Simple type list requires a value
@@ -1455,6 +1480,8 @@ impl ActionExecutor {
                     };
                     item.parameters.insert("value".to_string(), val);
                     list_node.children.push(item);
+                    // Mark this list field as explicitly overridden so mutations persist on template instances
+                    Self::mark_field_explicit_override(nodes, &indices);
                 }
                 _ => return Err(OverseerError::ValidationError("append: unsupported entry type".to_string())),
             }
@@ -1503,6 +1530,8 @@ impl ActionExecutor {
                     new_item.name = format!("{}__{}", template_def.name, ordinal);
                     Self::apply_overrides_evaluated(&mut new_item, overrides, owner_path, &snapshot)?;
                     list_node.children.insert(0, new_item);
+                    // Mark this list field as explicitly overridden so mutations persist on template instances
+                    Self::mark_field_explicit_override(nodes, &indices);
                 }
                 OverseerValue::String(type_name) => {
                     let val = value_opt.ok_or_else(|| OverseerError::ValidationError("prepend.value required for simple list".to_string()))?;
@@ -1516,6 +1545,8 @@ impl ActionExecutor {
                     };
                     item.parameters.insert("value".to_string(), val);
                     list_node.children.insert(0, item);
+                    // Mark this list field as explicitly overridden so mutations persist on template instances
+                    Self::mark_field_explicit_override(nodes, &indices);
                 }
                 _ => return Err(OverseerError::ValidationError("prepend: unsupported entry type".to_string())),
             }
@@ -1523,6 +1554,34 @@ impl ActionExecutor {
             return Err(OverseerError::ValidationError("prepend: list has no entry parameter".to_string()));
         }
         Ok(())
+    }
+
+    /// Mark a field (at indices) as explicitly overridden on its parent so serializer/resolver persist mutations.
+    fn mark_field_explicit_override(nodes: &mut Vec<OverseerNode>, indices: &[usize]) {
+        if indices.is_empty() { return; }
+        // Mark child itself
+        if let Some(child) = Self::get_node_mut_by_indices(nodes, indices) {
+            child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+            child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
+        }
+        // Mark on parent list of explicit override names
+        if indices.len() >= 2 {
+            let parent_path = &indices[..indices.len()-1];
+            if let Some(parent) = Self::get_node_mut_by_indices(nodes, parent_path) {
+                // Child name
+                let child_name = if let Some(ch) = parent.children.get(indices[indices.len()-1]) { ch.name.clone() } else { String::new() };
+                let entry = parent
+                    .parameters
+                    .entry("_explicit_overrides".to_string())
+                    .or_insert(OverseerValue::String(String::new()));
+                if let OverseerValue::String(s) = entry {
+                    if !s.split(',').any(|n| n == child_name) {
+                        if !s.is_empty() { s.push(','); }
+                        s.push_str(&child_name);
+                    }
+                }
+            }
+        }
     }
 
     // Evaluate formulas in value/params against owner_path context and apply into target
@@ -1544,6 +1603,28 @@ impl ActionExecutor {
                 let only_value_override = ov.parameters.len() == 1 && ov.parameters.contains_key("value");
                 let mut applied_any = false;
                 for (k, v) in ov.parameters.iter() {
+                    // Special case: list-to-list copy without explicit loops, e.g. "- intake = $(../intake)"
+                    // If the target field is a list and the override provides a formula path, resolve it to a source list
+                    // and deep-copy its children into the target list.
+                    if child.node_type == "list" && k == "value" {
+                        if let OverseerValue::Formula(expr) = v {
+                            let path_str = expr.trim();
+                            let (segments, _explicit_param, anchored) = Self::split_path_and_param(path_str);
+                            if let Some(indices) = Self::resolve_target_indices(snapshot, owner_path, anchored, &segments) {
+                                if let Some(src) = Self::get_node_ref_by_indices(snapshot, &indices) {
+                                    if src.node_type == "list" {
+                                        // Deep copy list items
+                                        child.children = src.children.clone();
+                                        // Ensure any lingering 'value' param on list is cleared; list value is its children
+                                        child.parameters.remove("value");
+                                        applied_any = true;
+                                        // Skip normal value assignment for this key
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let eval = Self::evaluate_in_context(v, owner_path, snapshot)?;
                     if k == "value" && only_value_override {
                         if let Some(template_val) = child.parameters.get("value") {
@@ -1589,6 +1670,24 @@ impl ActionExecutor {
                 };
                 // Copy/evaluate params
                 for (k, v) in ov.parameters.iter() {
+                    // Special case: creating a list field via value=$(../list) should deep-copy children
+                    if k == "value" && ov.node_type == "list" {
+                        if let OverseerValue::Formula(expr) = v {
+                            let path_str = expr.trim();
+                            let (segments, _explicit_param, anchored) = Self::split_path_and_param(path_str);
+                            if let Some(indices) = Self::resolve_target_indices(snapshot, owner_path, anchored, &segments) {
+                                if let Some(src) = Self::get_node_ref_by_indices(snapshot, &indices) {
+                                    if src.node_type == "list" {
+                                        new_child.children = src.children.clone();
+                                        // Explicit list override
+                                        new_child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                                        new_child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
+                                        continue; // don't set a scalar 'value' on the list
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let eval = Self::evaluate_in_context(v, owner_path, snapshot)?;
                     new_child.parameters.insert(k.clone(), eval);
                 }
