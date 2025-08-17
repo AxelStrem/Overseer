@@ -14,21 +14,25 @@ tab main (title="Overseer DSL Development") {
     }
     text StepsHeader = "Step list:"
     text PriorityUpdate = "UPDATED: Added comprehensive UI styling system (2.2-2.4) as next priority after completing layout system and testing infrastructure"
-    div Task (hidden=true, background-color=$(/tested?#112211:(/complete?#222211:#111111))) {
-        string task_description = ""
-        div (border-style=none) {
-            checkbox complete (label="Complete") = false
-            checkbox tested (label="Tested") = false
+    
+    div (hidden = true) {
+
+        div Task (background-color=$(/tested?#112211:(/complete?#222211:#111111))) {
+            string task_description = ""
+            div (border-style=none) {
+                checkbox complete (label="Complete") = false
+                checkbox tested (label="Tested") = false
+            }
+            string notes = ""
         }
-        string notes = ""
-    }
-    div Step (hidden=true) {
-        string name = ""
-        string description = ""
-        int priority = 0
-        list StepTasks (entry=<../Task>)
-        int complete_tasks = $(StepTasks.filter(|x| x/complete).count())
-        int total_tasks = $(StepTasks.count())
+        div Step {
+            string name = ""
+            string description = ""
+            int priority (label = "Priority") = 0
+            list StepTasks (entry=<../Task>)
+            int complete_tasks (label = "Completed Tasks") = $(StepTasks.filter(|x| x/complete).count())
+            int total_tasks (label = "Total Tasks") = $(StepTasks.count())
+        }
     }
     list Steps (entry=<Step>) {
         - {
@@ -334,8 +338,8 @@ tab main (title="Overseer DSL Development") {
                 }
                 - {
                     string task_description = "Implement list filtering and sorting"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Basic search/filter UI for large lists"
                 }
             }
@@ -347,26 +351,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<Task>) {
                 - {
                     string task_description = "Implement basic arithmetic operations"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Support +, -, *, /, parentheses, numeric literals"
                 }
                 - {
                     string task_description = "Add path-based field references"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Support ../field, ../../other/path syntax"
                 }
                 - {
                     string task_description = "Implement comparison operators"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Support ==, !=, <, >, <=, >= for conditionals"
                 }
                 - {
                     string task_description = "Add basic functions (today, count, sum)"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Built-in functions for common operations"
                 }
             }
@@ -434,26 +438,26 @@ tab main (title="Overseer DSL Development") {
             list StepTasks (entry=<Task>) {
                 - {
                     string task_description = "Parse action syntax in DSL"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Support trigger conditions and action definitions"
                 }
                 - {
                     string task_description = "Implement basic actions (Set, Add, Create)"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Core action types for field manipulation"
                 }
                 - {
                     string task_description = "Build action execution engine"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Safe execution of actions with error handling"
                 }
                 - {
                     string task_description = "Add button click handlers"
-                    checkbox complete (label="Complete") = false
-                    checkbox tested (label="Tested") = false
+                    checkbox complete (label="Complete") = true
+                    checkbox tested (label="Tested") = true
                     string notes = "Connect UI buttons to action execution"
                 }
             }
