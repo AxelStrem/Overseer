@@ -149,7 +149,8 @@ list Priorities (entry=int) {
 #### Interactive Types:
 - `button`: Clickable button with actions
 - `checkbox`: Boolean toggle with actions
-- `chart`: Data visualization element
+- `timer`: Scheduled actions with time triggers
+- `chart`: Data visualization element (planned)
 
 #### Logic Types:
 - `trigger`: Conditional logic execution
@@ -258,39 +259,51 @@ tab Tasks {
 }
 ```
 
-### 2. Actions and Triggers
+### 4. Actions and Triggers
 
-#### Actions
-Actions perform operations when triggered:
+Overseer supports interactive elements and automated actions:
 
+#### Interactive Elements:
 ```overseer
-action ActionType (target=path, param=value) = expression
+// Button with actions
+button save_button "Save Data" {
+    action Set (target=../status) = "saved"
+    action Add (target=../save_count) = 1
+}
 
-// Action types:
-action Set (target=../Priority) = $(../Priority + 1)
-action Add (target=../Counter) = 1
-action Create (target=../NewList, template=../ItemTemplate)
-action Delete (target=../Items/5)
-```
+// Checkbox with actions
+checkbox completed "Mark Complete" {
+    action Set (target=../completed) = true
+    action Add (target=../../stats/completed_count) = 1
+}
 
-#### Triggers
-Triggers execute actions based on conditions:
-
-```overseer
-trigger (condition=$(../DaysUntilDue < 2)) {
-    action Set (target=../Priority) = $(../Priority + 10)
+// Timer for scheduled actions
+timer daily_backup (at="09:00", active=true) {
+    action Set (target=../last_backup) = $(today())
 }
 ```
 
-#### Interactive Elements with Actions
+#### Action Types:
 ```overseer
-checkbox Completed {
-    action Set (target=../Completed) = true
-    action Add (target=../../Statistics/CompletedTasks) = 1
-}
+// Set action - assigns a value
+action Set (target=../field_name) = new_value
 
-button DeleteTask "Delete" {
-    action Delete (target=../)
+// Add action - adds to numeric values
+action Add (target=../counter) = 5
+
+// Create action - creates new items in lists
+action Create (target=../task_list, template=<../TaskTemplate>)
+
+// Delete action - removes items
+action Delete (target=../items/5)
+```
+
+#### Triggers:
+```overseer
+// Conditional trigger
+trigger (condition=$(../priority > 20)) {
+    action Set (target=../urgent) = true
+    action Set (target=../background-color) = "#FFE6E6"
 }
 ```
 
@@ -298,17 +311,87 @@ button DeleteTask "Delete" {
 
 #### Layout Parameters:
 ```overseer
-div Content (horizontal-size=30%, border=Right, background=#F0F0F0) {
-    // content
+// Layout direction control
+div Container (layout=horizontal, spacing=10) {
+    // Children arranged horizontally with 10px gaps
 }
 
-list TaskList (layout=grid, sort=Priority, direction=horizontal) {
-    // list items
+div Container (layout=vertical, spacing=5) {
+    // Children arranged vertically with 5px gaps
 }
 
-tab Projects (direction=vertical, position=left) {
-    // tab content
+div Container (layout=inherit) {
+    // Inherits parent's layout direction
 }
+
+div Container (layout=opposite) {
+    // Uses opposite of parent's layout direction
+}
+
+// Margin controls
+div Element (margin=10) {
+    // 10px margin on all sides
+}
+
+div Element (margin-top=5, margin-bottom=15, margin-left=0, margin-right=20) {
+    // Individual margin control per side
+}
+```
+
+#### Visual Styling Parameters:
+```overseer
+// Background colors
+div Container (background-color=#FF0000) {          // Hex colors
+div Container (background-color=red) {              // Named colors
+div Container (background-color=rgb(0.2, 0.8, 0.5)) { // RGB triplets
+
+// Font styling
+text Content (font-size=16px, font-color=blue) {    // Pixels and named colors
+text Content (font-size=120%, font-color=#333333) { // Percentages and hex
+text Content (font-size=1.2em, font-color=rgb(0.1, 0.1, 0.1)) { // Em units and RGB
+
+// Fixed sizing with multiple units
+div FixedBox (width=200px, height=150px) {          // Pixel values
+div ResponsiveBox (width=50%, height=auto) {        // Percentage and auto
+div FitContent (width=fit-content, height=fit-content) { // Content-based sizing
+
+// Overflow control
+div ScrollableBox (width=200px, height=100px, overflow=auto) {
+div ClampedBox (overflow-x=hidden, overflow-y=scroll) {
+
+// Border styling
+div BorderedBox (border-style=solid 2px black) {    // Solid borders
+div BorderedBox (border-style=dashed 1px red) {     // Dashed borders
+div BorderedBox (border-style=dotted 3px blue) {    // Dotted borders
+div BorderedBox (border-style=none) {               // No border
+
+// Selective border controls
+div TableCell (
+    border-top=solid 1px gray,
+    border-bottom=solid 1px gray,
+    border-left=none,
+    border-right=solid 2px black
+) {
+
+// Corner control
+div RoundedBox (border-radius=8px) {                // Rounded corners
+div SharpBox (border-radius=0px) {                  // Sharp corners
+```
+
+#### Markdown Text Formatting:
+```overseer
+text MarkdownContent (markdown=true) = "# Heading
+**Bold text** and *italic text*
+
+- Bullet points
+- `inline code`
+- [Links](https://example.com)
+
+```code block```
+
+> Blockquotes"
+
+text PlainContent = "This is plain text without markdown formatting"
 ```
 
 #### Chart Configuration:
@@ -491,8 +574,15 @@ div Tasks {
 
 ## Reserved Keywords
 
-- Parameters: `hidden`, `background`, `border`, `layout`, `sort`, `direction`, `entry`, `target`, `condition`, `type`, `data`, `labels`
+- **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
+- **Styling**: `background-color`, `font-size`, `font-color`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
+- **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
+- **Content**: `markdown`, `hidden`, `entry`, `base`
+- **Actions**: `target`, `condition`, `template`, `active`, `at`
+- **Timers**: `active`, `at`, `interval`, `repeat`
+- **Charts**: `data`, `labels`, `title`, `color` (planned)
+- **Lists**: `sort`, `direction` (planned)
 
 ---
 
-This specification provides the foundation for implementing the Overseer language parser and runtime engine.
+This specification covers the currently implemented features of the Overseer language parser and runtime engine.

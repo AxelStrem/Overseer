@@ -28,10 +28,34 @@ Here are some examples of data this software is capable of managing:
 - Integration with tasks, for example, when a bug is closed, a daily task "Work on project X for N storypoins" can update automatically
 - Displaying statistics over project progress
 
-IMPORTANT: Overseer is NOT supposed to provide out-of-the-box functionality for all of the described use cases; instead it's a minimalistic framework that can be used to make all of it possible: it should provide:
-- a human-readable language (probably XML based or similar) to describe the relevant logic;
-- a way/a convention to store and track the data
-- software that displays the data according to the language, in a neat and understandable way
+IMPORTANT: Overseer provides a minimalistic but powerful framework that can be used to make all of these use cases possible. It provides:
+- A human-readable domain-specific language (DSL) for describing data structures, logic, and styling
+- A robust way to store and track data in plain-text files that are version-control friendly
+- Cross-platform desktop software that displays and manages the data with rich interactivity
+
+CURRENT IMPLEMENTATION STATUS:
+Overseer has evolved significantly from the initial vision and now includes:
+
+✅ **COMPLETED FEATURES:**
+- Complete DSL parser supporting hierarchical data structures
+- Advanced layout system with horizontal/vertical arrangements, spacing, and margins  
+- Comprehensive styling system including colors, fonts, borders, and sizing
+- Grid layouts with fixed sizing and precise positioning
+- Markdown text formatting with dual edit/view modes
+- Parameter inheritance throughout the node hierarchy
+- File operations with comment preservation and canonical serialization
+- Interactive UI with real-time updates
+
+🔄 **IN DEVELOPMENT:**
+- Enhanced interactive field editing with validation
+- List CRUD operations (add/remove/reorder items)
+- Formula evaluation system for dynamic calculations
+
+⏳ **PLANNED FEATURES:**
+- Actions and triggers for user interactions and automation
+- Chart visualization for data analysis
+- Cross-file references for large projects
+- Mobile support and synchronization
 
 SOME POSSIBLE IMPLEMENTATION IDEAS:
 - for storage and tracking, can git work? it provides self-hosting capacity and can easily be used for remote storage and sharing between devices. Of course this is a little outside of its intended use, and commiting every single change, such as one task being completed, can create very large repository history, so instead maybe just amend changed during one day, and then keep a commit per day? can this work with multiple devices, e.g. when I update a shopping list on my pc, can I see the update on my phone without having to refresh manually?
@@ -74,28 +98,68 @@ Suggestion 3. For display: A web-based approach with offline capabilities (PWA) 
 Comment: Yes, as long as we'll be able to perform some graphical operations such as build and display charts from the data, I think this should work.
 
 Some additional information
-Example A1.
-This is an example of what the code might look like using our finalized Overseer syntax:
+UPDATED EXAMPLE WITH CURRENT SYNTAX:
+This demonstrates the implemented Overseer syntax with all current features:
 
 ```overseer
-tab Tasks {
-  div (hidden=true) { // unnamed div does not affect hierarchy, just to hide contents
-    div Task (background=$(Priority>20?Red:White)) { // template for all tasks
-      string Header = ""
-      text Description = "" // text field allows markdown
-      int Priority = 0
-      date Created = today()
-      date Due = ""
+tab "Task Management" {
+    text welcome (markdown=true, font-size=18px, font-color=darkblue) = "# My Task Dashboard
+Welcome to **Overseer** - your personal data management system!"
+    
+    div statistics (background-color=#F5F5F5, layout=horizontal, spacing=20, margin=10) {
+        div total_tasks (width=150px, background-color=lightblue, border-style=solid 2px navy, border-radius=8px) {
+            string label = "Total Tasks"
+            int count = 5
+        }
+        div completed_tasks (width=150px, background-color=lightgreen, border-style=solid 2px green, border-radius=8px) {
+            string label = "Completed"  
+            int count = 2
+        }
     }
-  }
-  
-  list Data (entry=../Task) { // list will provide CRUD capabilities in the UI, as well as sorting, filtering etc
-    div task1 (base=../../Task) {
-      Header = "Test task" // other fields are copied from template
+    
+    div task_container (layout=vertical, spacing=10, margin=20) {
+        div task1 (background-color=white, border-style=solid 1px gray, font-size=14px) {
+            string title = "Implement formula system"
+            text description (markdown=true) = "Add **$(formula)** evaluation with:
+- Math operations
+- Date functions  
+- List aggregations"
+            int priority = 5
+            bool completed = false
+        }
+        
+        div task2 (background-color=#FFF8E1, border-style=dashed 1px orange) {
+            string title = "Create user documentation"
+            text description = "Write comprehensive guides for new users"
+            int priority = 3
+            bool completed = true
+        }
     }
-  }
+}
+
+tab "Settings" {
+    div preferences (layout=vertical, spacing=15) {
+        div theme (background-color=#F0F0F0, border-radius=6px) {
+            string theme_name = "Light Theme"
+            bool dark_mode = false
+        }
+        
+        div layout_options (border-top=solid 2px #CCC, border-bottom=solid 2px #CCC) {
+            string default_layout = "vertical"
+            int default_spacing = 10
+        }
+    }
 }
 ```
+
+This example showcases:
+- **Layout System**: Horizontal/vertical layouts with spacing and margins
+- **Styling**: Background colors, font styling, borders with various styles and radius
+- **Markdown Support**: Rich text formatting with dual edit/view modes  
+- **Grid Layouts**: Fixed sizing and precise positioning
+- **Parameter Inheritance**: Children inherit styling from parents
+- **Multiple Data Types**: Strings, text, integers, booleans
+- **Tab Organization**: Multiple tab interface for complex applications
 
 
 BRAINSTORM ITERATION 2:

@@ -1,0 +1,243 @@
+# Overseer
+
+> A minimalistic personal data management framework using a custom domain-specific language
+
+Overseer is a cross-platform desktop application that helps you manage personal statistics, projects, tasks, journals, and other data using a human-readable, hierarchical syntax. It prioritizes open standards, local data storage, and complete user control over your information.
+
+## ✨ Features
+
+- **Custom DSL**: Human-readable syntax for defining data structures, logic, and styling
+- **Advanced Layout System**: Flexible horizontal/vertical layouts with spacing and margin controls
+- **Rich Styling**: Colors, fonts, borders, and sizing with inheritance
+- **Markdown Support**: Full markdown formatting with dual edit/view modes
+- **Grid Layouts**: Fixed sizing and table-like structures
+- **Local Storage**: All data stored in plain-text `.os` files
+- **Cross-Platform**: Built with Tauri for Windows, macOS, and Linux
+- **Live Updates**: Real-time file watching and auto-refresh
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) (v16 or later)
+- [Rust](https://rustup.rs/) (latest stable)
+- [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (Windows only)
+
+### Installation
+
+1. **Clone the repository:**
+   ```powershell
+   git clone https://github.com/yourusername/overseer.git
+   cd overseer
+   ```
+
+2. **Install dependencies:**
+   ```powershell
+   npm install
+   ```
+
+3. **Run in development mode:**
+   ```powershell
+   npm run tauri:dev
+   ```
+
+### Building for Release
+
+```powershell
+# Build with WebView2 runtime bundled (recommended)
+npm run tauri:build:release
+
+# Quick build (requires WebView2 installed separately)
+npm run tauri:build
+```
+
+The built application will be in `src-tauri/target/release/bundle/`.
+
+## 📝 Basic Tutorial
+
+### Your First Document
+
+Create a file called `my-tasks.os`:
+
+```overseer
+tab "My Tasks" {
+    text welcome = "Welcome to Overseer!"
+    
+    div task_list (background-color=#F5F5F5, layout=vertical, spacing=10) {
+        div task1 (border-style=solid 1px gray, background-color=white) {
+            string title = "Learn Overseer syntax"
+            text description = "Understand the basic node types and parameters"
+            int priority = 5
+            bool completed = false
+        }
+        
+        div task2 (border-style=solid 1px gray, background-color=white) {
+            string title = "Create a personal dashboard"
+            text description (markdown=true) = "Build a **custom dashboard** with:
+- Task tracking
+- Statistics
+- Project notes"
+            int priority = 3
+            bool completed = false
+        }
+    }
+}
+```
+
+### Key Concepts
+
+**Node Types:**
+- `div` - Container for grouping and styling
+- `string` - Single-line text
+- `text` - Multi-line text (supports markdown)
+- `int` - Numbers
+- `bool` - True/false values
+- `list` - Collections with templates
+- `tab` - UI tabs for organization
+
+**Layout System:**
+```overseer
+div container (layout=horizontal, spacing=15, margin=10) {
+    // Children arranged horizontally with 15px gaps and 10px margin
+}
+```
+
+**Styling:**
+```overseer
+div styled_box (
+    background-color=lightblue,
+    font-size=18px,
+    font-color=darkblue,
+    width=200px,
+    height=100px,
+    border-style=solid 2px navy,
+    border-radius=8px
+) {
+    text content = "A styled container"
+}
+```
+
+**Markdown Text:**
+```overseer
+text docs (markdown=true) = "# Project Notes
+**Important:** This supports *formatting* and `code`!
+
+- Feature list
+- Progress tracking
+- Documentation"
+```
+
+**Interactive Elements:**
+```overseer
+// Button with actions
+button save_data "Save Progress" {
+    action Set (target=../last_saved) = $(today())
+    action Add (target=../save_count) = 1
+}
+
+// Checkbox with automatic actions
+checkbox task_complete "Mark Done" {
+    action Set (target=../completed) = true
+    action Set (target=../completion_date) = $(today())
+}
+
+// Scheduled timer
+timer daily_reminder (at="09:00", active=true) {
+    action Set (target=../reminder_sent) = true
+}
+```
+
+## 🔧 Development
+
+### Running Tests
+
+```powershell
+# Run all tests
+npm test
+
+# Run tests in watch mode
+npm run test:rust:watch
+
+# Verbose test output
+npm run test:verbose
+```
+
+### Debug Modes
+
+```powershell
+# Debug parser
+npm run tauri:dev:debug-parser
+
+# Debug resolver
+npm run tauri:dev:debug-resolver
+
+# Debug evaluator
+npm run tauri:dev:debug-evaluator
+
+# Debug all systems
+npm run tauri:dev:debug
+```
+
+### Project Structure
+
+```
+overseer/
+├── src/                    # Frontend (JavaScript/HTML/CSS)
+├── src-tauri/             # Backend (Rust)
+│   ├── src/
+│   │   ├── parser.rs      # DSL parser
+│   │   ├── resolver.rs    # Logic resolution
+│   │   ├── types.rs       # Data structures
+│   │   └── main.rs        # Tauri app entry
+├── examples/              # Example .os files
+├── docs/                  # Documentation
+└── package.json          # Node.js dependencies
+```
+
+## 📚 Documentation
+
+- [Syntax Specification](overseer_syntax_specification.md) - Complete language reference
+- [Technical Architecture](technical_architecture.md) - System design details
+- [Development Plan](DEVELOPMENT_PLAN.os) - Current roadmap and progress
+- [Product Description](product_description.md) - Vision and use cases
+
+## 🎯 Current Status
+
+**✅ Completed:**
+- Core file operations and UI
+- Advanced layout system (horizontal/vertical/spacing/margins)
+- Complete styling system (colors, fonts, borders, sizing)
+- Grid layouts with fixed sizing
+- Markdown text formatting with editor
+- Parameter inheritance
+- Live file watching
+- Action system with buttons, timers, and triggers
+
+**🚧 In Progress:**
+- Interactive field editing improvements
+- List CRUD operations (add/remove/reorder)
+- Formula system with `$(...)` syntax
+
+**📋 Planned:**
+- Actions and triggers
+- Chart visualization
+- Multi-file references
+- Advanced UI components
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes and test thoroughly
+4. Commit with clear messages: `git commit -m "Add feature description"`
+5. Push and create a pull request
+
+## 🛟 Support
+
+- Check the [examples/](examples/) directory for sample files
+- Review [KNOWN_BUGS.os](KNOWN_BUGS.os) for current issues
+- See [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) for detailed setup instructions
+
+---
+
+**Built with ❤️ using [Tauri](https://tauri.app/) • A modern approach to personal data management**
