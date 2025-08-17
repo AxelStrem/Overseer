@@ -5,12 +5,35 @@ const DEBUG_MODE = false;
 import { marked } from 'marked';
 import { invoke } from '@tauri-apps/api/tauri'
 
+// Import Chart.js for chart visualization
+import {
+    Chart,
+    CategoryScale,
+    LinearScale,
+    PointElement,
+    LineElement,
+    LineController,
+    Title,
+    Tooltip,
+    Legend
+} from 'chart.js';
+
+// Register Chart.js components
+Chart.register(
+    CategoryScale,
+    LinearScale,
+    PointElement,
+    LineElement,
+    LineController,
+    Title,
+    Tooltip,
+    Legend
+);
+
 export class OverseerRenderer {
     constructor() {
         this.contentDisplay = document.getElementById('content-display')
         this.tabContainer = document.getElementById('tab-container')
-    // Cache for charts keyed by stable node path string
-    this._chartCache = new Map()
     }
 
     // Non-visual node helpers
@@ -42,6 +65,10 @@ export class OverseerRenderer {
     // Timer nodes are visual now; don't filter them out
         // Hide any event handler containers and action statements anywhere
         if (this.isEventHandlerName(childName) || this.isActionName(childName)) return false
+        
+        // Hide plot nodes - they are configuration for chart nodes, not visual elements
+        if (childType === 'plot') return false
+        
         // Respect hidden=true on child nodes
         try {
             const hid = this.getParameterValue(childNode, 'hidden')
@@ -1020,20 +1047,16 @@ export class OverseerRenderer {
     createChartElement(node) {
         const container = document.createElement('div')
         container.className = 'overseer-chart'
-    // Legend (shown above the canvas)
-    const legend = document.createElement('div')
-    legend.className = 'overseer-chart-legend'
-    container.appendChild(legend)
-
-    const canvas = document.createElement('canvas')
-    container.appendChild(canvas)
-        // Size: support px and %; fallback to 400x200. Honor devicePixelRatio.
-        // Size: support px/% and optional aspect-ratio; fallback to width x (width/aspect or width*0.5). Honor devicePixelRatio.
+        
+        // Create canvas for Chart.js
+        const canvas = document.createElement('canvas')
+        container.appendChild(canvas)
+        
+        // Size handling - support width/height parameters
         const rawW = this.getParameterValue(node, 'width')
         const rawH = this.getParameterValue(node, 'height')
         const rawAR = this.getParameterValue(node, 'aspect-ratio')
-    // Track current DPR for crisp drawing; declare before computeSize to avoid TDZ issues
-    let currentDpr = Math.max(1, Math.floor(window.devicePixelRatio || 1))
+        
         const parseAspectRatio = (v) => {
             if (v === null || v === undefined) return null
             if (typeof v === 'number') return v > 0 ? Number(v) : null
@@ -1050,7 +1073,9 @@ export class OverseerRenderer {
             const n = parseFloat(s)
             return isNaN(n) || n <= 0 ? null : n
         }
-    const aspect = parseAspectRatio(rawAR) // width/height
+        
+        const aspect = parseAspectRatio(rawAR) // width/height
+        
         const parseDim = (raw, parentPx, fallback) => {
             if (raw === null || raw === undefined) return fallback
             if (typeof raw === 'number') return Math.max(10, Math.floor(raw))
@@ -1062,17 +1087,20 @@ export class OverseerRenderer {
             const n = parseInt(s, 10)
             return isNaN(n) ? fallback : Math.max(10, n)
         }
-    let width = 400, height = 200
+        
+        let width = 400, height = 200
+        
         const computeSize = () => {
             // Use the container's content box as the reference for percentage sizes
             const rect = container.getBoundingClientRect()
-            // client sizes exclude borders and scrollbar; padding is fine as inner spacing
             const parentW = container.parentElement ? container.parentElement.clientWidth : 0
             const viewportW = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0)
             const pw = Math.max(10, Math.floor(container.clientWidth || parentW || rect.width || viewportW || 0))
             const phMeasured = Math.max(0, Math.floor(container.clientHeight || rect.height || 0))
+            
             width = parseDim(rawW, pw, pw || 400)
             const defaultH = aspect ? Math.max(10, Math.round(width / aspect)) : Math.max(200, Math.round(width * 0.5))
+            
             // If height is %, but parent height is 0/unknown, fall back to aspect/default
             const isPercentH = typeof rawH === 'string' && rawH.trim().endsWith('%')
             if (rawH === null || rawH === undefined) {
@@ -1082,274 +1110,222 @@ export class OverseerRenderer {
             } else {
                 height = parseDim(rawH, phMeasured, defaultH)
             }
+            
             // Cap width to container (avoid overflow on 100%) and enforce a sensible floor
             width = Math.max(50, Math.min(width, pw))
             // Only cap height if we have a measurable container height (non-zero)
             if (phMeasured > 1) height = Math.max(50, Math.min(height, phMeasured))
             else height = Math.max(50, height)
-            // Set CSS size so the element stretches, then set pixel size multiplied by DPR
+            
+            // Set CSS size
             canvas.style.width = width + 'px'
             canvas.style.height = height + 'px'
-        const dpr = Math.max(1, window.devicePixelRatio || 1)
-        canvas.width = Math.floor(width * dpr)
-        canvas.height = Math.floor(height * dpr)
-        currentDpr = dpr
         }
+        
         computeSize()
-
-    const ctx = canvas.getContext('2d')
-        // Try to read explicit and computed bounds; if missing or suspicious, derive from series
-    let xmin = parseFloat(this.getParameterValue(node, 'domain-x-min'))
-    let xmax = parseFloat(this.getParameterValue(node, 'domain-x-max'))
-    let ymin = parseFloat(this.getParameterValue(node, 'domain-y-min'))
-    let ymax = parseFloat(this.getParameterValue(node, 'domain-y-max'))
-    if (isNaN(xmin)) xmin = parseFloat(this.getParameterValue(node, '_computed_x_min'))
-    if (isNaN(xmax)) xmax = parseFloat(this.getParameterValue(node, '_computed_x_max'))
-    if (isNaN(ymin)) ymin = parseFloat(this.getParameterValue(node, '_computed_y_min'))
-    if (isNaN(ymax)) ymax = parseFloat(this.getParameterValue(node, '_computed_y_max'))
-
-    // Gather series data from plots
-    const plotsAll = (node.children || []).filter(c => (c.node_type||'').toLowerCase() === 'plot')
-    let seriesUnionBounds = null
-    for (const plot of plotsAll) {
-        const seriesJson = this.getParameterValue(plot, '_computed_series')
-        if (!seriesJson) continue
-        let series
-        try { series = JSON.parse(seriesJson) } catch (_) { continue }
-        if (!Array.isArray(series) || series.length === 0) continue
-        for (const pt of series) {
-            const x = Number(pt[0]); const y = Number(pt[1])
-            if (!isFinite(x) || !isFinite(y)) continue
-            if (!seriesUnionBounds) seriesUnionBounds = { xmin: x, xmax: x, ymin: y, ymax: y }
-            else {
-                if (x < seriesUnionBounds.xmin) seriesUnionBounds.xmin = x
-                if (x > seriesUnionBounds.xmax) seriesUnionBounds.xmax = x
-                if (y < seriesUnionBounds.ymin) seriesUnionBounds.ymin = y
-                if (y > seriesUnionBounds.ymax) seriesUnionBounds.ymax = y
-            }
-        }
-    }
-
-    // Prefer union-of-series when no explicit domain is set; otherwise use computed.
-    const explicitXProvided = !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-max')))
-    const explicitYProvided = !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-max')))
-    const noExplicitDomain = !(explicitXProvided || explicitYProvided)
-    const computedInvalid = !(isFinite(xmin) && isFinite(xmax) && isFinite(ymin) && isFinite(ymax)) || xmax <= xmin || ymax <= ymin
-    if (seriesUnionBounds) {
-        if (noExplicitDomain) {
-            // Adopt union entirely to auto-fit to the real data range, with a gentle pad
-            xmin = seriesUnionBounds.xmin
-            xmax = seriesUnionBounds.xmax
-            ymin = seriesUnionBounds.ymin
-            ymax = seriesUnionBounds.ymax
-            const dx = (xmax - xmin) || 1
-            const dy = (ymax - ymin) || 1
-            const padX = dx * 0.03
-            const padY = dy * 0.05
-            xmin -= padX; xmax += padX
-            ymin -= padY; ymax += padY
-        } else if (computedInvalid) {
-            // Fallback: explicit was partial and computed invalid — still use union if available
-            xmin = seriesUnionBounds.xmin
-            xmax = seriesUnionBounds.xmax
-            ymin = seriesUnionBounds.ymin
-            ymax = seriesUnionBounds.ymax
-        }
-    }
-
-    // Cache last-good bounds across reevaluations using stable path key
-    let cacheKey = null
-    try { cacheKey = JSON.stringify(node.__overseer_path || [node.name || node.node_type || 'chart']) } catch(_) { cacheKey = null }
-    const newGood = isFinite(xmin) && isFinite(xmax) && isFinite(ymin) && isFinite(ymax) && xmax > xmin && ymax > ymin
-    if (cacheKey) {
-        const prev = this._chartCache.get(cacheKey)
-        if (!newGood && prev && prev.bounds) {
-            ({ xmin, xmax, ymin, ymax } = prev.bounds)
-        }
-        // If the new computed (union) bounds are narrower than previous and user didn't set explicit domain, expand to previous
-        const noExplicit = !(explicitXProvided || explicitYProvided)
-        if (prev && prev.bounds && newGood && noExplicit) {
-            const prevB = prev.bounds
-            const spanX = xmax - xmin
-            const prevSpanX = prevB.xmax - prevB.xmin
-            if (prevSpanX > spanX) {
-                xmin = Math.min(xmin, prevB.xmin)
-                xmax = Math.max(xmax, prevB.xmax)
-            }
-            const spanY = ymax - ymin
-            const prevSpanY = prevB.ymax - prevB.ymin
-            if (prevSpanY > spanY) {
-                ymin = Math.min(ymin, prevB.ymin)
-                ymax = Math.max(ymax, prevB.ymax)
-            }
-        }
-    }
-
-    const hasBounds = [xmin, xmax, ymin, ymax].every(v => isFinite(v)) && xmax > xmin && ymax > ymin
-        // If bounds come from computed values and axis looks like time (epoch ms magnitude), pad a bit and format ticks as dates
-        const xLooksLikeTime = hasBounds && Math.abs(xmax) > 1e10 && Math.abs(xmin) > 1e10
-        if (hasBounds) {
-            // If user didn't set explicit domain params, gently pad computed bounds to include end points fully
-            const hasExplicitX = !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-x-max')))
-            const hasExplicitY = !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-min'))) && !isNaN(parseFloat(this.getParameterValue(node, 'domain-y-max')))
-            if (!hasExplicitX) {
-                const dx = (xmax - xmin) || 1
-                const pad = dx * 0.05
-                xmin -= pad; xmax += pad
-            }
-            if (!hasExplicitY) {
-                const dy = (ymax - ymin) || 1
-                const pad = dy * 0.05
-                ymin = Math.min(ymin, ymin - pad)
-                ymax = Math.max(ymax, ymax + pad)
-            }
-        }
-        const pad = 28 // inner padding for axes
         
-        // Background
-        ctx.fillStyle = '#1e1e1e'
-        ctx.fillRect(0, 0, width, height)
+        // Get plot children
+        const plotsAll = (node.children || []).filter(c => (c.node_type||'').toLowerCase() === 'plot')
         
-        if (hasBounds) {
-            // Styles and geometry
-            const axisColor = this.getParameterValue(node, 'axis-color') || '#666'
-            const gridColor = this.getParameterValue(node, 'grid-color') || '#333'
-            const plotW = width - 2 * pad
-            const plotH = height - 2 * pad
-            const ticks = 5
-            const sx = (x) => pad + ((x - xmin) / (xmax - xmin)) * plotW
-            const sy = (y) => height - pad - ((y - ymin) / (ymax - ymin)) * plotH
-
-            // Build legend from plot children
-    const plots = plotsAll
-            legend.innerHTML = ''
-        const visibility = new Map()
-        plots.forEach((plot) => {
-                const color = this.getParameterValue(plot, 'color') || '#4A90E2'
-                const label = this.getParameterValue(plot, 'label') || plot.name || 'Series'
-                const item = document.createElement('span')
-                item.className = 'legend-item'
-                const swatch = document.createElement('span')
-                swatch.className = 'legend-swatch'
-                swatch.style.backgroundColor = this.convertColorValue(color)
-                const text = document.createElement('span')
-                text.className = 'legend-text'
-                text.textContent = String(label)
-                item.appendChild(swatch)
-                item.appendChild(text)
-                legend.appendChild(item)
-                visibility.set(plot, true)
-                item.addEventListener('click', () => {
-                    const next = !visibility.get(plot)
-                    visibility.set(plot, next)
-                    item.classList.toggle('off', !next)
-                    drawAll()
-                })
-            })
-
-            const drawAll = () => {
-                // Ensure drawing space matches DPR
-                // Reset then apply DPR scaling so 1 unit == 1 CSS pixel
-                ctx.setTransform(1, 0, 0, 1, 0, 0)
-                ctx.scale(currentDpr, currentDpr)
-                // Clear and background
-                ctx.fillStyle = '#1e1e1e'
-                ctx.fillRect(0, 0, width, height)
-
-                // Grid
-                ctx.lineWidth = 1
-                ctx.strokeStyle = gridColor
-                ctx.beginPath()
-                for (let i = 1; i < ticks; i++) {
-                    const x = pad + (i * plotW) / ticks
-                    ctx.moveTo(x, pad)
-                    ctx.lineTo(x, height - pad)
-                }
-                for (let i = 1; i < ticks; i++) {
-                    const y = pad + (i * plotH) / ticks
-                    ctx.moveTo(pad, y)
-                    ctx.lineTo(width - pad, y)
-                }
-                ctx.stroke()
-
-                // Axes
-                ctx.strokeStyle = axisColor
-                ctx.beginPath()
-                ctx.moveTo(pad, height - pad)
-                ctx.lineTo(width - pad, height - pad)
-                ctx.moveTo(pad, height - pad)
-                ctx.lineTo(pad, pad)
-                ctx.stroke()
-
-                // Tick labels
-                ctx.fillStyle = '#ccc'
-                ctx.font = '11px system-ui, Arial'
-                ctx.textAlign = 'center'
-                const fmtDate = (ms) => {
-                    const d = new Date(ms)
-                    // Use short locale date; include time only if span < 2 days
-                    const span = Math.abs(xmax - xmin)
-                    if (span <= 2 * 24 * 3600 * 1000) {
-                        return d.toLocaleString()
-                    }
-                    return d.toLocaleDateString()
-                }
-                for (let i = 0; i <= ticks; i++) {
-                    const xv = xmin + (i * (xmax - xmin)) / ticks
-                    const x = pad + (i * plotW) / ticks
-                    const label = xLooksLikeTime ? fmtDate(xv) : String(Number(xv.toFixed(2)))
-                    ctx.fillText(label, x, height - pad + 14)
-                }
-                ctx.textAlign = 'right'
-                const ySpan = Math.abs(ymax - ymin)
-                const yPrec = ySpan > 0 && (ySpan < 1e-2 || ySpan > 1e4) ? 0 : 2
-                for (let i = 0; i <= ticks; i++) {
-                    const yv = ymin + (i * (ymax - ymin)) / ticks
-                    const y = height - pad - (i * plotH) / ticks
-                    const yl = yPrec === 0 ? String(Math.round(yv)) : String(Number(yv.toFixed(yPrec)))
-                    ctx.fillText(yl, pad - 6, y + 3)
-                }
-
-                // Series
-                for (const plot of plots) {
-                    if (!visibility.get(plot)) continue
-                    const seriesJson = this.getParameterValue(plot, '_computed_series')
-                    if (!seriesJson) continue
-                    let series
-                    try { series = JSON.parse(seriesJson) } catch (_) { continue }
-                    // Ensure points are in ascending x order for a sensible line plot
-                    try { series.sort((a,b) => Number(a?.[0]) - Number(b?.[0])) } catch(_) {}
-                    if (!Array.isArray(series) || series.length === 0) continue
-                    const color = this.getParameterValue(plot, 'color') || '#4A90E2'
-                    ctx.strokeStyle = this.convertColorValue(color)
-                    ctx.lineWidth = 2
-                    ctx.beginPath()
-                    for (let i = 0; i < series.length; i++) {
-                        const [x, y] = series[i]
-                        const px = sx(Number(x)), py = sy(Number(y))
-                        if (i === 0) ctx.moveTo(px, py)
-                        else ctx.lineTo(px, py)
-                    }
-                    ctx.stroke()
-                }
-
-                // Update cache with last-good bounds after successful draw
-                if (cacheKey) {
-                    this._chartCache.set(cacheKey, { bounds: { xmin, xmax, ymin, ymax }, width, height, dpr: currentDpr })
-                }
+        // Check if we have computed series data
+        const hasData = plotsAll.some(plot => {
+            const seriesJson = this.getParameterValue(plot, '_computed_series')
+            if (!seriesJson) return false
+            try {
+                const series = JSON.parse(seriesJson)
+                return Array.isArray(series) && series.length > 0
+            } catch (_) {
+                return false
             }
-
-            drawAll()
-            // Resize observer to keep canvas in sync with % dimensions
-            const ro = new ResizeObserver(() => { computeSize(); drawAll(); })
-            ro.observe(container)
-        } else {
-            // Fallback placeholder when series not computed yet
-            ctx.fillStyle = '#ccc'
+        })
+        
+        if (!hasData) {
+            // Show placeholder when no data is available
+            const ctx = canvas.getContext('2d')
+            ctx.fillStyle = '#666'
             ctx.font = '14px system-ui, Arial'
-            ctx.fillText('Chart: ' + (node.name || 'Unnamed'), 10, 26)
-            ctx.fillText('(no series yet — add plot nodes with source/x/y)', 10, 48)
+            ctx.fillText('Chart: ' + (node.name || 'Unnamed'), 10, 30)
+            ctx.fillText('(no series yet — add plot nodes with source/x/y)', 10, 50)
+            this.applyNodeStyles(container, node)
+            return container
         }
+        
+        // Prepare datasets for Chart.js
+        const datasets = []
+        const allDataPoints = []
+        
+        for (const plot of plotsAll) {
+            const seriesJson = this.getParameterValue(plot, '_computed_series')
+            if (!seriesJson) continue
+            
+            let series
+            try {
+                series = JSON.parse(seriesJson)
+            } catch (_) {
+                continue
+            }
+            
+            if (!Array.isArray(series) || series.length === 0) continue
+            
+            // Convert series data to Chart.js format
+            const data = series.map(([x, y]) => ({ x: Number(x), y: Number(y) }))
+            allDataPoints.push(...data)
+            
+            // Get plot styling
+            const color = this.convertColorValue(this.getParameterValue(plot, 'color') || '#4A90E2')
+            const label = this.getParameterValue(plot, 'label') || plot.name || 'Series'
+            
+            datasets.push({
+                label: label,
+                data: data,
+                borderColor: color,
+                backgroundColor: color + '20', // Add transparency for fill
+                borderWidth: 2,
+                fill: false,
+                tension: 0.1,
+                pointRadius: 3,
+                pointHoverRadius: 5
+            })
+        }
+        
+        // Determine if X axis looks like time data
+        const xValues = allDataPoints.map(p => p.x)
+        const xLooksLikeTime = xValues.length > 0 && xValues.every(x => Math.abs(x) > 1e10)
+        
+        // Get explicit domain bounds if provided
+        let xmin = parseFloat(this.getParameterValue(node, 'domain-x-min'))
+        let xmax = parseFloat(this.getParameterValue(node, 'domain-x-max'))
+        let ymin = parseFloat(this.getParameterValue(node, 'domain-y-min'))
+        let ymax = parseFloat(this.getParameterValue(node, 'domain-y-max'))
+        
+        // If not explicit, try computed bounds
+        if (isNaN(xmin)) xmin = parseFloat(this.getParameterValue(node, '_computed_x_min'))
+        if (isNaN(xmax)) xmax = parseFloat(this.getParameterValue(node, '_computed_x_max'))
+        if (isNaN(ymin)) ymin = parseFloat(this.getParameterValue(node, '_computed_y_min'))
+        if (isNaN(ymax)) ymax = parseFloat(this.getParameterValue(node, '_computed_y_max'))
+        
+        // Chart.js configuration
+        const config = {
+            type: 'line',
+            data: {
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 20,
+                            color: '#cccccc'
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#ffffff',
+                        borderColor: '#333333',
+                        borderWidth: 1,
+                        callbacks: {
+                            title: function(tooltipItems) {
+                                const item = tooltipItems[0]
+                                if (xLooksLikeTime) {
+                                    // Format timestamp as readable date
+                                    return new Date(item.parsed.x).toLocaleString()
+                                }
+                                return item.label || item.parsed.x
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        display: true,
+                        title: {
+                            display: false
+                        },
+                        grid: {
+                            color: '#333333'
+                        },
+                        ticks: {
+                            color: '#cccccc',
+                            callback: function(value) {
+                                if (xLooksLikeTime) {
+                                    // Format timestamp ticks as dates
+                                    return new Date(value).toLocaleDateString()
+                                }
+                                return value
+                            }
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        title: {
+                            display: false
+                        },
+                        grid: {
+                            color: '#333333'
+                        },
+                        ticks: {
+                            color: '#cccccc'
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Apply explicit bounds if provided
+        if (!isNaN(xmin) && !isNaN(xmax)) {
+            config.options.scales.x.min = xmin
+            config.options.scales.x.max = xmax
+        }
+        if (!isNaN(ymin) && !isNaN(ymax)) {
+            config.options.scales.y.min = ymin
+            config.options.scales.y.max = ymax
+        }
+        
+        // Apply chart background color if specified
+        const bgColor = this.getParameterValue(node, 'background-color')
+        if (bgColor) {
+            container.style.backgroundColor = this.convertColorValue(bgColor)
+        }
+        
+        // Create Chart.js instance
+        let chartInstance = null
+        try {
+            chartInstance = new Chart(canvas, config)
+        } catch (error) {
+            console.error('Failed to create Chart.js instance:', error)
+            // Fallback to canvas text
+            const ctx = canvas.getContext('2d')
+            ctx.fillStyle = '#cc6666'
+            ctx.font = '14px system-ui, Arial'
+            ctx.fillText('Chart Error: ' + error.message, 10, 30)
+            this.applyNodeStyles(container, node)
+            return container
+        }
+        
+        // Handle resize
+        const resizeObserver = new ResizeObserver(() => {
+            computeSize()
+            if (chartInstance) {
+                chartInstance.resize()
+            }
+        })
+        resizeObserver.observe(container)
+        
+        // Store chart instance for cleanup
+        container._chartInstance = chartInstance
+        container._resizeObserver = resizeObserver
         
         this.applyNodeStyles(container, node)
         return container

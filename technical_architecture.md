@@ -276,13 +276,20 @@ average = $(avg(scores[]))
 - ✅ Timer-based scheduled actions
 - ✅ Safe action execution with error handling
 
-### Phase 5: Formula System 🔄 IN PROGRESS
+### Phase 5: Chart Visualization ✅ COMPLETE
+- ✅ Chart.js integration with proper scaling
+- ✅ Chart/plot DSL syntax support
+- ✅ Data binding from computed series
+- ✅ Interactive features (hover, tooltips, legend)
+- ✅ Responsive design and resize handling
+
+### Phase 6: Formula System 🔄 IN PROGRESS
 - 🔄 Complete formula evaluator with $() syntax
 - ⏳ Built-in functions (math, date, string, list operations)
 - ⏳ Cross-node reference resolution  
 - ⏳ Dynamic recalculation on data changes
 
-### Phase 6: Advanced Features ⏳ PLANNED
+### Phase 7: Advanced Features ⏳ PLANNED
 - ⏳ Chart visualization system
 - ⏳ Cross-file references and imports
 - ⏳ Export/import capabilities
@@ -305,6 +312,7 @@ average = $(avg(scores[]))
 6. **Markdown Support**: Rich text with dual edit/view modes
 7. **File Operations**: Async I/O with comment preservation
 8. **Action System**: Buttons, timers, triggers with safe execution
+9. **Chart System**: Chart.js integration with responsive scaling
 
 ### 🔄 In Development
 1. **Interactive Editing**: Enhanced field validation and editing

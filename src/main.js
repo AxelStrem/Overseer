@@ -120,6 +120,28 @@ class OverseerApp {
             // Parse the content
             const overseerDocument = await invoke('parse_overseer_content', { content })
             if (DEBUG_MODE) this.setStatus(`DEBUG: Document parsed, type: ${typeof overseerDocument}, length: ${overseerDocument?.length || 'unknown'}`)
+            
+            // Debug: Check if any chart nodes have computed series
+            if (DEBUG_MODE && overseerDocument) {
+                const checkNodes = (nodes, depth = 0) => {
+                    for (const node of nodes) {
+                        if (node.node_type === 'chart') {
+                            console.log(`DEBUG: Found chart node ${node.name} at depth ${depth}`)
+                            for (const child of node.children || []) {
+                                if (child.node_type === 'plot') {
+                                    const computedSeries = child.parameters?._computed_series
+                                    console.log(`DEBUG: Plot ${child.name} _computed_series:`, 
+                                        computedSeries ? (typeof computedSeries === 'string' ? computedSeries.substring(0, 100) + '...' : computedSeries) : 'null')
+                                }
+                            }
+                        }
+                        if (node.children) {
+                            checkNodes(node.children, depth + 1)
+                        }
+                    }
+                }
+                checkNodes(overseerDocument)
+            }
 
             this.currentFile = filePath
             this.currentDocument = overseerDocument

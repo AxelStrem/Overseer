@@ -212,6 +212,7 @@ overseer/
 - Parameter inheritance
 - Live file watching
 - Action system with buttons, timers, and triggers
+- Chart visualization with Chart.js integration
 
 **🚧 In Progress:**
 - Interactive field editing improvements
@@ -219,10 +220,9 @@ overseer/
 - Formula system with `$(...)` syntax
 
 **📋 Planned:**
-- Actions and triggers
-- Chart visualization
 - Multi-file references
 - Advanced UI components
+- Performance optimizations
 
 ## 🤝 Contributing
 
