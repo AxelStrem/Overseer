@@ -109,5 +109,12 @@ tab known_bugs(label="Known Bugs") {
             - storypoints = 1
         }
 
+         - {
+            - id = 11
+            - description = "When nodes are serialized, the parameters change order in which they are listed (seemingly at random). Node parameters should always be serialized in the same order, and they should preserve the original order when deserialized."
+            - fixed = false
+            - storypoints = 1
+        }
+
     }
 }
