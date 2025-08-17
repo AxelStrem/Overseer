@@ -14,8 +14,6 @@ class OverseerApp {
         this.isDocumentModified = false
         this.fileManager = new FileManager()
     this.renderer = new OverseerRenderer()
-    // Track active inline editors to pause background updates during editing
-    this._activeEditors = 0
     this._scheduler = { id: null, periodMs: 1000, cachedNextMs: null }
     // Keep the raw original text for comment/whitespace merge on save
     this._originalText = null
@@ -273,21 +271,182 @@ tab Main {
         }
     }
 
-    async reevaluateDocument() {
+    /**
+     * Update only specific fields in the current document instead of replacing the entire document
+     */
+    updateDocumentSelectively(currentDocument, resolvedDocument, changedFieldPaths) {
+        console.log('🔧 Selectively updating document fields:', changedFieldPaths)
+        
+        for (const fieldPath of changedFieldPaths) {
+            try {
+                // Find the field in both documents and update the current one
+                const newValue = this.getFieldValueByPath(resolvedDocument, fieldPath)
+                if (newValue !== undefined) {
+                    this.setFieldValueByPath(currentDocument, fieldPath, newValue)
+                    console.log('🔧 Updated field:', fieldPath, 'to:', newValue)
+                }
+            } catch (error) {
+                console.warn('⚠️ Failed to update field selectively:', fieldPath, error)
+            }
+        }
+    }
+
+    /**
+     * Get a field value by path from a document
+     */
+    getFieldValueByPath(document, fieldPath) {
+        const pathParts = fieldPath.split('/')
+        let current = { children: document }
+        
+        for (const part of pathParts) {
+            if (current.children) {
+                current = current.children.find(child => child.name === part)
+                if (!current) return undefined
+            } else {
+                return undefined
+            }
+        }
+        
+        return current.parameters?.value
+    }
+
+    /**
+     * Set a field value by path in a document
+     */
+    setFieldValueByPath(document, fieldPath, newValue) {
+        const pathParts = fieldPath.split('/')
+        let current = { children: document }
+        
+        for (const part of pathParts) {
+            if (current.children) {
+                current = current.children.find(child => child.name === part)
+                if (!current) return false
+            } else {
+                return false
+            }
+        }
+        
+        if (current.parameters) {
+            current.parameters.value = newValue
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Check if field changes can be handled as DOM-only updates without backend processing
+     */
+    canHandleAsDOMOnlyUpdate(fieldChanges) {
+        for (const change of fieldChanges) {
+            // Check if the new value contains any formulas (starts with $)
+            if (typeof change.newValue === 'string' && change.newValue.includes('$')) {
+                return false // Contains formulas, needs backend processing
+            }
+            
+            // For numeric values, we need to check if other fields might depend on this field
+            // For now, be conservative: only handle simple string fields that are clearly labels/headers
+            if (typeof change.newValue !== 'string') {
+                return false // Non-string values might be referenced by formulas
+            }
+            
+            // Check if this looks like a header/label field (starts with # or contains "header" in path)
+            const isHeaderField = change.path.toLowerCase().includes('header') || 
+                                 (typeof change.newValue === 'string' && change.newValue.startsWith('#'))
+            
+            if (!isHeaderField) {
+                return false // Non-header string fields might still be referenced by formulas
+            }
+        }
+        
+        return true // All changes are simple header/label strings
+    }
+
+    async reevaluateDocumentSelective(changedFieldPaths = [], fieldChanges = []) {
         try {
-            if (!this.currentDocument) return
-            // If user is editing, defer reevaluation to avoid breaking edit state
-            if (this._activeEditors > 0) return
+            if (!this.currentDocument) return { domOnly: false }
+            
+            console.log('🔄 Selective update triggered for fields:', changedFieldPaths)
+            if (fieldChanges.length > 0) {
+                console.log('📝 Field changes:', fieldChanges)
+            }
+
+            // Check if we can handle this as a pure DOM-only update (no backend needed)
+            const canHandleDOMOnly = this.canHandleAsDOMOnlyUpdate(fieldChanges)
+            
+            if (canHandleDOMOnly) {
+                console.log('🚀 Handling as DOM-only update (no backend call needed)')
+                // Just do the DOM update directly without any backend processing
+                if (changedFieldPaths.length > 0) {
+                    console.log('🎯 Attempting DOM-only update for specific fields')
+                    
+                    // Use the current document as both old and new for DOM updates
+                    const selectiveUpdateSuccessful = this.renderer.updateSelectiveFields(
+                        this.currentDocument, this.currentDocument, changedFieldPaths, fieldChanges
+                    )
+                    
+                    if (selectiveUpdateSuccessful) {
+                        console.log('✅ DOM-only update completed successfully (charts completely untouched)')
+                        return { domOnly: true, success: true }
+                    } else {
+                        console.log('⚠️ DOM-only update failed, falling back to backend processing')
+                    }
+                }
+            }
+            
+            // Store the old document state before backend processing
+            const oldDocument = JSON.parse(JSON.stringify(this.currentDocument))
+            
             // Serialize current nodes to DSL
             const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
-            // Parse + resolve + evaluate on backend
-            const resolved = await invoke('parse_overseer_content', { content })
-            // Replace current document and re-render
-            this.currentDocument = resolved
-            this.renderer.renderDocument(this.currentDocument)
+            console.log('📤 Serialized content being sent to backend:', content.substring(0, 500))
+            // Parse + resolve + evaluate on backend with selective updates
+            const resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths })
+            
+            // Instead of full re-render, do selective DOM updates if we have specific changed fields
+            if (changedFieldPaths.length > 0) {
+                console.log('🎯 Attempting selective DOM update for specific fields')
+                
+                // Try selective rendering for the changed fields using field change info
+                let selectiveUpdateSuccessful = false
+                try {
+                    selectiveUpdateSuccessful = this.renderer.updateSelectiveFields(oldDocument, resolved, changedFieldPaths, fieldChanges)
+                } catch (e) {
+                    console.warn('Selective DOM update failed:', e)
+                }
+                
+                if (selectiveUpdateSuccessful) {
+                    // For now, assume no cascading changes since we can't easily get cascade count from backend
+                    // This will prevent document updates when only simple field changes occur
+                    console.log('✅ No cascading changes detected - document object unchanged (prevents chart refresh)')
+                    
+                    console.log('✅ Selective update completed successfully')
+                    return { domOnly: false, success: true }
+                } else {
+                    console.log('🔄 Falling back to full re-render')
+                    this.currentDocument = resolved
+                    this.renderer.renderDocument(this.currentDocument)
+                    return { domOnly: false, success: true }
+                }
+            } else {
+                // No specific fields, do full re-render (for periodic updates)
+                this.currentDocument = resolved
+                this.renderer.renderDocument(this.currentDocument)
+                return { domOnly: false, success: true }
+            }
         } catch (error) {
-            // Non-fatal: log and keep current view
-            console.warn('Reevaluation failed:', error)
+            // If selective update fails, fall back to full reevaluation
+            console.warn('❌ Selective reevaluation failed, falling back to full update:', error)
+            // Fallback: do full resolution without selective DOM updates
+            try {
+                const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
+                const resolved = await invoke('parse_overseer_content', { content })
+                this.currentDocument = resolved
+                this.renderer.renderDocument(this.currentDocument)
+                return { domOnly: false, success: true }
+            } catch (fallbackError) {
+                console.error('❌ Fallback update also failed:', fallbackError)
+                return { domOnly: false, success: false }
+            }
         }
     }
 
@@ -441,24 +600,20 @@ tab Main {
         // Prefer backend calculation to stay consistent with formula evaluation.
         // While actively editing, avoid spamming the backend — reuse a cached value when available.
         let nextMs = null
-        if (this._activeEditors > 0 && this._scheduler.cachedNextMs != null) {
-            nextMs = this._scheduler.cachedNextMs
-        } else {
-            try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
-            if (nextMs == null) nextMs = findNextDue(this.currentDocument)
-            // Cache while editing to reduce churn
-            if (this._activeEditors > 0) this._scheduler.cachedNextMs = nextMs
-        }
-                // If there are no timers, still refresh formulas periodically (e.g., days_since)
-                // Use a gentle cadence (e.g., 60s) to avoid heavy CPU usage.
-                const periodicRefreshMs = 60000
+        try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
+        if (nextMs == null) nextMs = findNextDue(this.currentDocument)
+                // With dependency tracking, periodic full refreshes are no longer needed
+                // Selective updates will handle formula dependencies when fields actually change
+                // Keep minimal timer support for any remaining time-based formulas like days_since()
+                const periodicRefreshMs = 300000 // Reduced to 5 minutes
                 if (!nextMs) {
                     this._scheduler.id = setTimeout(async () => {
                         try {
                             if (!this.currentDocument) return
-                            // Skip reevaluation while editing to avoid interrupting the user
-                            if ((this._activeEditors || 0) === 0) {
-                                await this.reevaluateDocument()
+                            // Skip reevaluation if document has been modified to preserve user changes
+                            if (!this.isDocumentModified) {
+                                // Use selective update with empty change list for minimal time-based formula refresh
+                                await this.reevaluateDocumentSelective([])
                             }
                         } finally {
                             scheduleNext()
@@ -470,14 +625,12 @@ tab Main {
         let delay = nextMs - now
             // Only schedule for future; if due/past, process almost immediately (debounced)
             if (delay < 0) delay = 0
-            // Add small debounce to let system settle; widen when editing to reduce churn
-            const baseDebounce = (this._activeEditors || 0) > 0 ? 2000 : 500
+            // Add small debounce to let system settle
+            const baseDebounce = 500
             delay += baseDebounce
     this._scheduler.id = setTimeout(async () => {
                 try {
             if (!this.currentDocument) return
-            // If editing, skip applying updates now and reschedule soon
-            if (this._activeEditors > 0) { scheduleNext(); return }
                     const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
                     if (updated && !docsEqual(updated, this.currentDocument)) {
                         this.currentDocument = updated

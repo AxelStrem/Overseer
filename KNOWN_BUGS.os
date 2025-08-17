@@ -116,5 +116,13 @@ tab known_bugs(label="Known Bugs") {
             - storypoints = 1
         }
 
+         - {
+            - id = 12
+            - description = "Field values in template inheritance hierarchies get reset during periodic document re-evaluation, causing user input to disappear and UI to flicker. This was caused by the reevaluateDocument() function performing full document serialize->parse->resolve cycles every 60 seconds, which destroyed user modifications and caused performance issues."
+            - fixed = true
+            - fix_date = 26.12.2024
+            - storypoints = 8
+        }
+
     }
 }

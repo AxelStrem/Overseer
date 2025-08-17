@@ -1956,6 +1956,7 @@ dependencies = [
  "chrono",
  "nom",
  "notify",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

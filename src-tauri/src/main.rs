@@ -10,11 +10,122 @@ pub mod resolver;
 mod formula_evaluator;
 mod actions;
 mod docmgr;
+mod dependency_tracker;
 
 use types::*;
 use actions::ActionExecutor;
 use file_ops::{FileOperations, OverseerFileHandler};
 use parser::parse_document;
+use dependency_tracker::DependencyGraph;
+
+// Helper function to get a field value by path (e.g., "exercise_tracker/header")
+fn get_field_value_by_path(nodes: &[OverseerNode], path: &str) -> Option<OverseerValue> {
+    let path_parts: Vec<&str> = path.split('/').collect();
+    if path_parts.is_empty() {
+        return None;
+    }
+    
+    find_node_by_path(nodes, &path_parts).and_then(|node| {
+        // Try to get the value from parameters
+        node.parameters.get("value").cloned()
+    })
+}
+
+// Helper function to set a field value by path
+fn set_field_value_by_path(nodes: &mut [OverseerNode], path: &str, value: OverseerValue) -> std::result::Result<(), OverseerError> {
+    let path_parts: Vec<&str> = path.split('/').collect();
+    if path_parts.is_empty() {
+        return Err(OverseerError::ValidationError("Empty path".to_string()));
+    }
+    
+    if let Some(node) = find_node_by_path_mut(nodes, &path_parts) {
+        // Set the value in parameters
+        node.parameters.insert("value".to_string(), value);
+        return Ok(());
+    }
+    
+    Err(OverseerError::ValidationError(format!("Could not find field at path: {}", path)))
+}
+
+// Helper function to find a node by path (immutable)
+fn find_node_by_path<'a>(nodes: &'a [OverseerNode], path_parts: &[&str]) -> Option<&'a OverseerNode> {
+    if path_parts.is_empty() {
+        return None;
+    }
+    
+    let mut current_nodes = nodes;
+    let mut current_node: Option<&OverseerNode> = None;
+    
+    for (i, &part) in path_parts.iter().enumerate() {
+        // Handle array-style names with ordinals (e.g., "item#1")
+        let (base_name, ordinal) = if part.contains('#') {
+            let parts: Vec<&str> = part.split('#').collect();
+            (parts[0], parts.get(1).unwrap_or(&"0").parse::<usize>().unwrap_or(0))
+        } else {
+            (part, 0)
+        };
+        
+        let matches: Vec<&OverseerNode> = current_nodes.iter()
+            .filter(|node| node.name == base_name)
+            .collect();
+            
+        if ordinal >= matches.len() {
+            return None;
+        }
+        
+        current_node = Some(matches[ordinal]);
+        
+        // If not the last part, move to children
+        if i < path_parts.len() - 1 {
+            current_nodes = &current_node?.children;
+        }
+    }
+    
+    current_node
+}
+
+// Helper function to find a node by path (mutable)
+fn find_node_by_path_mut<'a>(nodes: &'a mut [OverseerNode], path_parts: &[&str]) -> Option<&'a mut OverseerNode> {
+    if path_parts.is_empty() {
+        return None;
+    }
+    
+    let mut current_nodes = nodes;
+    
+    for (i, &part) in path_parts.iter().enumerate() {
+        // Handle array-style names with ordinals (e.g., "item#1")
+        let (base_name, ordinal) = if part.contains('#') {
+            let parts: Vec<&str> = part.split('#').collect();
+            (parts[0], parts.get(1).unwrap_or(&"0").parse::<usize>().unwrap_or(0))
+        } else {
+            (part, 0)
+        };
+        
+        // Find all nodes with the base name
+        let mut matches_indices = Vec::new();
+        for (idx, node) in current_nodes.iter().enumerate() {
+            if node.name == base_name {
+                matches_indices.push(idx);
+            }
+        }
+        
+        if ordinal >= matches_indices.len() {
+            return None;
+        }
+        
+        let target_index = matches_indices[ordinal];
+        
+        // If this is the last part, return the node
+        if i == path_parts.len() - 1 {
+            return Some(&mut current_nodes[target_index]);
+        }
+        
+        // Otherwise, move to children
+        current_nodes = &mut current_nodes[target_index].children;
+    }
+    
+    None
+}
 
 #[command]
 async fn load_overseer_file(path: String) -> Result<String> {
@@ -106,6 +217,73 @@ async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
 }
 
 #[command]
+async fn parse_overseer_content_selective(content: String, changed_fields: Vec<String>) -> Result<Vec<OverseerNode>> {
+    println!("🔄 Selective update called with {} changed fields: {:?}", changed_fields.len(), changed_fields);
+    
+    match parse_document(&content) {
+        Ok((_remaining, mut nodes)) => {
+            // If no specific fields changed, do full resolution
+            if changed_fields.is_empty() {
+                println!("📋 No specific fields changed, performing full resolution");
+                resolver::resolve_document(&mut nodes);
+            } else {
+                // Build dependency graph and do selective updates
+                let mut dep_graph = DependencyGraph::new();
+                if let Err(e) = dep_graph.build_from_document(&nodes) {
+                    // If dependency tracking fails, fall back to full resolution
+                    println!("❌ Dependency tracking failed: {:?}, falling back to full resolution", e);
+                    resolver::resolve_document(&mut nodes);
+                } else {
+                    // Calculate what fields need to be updated based on dependencies
+                    let mut all_fields_to_update = std::collections::HashSet::new();
+                    for changed_field in &changed_fields {
+                        let cascade = dep_graph.calculate_update_cascade(changed_field);
+                        for field in cascade {
+                            all_fields_to_update.insert(field);
+                        }
+                    }
+                    println!("📊 Dependency cascade calculated: {} fields need updates from {} changed fields", 
+                             all_fields_to_update.len(), changed_fields.len());
+                    
+                    // For now, do full resolution but preserve the user's changes in the changed fields
+                    // TODO: Implement true selective resolution in resolver module
+                    println!("⚠️  Using full resolution with field preservation");
+                    
+                    // First, capture the current values of the changed fields before resolution
+                    let mut preserved_values = std::collections::HashMap::new();
+                    for changed_field in &changed_fields {
+                        if let Some(value) = get_field_value_by_path(&nodes, changed_field) {
+                            preserved_values.insert(changed_field.clone(), value.clone());
+                            println!("💾 Preserving field '{}' with value: {:?}", changed_field, value);
+                        } else {
+                            println!("❌ Could not find field '{}' to preserve", changed_field);
+                        }
+                    }
+                    
+                    // Do full resolution
+                    resolver::resolve_document(&mut nodes);
+                    
+                    // Restore the preserved values to the changed fields
+                    for (field_path, value) in preserved_values {
+                        if let Err(e) = set_field_value_by_path(&mut nodes, &field_path, value) {
+                            println!("⚠️  Failed to restore field '{}': {:?}", field_path, e);
+                        } else {
+                            println!("✅ Restored field '{}'", field_path);
+                        }
+                    }
+                }
+            }
+            println!("✅ Selective update completed");
+            Ok(nodes)
+        },
+        Err(e) => {
+            println!("❌ Parse error in selective update: {}", e);
+            Err(OverseerError::ParseError(format!("Parse error: {}", e)))
+        }
+    }
+}
+
+#[command]
 async fn find_overseer_files(_directory: String) -> Result<Vec<String>> {
     // For now, return empty vector - this function needs to be implemented
     Ok(vec![])
@@ -161,6 +339,7 @@ fn main() {
             save_overseer_file_with_original,
             serialize_overseer_nodes,
             parse_overseer_content,
+            parse_overseer_content_selective,
             find_overseer_files,
             execute_overseer_event,
             scheduler_tick,

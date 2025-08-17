@@ -308,7 +308,7 @@ export class OverseerRenderer {
             case 'mount':
                 return this.createMountElement(node)
             default:
-                console.warn('Unknown node type:', nodeType)
+                // Treat unknown node types as divs (custom templates/components)
                 return this.createDivElement(node)
         }
     }
@@ -930,8 +930,15 @@ export class OverseerRenderer {
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
             }
-            if (window.app && window.app.reevaluateDocument) {
-                window.app.reevaluateDocument()
+            if (window.app && window.app.reevaluateDocumentSelective) {
+                // Try to determine field path for selective update
+                try {
+                    const fieldPath = this.buildNodePath(container).join('/')
+                    window.app.reevaluateDocumentSelective([fieldPath])
+                } catch (e) {
+                    console.warn('Failed to build field path, falling back to full update:', e)
+                    window.app.reevaluateDocumentSelective([])
+                }
             }
         })
         
@@ -1019,8 +1026,15 @@ export class OverseerRenderer {
                 window.app.markDocumentModified()
             }
             // Trigger reevaluation so formulas/computed params refresh
-            if (window.app && window.app.reevaluateDocument) {
-                window.app.reevaluateDocument()
+            if (window.app && window.app.reevaluateDocumentSelective) {
+                // Try to determine field path for selective update
+                try {
+                    const fieldPath = this.buildNodePath(container).join('/')
+                    window.app.reevaluateDocumentSelective([fieldPath])
+                } catch (e) {
+                    console.warn('Failed to build field path, falling back to full update:', e)
+                    window.app.reevaluateDocumentSelective([])
+                }
             }
             // Determine which events are defined to avoid unnecessary backend calls
             const hasHandler = (evt) => Array.isArray(node.children) && node.children.some(c => (c.name||'').toLowerCase() === evt)
@@ -2067,6 +2081,9 @@ export class OverseerRenderer {
     }
 
     makeFieldEditable(element, node, isMultiline = false) {
+        // Capture the old value before editing starts
+        const oldValue = element.textContent
+        
         // Prefer editing the raw formula if this field has one; otherwise use displayed text
         const originalParam = node?.parameters?.value
         const hasFormula = originalParam && typeof originalParam === 'object' && originalParam.Formula !== undefined
@@ -2081,24 +2098,51 @@ export class OverseerRenderer {
             input.rows = 3
         }
         
-    // Replace the element with the input
+        // Replace the element with the input
         element.style.display = 'none'
         element.parentNode.insertBefore(input, element.nextSibling)
         input.focus()
         input.select()
-    try { if (window.app) window.app._activeEditors = (window.app._activeEditors || 0) + 1 } catch(_) {}
         
-    const finishEditing = async () => {
+        let editingFinished = false
+        const finishEditing = async () => {
+            if (editingFinished) return
+            editingFinished = true
+            
+            // Capture field path before any DOM manipulation
+            let fieldPath = null
+            try {
+                fieldPath = this.buildNodePath(element).join('/')
+            } catch (e) {
+                console.warn('Failed to build field path before editing:', e)
+            }
+            
             const newValue = input.value
             // Keep showing the previous computed value if a formula was entered/edited
             const prevDisplay = element.textContent
             const isFormulaInput = typeof newValue === 'string' && /\$\([\s\S]*\)/.test(newValue.trim())
             element.textContent = isFormulaInput ? prevDisplay : newValue
             element.style.display = 'inline'
-            input.remove()
+            
+            // Safely remove input element
+            try {
+                input.remove()
+            } catch (e) {
+                console.warn('Input element already removed:', e)
+            }
             
             // Update the node value in the document structure
-            this.updateNodeValue(node, newValue)
+            // Instead of using the local node reference, find and update the node in the main document
+            if (fieldPath && window.app && window.app.currentDocument) {
+                console.log('🔧 Updating node in main document at path:', fieldPath, 'with value:', newValue)
+                const success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
+                if (!success) {
+                    console.warn('⚠️ Failed to update node by path, falling back to local node update')
+                    this.updateNodeValue(node, newValue)
+                }
+            } else {
+                this.updateNodeValue(node, newValue)
+            }
             // If user entered a formula, also set a client-side computed value to avoid showing raw formula on re-render
             if (isFormulaInput) {
                 try {
@@ -2115,12 +2159,29 @@ export class OverseerRenderer {
                 window.app.markDocumentModified()
             }
             // Trigger reevaluation so formulas and computed values refresh
-            if (window.app && window.app.reevaluateDocument && (window.app._activeEditors || 0) === 0) {
-                window.app.reevaluateDocument()
+            if (window.app && window.app.reevaluateDocumentSelective) {
+                // Use pre-captured field path for selective update
+                if (fieldPath) {
+                    console.log('🔄 Triggering selective update for field:', fieldPath)
+                    // Pass the old and new values to help selective update system
+                    const updateResult = await window.app.reevaluateDocumentSelective([fieldPath], [{
+                        path: fieldPath,
+                        oldValue: oldValue,
+                        newValue: newValue
+                    }])
+                    
+                    // If it was a DOM-only update, skip the event emission to prevent chart refresh
+                    if (updateResult && updateResult.domOnly && updateResult.success) {
+                        console.log('🎯 Skipping event emission for DOM-only update (prevents chart refresh)')
+                        return // Skip the event emission below
+                    }
+                } else {
+                    console.warn('No field path available, falling back to full update')
+                    await window.app.reevaluateDocumentSelective([])
+                }
             }
-            // Emit change event for actions
+            // Emit change event for actions (only if not DOM-only update)
             try { await this.emitEvent(node, element, 'change') } catch(_) {}
-            try { if (window.app && window.app._activeEditors > 0) window.app._activeEditors-- } catch(_) {}
         }
         
         input.addEventListener('blur', finishEditing)
@@ -2129,9 +2190,13 @@ export class OverseerRenderer {
                 finishEditing()
             }
             if (e.key === 'Escape') {
+                editingFinished = true
                 element.style.display = 'inline'
-                input.remove()
-                try { if (window.app && window.app._activeEditors > 0) window.app._activeEditors-- } catch(_) {}
+                try {
+                    input.remove()
+                } catch (e) {
+                    console.warn('Input element already removed:', e)
+                }
             }
         })
     }
@@ -2186,7 +2251,6 @@ export class OverseerRenderer {
         element.style.display = 'none'
     element.parentNode.insertBefore(editorContainer, element.nextSibling)
         textarea.focus()
-    try { if (window.app) window.app._activeEditors = (window.app._activeEditors || 0) + 1 } catch(_) {}
         
         let isPreviewMode = false
         
@@ -2224,8 +2288,15 @@ export class OverseerRenderer {
                     window.app.markDocumentModified()
                 }
                 // Trigger reevaluation so formulas/computed params refresh
-                if (window.app && window.app.reevaluateDocument && (window.app._activeEditors || 0) === 0) {
-                    window.app.reevaluateDocument()
+                if (window.app && window.app.reevaluateDocumentSelective) {
+                    // Try to determine field path for selective update
+                    try {
+                        const fieldPath = this.buildNodePath(element).join('/')
+                        window.app.reevaluateDocumentSelective([fieldPath])
+                    } catch (e) {
+                        console.warn('Failed to build field path, falling back to full update:', e)
+                        window.app.reevaluateDocumentSelective([])
+                    }
                 }
         // Emit change event for actions
         try { await this.emitEvent(node, element, 'change') } catch(_) {}
@@ -2234,7 +2305,6 @@ export class OverseerRenderer {
             // Clean up
             element.style.display = 'block'
             editorContainer.remove()
-            try { if (window.app && window.app._activeEditors > 0) window.app._activeEditors-- } catch(_) {}
         }
         
         // Event handlers
@@ -2269,6 +2339,50 @@ export class OverseerRenderer {
         window.app.markDocumentModified && window.app.markDocumentModified()
     // Reschedule timers based on the new document state
     try { window.app.startScheduler && window.app.startScheduler() } catch(_) {}
+    }
+
+    // Helper function to update a node's value in the document structure by path
+    updateNodeValueByPath(document, fieldPath, newValue) {
+        try {
+            const pathParts = fieldPath.split('/')
+            let currentNodes = document
+            let targetNode = null
+            
+            // Navigate to the target node
+            for (let i = 0; i < pathParts.length; i++) {
+                const part = pathParts[i]
+                
+                // Handle array-style names with ordinals (e.g., "item#1")
+                const [baseName, ordinal] = part.includes('#') ? 
+                    part.split('#') : [part, '0']
+                const ordinalIndex = parseInt(ordinal, 10)
+                
+                const matches = currentNodes.filter(node => node.name === baseName)
+                if (ordinalIndex >= matches.length) {
+                    console.warn('❌ Could not find node at path:', fieldPath, 'missing:', part)
+                    return false
+                }
+                
+                targetNode = matches[ordinalIndex]
+                
+                // If not the last part, move to children
+                if (i < pathParts.length - 1) {
+                    currentNodes = targetNode.children || []
+                }
+            }
+            
+            if (targetNode) {
+                console.log('✅ Found target node:', targetNode.name, 'updating value to:', newValue)
+                this.updateNodeValue(targetNode, newValue)
+                return true
+            } else {
+                console.warn('❌ Target node not found at path:', fieldPath)
+                return false
+            }
+        } catch (e) {
+            console.warn('❌ Error updating node by path:', e)
+            return false
+        }
     }
 
     // Helper function to update a node's value in the document structure
@@ -2363,6 +2477,257 @@ export class OverseerRenderer {
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
                 .replace(/\n/g, '<br>');
+        }
+    }
+
+    /**
+     * Attempt to update only specific fields in the DOM without full re-render
+     * Returns true if successful, false if full re-render is needed
+     */
+    updateSelectiveFields(oldDocument, newDocument, changedFieldPaths, fieldChanges = []) {
+        try {
+            console.log('🎯 Selective DOM update for paths:', changedFieldPaths)
+            if (fieldChanges.length > 0) {
+                console.log('💡 Using field change info for selective updates')
+            }
+            
+            // Create a map of field changes for quick lookup
+            const changeMap = new Map()
+            for (const change of fieldChanges) {
+                changeMap.set(change.path, change)
+            }
+            
+            let updateCount = 0
+            
+            for (const fieldPath of changedFieldPaths) {
+                console.log('🔍 Looking for DOM elements with path:', fieldPath)
+                
+                const changeInfo = changeMap.get(fieldPath)
+                if (changeInfo) {
+                    console.log('📝 Field change detected:', changeInfo)
+                    
+                    // Find the specific element to update
+                    const elements = document.querySelectorAll(`[data-path]`)
+                    
+                    for (const element of elements) {
+                        try {
+                            const elementPath = JSON.parse(element.dataset.path || '[]')
+                            const elementPathStr = elementPath.join('/')
+                            
+                            // Check if this element's path exactly matches the changed field
+                            if (elementPathStr === fieldPath) {
+                                console.log('🎯 Found exact matching element for path:', elementPathStr)
+                                
+                                // Find the corresponding node in the new document
+                                const newNode = this.findNodeByPath(newDocument, elementPath)
+                                
+                                if (newNode) {
+                                    console.log('📝 Updating element for changed field:', newNode.name, 'from', changeInfo.oldValue, 'to', changeInfo.newValue)
+                                    this.updateSingleElement(element, newNode, elementPath)
+                                    updateCount++
+                                } else {
+                                    console.log('❌ Node not found:', { path: elementPath })
+                                }
+                                break // Found the exact match, no need to continue
+                            }
+                        } catch (error) {
+                            console.warn('Error processing element:', error)
+                        }
+                    }
+                } else {
+                    // Fallback to old comparison-based approach if no change info
+                    console.log('⚠️ No change info available, using comparison approach for:', fieldPath)
+                    this.updateFieldByComparison(oldDocument, newDocument, fieldPath)
+                    updateCount++ // Assume it worked for now
+                }
+            }
+            
+            console.log(`✅ Selective update completed: ${updateCount} elements updated`)
+            return updateCount > 0
+            
+        } catch (error) {
+            console.error('Error in selective DOM update:', error)
+            return false
+        }
+    }
+    
+    /**
+     * Fallback method for updating fields by comparing old vs new documents
+     */
+    updateFieldByComparison(oldDocument, newDocument, fieldPath) {
+        // Find all elements that might match this field path
+        const elements = document.querySelectorAll(`[data-path]`)
+        
+        for (const element of elements) {
+            try {
+                const elementPath = JSON.parse(element.dataset.path || '[]')
+                const elementPathStr = elementPath.join('/')
+                
+                // Check if this element's path matches or is a parent of the changed field
+                if (elementPathStr === fieldPath || fieldPath.startsWith(elementPathStr + '/')) {
+                    console.log('🎯 Found matching element for path:', elementPathStr)
+                    
+                    // Find the corresponding node in the new document
+                    const newNode = this.findNodeByPath(newDocument, elementPath)
+                    const oldNode = this.findNodeByPath(oldDocument, elementPath)
+                    
+                    if (newNode && oldNode) {
+                        // Check if the node actually changed
+                        console.log('🔍 Comparing nodes:', {
+                            oldValue: this.getNodeValue(oldNode),
+                            newValue: this.getNodeValue(newNode),
+                            oldComputed: oldNode.parameters?._computed_value,
+                            newComputed: newNode.parameters?._computed_value
+                        })
+                        
+                        if (this.nodeHasChanged(oldNode, newNode)) {
+                            console.log('📝 Updating element for changed node:', newNode.name)
+                            this.updateSingleElement(element, newNode, elementPath)
+                        } else {
+                            console.log('⏭️ Node unchanged, skipping:', newNode.name)
+                        }
+                    } else {
+                        console.log('❌ Node not found:', { newNode: !!newNode, oldNode: !!oldNode, path: elementPath })
+                    }
+                }
+            } catch (e) {
+                console.warn('Error processing element for selective update:', e)
+            }
+        }
+    }
+
+    /**
+     * Find a node in the document by its path array
+     */
+    findNodeByPath(document, pathArray) {
+        let current = { children: document }
+        
+        for (const pathSegment of pathArray) {
+            if (!current.children) return null
+            
+            // Handle array-style names with ordinals (e.g., "item#1")
+            const [baseName, ordinal] = pathSegment.includes('#') ? 
+                pathSegment.split('#') : [pathSegment, '0']
+            
+            const matches = current.children.filter(child => child.name === baseName)
+            const index = parseInt(ordinal, 10)
+            
+            if (index >= matches.length) return null
+            current = matches[index]
+        }
+        
+        return current
+    }
+
+    /**
+     * Check if a node has actually changed between old and new versions
+     */
+    nodeHasChanged(oldNode, newNode) {
+        // Compare key properties that would affect rendering
+        if (oldNode.node_type !== newNode.node_type) {
+            console.log('🔄 Node type changed:', oldNode.node_type, '->', newNode.node_type)
+            return true
+        }
+        
+        // Compare the actual values using getNodeValue
+        const oldValue = this.getNodeValue(oldNode)
+        const newValue = this.getNodeValue(newNode)
+        
+        if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+            console.log('🔄 Node value changed:', oldValue, '->', newValue)
+            return true
+        }
+        
+        // Compare computed values if they exist
+        const oldComputed = oldNode.parameters?._computed_value
+        const newComputed = newNode.parameters?._computed_value
+        
+        if (JSON.stringify(oldComputed) !== JSON.stringify(newComputed)) {
+            console.log('🔄 Computed value changed:', oldComputed, '->', newComputed)
+            return true
+        }
+        
+        console.log('🔄 No relevant changes detected in node:', oldNode.name)
+        return false
+    }
+
+    /**
+     * Update a single DOM element with new node data
+     */
+    updateSingleElement(element, newNode, pathArray) {
+        try {
+            // Handle different node types
+            const nodeType = (newNode.node_type || newNode.type || '').toLowerCase()
+            
+            switch (nodeType) {
+                case 'string':
+                case 'text':
+                    this.updateTextElement(element, newNode)
+                    break
+                    
+                case 'int':
+                case 'float':
+                    this.updateNumericElement(element, newNode)
+                    break
+                    
+                case 'checkbox':
+                    this.updateCheckboxElement(element, newNode)
+                    break
+                    
+                default:
+                    console.warn('Selective update not implemented for node type:', nodeType)
+                    return false
+            }
+            
+            return true
+        } catch (error) {
+            console.warn('Failed to update single element:', error)
+            return false
+        }
+    }
+
+    /**
+     * Update a text/string element
+     */
+    updateTextElement(element, newNode) {
+        const textElement = element.querySelector('.field-content, .field-value') || element
+        const computedValue = this.getNodeValue(newNode)
+        
+        if (textElement.textContent !== computedValue) {
+            textElement.textContent = computedValue
+            console.log('📝 Updated text element:', computedValue)
+        }
+    }
+
+    /**
+     * Update a numeric input element
+     */
+    updateNumericElement(element, newNode) {
+        const input = element.querySelector('input[type="number"], input[type="text"]')
+        if (input) {
+            const computedValue = this.getNodeValue(newNode)
+            if (input.value !== computedValue) {
+                input.value = computedValue
+                console.log('📝 Updated numeric element:', computedValue)
+            }
+        } else {
+            // Fallback to text update
+            this.updateTextElement(element, newNode)
+        }
+    }
+
+    /**
+     * Update a checkbox element
+     */
+    updateCheckboxElement(element, newNode) {
+        const checkbox = element.querySelector('input[type="checkbox"]')
+        if (checkbox) {
+            const value = this.getNodeValue(newNode)
+            const isChecked = value === true || value === 'true'
+            if (checkbox.checked !== isChecked) {
+                checkbox.checked = isChecked
+                console.log('📝 Updated checkbox element:', isChecked)
+            }
         }
     }
 }
