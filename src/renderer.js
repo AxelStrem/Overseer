@@ -2170,9 +2170,13 @@ export class OverseerRenderer {
                         newValue: newValue
                     }])
                     
-                    // If it was a DOM-only update, skip the event emission to prevent chart refresh
-                    if (updateResult && updateResult.domOnly && updateResult.success) {
-                        console.log('🎯 Skipping event emission for DOM-only update (prevents chart refresh)')
+                    // Skip event emission for any successful selective update (DOM-only or backend selective)
+                    if (updateResult && updateResult.success) {
+                        if (updateResult.domOnly) {
+                            console.log('🎯 Skipping event emission for DOM-only update (prevents chart refresh)')
+                        } else {
+                            console.log('🎯 Skipping event emission for successful selective backend update (prevents chart refresh)')
+                        }
                         return // Skip the event emission below
                     }
                 } else {
@@ -2551,6 +2555,158 @@ export class OverseerRenderer {
         }
     }
     
+    /**
+     * Update DOM for cascade fields that were changed by backend processing
+     */
+    updateDocumentForCascadeFields(oldDocument, newDocument, userChangedFields, cascadeFields = null) {
+        console.log('🔄 Updating DOM for cascade fields after backend processing')
+        
+        // Use provided cascade fields if available, otherwise compute them
+        let fieldsToUpdate = cascadeFields
+        if (!fieldsToUpdate) {
+            // Find all fields that changed between old and new documents
+            const allChangedFields = this.findAllChangedFields(oldDocument, newDocument, '')
+            
+            // Filter out user-changed fields to get only cascade fields
+            fieldsToUpdate = allChangedFields.filter(field => !userChangedFields.includes(field))
+        }
+        
+        console.log('🎯 Cascade fields to update:', fieldsToUpdate)
+        
+        // Update DOM for each cascade field
+        for (const fieldPath of fieldsToUpdate) {
+            try {
+                this.updateSingleFieldInDOM(oldDocument, newDocument, fieldPath)
+            } catch (e) {
+                console.warn(`Failed to update cascade field ${fieldPath}:`, e)
+            }
+        }
+    }
+
+    /**
+     * Find all fields that have different computed values between two documents
+     */
+    findAllChangedFields(node1, node2, currentPath) {
+        const changedFields = []
+        this.collectChangedFields(node1, node2, currentPath, changedFields)
+        return changedFields
+    }
+
+    /**
+     * Recursively collect changed field paths
+     */
+    collectChangedFields(node1, node2, currentPath, changedFields) {
+        if (!node1 || !node2) return
+
+        // Check computed parameters for changes
+        if (node1.parameters && node2.parameters) {
+            for (const [key, value1] of Object.entries(node1.parameters)) {
+                if (key.startsWith('_computed_')) {
+                    const value2 = node2.parameters[key]
+                    if (!this.valuesEqual(value1, value2)) {
+                        const fieldName = key.replace('_computed_', '')
+                        const fieldPath = currentPath ? `${currentPath}/${fieldName}` : fieldName
+                        changedFields.push(fieldPath)
+                        console.log(`📝 Detected cascade change: ${fieldPath}`)
+                    }
+                }
+            }
+        }
+
+        // Recursively check children
+        if (node1.children && node2.children) {
+            for (let i = 0; i < Math.min(node1.children.length, node2.children.length); i++) {
+                const child1 = node1.children[i]
+                const child2 = node2.children[i]
+                if (child1 && child2 && child1.name === child2.name) {
+                    const childPath = currentPath ? `${currentPath}/${child1.name}` : child1.name
+                    this.collectChangedFields(child1, child2, childPath, changedFields)
+                }
+            }
+        }
+    }
+
+    /**
+     * Update a single field in the DOM based on document comparison
+     */
+    updateSingleFieldInDOM(oldDocument, newDocument, fieldPath) {
+        console.log(`🔄 Updating single field in DOM: ${fieldPath}`)
+        
+        // Find the DOM element for this field using the same logic as selective updates
+        const elements = document.querySelectorAll(`[data-path]`)
+        
+        for (const element of elements) {
+            try {
+                const elementPath = JSON.parse(element.dataset.path || '[]').join('/')
+                if (elementPath === fieldPath || (elementPath === fieldPath && element.dataset.path)) {
+                    // Get the new computed value
+                    const newValue = this.getComputedValueFromDocument(newDocument, fieldPath)
+                    if (newValue !== undefined) {
+                        console.log(`📝 Updating cascade field ${fieldPath} to:`, newValue)
+                        this.updateElementDisplayValue(element, newValue)
+                    }
+                }
+            } catch (e) {
+                console.warn(`Failed to update element for ${fieldPath}:`, e)
+            }
+        }
+    }
+
+    /**
+     * Get computed value from document for a specific field path
+     */
+    getComputedValueFromDocument(documentArray, fieldPath) {
+        // Handle array document structure
+        if (Array.isArray(documentArray)) {
+            // Find the node with the matching name
+            const targetNode = documentArray.find(node => node.name === fieldPath)
+            if (targetNode && targetNode.parameters) {
+                // Check for computed value first, then regular value
+                if (targetNode.parameters._computed_value) {
+                    return targetNode.parameters._computed_value
+                }
+                if (targetNode.parameters.value) {
+                    return targetNode.parameters.value
+                }
+            }
+        }
+        
+        return undefined
+    }
+
+    /**
+     * Update element's display value
+     */
+    updateElementDisplayValue(element, newValue) {
+        if (!element) return
+
+        // Extract display value from OverseerValue
+        let displayValue = newValue
+        if (typeof newValue === 'object' && newValue !== null) {
+            if (newValue.Integer !== undefined) displayValue = newValue.Integer
+            else if (newValue.Float !== undefined) displayValue = newValue.Float
+            else if (newValue.String !== undefined) displayValue = newValue.String
+            else if (newValue.Boolean !== undefined) displayValue = newValue.Boolean
+        }
+
+        element.textContent = displayValue
+        console.log(`✅ Updated element display to: ${displayValue}`)
+    }
+
+    /**
+     * Compare two values for equality
+     */
+    valuesEqual(val1, val2) {
+        if (val1 === val2) return true
+        if (!val1 || !val2) return false
+        
+        if (typeof val1 === 'object' && typeof val2 === 'object') {
+            return JSON.stringify(val1) === JSON.stringify(val2)
+        }
+        
+        return false
+    }
+
     /**
      * Fallback method for updating fields by comparing old vs new documents
      */

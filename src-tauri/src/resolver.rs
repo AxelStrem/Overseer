@@ -92,6 +92,24 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     initialize_and_validate_mount_nodes(nodes);
 }
 
+/// Selective resolution that only processes specific field paths
+pub fn resolve_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
+    println!("🎯 Selective resolution for {} fields: {:?}", field_paths.len(), field_paths);
+    
+    // For selective updates, we only need to:
+    // 1. Re-evaluate formulas for the specific fields
+    // 2. Re-compute charts that depend on those fields
+    // 3. Skip template resolution, layout, and parameter inheritance (those don't change)
+    
+    // Only evaluate formulas for the specific field paths
+    evaluate_formulas_for_specific_fields(nodes, field_paths);
+    
+    // Only recompute charts that contain references to the changed fields
+    compute_chart_series_for_specific_fields(nodes, field_paths);
+    
+    println!("✅ Selective resolution completed");
+}
+
 // Initialize default values and validate mount nodes across the document tree
 fn initialize_and_validate_mount_nodes(nodes: &mut Vec<OverseerNode>) {
     let len = nodes.len();
@@ -964,6 +982,118 @@ fn evaluate_formulas_in_document(nodes: &mut Vec<OverseerNode>) {
     debug_resolver!("[RESOLVER] Formula evaluation completed");
 }
 
+/// Selective formula evaluation that only processes specific field paths
+fn evaluate_formulas_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
+    debug_resolver!("[RESOLVER] Starting selective formula evaluation for {} fields", field_paths.len());
+    let document_root_snapshot = nodes.clone();
+
+    // Walk using raw pointers so we can pass parent immutable reference alongside child mutable
+    let len = nodes.len();
+    for i in 0..len {
+        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
+        unsafe { 
+            recursively_evaluate_node_formulas_selective(
+                node_ptr, 
+                std::ptr::null(), 
+                &mut current_path, 
+                &document_root_snapshot,
+                field_paths
+            ); 
+        }
+    }
+
+    debug_resolver!("[RESOLVER] Selective formula evaluation completed");
+}
+
+/// Selective chart computation that only processes charts affected by specific field changes
+fn compute_chart_series_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
+    println!("🎯 Selective chart computation for fields: {:?}", field_paths);
+    
+    // Analyze if any charts actually depend on the changed field paths
+    let charts_need_update = charts_depend_on_fields(nodes, field_paths);
+    
+    if charts_need_update {
+        println!("🔄 Charts depend on changed fields, performing selective chart recomputation");
+        compute_chart_series(nodes);
+    } else {
+        println!("✅ No charts depend on changed fields, skipping chart computation");
+    }
+}
+
+/// Check if any charts in the document depend on the specified field paths
+fn charts_depend_on_fields(nodes: &[OverseerNode], field_paths: &std::collections::HashSet<String>) -> bool {
+    for node in nodes {
+        if chart_node_depends_on_fields(node, field_paths, "") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Recursively check if a chart node or its children depend on the specified field paths
+fn chart_node_depends_on_fields(node: &OverseerNode, field_paths: &std::collections::HashSet<String>, current_path: &str) -> bool {
+    let node_path = if current_path.is_empty() { 
+        node.name.clone() 
+    } else { 
+        format!("{}/{}", current_path, node.name) 
+    };
+    
+    // Check if this is a chart with plots
+    if node.node_type == "chart" {
+        for child in &node.children {
+            if child.node_type == "plot" {
+                if plot_depends_on_fields(child, field_paths, &node_path) {
+                    println!("📊 Chart plot '{}' depends on changed fields", format!("{}/{}", node_path, child.name));
+                    return true;
+                }
+            }
+        }
+    }
+    
+    // Recursively check children
+    for child in &node.children {
+        if chart_node_depends_on_fields(child, field_paths, &node_path) {
+            return true;
+        }
+    }
+    
+    false
+}
+
+/// Check if a specific plot depends on any of the changed field paths
+fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::HashSet<String>, chart_path: &str) -> bool {
+    use crate::types::OverseerValue;
+    
+    // Check the 'source' parameter to see what data the plot references
+    if let Some(OverseerValue::String(source_path)) = plot.parameters.get("source") {
+        println!("🔍 Checking if plot source '{}' intersects with changed fields: {:?}", source_path, field_paths);
+        
+        // If the source path (like "/data") intersects with any changed field paths
+        for field_path in field_paths {
+            // Check if the changed field could affect the plot's data source
+            let source_clean = source_path.trim_start_matches('/');
+            
+            // Direct path match (e.g., field "data" affects source "/data")
+            if field_path == source_clean || field_path.starts_with(&format!("{}/", source_clean)) {
+                println!("� Plot source '{}' directly affected by field change '{}'", source_path, field_path);
+                return true;
+            }
+            
+            // Reverse check: source affects field (e.g., source "/data" affects field "data/item")
+            if source_clean.starts_with(field_path) || source_clean.starts_with(&format!("{}/", field_path)) {
+                println!("📊 Plot source '{}' contains changed field '{}'", source_path, field_path);
+                return true;
+            }
+        }
+    }
+    
+    // For now, assume plot formulas (x, y parameters) only depend on lambda variables and source data
+    // They typically don't depend on external fields like 'a' or 'b'
+    println!("✅ Plot '{}' does not depend on changed fields", format!("{}/{}", chart_path, plot.name));
+    false
+}
+
 /// Recursively traverses the node tree, evaluating formulas along the way.
 /// It maintains the path to the current node, which is crucial for the EvaluationContext.
 unsafe fn recursively_evaluate_node_formulas(
@@ -1036,6 +1166,82 @@ unsafe fn recursively_evaluate_node_formulas(
             if k > 0 { current_path.push(format!("{}#{}", name, k)); } else { current_path.push(name); }
         }
         recursively_evaluate_node_formulas(child_ptr, node as *const OverseerNode, current_path, document_root);
+        current_path.pop();
+    }
+}
+
+/// Selective version that only evaluates formulas for nodes in specific field paths
+unsafe fn recursively_evaluate_node_formulas_selective(
+    node_ptr: *mut OverseerNode,
+    _parent_ptr: *const OverseerNode,
+    current_path: &mut Vec<String>,
+    document_root: &[OverseerNode],
+    field_paths: &std::collections::HashSet<String>,
+) {
+    let node: &mut OverseerNode = &mut *node_ptr;
+    let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() { None } else { Some(&*_parent_ptr) };
+    
+    // Skip evaluating formulas for nodes inside action handler blocks
+    if let Some(p) = _parent_ref {
+        if p.node_type == "on" {
+            return;
+        }
+    }
+    
+    // Check if this node's path is in the fields we need to update
+    let current_path_str = current_path.join("/");
+    let should_evaluate_this_node = field_paths.contains(&current_path_str) || 
+        field_paths.iter().any(|path| path.starts_with(&current_path_str));
+    
+    if should_evaluate_this_node {
+        println!("🔄 Selectively evaluating formulas for node at path: {}", current_path_str);
+        
+        // Same formula evaluation logic as the main function
+        let formula_pairs: Vec<(String, String)> = node
+            .parameters
+            .iter()
+            .filter_map(|(k, v)| match v {
+                OverseerValue::Formula(s) => Some((k.clone(), s.clone())),
+                _ => None,
+            })
+            .collect();
+
+        // Run up to 2 passes for intra-node dependencies
+        for _ in 0..2 {
+            let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
+            let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
+            for (key, formula_src) in &formula_pairs {
+                debug_resolver!("[RESOLVER] Selectively evaluating formula in {}.{}: {}", node.name, key, formula_src);
+                let shadow_key = if key == "value" { "_computed_value".to_string() } else { format!("_computed_{}", key) };
+                match FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context) {
+                    Ok(result) => {
+                        debug_resolver!("[RESOLVER] Formula result: {:?}", result);
+                        computed_params.push((shadow_key, result));
+                    }
+                    Err(_err) => {
+                        debug_resolver!("[RESOLVER] Formula error at {}.{}", node.name, key);
+                        computed_params.push((shadow_key, OverseerValue::String("invalid formula error".to_string())));
+                    }
+                }
+            }
+            drop(context);
+            for (k, v) in computed_params {
+                node.parameters.insert(k, v);
+            }
+        }
+    }
+    
+    // Always recurse into children to check their paths
+    let child_len = node.children.len();
+    for idx in 0..child_len {
+        let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
+        {
+            let child_ref = &*child_ptr;
+            let name = child_ref.name.clone();
+            let k = node.children.iter().take(idx).filter(|c| c.name == name).count();
+            if k > 0 { current_path.push(format!("{}#{}", name, k)); } else { current_path.push(name); }
+        }
+        recursively_evaluate_node_formulas_selective(child_ptr, node as *const OverseerNode, current_path, document_root, field_paths);
         current_path.pop();
     }
 }

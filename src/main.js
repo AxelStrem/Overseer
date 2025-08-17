@@ -361,6 +361,101 @@ tab Main {
         return true // All changes are simple header/label strings
     }
 
+    /**
+     * Detect if there are cascade changes by comparing old and new documents
+     */
+    detectCascadeChanges(oldDocument, newDocument, userChangedFields) {
+        // Simple comparison: check if any fields other than user-changed fields have different values
+        const allChangedFields = this.findChangedFieldsBetweenDocuments(oldDocument, newDocument)
+        const cascadeFields = allChangedFields.filter(field => !userChangedFields.includes(field))
+        return cascadeFields.length > 0
+    }
+
+    /**
+     * Find all fields that have different values between two documents
+     */
+    findChangedFieldsBetweenDocuments(doc1, doc2) {
+        const changedFields = []
+        
+        // Handle array documents (list of top-level nodes)
+        if (Array.isArray(doc1) && Array.isArray(doc2)) {
+            // Compare each top-level node
+            for (let i = 0; i < Math.max(doc1.length, doc2.length); i++) {
+                const node1 = doc1[i]
+                const node2 = doc2[i]
+                if (node1 && node2) {
+                    this.compareDocumentFields(node1, node2, '', changedFields)
+                }
+            }
+        } else {
+            // Handle single document object
+            this.compareDocumentFields(doc1, doc2, '', changedFields)
+        }
+        
+        return changedFields
+    }
+
+    /**
+     * Recursively compare document fields and collect paths of changed fields
+     */
+    compareDocumentFields(node1, node2, currentPath, changedFields) {
+        if (!node1 || !node2) return
+
+        // Compare all parameter values, not just computed ones
+        if (node1.parameters && node2.parameters) {
+            for (const [key, value1] of Object.entries(node1.parameters)) {
+                const value2 = node2.parameters[key]
+                if (!this.valuesEqual(value1, value2)) {
+                    // For value parameters, use the node name (field path)
+                    if (key === 'value') {
+                        const nodePath = currentPath || node1.name
+                        changedFields.push(nodePath)
+                        console.log(`🔍 Field value changed: ${nodePath} from`, value1, 'to', value2)
+                    } else if (key.startsWith('_computed_')) {
+                        // For computed parameters, include both the node path and parameter name
+                        const paramName = key.replace('_computed_', '')
+                        const nodePath = currentPath || node1.name
+                        if (paramName === 'value') {
+                            // For computed values, update the main field
+                            changedFields.push(nodePath)
+                        } else {
+                            // For other computed parameters, use full path
+                            changedFields.push(`${nodePath}/${paramName}`)
+                        }
+                        console.log(`🔍 Field computed value changed: ${nodePath}/${paramName} from`, value1, 'to', value2)
+                    }
+                }
+            }
+        }
+
+        // Recursively check children
+        if (node1.children && node2.children) {
+            for (let i = 0; i < Math.max(node1.children.length, node2.children.length); i++) {
+                const child1 = node1.children[i]
+                const child2 = node2.children[i]
+                if (child1 && child2) {
+                    const childPath = currentPath ? `${currentPath}/${child1.name}` : child1.name
+                    this.compareDocumentFields(child1, child2, childPath, changedFields)
+                }
+            }
+        }
+    }
+
+    /**
+     * Compare two values for equality
+     */
+    valuesEqual(val1, val2) {
+        if (val1 === val2) return true
+        if (!val1 || !val2) return false
+        
+        // Handle OverseerValue objects
+        if (typeof val1 === 'object' && typeof val2 === 'object') {
+            return JSON.stringify(val1) === JSON.stringify(val2)
+        }
+        
+        return false
+    }
+
     async reevaluateDocumentSelective(changedFieldPaths = [], fieldChanges = []) {
         try {
             if (!this.currentDocument) return { domOnly: false }
@@ -415,9 +510,30 @@ tab Main {
                 }
                 
                 if (selectiveUpdateSuccessful) {
-                    // For now, assume no cascading changes since we can't easily get cascade count from backend
-                    // This will prevent document updates when only simple field changes occur
-                    console.log('✅ No cascading changes detected - document object unchanged (prevents chart refresh)')
+                    // The backend has processed cascade dependencies, so we need to update DOM for 
+                    // both the user-changed fields AND any cascade fields that were updated
+                    
+                    // For now, detect if there might be cascade changes by comparing resolved document
+                    const hasCascadeChanges = this.detectCascadeChanges(this.currentDocument, resolved, changedFieldPaths)
+                    
+                    if (hasCascadeChanges) {
+                        console.log('🔄 Cascade changes detected, updating DOM for affected fields')
+                        // Get the actual cascade fields that were detected
+                        const allChangedFields = this.findChangedFieldsBetweenDocuments(this.currentDocument, resolved)
+                        const cascadeFields = allChangedFields.filter(field => !changedFieldPaths.includes(field))
+                        
+                        // Re-run selective DOM update to include cascade fields
+                        try {
+                            this.renderer.updateDocumentForCascadeFields(this.currentDocument, resolved, changedFieldPaths, cascadeFields)
+                        } catch (e) {
+                            console.warn('Failed to update cascade fields in DOM:', e)
+                        }
+                    } else {
+                        console.log('✅ No cascade changes detected - document object unchanged (prevents chart refresh)')
+                    }
+                    
+                    // Update the current document with the resolved result
+                    this.currentDocument = resolved
                     
                     console.log('✅ Selective update completed successfully')
                     return { domOnly: false, success: true }

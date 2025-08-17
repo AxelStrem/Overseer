@@ -245,30 +245,50 @@ async fn parse_overseer_content_selective(content: String, changed_fields: Vec<S
                     println!("📊 Dependency cascade calculated: {} fields need updates from {} changed fields", 
                              all_fields_to_update.len(), changed_fields.len());
                     
-                    // For now, do full resolution but preserve the user's changes in the changed fields
-                    // TODO: Implement true selective resolution in resolver module
-                    println!("⚠️  Using full resolution with field preservation");
-                    
-                    // First, capture the current values of the changed fields before resolution
-                    let mut preserved_values = std::collections::HashMap::new();
-                    for changed_field in &changed_fields {
-                        if let Some(value) = get_field_value_by_path(&nodes, changed_field) {
-                            preserved_values.insert(changed_field.clone(), value.clone());
-                            println!("💾 Preserving field '{}' with value: {:?}", changed_field, value);
-                        } else {
-                            println!("❌ Could not find field '{}' to preserve", changed_field);
+                    if all_fields_to_update.is_empty() {
+                        // No cascade updates needed, just preserve user changes
+                        println!("✅ No dependency cascade needed, preserving user changes only");
+                        
+                        // Preserve the user's input values
+                        let mut preserved_values = std::collections::HashMap::new();
+                        for changed_field in &changed_fields {
+                            if let Some(value) = get_field_value_by_path(&nodes, changed_field) {
+                                preserved_values.insert(changed_field.clone(), value.clone());
+                                println!("💾 Preserving field '{}' with value: {:?}", changed_field, value);
+                            }
                         }
-                    }
-                    
-                    // Do full resolution
-                    resolver::resolve_document(&mut nodes);
-                    
-                    // Restore the preserved values to the changed fields
-                    for (field_path, value) in preserved_values {
-                        if let Err(e) = set_field_value_by_path(&mut nodes, &field_path, value) {
-                            println!("⚠️  Failed to restore field '{}': {:?}", field_path, e);
-                        } else {
-                            println!("✅ Restored field '{}'", field_path);
+                        
+                        // No need for any resolution - just restore the user values
+                        for (field_path, value) in preserved_values {
+                            if let Err(e) = set_field_value_by_path(&mut nodes, &field_path, value) {
+                                println!("⚠️  Failed to restore field '{}': {:?}", field_path, e);
+                            } else {
+                                println!("✅ Restored field '{}'", field_path);
+                            }
+                        }
+                    } else {
+                        // Use true selective resolution for fields that need updates
+                        println!("🎯 Using selective resolution for {} fields", all_fields_to_update.len());
+                        
+                        // First preserve user input values
+                        let mut preserved_values = std::collections::HashMap::new();
+                        for changed_field in &changed_fields {
+                            if let Some(value) = get_field_value_by_path(&nodes, changed_field) {
+                                preserved_values.insert(changed_field.clone(), value.clone());
+                                println!("💾 Preserving field '{}' with value: {:?}", changed_field, value);
+                            }
+                        }
+                        
+                        // Do selective resolution only for the cascade fields
+                        resolver::resolve_specific_fields(&mut nodes, &all_fields_to_update);
+                        
+                        // Restore the preserved user input values
+                        for (field_path, value) in preserved_values {
+                            if let Err(e) = set_field_value_by_path(&mut nodes, &field_path, value) {
+                                println!("⚠️  Failed to restore field '{}': {:?}", field_path, e);
+                            } else {
+                                println!("✅ Restored field '{}'", field_path);
+                            }
                         }
                     }
                 }
