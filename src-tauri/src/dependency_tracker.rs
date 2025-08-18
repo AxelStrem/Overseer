@@ -236,23 +236,55 @@ impl DependencyGraph {
 
     /// Extract path reference patterns from formula string
     fn extract_path_references(&self, formula: &str) -> Vec<String> {
-        let mut references = Vec::new();
+        use std::collections::HashSet;
+        let mut references: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut path_segments: HashSet<String> = HashSet::new();
         
         println!("🔍   Extracting path references from formula: '{}'", formula);
         
-        // Simple approach: find all word tokens that could be field references
-        // Look for identifiers (letters, numbers, underscores) that are not keywords
-        let re = regex::Regex::new(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b").unwrap();
+        // 1) Absolute paths like "/root/field_b" (one or more segments)
+        let abs_re = regex::Regex::new(r"/[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*)*").unwrap();
+        for m in abs_re.find_iter(formula) {
+            let p = m.as_str().to_string();
+            if seen.insert(p.clone()) {
+                println!("🔍     Found absolute path: '{}'", p);
+                // Track path segments to avoid later duplicate bare identifiers
+                for seg in p.trim_start_matches('/').split('/') {
+                    path_segments.insert(seg.to_string());
+                }
+                references.push(p);
+            }
+        }
         
-        for mat in re.find_iter(formula) {
+        // 2) Relative-up paths like "../sibling" or "../../x/y"
+        let rel_up_re = regex::Regex::new(r"(?:\.\./)+[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*)*").unwrap();
+        for m in rel_up_re.find_iter(formula) {
+            let p = m.as_str().to_string();
+            if seen.insert(p.clone()) {
+                println!("🔍     Found relative-up path: '{}'", p);
+                // Track segments after the ../ prefixes
+                let after = p.trim_start_matches("../");
+                for seg in after.split('/') {
+                    if !seg.is_empty() { path_segments.insert(seg.to_string()); }
+                }
+                references.push(p);
+            }
+        }
+        
+        // 3) Bare identifiers (e.g., field_a) that are not keywords and not already captured as part of paths
+        let ident_re = regex::Regex::new(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b").unwrap();
+        for mat in ident_re.find_iter(formula) {
             let token = mat.as_str();
-            
-            // Skip obvious non-field tokens (keywords, functions, etc.)
-            if !self.is_formula_keyword(token) {
-                println!("🔍     Found potential field reference: '{}'", token);
-                references.push(token.to_string());
-            } else {
+            if self.is_formula_keyword(token) { 
                 println!("🔍     Skipping keyword: '{}'", token);
+                continue;
+            }
+            // Skip if the token is already part of a captured path (as a segment)
+            if path_segments.contains(token) { continue; }
+            if seen.insert(token.to_string()) {
+                println!("🔍     Found bare field reference: '{}'", token);
+                references.push(token.to_string());
             }
         }
         
@@ -307,19 +339,8 @@ impl DependencyGraph {
             println!("🔍     Relative path resolved to: '{}'", resolved);
             resolved
         } else {
-            // For simple field references (like 'a' in '2*a'), treat as sibling field
-            // If the context is like 'b/value', resolve 'a' as 'a', not 'b/a'
-            let context_parts: Vec<&str> = context_path.split('/').collect();
-            
-            let resolved = if context_parts.len() > 1 {
-                // We're in a nested context like 'b/value', so resolve relative to parent
-                // 'a' should resolve to 'a', not 'b/a'
-                path_ref.to_string()
-            } else {
-                // We're at the root level, so it's a sibling
-                path_ref.to_string()
-            };
-            
+            // Simple relative reference: append to current context
+            let resolved = if context_path.is_empty() { path_ref.to_string() } else { format!("{}/{}", context_path, path_ref) };
             println!("🔍     Sibling field resolved to: '{}'", resolved);
             resolved
         }
