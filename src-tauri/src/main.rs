@@ -325,8 +325,13 @@ async fn execute_overseer_event(
 #[command]
 async fn scheduler_tick(mut nodes: Vec<OverseerNode>) -> Result<Vec<OverseerNode>> {
     // Run a timer sweep; this may mutate the document and re-resolve inside
-    ActionExecutor::tick(&mut nodes)?;
-    Ok(nodes)
+    match ActionExecutor::tick(&mut nodes) {
+        Ok(()) => Ok(nodes),
+        Err(e) => {
+            eprintln!("[TAURI] scheduler_tick error: {}", e);
+            Err(e)
+        }
+    }
 }
 
 #[command]
@@ -335,6 +340,15 @@ async fn get_next_timer_due_ms(nodes: Vec<OverseerNode>) -> Result<Option<i64>> 
 }
 
 fn main() {
+    // Install a panic hook to surface detailed errors in the terminal during development
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("\n================= RUST PANIC =================");
+        eprintln!("{}", info);
+        if let Ok(bt) = std::env::var("RUST_BACKTRACE") {
+            if bt != "0" { eprintln!("Backtrace enabled (set RUST_BACKTRACE=1)"); }
+        }
+        eprintln!("============================================\n");
+    }));
     // Set WebView2 fixed version path with debug cache folder
     let debug_cache_folder = std::env::current_exe()
         .unwrap()

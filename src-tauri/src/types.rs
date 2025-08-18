@@ -128,4 +128,7 @@ pub enum OverseerError {
     
     #[error("Validation error: {0}")]
     ValidationError(String),
+
+    #[error("Runtime error: {0}")]
+    RuntimeError(String),
 }

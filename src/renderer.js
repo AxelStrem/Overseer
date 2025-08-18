@@ -1,5 +1,11 @@
 // Set this to false to disable all debug info in the rendered UI
-const DEBUG_MODE = false;
+const DEBUG_MODE = (() => {
+    try {
+        const qs = typeof window !== 'undefined' && window.location && typeof window.location.search === 'string' ? window.location.search : ''
+        const ls = typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('overseer_debug') : null
+        return (qs && qs.includes('debug=1')) || ls === '1'
+    } catch { return false }
+})();
 
 // Import marked for markdown rendering
 import { marked } from 'marked';
@@ -34,6 +40,22 @@ export class OverseerRenderer {
     constructor() {
         this.contentDisplay = document.getElementById('content-display')
         this.tabContainer = document.getElementById('tab-container')
+        // Track live intervals so we can clear them on each full re-render
+        this._liveIntervals = new Set()
+    }
+
+    // Interval management: avoid per-element MutationObservers by clearing on re-render
+    _registerInterval(id) {
+        try { this._liveIntervals.add(id) } catch(_) {}
+        return id
+    }
+    _clearAllIntervals() {
+        try {
+            for (const id of this._liveIntervals) {
+                clearInterval(id)
+            }
+            this._liveIntervals.clear()
+        } catch(_) {}
     }
 
     // Non-visual node helpers
@@ -88,14 +110,38 @@ export class OverseerRenderer {
         }
 
         // Clear previous content
+    // Also clear any active intervals from previous render to prevent leaks
+    this._clearAllIntervals()
+        // Clean up DOM-attached resources (charts, observers) from previous render
+        try {
+            const cleanupNode = (el) => {
+                if (!el || typeof el !== 'object') return
+                // Chart.js instance cleanup
+                if (el._chartInstance && typeof el._chartInstance.destroy === 'function') {
+                    try { el._chartInstance.destroy() } catch(_) {}
+                    el._chartInstance = null
+                }
+                // ResizeObserver cleanup
+                if (el._resizeObserver && typeof el._resizeObserver.disconnect === 'function') {
+                    try { el._resizeObserver.disconnect() } catch(_) {}
+                    el._resizeObserver = null
+                }
+                // Recurse into children
+                if (el.children && el.children.length) {
+                    for (const child of Array.from(el.children)) cleanupNode(child)
+                }
+            }
+            cleanupNode(this.contentDisplay)
+        } catch(_) {}
         this.contentDisplay.innerHTML = ''
         this.tabContainer.innerHTML = ''
 
-        // Add visible debugging info
+        // Optional lightweight debug info (avoid dumping full document JSON)
         if (DEBUG_MODE) {
             const debugInfo = document.createElement('div')
-            debugInfo.style.cssText = 'background: #f0f0f0; padding: 10px; margin: 10px; border: 1px solid #ccc; font-family: monospace; white-space: pre-wrap; color: #000;'
-            debugInfo.textContent = `DEBUG INFO:\nDocument type: ${typeof overseerDocument}\nIs array: ${Array.isArray(overseerDocument)}\nDocument length: ${overseerDocument?.length || 'N/A'}\nDocument content: ${JSON.stringify(overseerDocument, null, 2)}`
+            debugInfo.style.cssText = 'background: #f0f0f0; padding: 6px 10px; margin: 8px; border: 1px solid #ccc; font-family: monospace; color: #000;'
+            const rootCount = Array.isArray(overseerDocument) ? overseerDocument.length : 1
+            debugInfo.textContent = `DEBUG: roots=${rootCount} type=${typeof overseerDocument}`
             this.contentDisplay.appendChild(debugInfo)
         }
 
@@ -776,11 +822,7 @@ export class OverseerRenderer {
         }
         update()
         if (mode === 'elapsed' || mode === 'remaining') {
-            intervalId = setInterval(update, 1000)
-            const obs = new MutationObserver(() => {
-                if (!document.body.contains(container)) { clearInterval(intervalId); obs.disconnect() }
-            })
-            obs.observe(document.body, { childList: true, subtree: true })
+            intervalId = this._registerInterval(setInterval(update, 1000))
         }
 
         this.applyFieldDefaultStyles(container, node)
@@ -894,12 +936,8 @@ export class OverseerRenderer {
                 value.textContent = formatRemaining(rem)
             }
         }
-        update()
-        intervalId = setInterval(update, 1000)
-        const obs = new MutationObserver(() => {
-            if (!document.body.contains(container)) { clearInterval(intervalId); obs.disconnect() }
-        })
-        obs.observe(document.body, { childList: true, subtree: true })
+    update()
+    intervalId = this._registerInterval(setInterval(update, 1000))
 
         this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)

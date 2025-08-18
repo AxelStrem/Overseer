@@ -1,11 +1,27 @@
 import { invoke } from '@tauri-apps/api/tauri'
 
 // Set this to false to disable all debug UI/status output
-const DEBUG_MODE = false;
+const DEBUG_MODE = (() => {
+    try {
+        const qs = typeof window !== 'undefined' && window.location && typeof window.location.search === 'string' ? window.location.search : ''
+        const ls = typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('overseer_debug') : null
+        return (qs && qs.includes('debug=1')) || ls === '1'
+    } catch { return false }
+})();
 import { open, save } from '@tauri-apps/api/dialog'
 import { appWindow } from '@tauri-apps/api/window'
 import { OverseerRenderer } from './renderer.js'
 import { FileManager } from './file-manager.js'
+
+// Shallow document equality check used to avoid unnecessary re-renders after scheduler ticks
+// If serialization fails, assume different to be safe and apply update.
+function docsEqual(a, b) {
+    try {
+        return JSON.stringify(a) === JSON.stringify(b)
+    } catch (_) {
+        return false
+    }
+}
 
 class OverseerApp {
     constructor() {
@@ -14,7 +30,7 @@ class OverseerApp {
         this.isDocumentModified = false
         this.fileManager = new FileManager()
     this.renderer = new OverseerRenderer()
-    this._scheduler = { id: null, periodMs: 1000, cachedNextMs: null }
+    this._scheduler = { id: null, periodMs: 1000, cachedNextMs: null, inFlight: false, lastTickAt: 0 }
     // Keep the raw original text for comment/whitespace merge on save
     this._originalText = null
         
@@ -151,24 +167,20 @@ class OverseerApp {
             document.getElementById('reload-file-btn').disabled = false
             this.updateTitle()
 
-            // Add visible debug info before rendering
+            // Clear any previous content; avoid injecting bulky debug blocks into the document area
             const contentDisplay = document.getElementById('content-display')
-            if (DEBUG_MODE) {
-                contentDisplay.innerHTML = `<div style="background: yellow; padding: 10px; margin: 10px;">
-                    <h3>DEBUG: About to render document</h3>
-                    <p>Document type: ${typeof overseerDocument}</p>
-                    <p>Is array: ${Array.isArray(overseerDocument)}</p>
-                    <p>Length: ${overseerDocument?.length || 'N/A'}</p>
-                    <p>Content preview: ${JSON.stringify(overseerDocument).substring(0, 200)}...</p>
-                </div>`
-            } else {
-                contentDisplay.innerHTML = '';
-            }
+            contentDisplay.innerHTML = ''
 
             if (DEBUG_MODE) this.setStatus('DEBUG: About to call renderer...')
 
             // Render the document
-            this.renderer.renderDocument(overseerDocument)
+            try {
+                this.renderer.renderDocument(overseerDocument)
+            } catch (e) {
+                console.error('Render error on initial load:', e)
+                this.showError('Render error', e)
+                return
+            }
 
             if (DEBUG_MODE) this.setStatus('DEBUG: Renderer called, switching to editor screen...')
             this.showEditorScreen()
@@ -540,13 +552,13 @@ tab Main {
                 } else {
                     console.log('🔄 Falling back to full re-render')
                     this.currentDocument = resolved
-                    this.renderer.renderDocument(this.currentDocument)
+                    try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback re-render):', e); this.showError('Render error', e) }
                     return { domOnly: false, success: true }
                 }
             } else {
                 // No specific fields, do full re-render (for periodic updates)
                 this.currentDocument = resolved
-                this.renderer.renderDocument(this.currentDocument)
+                try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full re-render):', e); this.showError('Render error', e) }
                 return { domOnly: false, success: true }
             }
         } catch (error) {
@@ -557,7 +569,7 @@ tab Main {
                 const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
                 const resolved = await invoke('parse_overseer_content', { content })
                 this.currentDocument = resolved
-                this.renderer.renderDocument(this.currentDocument)
+                try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback full update):', e); this.showError('Render error', e) }
                 return { domOnly: false, success: true }
             } catch (fallbackError) {
                 console.error('❌ Fallback update also failed:', fallbackError)
@@ -634,9 +646,10 @@ tab Main {
 
     showError(title, error) {
         console.error(title, error)
-        document.getElementById('error-message').textContent = `${title}: ${error}`
+        const msg = error && error.message ? error.message : (typeof error === 'string' ? error : JSON.stringify(error))
+        document.getElementById('error-message').textContent = `${title}: ${msg}`
         this.showScreen('error-screen')
-        this.setStatus('Error occurred', error.message, 'error')
+        this.setStatus('Error occurred', msg, 'error')
     }
 
     showScreen(screenId) {
@@ -688,7 +701,7 @@ tab Main {
             return null
         }
 
-        const findNextDue = (doc) => {
+    const findNextDue = (doc) => {
             let nextTs = null
             const walk = (nodes, ctxPath=[]) => {
                 for (const n of nodes || []) {
@@ -738,25 +751,49 @@ tab Main {
                     return
                 }
         const now = Date.now()
+        if (DEBUG_MODE) console.log('[SCHED] next due ms from backend:', nextMs)
         let delay = nextMs - now
             // Only schedule for future; if due/past, process almost immediately (debounced)
             if (delay < 0) delay = 0
             // Add small debounce to let system settle
-            const baseDebounce = 500
+            const baseDebounce = 700
             delay += baseDebounce
+        // Enforce a minimal gap between ticks to avoid storms
+    const minGap = 500
+        if (this._scheduler && this._scheduler.lastTickAt) {
+            const sinceLast = now - this._scheduler.lastTickAt
+            if (sinceLast < minGap) delay += (minGap - sinceLast)
+        }
+    if (DEBUG_MODE) console.log('[SCHED] scheduling tick in', delay, 'ms')
     this._scheduler.id = setTimeout(async () => {
                 try {
             if (!this.currentDocument) return
+                    // Skip if a previous tick is still running
+                    if (this._scheduler && this._scheduler.inFlight) { if (DEBUG_MODE) console.log('[SCHED] tick skipped (in flight)'); return }
+                    if (this._scheduler) this._scheduler.inFlight = true
+                    if (DEBUG_MODE) console.log('[SCHED] tick invoking backend')
                     const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
-                    if (updated && !docsEqual(updated, this.currentDocument)) {
+                    if (updated) {
                         this.currentDocument = updated
-                        this.renderer.renderDocument(updated)
+                        try {
+                            this.renderer.renderDocument(updated)
+                        } catch (e) {
+                            console.error('Render error during scheduler tick:', e)
+                            this.showError('Render error', e)
+                            return
+                        }
                         // Invalidate cached next due after a state change
                         this._scheduler.cachedNextMs = null
                     }
                 } catch (e) {
-                    if (DEBUG_MODE) console.warn('scheduler tick error:', e)
+                    const msg = e?.message || (typeof e === 'string' ? e : JSON.stringify(e))
+                    console.warn('scheduler tick error:', e)
+                    try { this.setStatus('Scheduler error', msg, 'error') } catch {}
                 } finally {
+                    if (this._scheduler) {
+                        this._scheduler.inFlight = false
+                        this._scheduler.lastTickAt = Date.now()
+                    }
                     // Schedule again for the next due timer if any
             scheduleNext()
                 }
@@ -804,5 +841,38 @@ tab Main {
 
 // Initialize the app when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    new OverseerApp()
+    const app = new OverseerApp()
+
+    // Dev-only convenience: auto-enable debug UI and auto-open a file if configured
+    try {
+        const isDev = (typeof window !== 'undefined') && (import.meta && import.meta.env && import.meta.env.DEV)
+    // Do not force-enable debug in dev; user can opt-in via ?debug=1
+
+        // Determine autofile from query, localStorage, or dev default
+        const qs = (() => {
+            try { return new URLSearchParams(window.location.search) } catch { return new URLSearchParams('') }
+        })()
+        const autoFile = qs.get('autofile')
+        // Only honor explicit query param; ignore any stale localStorage-based auto-loads
+        // Guard against relative paths which may not resolve reliably across environments
+        const looksAbsolute = (p) => typeof p === 'string' && (/^[a-zA-Z]:\\/.test(p) || /^\\\\/.test(p) || /^\//.test(p))
+        if (autoFile && looksAbsolute(autoFile)) {
+            app.loadFile(autoFile)
+        }
+    } catch {}
+    
+    // Global error surfacing to avoid silent crashes
+    try {
+        window.addEventListener('error', (e) => {
+            const msg = e?.error?.message || e?.message || 'Unknown error'
+            console.error('Global error:', e?.error || e)
+            try { app.setStatus('Runtime error', msg, 'error') } catch {}
+        })
+        window.addEventListener('unhandledrejection', (e) => {
+            const reason = e?.reason
+            const msg = (reason && (reason.message || (typeof reason === 'string' ? reason : JSON.stringify(reason)))) || 'Unhandled promise rejection'
+            console.error('Unhandled promise rejection:', reason)
+            try { app.setStatus('Unhandled error', msg, 'error') } catch {}
+        })
+    } catch {}
 })

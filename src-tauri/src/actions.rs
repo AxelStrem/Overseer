@@ -2,12 +2,34 @@ use crate::resolver;
 use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext, BoundValue};
 use crate::types::{OverseerError, OverseerNode, OverseerValue};
 use chrono::{Local, Utc, Duration};
+use std::sync::OnceLock;
+
+// Runtime flag for verbose timer logging (set OVERSEER_DEBUG_TIMERS=1)
+fn timers_debug() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("OVERSEER_DEBUG_TIMERS")
+            .map(|v| {
+                let s = v.to_ascii_lowercase();
+                s == "1" || s == "true" || s == "yes"
+            })
+            .unwrap_or(false)
+    })
+}
 
 // Debug logging macro for actions
 macro_rules! debug_actions {
     ($($arg:tt)*) => {
     #[cfg(feature = "debug-resolver")]
         println!($($arg)*);
+    };
+}
+
+// Debug logging macro for scheduler/timers
+macro_rules! debug_sched {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug-resolver")]
+        eprintln!($($arg)*);
     };
 }
 
@@ -23,56 +45,106 @@ impl ActionExecutor {
     /// Returns Some(now) if any timer is already due; None if there are no timers.
     pub fn next_due_ms(nodes: &Vec<OverseerNode>) -> Option<i64> {
         let now = chrono::Utc::now();
-        // Walk all nodes to find timers
-        fn collect<'a>(acc: &mut Vec<&'a OverseerNode>, cur: &'a OverseerNode) {
+        // Build a snapshot for formula evaluation
+        let snapshot = nodes.clone();
+        // Walk all nodes to find timers with their name-path (skip unnamed wrappers like run_timers)
+        fn collect<'a>(acc: &mut Vec<(&'a OverseerNode, Vec<String>)>, cur: &'a OverseerNode, path: &mut Vec<String>) {
+            let pushed = if !cur.name.is_empty() { path.push(cur.name.clone()); true } else { false };
             let is_timer = cur.node_type == "timer"
                 || cur
                     .parameters
                     .get("_original_type")
                     .map(|v| matches!(v, OverseerValue::String(s) if s == "timer"))
                     .unwrap_or(false);
-            if is_timer { acc.push(cur); }
-            for ch in &cur.children { collect(acc, ch); }
+            if is_timer { acc.push((cur, path.clone())); }
+            for ch in &cur.children { collect(acc, ch, path); }
+            if pushed { path.pop(); }
         }
-        let mut timers: Vec<&OverseerNode> = Vec::new();
-        for root in nodes { collect(&mut timers, root); }
+        let mut timers: Vec<(&OverseerNode, Vec<String>)> = Vec::new();
+        for root in nodes {
+            let mut p: Vec<String> = Vec::new();
+            collect(&mut timers, root, &mut p);
+        }
 
         let mut next_ms: Option<i64> = None;
-        for t in timers {
-            // active?
-            let active = match t.parameters.get("active").or_else(|| t.parameters.get("_computed_active")) {
+        for (t, tpath) in &timers {
+            // active: prefer computed; evaluate formula if present
+            let active_val = t.parameters.get("_computed_active").or_else(|| t.parameters.get("active"));
+            let active = match active_val {
                 Some(OverseerValue::Boolean(b)) => *b,
                 Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
+                Some(OverseerValue::Formula(expr)) => {
+                    let ctx = EvaluationContext::new(tpath.clone(), &snapshot);
+                    match FormulaEvaluator::evaluate_formula(expr, &ctx) {
+                        Ok(OverseerValue::Boolean(b)) => b,
+                        Ok(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
+                        _ => false,
+                    }
+                }
                 _ => false,
             };
             if !active { continue; }
-            // at: prefer computed value to support formulas resolved by the resolver
+            // at: prefer computed; evaluate formula if present; accept Timestamp/Date/String
             let at_val = t.parameters.get("_computed_at").or_else(|| t.parameters.get("at"));
             let at_str: Option<String> = match at_val {
                 Some(OverseerValue::Timestamp(ts)) => Some(ts.clone()),
                 Some(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
                 Some(OverseerValue::String(s)) => Some(s.clone()),
+                Some(OverseerValue::Formula(expr)) => {
+                    let ctx = EvaluationContext::new(tpath.clone(), &snapshot);
+                    match FormulaEvaluator::evaluate_formula(expr, &ctx) {
+                        Ok(OverseerValue::Timestamp(ts)) => Some(ts),
+                        Ok(OverseerValue::Date(d)) => Some(format!("{}T00:00:00Z", d)),
+                        Ok(OverseerValue::String(s)) => Some(s),
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
             let Some(at) = at_str.and_then(|s| Self::parse_timestamp_utc(&s)) else { continue; };
-            // offset
-            let off = t.parameters.get("offset").and_then(|v| Self::parse_offset_duration(v));
-            let due = if let Some(off) = off {
+            // offset: prefer computed; evaluate formula if present; else parse
+            let off_val = t.parameters.get("_computed_offset").or_else(|| t.parameters.get("offset"));
+            let off = match off_val {
+                Some(OverseerValue::Formula(expr)) => {
+                    let ctx = EvaluationContext::new(tpath.clone(), &snapshot);
+                    FormulaEvaluator::evaluate_formula(expr, &ctx).ok().and_then(|v| Self::parse_offset_duration(&v))
+                }
+                Some(v) => Self::parse_offset_duration(v),
+                None => None,
+            };
+            // Determine due behavior
+            let due_ms = if let Some(off) = off {
                 let ms = off.num_milliseconds();
                 if ms > 0 {
-                    if at > now { at } else {
-                        // find next tick >= now
-                        let mut tcur = at + off;
-                        while tcur < now { tcur = tcur + off; if tcur.timestamp_millis() - now.timestamp_millis() > 10_000_000_000 { break; } }
-                        if tcur < now { now } else { tcur }
+                    // Recurring
+                    let overdue = at + off <= now;
+                    if overdue {
+                        debug_sched!("[SCHED] timer '{}' overdue (at+off: {:?} <= now: {:?}), due now", t.name, at + off, now);
+                        now.timestamp_millis()
+                    } else if at > now {
+                        at.timestamp_millis()
+                    } else {
+                        (at + off).timestamp_millis()
                     }
                 } else {
-                    // non-positive offsets act as one-shot at 'at'
-                    at
+                    if at <= now { debug_sched!("[SCHED] one-shot timer '{}' due now (at <= now)", t.name); now.timestamp_millis() } else { at.timestamp_millis() }
                 }
-            } else { at };
-            let due_ms = if due > now { due.timestamp_millis() } else { now.timestamp_millis() };
+            } else {
+                if at <= now { debug_sched!("[SCHED] one-shot timer '{}' due now (no offset)", t.name); now.timestamp_millis() } else { at.timestamp_millis() }
+            };
+            #[cfg(feature = "debug-resolver")]
+            {
+                let off_dbg = match off_val { Some(OverseerValue::String(s))=>Some(s.clone()), Some(OverseerValue::Integer(i))=>Some(i.to_string()), _=>None };
+                eprintln!("[SCHED] scanned timer name='{}' active={} at={:?} offset={:?} next_due_ms={}", t.name, active, at, off_dbg, due_ms);
+            }
             next_ms = Some(match next_ms { Some(prev) => prev.min(due_ms), None => due_ms });
+        }
+        if timers_debug() {
+            if let Some(ms) = next_ms {
+                eprintln!("[SCHED] next_due_ms => {} ({} timers scanned)", ms, timers.len());
+            } else {
+                eprintln!("[SCHED] next_due_ms => None (no active timers)");
+            }
         }
         next_ms
     }
@@ -234,12 +306,17 @@ impl ActionExecutor {
     /// parameters: active=true and at=<timestamp or formula producing Timestamp/Date>.
     /// On fire: execute its on timeout { ... } block, then set active=false (one-shot) and re-resolve once.
     fn run_timers(nodes: &mut Vec<OverseerNode>) -> Result<(), OverseerError> {
+        // Safety valves: per-timer and global caps per tick to avoid UI overload
+        const MAX_REPEATS_PER_TICK: usize = 3;
+        const MAX_ACTIONS_PER_TICK: usize = 50;
+        let mut actions_budget: usize = MAX_ACTIONS_PER_TICK;
     // Snapshot of now (UTC)
     let now_dt = chrono::Utc::now();
         // Collect paths to timers to avoid borrow issues
         let mut timer_paths: Vec<Vec<String>> = Vec::new();
         fn collect(paths: &mut Vec<Vec<String>>, cur: &OverseerNode, path: &mut Vec<String>) {
-            path.push(cur.name.clone());
+            // Only push a segment when the node has a non-empty name; skip unnamed wrappers
+            let pushed = if !cur.name.is_empty() { path.push(cur.name.clone()); true } else { false };
             // Identify timer by node_type or original type param
             let is_timer = cur.node_type == "timer"
                 || cur
@@ -251,19 +328,21 @@ impl ActionExecutor {
                 paths.push(path.clone());
             }
             for child in &cur.children { collect(paths, child, path); }
-            path.pop();
+            if pushed { path.pop(); }
         }
-        for root in nodes.iter() {
+    for root in nodes.iter() {
             let mut p: Vec<String> = Vec::new();
             collect(&mut timer_paths, root, &mut p);
         }
+    if timers_debug() { eprintln!("[TIMER] found {} timer path(s)", timer_paths.len()); }
 
     // Use snapshot for safe evaluation contexts
     let snapshot = nodes.clone();
         // Evaluate and fire timers
-        for tpath in timer_paths {
+    'timers: for tpath in timer_paths {
+            if actions_budget == 0 { if timers_debug() { eprintln!("[TIMER] global actions budget exhausted; stopping scan"); } break 'timers; }
             // Resolve node by path
-            if let Some((ptr, indices)) = Self::get_node_mut_by_path(nodes, &tpath) {
+            if let Some((ptr, indices_initial)) = Self::get_node_mut_by_path(nodes, &tpath) {
                 let timer_node: &mut OverseerNode = unsafe { &mut *ptr };
                 // Check active
                 let active = match Self::get_effective(&timer_node.parameters, "active").or_else(|| timer_node.parameters.get("active")) {
@@ -271,7 +350,8 @@ impl ActionExecutor {
                     Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
                     _ => false,
                 };
-                if !active { continue; }
+                if !active { if timers_debug() { eprintln!("[TIMER] skip inactive '{}' at {:?}", timer_node.name, tpath); } continue; }
+                if timers_debug() { eprintln!("[TIMER] evaluating '{}' at path {:?}", timer_node.name, tpath); }
                 // Evaluate 'at' (base timestamp)
                 let at_val = Self::get_effective(&timer_node.parameters, "at").or_else(|| timer_node.parameters.get("at"));
                 let at_str: Option<String> = match at_val {
@@ -307,12 +387,21 @@ impl ActionExecutor {
                                 while t <= now_dt {
                                     fire_count += 1;
                                     t = t + off;
-                                    if fire_count > 1000 { break; }
+                                    if fire_count > 100 { break; }
                                 }
                             } else if base <= now_dt { fire_count = 1; }
                         } else if base <= now_dt { fire_count = 1; }
 
                         if fire_count > 0 {
+                            let capped = fire_count.min(MAX_REPEATS_PER_TICK);
+                            let timer_name = timer_node.name.clone();
+                            // Precompute a disambiguated path string for clearer logs
+                            let dbg_path = {
+                                let (_ptr, idxs) = match Self::get_node_mut_by_path(nodes, &tpath) { Some(v) => v, None => (std::ptr::null_mut(), vec![]) };
+                                let p = Self::build_disambiguated_path(&nodes.clone(), &idxs);
+                                format!("{:?}", p)
+                            };
+                            if timers_debug() { eprintln!("[TIMER] firing '{}' repeats={} (recurring={}) at path {}", timer_name, capped, is_recurring, dbg_path); }
                             let actions: Vec<OverseerNode> = timer_node
                                 .children
                                 .iter()
@@ -327,17 +416,61 @@ impl ActionExecutor {
                                     _ => !is_recurring,
                                 };
                                 // For recurring and not one-shot: fire multiple times to catch up; otherwise fire once.
-                                let repeats = if one_shot { fire_count.min(1) } else if is_recurring { fire_count } else { 1 };
-                                let owner_path = Self::build_disambiguated_path(&nodes.clone(), &indices);
-                                for _ in 0..repeats {
-                                    for action in &actions {
-                                        Self::execute_action(nodes, &indices, &owner_path, action)?;
-                                        resolver::resolve_document(nodes);
+                let repeats = if one_shot { 1 } else if is_recurring { capped } else { 1 };
+                if timers_debug() { eprintln!("[TIMER] will execute {} repeat(s) for '{}' at {} (budget left={})", repeats, timer_name, dbg_path, actions_budget); }
+                                let mut did_any_action = false;
+                                let exec_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    'outer: for r in 0..repeats {
+                    if timers_debug() { eprintln!("[TIMER] repeat {}/{} for '{}' at {}", r+1, repeats, timer_name, dbg_path); }
+                                        // Re-resolve owner indices & path before each action in case document mutated
+                                        let (owner_ptr, owner_indices) = match Self::get_node_mut_by_path(nodes, &tpath) {
+                                            Some(p) => p,
+                                            None => { eprintln!("[TIMER] owner path disappeared during actions: {:?}", tpath); break 'outer; }
+                                        };
+                                        drop(owner_ptr); // don't keep pointer around
+                                        let owner_path = Self::build_disambiguated_path(&nodes.clone(), &owner_indices);
+                                        for action in &actions {
+                                            if actions_budget == 0 { if timers_debug() { eprintln!("[TIMER] actions budget exhausted (timer='{}' path={})", timer_name, dbg_path); } break 'outer; }
+                                            if timers_debug() { eprintln!("[ACTIONS] executing '{}' with params keys: {:?}", action.node_type, action.parameters.keys().collect::<Vec<_>>() ); }
+                                            let res = Self::execute_action(nodes, &owner_indices, &owner_path, action);
+                                            if let Err(e) = res {
+                                                eprintln!("[ACTIONS] ERROR during action '{}' on timer '{}': {}", action.node_type, timer_name, e);
+                                                return Err(e);
+                                            }
+                                            did_any_action = true;
+                                            actions_budget = actions_budget.saturating_sub(1);
+                                            resolver::resolve_document(nodes);
+                                        }
+                                    }
+                                    Ok(())
+                                }));
+                                match exec_result {
+                                    Ok(Ok(())) => { if timers_debug() { eprintln!("[TIMER] actions complete for '{}' at {}", timer_name, dbg_path); } }
+                                    Ok(Err(e)) => { return Err(e); }
+                                    Err(panic_info) => {
+                                        eprintln!("[TIMER] PANIC while executing actions for '{}' at {:?}", timer_name, tpath);
+                                        return Err(OverseerError::RuntimeError(format!("Timer '{}' panicked during actions", timer_name)));
                                     }
                                 }
                                 if one_shot {
-                                    // Deactivate one-shot timers after firing
-                                    timer_node.parameters.insert("active".to_string(), OverseerValue::Boolean(false));
+                                    // Deactivate one-shot timers after firing.
+                                    // If 'active' is a Formula, do NOT overwrite it; the formula should determine activity.
+                                    if did_any_action {
+                                        if let Some((deact_ptr, _)) = Self::get_node_mut_by_path(nodes, &tpath) {
+                                            let tn: &mut OverseerNode = unsafe { &mut *deact_ptr };
+                                            match tn.parameters.get("active") {
+                                                Some(OverseerValue::Formula(_)) => {
+                                                    if timers_debug() { eprintln!("[TIMER] one-shot '{}' at {} completed; leaving formula-based active intact", timer_name, dbg_path); }
+                                                }
+                                                _ => {
+                                                    tn.parameters.insert("active".to_string(), OverseerValue::Boolean(false));
+                                                    if timers_debug() { eprintln!("[TIMER] deactivated one-shot timer '{}' at {}", timer_name, dbg_path); }
+                                                }
+                                            }
+                                        }
+                                    } else if timers_debug() {
+                                        eprintln!("[TIMER] NOT deactivating one-shot '{}' at {} due to zero actions executed (budget exhausted)", timer_name, dbg_path);
+                                    }
                                 }
                             }
                         }
@@ -2463,6 +2596,82 @@ div Ext {
         assert!(val >= 2 && val <= 5, "expected A between 2 and 5 inclusive, got {}", val);
         let timer = root.children.iter().find(|c| c.node_type == "timer").unwrap();
         assert_eq!(timer.parameters.get("active"), Some(&OverseerValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_recurring_timer_under_unnamed_wrapper_in_tab_appends_active() {
+        // This mirrors examples/task_scheduler.os: a RecurringTask with a generator timer
+        // nested under an unnamed transparent wrapper inside a tab. When overdue, it should
+        // append to the Active list, increment next_id, and update last_triggered_at.
+        let input = r#"
+        tab Tasks {
+            div (hidden=true) {
+                // Minimal ActiveTask template used by the Active list
+                div ActiveTask { int id = 0 int rid = 0 }
+                // Recurring task with generator under unnamed wrapper
+                div RecurringTask {
+                    int rid = 42
+                    string description = "Test recurring"
+                    int points = 3
+                    int base_priority = 7
+                    int priority_gain = 0
+                    checkbox pause_when_active = false
+                    timestamp last_triggered_at = $(now())
+                    timer generator (active=true, at=$(../last_triggered_at), offset="1s", one_shot=$(../pause_when_active)) {
+                        on timeout {
+                            append (list="/Tasks/Active", template="<ActiveTask>") {
+                                - rid = $(../rid)
+                                - id = $(/Tasks/State/next_id)
+                            }
+                            inc (path="/Tasks/State/next_id")
+                            set_now_ts (path="../last_triggered_at")
+                        }
+                    }
+                }
+                // Helper to make the timer overdue by 2 seconds
+                button Init { on click { set_now_ts(path="/Tasks/RecurringTask/last_triggered_at", offset=-2) } }
+            }
+            div State (hidden=true) { int next_id = 1 }
+            list Active (entry=<ActiveTask>, key="id") { }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        // Prime last_triggered_at to now-2s so the recurring timer is overdue
+        let init_path = vec!["Tasks".to_string(), "Init".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &init_path, "click");
+        assert!(res.is_ok());
+        resolve_document(&mut nodes);
+        // Run timers: generator is overdue, should fire now
+        let _ = ActionExecutor::tick(&mut nodes);
+    // Validate Active has at least one item appended with rid=42 and id starting at 1
+        let tasks = nodes.iter().find(|n| n.name == "Tasks").unwrap();
+        let active = tasks.children.iter().find(|c| c.name == "Active").unwrap();
+        assert_eq!(active.node_type, "list");
+    assert!(active.children.len() >= 1, "Active should have at least one appended item");
+    // First appended item should have rid=42 and id=1
+    let first = &active.children[0];
+    let rid = first.children.iter().find(|f| f.name == "rid").and_then(|f| f.parameters.get("value")).cloned();
+    let idv = first.children.iter().find(|f| f.name == "id").and_then(|f| f.parameters.get("value")).cloned();
+    assert_eq!(rid, Some(OverseerValue::Integer(42)));
+    assert_eq!(idv, Some(OverseerValue::Integer(1)));
+        // next_id should increment to 2
+        let state = tasks.children.iter().find(|c| c.name == "State").unwrap();
+    let next_id = state.children.iter().find(|f| f.name == "next_id").and_then(|f| f.parameters.get("value")).cloned();
+    // Depending on how many times it caught up, next_id should be >=2
+    if let Some(OverseerValue::Integer(n)) = next_id { assert!(n >= 2 && n <= 6, "unexpected next_id {}", n); } else { panic!("next_id missing") }
+        // last_triggered_at should be updated from the old value
+        // RecurringTask lives under an unnamed wrapper; find it recursively
+        fn find_by_name<'a>(n: &'a OverseerNode, name: &str) -> Option<&'a OverseerNode> {
+            if n.name == name { return Some(n); }
+            for ch in &n.children {
+                if let Some(r) = find_by_name(ch, name) { return Some(r); }
+            }
+            None
+        }
+        let recur = tasks.children.iter().find_map(|c| find_by_name(c, "RecurringTask")).expect("RecurringTask not found");
+        let lta = recur.children.iter().find(|f| f.name == "last_triggered_at").and_then(|f| f.parameters.get("value")).cloned();
+        assert!(matches!(lta, Some(OverseerValue::Timestamp(_))));
     }
 
     #[test]
