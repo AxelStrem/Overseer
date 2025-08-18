@@ -21,11 +21,12 @@ Overseer is a cross-platform personal data management framework featuring a cust
 - **serde**: Serialization/deserialization framework
 - **chrono**: Date and time manipulation
 - **notify**: File system watching for live updates
+- **regex**: Advanced formula parsing for dependency tracking
 
 #### Frontend (JavaScript)
 - **Vite**: Modern build tool and development server
-- **Chart.js**: Data visualization library
-- **Native DOM**: Direct HTML/CSS manipulation (no framework)
+- **Chart.js 4.0.0**: Advanced data visualization with full chart support
+- **Native DOM**: Direct HTML/CSS manipulation with surgical updates
 
 ### System Architecture Diagram
 
@@ -34,12 +35,13 @@ Overseer is a cross-platform personal data management framework featuring a cust
 │                    Frontend (Web)                       │
 ├─────────────────────────────────────────────────────────┤
 │  UI Layer: HTML/CSS/JavaScript                         │
-│  - Document Renderer                                   │
-│  - Interactive Editor                                  │
-│  - Chart Visualizations                               │
+│  - Document Renderer (Selective DOM Updates)          │
+│  - Interactive Editor (Field-level Updates)           │
+│  - Chart Visualizations (Chart.js Integration)        │
+│  - Cascade Detection & DOM Management                 │
 │  - File Management Interface                          │
 └─────────────────────┬───────────────────────────────────┘
-                      │ Tauri IPC
+                      │ Tauri IPC (Selective Updates)
 ┌─────────────────────▼───────────────────────────────────┐
 │                  Backend (Rust)                        │
 ├─────────────────────────────────────────────────────────┤
@@ -49,8 +51,14 @@ Overseer is a cross-platform personal data management framework featuring a cust
 │  └─────────────┘  └─────────────┘  └─────────────┘     │
 │                                                         │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │    Types    │  │   Actions   │  │   Storage   │     │
-│  │    (AST)    │  │ (triggers)  │  │    (.os)    │     │
+│  │Dependency   │  │   Actions   │  │   Storage   │     │
+│  │  Tracker    │  │ (triggers)  │  │    (.os)    │     │
+│  │ (Selective) │  └─────────────┘  └─────────────┘     │
+│  └─────────────┘                                       │
+│                                                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
+│  │    Types    │  │  Resolver   │  │   Chart     │     │
+│  │    (AST)    │  │ (Selective) │  │ Integration │     │
 │  └─────────────┘  └─────────────┘  └─────────────┘     │
 └─────────────────────┬───────────────────────────────────┘
                       │
@@ -130,17 +138,72 @@ pub enum OverseerValue {
 - Error handling and recovery
 - File format validation
 
-### 6. Renderer (`renderer.js`)
-**Purpose**: Generate interactive UI from parsed AST with advanced styling
+### 6. Dependency Tracker Module (`dependency_tracker.rs`) - **NEW**
+**Purpose**: Advanced dependency tracking and selective update coordination
+
+**Key Features**:
+- Regex-based formula parsing to extract field references
+- Sophisticated dependency graph construction with bidirectional mapping
+- Context-aware path resolution (sibling fields, hierarchical references)
+- Timer node tracking for future timer system integration
+- Cascade calculation for formula dependencies
+
+**Core Functions**:
+```rust
+impl DependencyGraph {
+    pub fn build_dependencies(nodes: &[OverseerNode]) -> Result<Self, OverseerError>
+    pub fn get_affected_fields(&self, changed_fields: &[String]) -> Vec<String>
+    pub fn extract_path_references(formula: &str) -> Vec<String>
+    pub fn resolve_path_reference(reference: &str, context: &str) -> String
+}
+```
+
+### 7. Enhanced Resolver Module (`resolver.rs`) - **UPDATED**
+**Purpose**: Selective field resolution and intelligent chart computation
+
+**New Capabilities**:
+- `resolve_specific_fields`: Surgical backend processing for affected fields only
+- Field value preservation during selective updates
+- Smart chart data computation that skips unnecessary generation
+- Integration with dependency tracker for cascade processing
+
+**Performance Features**:
+- Eliminates full document re-parsing
+- Maintains field state during backend processing
+- Intelligent chart series computation based on actual dependencies
+
+### 8. Renderer (`renderer.js`) - **ENHANCED**
+**Purpose**: Generate interactive UI from parsed AST with advanced styling and selective updates
 
 **Capabilities**:
 - Dynamic HTML generation from node hierarchy
 - Advanced CSS styling (colors, fonts, borders, sizing)
 - Layout system (horizontal/vertical with spacing/margins)
 - Markdown rendering with dual edit/view modes
-- Interactive editing (double-click to edit)
+- Interactive editing with field-level validation
 - Tab management and navigation
 - Parameter inheritance visualization
+- **NEW**: Surgical DOM updates for individual fields
+- **NEW**: Cascade field detection and management
+- **NEW**: Chart.js 4.0.0 integration with full chart support
+- **NEW**: Intelligent chart refresh prevention
+
+### 9. Chart Integration System - **NEW**
+**Purpose**: Complete Chart.js 4.0.0 integration with performance optimization
+
+**Key Features**:
+- Full chart rendering pipeline (line, bar, scatter, area charts)
+- Intelligent chart refresh prevention system
+- Event emission control to prevent refresh loops
+- Data series computation with dependency analysis
+- Chart stability during unrelated field changes
+- Advanced chart configuration and data binding
+
+**Integration Points**:
+- Backend chart series generation with formula evaluation
+- Frontend Chart.js initialization and lifecycle management
+- Selective chart data refreshing based on actual dependencies
+- Chart type detection and automatic configuration
 
 ## Data Flow
 
@@ -150,18 +213,37 @@ pub enum OverseerValue {
 3. Backend reads file asynchronously
 4. Parser converts content to AST
 5. Resolver processes inheritance, layout, and parameters
-6. AST returned to frontend via IPC
-7. Renderer generates HTML with advanced styling
-8. Interactive UI displayed to user
+6. **NEW**: Dependency tracker builds formula dependency graph
+7. AST returned to frontend via IPC
+8. Renderer generates HTML with advanced styling and Chart.js integration
+9. Interactive UI displayed to user with full chart support
 
-### Formula Evaluation Workflow
+### Enhanced Formula Evaluation Workflow - **UPDATED**
 1. Parser identifies $() formulas during parsing
-2. Resolver prepares formula context and dependencies
-3. Evaluator resolves references and executes calculations
-4. Built-in functions executed with current context
-5. Results cached for performance
-6. UI updated with calculated values
-7. Re-evaluation triggered on data changes
+2. **NEW**: Dependency tracker extracts field references and builds dependency graph
+3. Resolver prepares formula context and dependencies
+4. Evaluator resolves references and executes calculations
+5. Built-in functions executed with current context
+6. Results cached for performance
+7. **NEW**: Multi-tier selective update system determines update strategy:
+   - **Tier 1**: DOM-only updates for simple field changes
+   - **Tier 2**: Selective backend processing for formula dependencies
+   - **Tier 3**: Cascade detection and DOM updates for dependent fields
+   - **Tier 4**: Intelligent chart refresh prevention
+8. UI updated with calculated values (surgical DOM updates)
+9. Charts updated only when their data dependencies change
+
+### Selective Update Process - **NEW**
+1. User modifies field in UI
+2. Frontend detects field change and determines update strategy
+3. For simple changes: DOM-only update preserves scroll position
+4. For formula dependencies:
+   a. Backend processes only affected fields using dependency graph
+   b. Field values preserved during backend processing
+   c. Cascade changes detected by comparing old vs new document
+   d. DOM surgically updated for both direct and cascade changes
+5. Charts refresh only if their data sources actually changed
+6. User experience: Instant responsive updates without flicker
 
 ### File Saving Process
 1. User modifies data through UI
