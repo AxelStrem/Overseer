@@ -1,9 +1,8 @@
-// Set this to false to disable all debug info in the rendered UI
+// Debug UI is disabled unless explicitly enabled via ?debug=1 (localStorage flag ignored)
 const DEBUG_MODE = (() => {
     try {
         const qs = typeof window !== 'undefined' && window.location && typeof window.location.search === 'string' ? window.location.search : ''
-        const ls = typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('overseer_debug') : null
-        return (qs && qs.includes('debug=1')) || ls === '1'
+        return !!(qs && qs.includes('debug=1'))
     } catch { return false }
 })();
 
@@ -235,8 +234,8 @@ export class OverseerRenderer {
                 if (DEBUG_MODE) {
                     try {
                         const dbgName = node.name || node.node_type || node.type || 'unknown'
-                        console.log(`[BG] enter node=${dbgName} type=${node.node_type || node.type} parentBg=${inheritedStyles?.backgroundColor ?? 'null'}`)
-                        console.log(`[BG] node=${dbgName} ownAny=${ownBgAny ? JSON.stringify(ownBgAny) : 'null'} computed=${hasComputedBg} rawFormula=${hasRawFormulaBg} ownEffective=${ownEffectiveBg ?? 'null'} effectiveBg=${effectiveBg ?? 'null'}`)
+                        if (DEBUG_MODE) console.log(`[BG] enter node=${dbgName} type=${node.node_type || node.type} parentBg=${inheritedStyles?.backgroundColor ?? 'null'}`)
+                        if (DEBUG_MODE) console.log(`[BG] node=${dbgName} ownAny=${ownBgAny ? JSON.stringify(ownBgAny) : 'null'} computed=${hasComputedBg} rawFormula=${hasRawFormulaBg} ownEffective=${ownEffectiveBg ?? 'null'} effectiveBg=${effectiveBg ?? 'null'}`)
                     } catch (_) { /* no-op */ }
                 }
 
@@ -294,7 +293,7 @@ export class OverseerRenderer {
                                 try {
                                     const dbgParent = node.name || node.node_type || node.type || 'unknown'
                                     const dbgChild = seg
-                                    console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
+                                    if (DEBUG_MODE) console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
                                 } catch (_) { /* no-op */ }
                             }
                             this.renderNode(child, element, nextInherited, childPath)
@@ -1842,7 +1841,7 @@ export class OverseerRenderer {
     getNodeValue(node) {
         // If the node itself is a string, return it
         if (typeof node === 'string') {
-            console.log('[DEBUG] getNodeValue: node is a string:', node);
+            if (DEBUG_MODE) console.log('[DEBUG] getNodeValue: node is a string:', node);
             return node
         }
 
@@ -1888,7 +1887,7 @@ export class OverseerRenderer {
         // Try parameters["value"] next
         if (node.parameters && node.parameters["value"] !== undefined) {
             const value = node.parameters["value"]
-            console.log('[DEBUG] getNodeValue: found parameters["value"]:', value, 'in node:', node);
+            if (DEBUG_MODE) console.log('[DEBUG] getNodeValue: found parameters["value"]:', value, 'in node:', node);
             if (typeof value === 'string') {
                 // If this node is a timestamp-typed field, format string value as timestamp
                 const nt = (node.node_type || node.type || '').toLowerCase()
@@ -1909,7 +1908,7 @@ export class OverseerRenderer {
 
         // Fallback: check node.value directly
         if (node.value !== undefined && node.value !== null) {
-            console.log('[DEBUG] getNodeValue: found node.value:', node.value, 'in node:', node);
+            if (DEBUG_MODE) console.log('[DEBUG] getNodeValue: found node.value:', node.value, 'in node:', node);
             if (typeof node.value === 'string') return node.value
             if (typeof node.value === 'object') {
                 if (node.value.String !== undefined) return node.value.String
@@ -1925,7 +1924,7 @@ export class OverseerRenderer {
 
         // Fallback: check node.String (for string nodes)
         if (node.String !== undefined && node.String !== null) {
-            console.log('[DEBUG] getNodeValue: found node.String:', node.String, 'in node:', node);
+            if (DEBUG_MODE) console.log('[DEBUG] getNodeValue: found node.String:', node.String, 'in node:', node);
             return node.String
         }
 
@@ -1934,13 +1933,13 @@ export class OverseerRenderer {
             const skip = new Set(['name', 'type', 'node_type', 'parameters', 'children', 'label'])
             for (const key in node) {
                 if (!skip.has(key) && typeof node[key] === 'string') {
-                    console.log(`[DEBUG] getNodeValue: found string property '${key}' in node:`, node);
+                    if (DEBUG_MODE) console.log(`[DEBUG] getNodeValue: found string property '${key}' in node:`, node);
                     return node[key]
                 }
             }
         }
 
-        console.log('[DEBUG] getNodeValue: no value found for node:', node);
+        if (DEBUG_MODE) console.log('[DEBUG] getNodeValue: no value found for node:', node);
         return null
     }
 
@@ -2172,7 +2171,7 @@ export class OverseerRenderer {
             // Update the node value in the document structure
             // Instead of using the local node reference, find and update the node in the main document
             if (fieldPath && window.app && window.app.currentDocument) {
-                console.log('🔧 Updating node in main document at path:', fieldPath, 'with value:', newValue)
+                if (DEBUG_MODE) console.log('🔧 Updating node in main document at path:', fieldPath, 'with value:', newValue)
                 const success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
                 if (!success) {
                     console.warn('⚠️ Failed to update node by path, falling back to local node update')
@@ -2190,7 +2189,7 @@ export class OverseerRenderer {
                     // no-op
                 }
             }
-            console.log('Field updated:', node.name, newValue)
+            if (DEBUG_MODE) console.log('Field updated:', node.name, newValue)
             
             // Mark document as modified
             if (window.app && window.app.markDocumentModified) {
@@ -2200,7 +2199,7 @@ export class OverseerRenderer {
             if (window.app && window.app.reevaluateDocumentSelective) {
                 // Use pre-captured field path for selective update
                 if (fieldPath) {
-                    console.log('🔄 Triggering selective update for field:', fieldPath)
+                    if (DEBUG_MODE) console.log('🔄 Triggering selective update for field:', fieldPath)
                     // Pass the old and new values to help selective update system
                     const updateResult = await window.app.reevaluateDocumentSelective([fieldPath], [{
                         path: fieldPath,
@@ -2211,9 +2210,9 @@ export class OverseerRenderer {
                     // Skip event emission for any successful selective update (DOM-only or backend selective)
                     if (updateResult && updateResult.success) {
                         if (updateResult.domOnly) {
-                            console.log('🎯 Skipping event emission for DOM-only update (prevents chart refresh)')
+                            if (DEBUG_MODE) console.log('🎯 Skipping event emission for DOM-only update (prevents chart refresh)')
                         } else {
-                            console.log('🎯 Skipping event emission for successful selective backend update (prevents chart refresh)')
+                            if (DEBUG_MODE) console.log('🎯 Skipping event emission for successful selective backend update (prevents chart refresh)')
                         }
                         return // Skip the event emission below
                     }
@@ -2323,7 +2322,7 @@ export class OverseerRenderer {
                 
                 // Update the node value in the document structure
                 this.updateNodeValue(node, newValue)
-                console.log('Markdown field updated:', node.name, newValue)
+                if (DEBUG_MODE) console.log('Markdown field updated:', node.name, newValue)
                 
                 // Mark document as modified
                 if (window.app && window.app.markDocumentModified) {
@@ -2370,7 +2369,7 @@ export class OverseerRenderer {
         const path = (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
-    try { console.debug('[Overseer] emitEvent', eventName, 'path=', path) } catch(_) {}
+    try { if (DEBUG_MODE) console.debug('[Overseer] emitEvent', eventName, 'path=', path) } catch(_) {}
         const updated = await invoke('execute_overseer_event', {
             nodes: window.app.currentDocument,
             nodePath: path,
@@ -2414,7 +2413,7 @@ export class OverseerRenderer {
             }
             
             if (targetNode) {
-                console.log('✅ Found target node:', targetNode.name, 'updating value to:', newValue)
+                if (DEBUG_MODE) console.log('✅ Found target node:', targetNode.name, 'updating value to:', newValue)
                 this.updateNodeValue(targetNode, newValue)
                 return true
             } else {
@@ -2528,9 +2527,9 @@ export class OverseerRenderer {
      */
     updateSelectiveFields(oldDocument, newDocument, changedFieldPaths, fieldChanges = []) {
         try {
-            console.log('🎯 Selective DOM update for paths:', changedFieldPaths)
+            if (DEBUG_MODE) console.log('🎯 Selective DOM update for paths:', changedFieldPaths)
             if (fieldChanges.length > 0) {
-                console.log('💡 Using field change info for selective updates')
+                if (DEBUG_MODE) console.log('💡 Using field change info for selective updates')
             }
             
             // Create a map of field changes for quick lookup
@@ -2542,11 +2541,11 @@ export class OverseerRenderer {
             let updateCount = 0
             
             for (const fieldPath of changedFieldPaths) {
-                console.log('🔍 Looking for DOM elements with path:', fieldPath)
+                if (DEBUG_MODE) console.log('🔍 Looking for DOM elements with path:', fieldPath)
                 
                 const changeInfo = changeMap.get(fieldPath)
                 if (changeInfo) {
-                    console.log('📝 Field change detected:', changeInfo)
+                    if (DEBUG_MODE) console.log('📝 Field change detected:', changeInfo)
                     
                     // Find the specific element to update
                     const elements = document.querySelectorAll(`[data-path]`)
@@ -2558,17 +2557,17 @@ export class OverseerRenderer {
                             
                             // Check if this element's path exactly matches the changed field
                             if (elementPathStr === fieldPath) {
-                                console.log('🎯 Found exact matching element for path:', elementPathStr)
+                                if (DEBUG_MODE) console.log('🎯 Found exact matching element for path:', elementPathStr)
                                 
                                 // Find the corresponding node in the new document
                                 const newNode = this.findNodeByPath(newDocument, elementPath)
                                 
                                 if (newNode) {
-                                    console.log('📝 Updating element for changed field:', newNode.name, 'from', changeInfo.oldValue, 'to', changeInfo.newValue)
+                                    if (DEBUG_MODE) console.log('📝 Updating element for changed field:', newNode.name, 'from', changeInfo.oldValue, 'to', changeInfo.newValue)
                                     this.updateSingleElement(element, newNode, elementPath)
                                     updateCount++
                                 } else {
-                                    console.log('❌ Node not found:', { path: elementPath })
+                                    if (DEBUG_MODE) console.log('❌ Node not found:', { path: elementPath })
                                 }
                                 break // Found the exact match, no need to continue
                             }
@@ -2578,13 +2577,13 @@ export class OverseerRenderer {
                     }
                 } else {
                     // Fallback to old comparison-based approach if no change info
-                    console.log('⚠️ No change info available, using comparison approach for:', fieldPath)
+                    if (DEBUG_MODE) console.log('⚠️ No change info available, using comparison approach for:', fieldPath)
                     this.updateFieldByComparison(oldDocument, newDocument, fieldPath)
                     updateCount++ // Assume it worked for now
                 }
             }
             
-            console.log(`✅ Selective update completed: ${updateCount} elements updated`)
+            if (DEBUG_MODE) console.log(`✅ Selective update completed: ${updateCount} elements updated`)
             return updateCount > 0
             
         } catch (error) {
@@ -2597,7 +2596,7 @@ export class OverseerRenderer {
      * Update DOM for cascade fields that were changed by backend processing
      */
     updateDocumentForCascadeFields(oldDocument, newDocument, userChangedFields, cascadeFields = null) {
-        console.log('🔄 Updating DOM for cascade fields after backend processing')
+    if (DEBUG_MODE) console.log('🔄 Updating DOM for cascade fields after backend processing')
         
         // Use provided cascade fields if available, otherwise compute them
         let fieldsToUpdate = cascadeFields
@@ -2609,7 +2608,7 @@ export class OverseerRenderer {
             fieldsToUpdate = allChangedFields.filter(field => !userChangedFields.includes(field))
         }
         
-        console.log('🎯 Cascade fields to update:', fieldsToUpdate)
+    if (DEBUG_MODE) console.log('🎯 Cascade fields to update:', fieldsToUpdate)
         
         // Update DOM for each cascade field
         for (const fieldPath of fieldsToUpdate) {
@@ -2645,7 +2644,7 @@ export class OverseerRenderer {
                         const fieldName = key.replace('_computed_', '')
                         const fieldPath = currentPath ? `${currentPath}/${fieldName}` : fieldName
                         changedFields.push(fieldPath)
-                        console.log(`📝 Detected cascade change: ${fieldPath}`)
+                        if (DEBUG_MODE) console.log(`📝 Detected cascade change: ${fieldPath}`)
                     }
                 }
             }
@@ -2668,7 +2667,7 @@ export class OverseerRenderer {
      * Update a single field in the DOM based on document comparison
      */
     updateSingleFieldInDOM(oldDocument, newDocument, fieldPath) {
-        console.log(`🔄 Updating single field in DOM: ${fieldPath}`)
+    if (DEBUG_MODE) console.log(`🔄 Updating single field in DOM: ${fieldPath}`)
         
         // Find the DOM element for this field using the same logic as selective updates
         const elements = document.querySelectorAll(`[data-path]`)
@@ -2680,7 +2679,7 @@ export class OverseerRenderer {
                     // Get the new computed value
                     const newValue = this.getComputedValueFromDocument(newDocument, fieldPath)
                     if (newValue !== undefined) {
-                        console.log(`📝 Updating cascade field ${fieldPath} to:`, newValue)
+                        if (DEBUG_MODE) console.log(`📝 Updating cascade field ${fieldPath} to:`, newValue)
                         this.updateElementDisplayValue(element, newValue)
                     }
                 }
@@ -2728,7 +2727,7 @@ export class OverseerRenderer {
         }
 
         element.textContent = displayValue
-        console.log(`✅ Updated element display to: ${displayValue}`)
+    if (DEBUG_MODE) console.log(`✅ Updated element display to: ${displayValue}`)
     }
 
     /**
@@ -2759,7 +2758,7 @@ export class OverseerRenderer {
                 
                 // Check if this element's path matches or is a parent of the changed field
                 if (elementPathStr === fieldPath || fieldPath.startsWith(elementPathStr + '/')) {
-                    console.log('🎯 Found matching element for path:', elementPathStr)
+                    if (DEBUG_MODE) console.log('🎯 Found matching element for path:', elementPathStr)
                     
                     // Find the corresponding node in the new document
                     const newNode = this.findNodeByPath(newDocument, elementPath)
@@ -2767,7 +2766,7 @@ export class OverseerRenderer {
                     
                     if (newNode && oldNode) {
                         // Check if the node actually changed
-                        console.log('🔍 Comparing nodes:', {
+                        if (DEBUG_MODE) console.log('🔍 Comparing nodes:', {
                             oldValue: this.getNodeValue(oldNode),
                             newValue: this.getNodeValue(newNode),
                             oldComputed: oldNode.parameters?._computed_value,
@@ -2775,13 +2774,13 @@ export class OverseerRenderer {
                         })
                         
                         if (this.nodeHasChanged(oldNode, newNode)) {
-                            console.log('📝 Updating element for changed node:', newNode.name)
+                            if (DEBUG_MODE) console.log('📝 Updating element for changed node:', newNode.name)
                             this.updateSingleElement(element, newNode, elementPath)
                         } else {
-                            console.log('⏭️ Node unchanged, skipping:', newNode.name)
+                            if (DEBUG_MODE) console.log('⏭️ Node unchanged, skipping:', newNode.name)
                         }
                     } else {
-                        console.log('❌ Node not found:', { newNode: !!newNode, oldNode: !!oldNode, path: elementPath })
+                        if (DEBUG_MODE) console.log('❌ Node not found:', { newNode: !!newNode, oldNode: !!oldNode, path: elementPath })
                     }
                 }
             } catch (e) {
@@ -2819,7 +2818,7 @@ export class OverseerRenderer {
     nodeHasChanged(oldNode, newNode) {
         // Compare key properties that would affect rendering
         if (oldNode.node_type !== newNode.node_type) {
-            console.log('🔄 Node type changed:', oldNode.node_type, '->', newNode.node_type)
+            if (DEBUG_MODE) console.log('🔄 Node type changed:', oldNode.node_type, '->', newNode.node_type)
             return true
         }
         
@@ -2828,7 +2827,7 @@ export class OverseerRenderer {
         const newValue = this.getNodeValue(newNode)
         
         if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
-            console.log('🔄 Node value changed:', oldValue, '->', newValue)
+            if (DEBUG_MODE) console.log('🔄 Node value changed:', oldValue, '->', newValue)
             return true
         }
         
@@ -2837,11 +2836,11 @@ export class OverseerRenderer {
         const newComputed = newNode.parameters?._computed_value
         
         if (JSON.stringify(oldComputed) !== JSON.stringify(newComputed)) {
-            console.log('🔄 Computed value changed:', oldComputed, '->', newComputed)
+            if (DEBUG_MODE) console.log('🔄 Computed value changed:', oldComputed, '->', newComputed)
             return true
         }
         
-        console.log('🔄 No relevant changes detected in node:', oldNode.name)
+    if (DEBUG_MODE) console.log('🔄 No relevant changes detected in node:', oldNode.name)
         return false
     }
 
@@ -2889,7 +2888,7 @@ export class OverseerRenderer {
         
         if (textElement.textContent !== computedValue) {
             textElement.textContent = computedValue
-            console.log('📝 Updated text element:', computedValue)
+            if (DEBUG_MODE) console.log('📝 Updated text element:', computedValue)
         }
     }
 
@@ -2902,7 +2901,7 @@ export class OverseerRenderer {
             const computedValue = this.getNodeValue(newNode)
             if (input.value !== computedValue) {
                 input.value = computedValue
-                console.log('📝 Updated numeric element:', computedValue)
+                if (DEBUG_MODE) console.log('📝 Updated numeric element:', computedValue)
             }
         } else {
             // Fallback to text update
@@ -2920,7 +2919,7 @@ export class OverseerRenderer {
             const isChecked = value === true || value === 'true'
             if (checkbox.checked !== isChecked) {
                 checkbox.checked = isChecked
-                console.log('📝 Updated checkbox element:', isChecked)
+                if (DEBUG_MODE) console.log('📝 Updated checkbox element:', isChecked)
             }
         }
     }

@@ -65,7 +65,7 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
         debug_parser!("[PARSER] Skipping invalid node start: {}", trimmed.chars().take(40).collect::<String>());
         return Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
     }
-    // Debug: print the input being parsed
+    // Debug: print the input being parsed (disabled by default)
     debug_parser!("[PARSER] input: {}", input.chars().take(80).collect::<String>());
 
     // A node definition can be templated or regular

@@ -94,7 +94,7 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
 
 /// Selective resolution that only processes specific field paths
 pub fn resolve_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
-    println!("🎯 Selective resolution for {} fields: {:?}", field_paths.len(), field_paths);
+    debug_resolver!("🎯 Selective resolution for {} fields: {:?}", field_paths.len(), field_paths);
     
     // For selective updates, we only need to:
     // 1. Re-evaluate formulas for the specific fields
@@ -107,7 +107,7 @@ pub fn resolve_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std:
     // Only recompute charts that contain references to the changed fields
     compute_chart_series_for_specific_fields(nodes, field_paths);
     
-    println!("✅ Selective resolution completed");
+    debug_resolver!("✅ Selective resolution completed");
 }
 
 // Initialize default values and validate mount nodes across the document tree
@@ -1008,16 +1008,16 @@ fn evaluate_formulas_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_pa
 
 /// Selective chart computation that only processes charts affected by specific field changes
 fn compute_chart_series_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
-    println!("🎯 Selective chart computation for fields: {:?}", field_paths);
+    debug_resolver!("🎯 Selective chart computation for fields: {:?}", field_paths);
     
     // Analyze if any charts actually depend on the changed field paths
     let charts_need_update = charts_depend_on_fields(nodes, field_paths);
     
     if charts_need_update {
-        println!("🔄 Charts depend on changed fields, performing selective chart recomputation");
+    debug_resolver!("🔄 Charts depend on changed fields, performing selective chart recomputation");
         compute_chart_series(nodes);
     } else {
-        println!("✅ No charts depend on changed fields, skipping chart computation");
+    debug_resolver!("✅ No charts depend on changed fields, skipping chart computation");
     }
 }
 
@@ -1044,7 +1044,7 @@ fn chart_node_depends_on_fields(node: &OverseerNode, field_paths: &std::collecti
         for child in &node.children {
             if child.node_type == "plot" {
                 if plot_depends_on_fields(child, field_paths, &node_path) {
-                    println!("📊 Chart plot '{}' depends on changed fields", format!("{}/{}", node_path, child.name));
+                    debug_resolver!("📊 Chart plot '{}' depends on changed fields", format!("{}/{}", node_path, child.name));
                     return true;
                 }
             }
@@ -1067,7 +1067,7 @@ fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::H
     
     // Check the 'source' parameter to see what data the plot references
     if let Some(OverseerValue::String(source_path)) = plot.parameters.get("source") {
-        println!("🔍 Checking if plot source '{}' intersects with changed fields: {:?}", source_path, field_paths);
+    debug_resolver!("🔍 Checking if plot source '{}' intersects with changed fields: {:?}", source_path, field_paths);
         
         // If the source path (like "/data") intersects with any changed field paths
         for field_path in field_paths {
@@ -1076,13 +1076,13 @@ fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::H
             
             // Direct path match (e.g., field "data" affects source "/data")
             if field_path == source_clean || field_path.starts_with(&format!("{}/", source_clean)) {
-                println!("� Plot source '{}' directly affected by field change '{}'", source_path, field_path);
+                debug_resolver!("� Plot source '{}' directly affected by field change '{}'", source_path, field_path);
                 return true;
             }
             
             // Reverse check: source affects field (e.g., source "/data" affects field "data/item")
             if source_clean.starts_with(field_path) || source_clean.starts_with(&format!("{}/", field_path)) {
-                println!("📊 Plot source '{}' contains changed field '{}'", source_path, field_path);
+                debug_resolver!("📊 Plot source '{}' contains changed field '{}'", source_path, field_path);
                 return true;
             }
         }
@@ -1090,7 +1090,7 @@ fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::H
     
     // For now, assume plot formulas (x, y parameters) only depend on lambda variables and source data
     // They typically don't depend on external fields like 'a' or 'b'
-    println!("✅ Plot '{}' does not depend on changed fields", format!("{}/{}", chart_path, plot.name));
+    debug_resolver!("✅ Plot '{}' does not depend on changed fields", format!("{}/{}", chart_path, plot.name));
     false
 }
 
@@ -1194,7 +1194,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         field_paths.iter().any(|path| path.starts_with(&current_path_str));
     
     if should_evaluate_this_node {
-        println!("🔄 Selectively evaluating formulas for node at path: {}", current_path_str);
+    debug_resolver!("🔄 Selectively evaluating formulas for node at path: {}", current_path_str);
         
         // Same formula evaluation logic as the main function
         let formula_pairs: Vec<(String, String)> = node
@@ -1430,9 +1430,9 @@ mod tests {
         
         // After resolution, we should still have both nodes (template and instance)
         // But hidden templates may be filtered out in actual rendering, not in tests
-        println!("Number of nodes after resolution: {}", nodes.len());
+    debug_resolver!("Number of nodes after resolution: {}", nodes.len());
         for (i, node) in nodes.iter().enumerate() {
-            println!("Node {}: {} (type: {})", i, node.name, node.node_type);
+            debug_resolver!("Node {}: {} (type: {})", i, node.name, node.node_type);
         }
         
         // Find the resolved task (it should be the second node, or the only non-hidden one)
@@ -1442,9 +1442,9 @@ mod tests {
             &nodes[0] // Only instance present (template filtered out)
         };
         
-        println!("Resolved task children: {}", resolved_task.children.len());
+    debug_resolver!("Resolved task children: {}", resolved_task.children.len());
         for (i, child) in resolved_task.children.iter().enumerate() {
-            println!("  Child {}: {} (type: {})", i, child.name, child.node_type);
+            debug_resolver!("  Child {}: {} (type: {})", i, child.name, child.node_type);
         }
         
     assert_eq!(resolved_task.node_type, "Task");

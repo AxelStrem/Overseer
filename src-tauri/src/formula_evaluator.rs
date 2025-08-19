@@ -1,10 +1,11 @@
 use crate::types::{OverseerValue, OverseerError, OverseerNode};
+use chrono::{DateTime, Utc, Local};
 use nom::{
     IResult,
     branch::alt,
     bytes::complete::{tag, take_while1, take_while},
     character::complete::{char, multispace0},
-    combinator::{map, opt},
+    combinator::{map, opt, peek},
     multi::many0,
     number::complete::double,
     sequence::{delimited, pair, preceded, tuple},
@@ -41,6 +42,7 @@ pub struct EvaluationContext<'a> {
 pub enum FormulaExpression {
     Number(f64),
     StringLiteral(String),
+    BooleanLiteral(bool),
     FieldReference(String),
     PathReference(Vec<String>), // e.g., ["..","field"] for ../field
     PathParam { path: Vec<String>, param: String },
@@ -105,6 +107,18 @@ pub enum UnaryOperator {
 pub struct FormulaEvaluator;
 
 impl FormulaEvaluator {
+    // Thread-local time override used by time-based functions during evaluation
+    thread_local! {
+        static TIME_OVERRIDE_UTC: std::cell::RefCell<Option<DateTime<Utc>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    pub fn set_time_override(dt: Option<DateTime<Utc>>) {
+        Self::TIME_OVERRIDE_UTC.with(|cell| { *cell.borrow_mut() = dt; });
+    }
+
+    pub fn get_time_override() -> Option<DateTime<Utc>> {
+        Self::TIME_OVERRIDE_UTC.with(|cell| cell.borrow().clone())
+    }
     /// Evaluate a list-source expression used for plots, returning the base path and filtered items (nodes).
     /// Supported forms:
     /// - Path only: /A/B or Rel/Path -> returns children of the container
@@ -348,6 +362,7 @@ impl FormulaEvaluator {
                 }
             }
             FormulaExpression::StringLiteral(s) => Ok(OverseerValue::String(s.clone())),
+            FormulaExpression::BooleanLiteral(b) => Ok(OverseerValue::Boolean(*b)),
             FormulaExpression::FieldReference(field_name) => {
                 debug_evaluator!("[EVAL] Resolve field '{}' at {:?}", field_name, context.node_path);
                 let out = Self::resolve_field_reference(field_name, context);
@@ -1190,14 +1205,19 @@ impl FormulaEvaluator {
                 if !args.is_empty() {
                     return Err(OverseerError::FormulaError("today() function takes no arguments".to_string()));
                 }
-                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                let today = if let Some(ovr) = Self::get_time_override() {
+                    let local_dt: DateTime<Local> = DateTime::<Local>::from(ovr);
+                    local_dt.format("%Y-%m-%d").to_string()
+                } else {
+                    chrono::Local::now().format("%Y-%m-%d").to_string()
+                };
                 Ok(OverseerValue::Date(today))
             }
             "now" => {
                 if !args.is_empty() {
                     return Err(OverseerError::FormulaError("now() takes no arguments".to_string()));
                 }
-                let now = chrono::Utc::now().to_rfc3339();
+                let now = match Self::get_time_override() { Some(dt) => dt.to_rfc3339(), None => chrono::Utc::now().to_rfc3339() };
                 Ok(OverseerValue::Timestamp(now))
             }
             // days_since(ts): returns whole days between now() and the given timestamp/date/string
@@ -1227,7 +1247,7 @@ impl FormulaEvaluator {
                     _ => None,
                 };
                 if let Some(ts) = ts_opt {
-                    let now = chrono::Utc::now();
+                    let now = match Self::get_time_override() { Some(dt) => dt, None => chrono::Utc::now() };
                     let dur = now.signed_duration_since(ts);
                     let days = dur.num_days();
                     Ok(OverseerValue::Integer(days))
@@ -1570,6 +1590,7 @@ fn primary_expression(input: &str) -> IResult<&str, FormulaExpression> {
             parenthesized_expression,
             function_call,
             string_literal,
+            bool_literal,
             current_path_reference,
             relative_path_reference,
             path_reference,
@@ -1625,6 +1646,19 @@ fn string_literal(input: &str) -> IResult<&str, FormulaExpression> {
         |s: &str| FormulaExpression::StringLiteral(format!("#{s}")),
     );
     alt((quoted, hexish))(input)
+}
+
+/// Parse boolean literals true/false ensuring word boundary (not followed by ident char)
+fn bool_literal(input: &str) -> IResult<&str, FormulaExpression> {
+    // Match 'true' or 'false'
+    let (rest, word) = alt((tag("true"), tag("false")))(input)?;
+    // Ensure next char is not an identifier character (avoid consuming prefix of a longer identifier)
+    let (_rest2, next) = opt(peek(take_while1(|c: char| c.is_alphanumeric() || c == '_')))(rest)?;
+    if next.is_some() {
+        // Fail this alternative so other parsers (e.g., field_reference) can match
+        return Err(nom::Err::Error(nom::error::Error::new(rest, nom::error::ErrorKind::Alpha)));
+    }
+    Ok((rest, FormulaExpression::BooleanLiteral(word == "true")))
 }
 
 /// Parse parenthesized expressions
@@ -1818,11 +1852,49 @@ impl FormulaEvaluator {
                     return Ok(acc);
                 }
                 "sum" => {
-                    let mut total: f64 = 0.0;
-                    for item in &list { if let Some(num) = Self::item_to_number(item) { total += num; } }
-                    let res = Self::normalize_number(total);
-                    debug_evaluator!("[EVAL] sum => {:?}", res);
-                    return Ok(res);
+                    // Optional projection: sum(expr) — evaluate expr in each item's context
+                    if call.args.len() == 1 {
+                        let proj = &call.args[0];
+                        let mut total: f64 = 0.0;
+                        for item in &list {
+                            let v_res = match item {
+                                ListItem::Node(n) => {
+                                    // Evaluate expression with current node = item
+                                    let ctx = EvaluationContext::new_with_current_and_parent(
+                                        *n,
+                                        Self::eval_expr_to_node(base, context),
+                                        {
+                                            // Best-effort path: start from current path, append base and item names
+                                            let mut p = context.node_path.clone();
+                                            // Append base name if resolvable
+                                            if let Some(bn) = Self::eval_expr_to_node(base, context) { p.push(bn.name.clone()); }
+                                            p.push(n.name.clone());
+                                            p
+                                        },
+                                        context.document_root,
+                                    );
+                                    Self::evaluate_expression(proj, &ctx)
+                                }
+                                ListItem::Value(val) => {
+                                    // Bind x to the value and evaluate
+                                    let mut ctx = context.clone();
+                                    ctx = ctx.with_var("x", BoundValue::Value(val.clone()));
+                                    Self::evaluate_expression(proj, &ctx)
+                                }
+                            };
+                            if let Ok(v) = v_res { if let Ok(n) = Self::value_to_number(&v) { total += n; } }
+                        }
+                        let res = Self::normalize_number(total);
+                        debug_evaluator!("[EVAL] sum(arg) => {:?}", res);
+                        return Ok(res);
+                    } else {
+                        // sum() without args: sum numeric items directly
+                        let mut total: f64 = 0.0;
+                        for item in &list { if let Some(num) = Self::item_to_number(item) { total += num; } }
+                        let res = Self::normalize_number(total);
+                        debug_evaluator!("[EVAL] sum => {:?}", res);
+                        return Ok(res);
+                    }
                 }
                 "count" => {
                     let res = OverseerValue::Integer(list.len() as i64);
@@ -1994,6 +2066,32 @@ impl FormulaEvaluator {
                                 current_container = f;
                             } else {
                                 nodes = vec![]; // no match
+                            }
+                        }
+                        "filter" => {
+                            // Keep only nodes matching predicate; maintain current_container context
+                            let lambda = call.args.get(0)?;
+                            let mut out: Vec<&OverseerNode> = Vec::new();
+                            for n in nodes.into_iter() {
+                                let item_ctx = EvaluationContext::new_with_current_and_parent(
+                                    n,
+                                    Some(current_container),
+                                    context.node_path.clone(),
+                                    context.document_root,
+                                );
+                                if let Ok(keep_v) = Self::eval_lambda(lambda, None, Some(n), None, &item_ctx) {
+                                    if Self::value_to_bool(&keep_v).unwrap_or(false) { out.push(n); }
+                                }
+                            }
+                            nodes = out;
+                        }
+                        "first" => {
+                            // Narrow to the first node if available (ignore default arg for node resolution)
+                            if let Some(n) = nodes.first().cloned() {
+                                nodes = vec![n];
+                                current_container = n;
+                            } else {
+                                nodes = vec![];
                             }
                         }
                         _ => {
@@ -2209,6 +2307,38 @@ mod tests {
     }
 
     #[test]
+    fn test_sum_with_projection_over_template_list() {
+        let input = r#"
+        div Root {
+            div MealRecord (hidden=true) {
+                string description = ""
+                int calories = 0
+            }
+            div WeightRecord (hidden=true) {
+                list intake (entry=<MealRecord>)
+                int total_calories = $(intake.sum(calories))
+            }
+            list History (entry=<WeightRecord>) {
+                - {
+                    list intake {
+                        - { string description = "a" int calories = 100 }
+                        - { string description = "b" int calories = 200 }
+                    }
+                }
+            }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let history = root.get_accessible_children().into_iter().find(|c| c.name == "History").unwrap();
+        let day = history.get_accessible_children().into_iter().find(|c| c.node_type == "WeightRecord").unwrap();
+        let total = day.get_accessible_children().into_iter().find(|c| c.name == "total_calories").unwrap();
+        let computed = total.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(computed, OverseerValue::Integer(300));
+    }
+
+    #[test]
     fn test_find_with_integer_keys_and_string_lookup() {
         let input = r#"
         div Root {
@@ -2322,6 +2452,52 @@ mod tests {
         let cnt = root.get_accessible_children().into_iter().find(|c| c.name == "cnt").unwrap();
         let computed = cnt.parameters.get("_computed_value").cloned().unwrap();
         assert_eq!(computed, OverseerValue::Integer(3));
+    }
+
+    #[test]
+    fn test_weight_tracker_total_calories_in_history_entries() {
+        // Mirrors examples/weight_tracker/weight_tracker.os semantics for History entries
+        let input = r#"
+        tab weight {
+            div (hidden=true) {
+                div MealRecord {
+                    string description = ""
+                    float calories = 100
+                }
+                div WeightRecord {
+                    timestamp date
+                    float weight = 108.3
+                    int total_calories = $(intake.sum(calories))
+                    list intake (entry=<MealRecord>)
+                    text commentary = ""
+                }
+            }
+            list History (entry=<WeightRecord>) {
+                - {
+                    list intake {
+                        - { string description = "a" float calories = 300 }
+                        - { string description = "b" float calories = 150 }
+                    }
+                }
+                - {
+                    // no intake -> total_calories should be 0
+                }
+            }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let tab = &nodes[0];
+        let history = tab.get_accessible_children().into_iter().find(|c| c.name == "History").unwrap();
+        let mut items = history.get_accessible_children().into_iter().filter(|c| c.node_type == "WeightRecord");
+        let first = items.next().unwrap();
+        let first_total = first.get_accessible_children().into_iter().find(|c| c.name == "total_calories").unwrap();
+        let v1 = first_total.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(v1, OverseerValue::Integer(450));
+        let second = items.next().unwrap();
+        let second_total = second.get_accessible_children().into_iter().find(|c| c.name == "total_calories").unwrap();
+        let v2 = second_total.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(v2, OverseerValue::Integer(0));
     }
 
     #[test]

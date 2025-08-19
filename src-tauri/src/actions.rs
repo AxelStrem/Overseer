@@ -41,14 +41,81 @@ impl ActionExecutor {
         Self::run_timers(nodes)
     }
 
+    // Simple equality for key comparisons
+    fn compare_values_simple(a: &OverseerValue, b: &OverseerValue) -> bool {
+        match (a, b) {
+            (OverseerValue::Integer(x), OverseerValue::Integer(y)) => x == y,
+            (OverseerValue::Float(x), OverseerValue::Float(y)) => (*x - *y).abs() < std::f64::EPSILON,
+            (OverseerValue::String(x), OverseerValue::String(y)) => x == y,
+            (OverseerValue::Boolean(x), OverseerValue::Boolean(y)) => x == y,
+            (OverseerValue::Date(x), OverseerValue::Date(y)) => x == y,
+            (OverseerValue::Timestamp(x), OverseerValue::Timestamp(y)) => x == y,
+            _ => false,
+        }
+    }
     /// Compute the next due time (epoch ms) for any active timer in the document.
     /// Returns Some(now) if any timer is already due; None if there are no timers.
     pub fn next_due_ms(nodes: &Vec<OverseerNode>) -> Option<i64> {
         let now = chrono::Utc::now();
         // Build a snapshot for formula evaluation
         let snapshot = nodes.clone();
+        // Compute template definition root paths referenced by any list.entry
+        fn gather_template_def_paths<'a>(roots: &'a [OverseerNode]) -> Vec<Vec<String>> {
+            // 1) Collect template names referenced by lists (entry=<T> or entry="T")
+            let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+            fn scan_for_entries(n: &OverseerNode, names: &mut std::collections::HashSet<String>) {
+                if n.node_type == "list" {
+                    if let Some(v) = n.parameters.get("entry") {
+                        match v {
+                            OverseerValue::Template(t) => names.insert(t.trim().trim_matches(['<','>']).to_string()),
+                            OverseerValue::String(s) => names.insert(s.trim().to_string()),
+                            _ => false,
+                        };
+                    }
+                }
+                for ch in &n.children { scan_for_entries(ch, names); }
+            }
+            for r in roots { scan_for_entries(r, &mut names); }
+            // 2) Find nodes whose name matches any template name and record their disambiguated path
+            fn search_by_name<'a>(acc: &mut Vec<Vec<String>>, cur: &'a OverseerNode, path: &mut Vec<String>, roots: &'a [OverseerNode], names: &std::collections::HashSet<String>) {
+                // Build disambiguated segment for this node (name with #k if duplicates among siblings)
+                let pushed = {
+                    let parent_children = path.len(); // use length as a proxy; we'll recompute properly below
+                    // We don't have parent here; push raw name which is enough for prefix matching within this traversal
+                    path.push(cur.name.clone());
+                    true
+                };
+                if names.contains(&cur.name) {
+                    acc.push(path.clone());
+                }
+                for ch in &cur.children { search_by_name(acc, ch, path, roots, names); }
+                if pushed { path.pop(); }
+            }
+            let mut out: Vec<Vec<String>> = Vec::new();
+            for r in roots {
+                let mut p: Vec<String> = Vec::new();
+                search_by_name(&mut out, r, &mut p, roots, &names);
+            }
+            out
+        }
+        let template_def_paths = gather_template_def_paths(&snapshot);
+        fn is_under_any(prefixes: &Vec<Vec<String>>, path: &Vec<String>) -> bool {
+            prefixes.iter().any(|pre| path.len() >= pre.len() && &path[..pre.len()] == pre.as_slice())
+        }
         // Walk all nodes to find timers with their name-path (skip unnamed wrappers like run_timers)
-        fn collect<'a>(acc: &mut Vec<(&'a OverseerNode, Vec<String>)>, cur: &'a OverseerNode, path: &mut Vec<String>) {
+        // Exclude timers that are declared on template definition nodes referenced by lists,
+        // but include timers inside instantiated templates and plain timers.
+        fn collect<'a>(
+            acc: &mut Vec<(&'a OverseerNode, Vec<String>)>,
+            cur: &'a OverseerNode,
+            path: &mut Vec<String>,
+            mut inside_instance: bool,
+            template_defs: &Vec<Vec<String>>,
+        ) {
+            // Update instance flag when we encounter a template instance root
+            if let Some(OverseerValue::Boolean(true)) = cur.parameters.get("_from_template") {
+                inside_instance = true;
+            }
             let pushed = if !cur.name.is_empty() { path.push(cur.name.clone()); true } else { false };
             let is_timer = cur.node_type == "timer"
                 || cur
@@ -56,14 +123,18 @@ impl ActionExecutor {
                     .get("_original_type")
                     .map(|v| matches!(v, OverseerValue::String(s) if s == "timer"))
                     .unwrap_or(false);
-            if is_timer { acc.push((cur, path.clone())); }
-            for ch in &cur.children { collect(acc, ch, path); }
+            if is_timer {
+                if inside_instance || !is_under_any(template_defs, path) {
+                    acc.push((cur, path.clone()));
+                }
+            }
+            for ch in &cur.children { collect(acc, ch, path, inside_instance, template_defs); }
             if pushed { path.pop(); }
         }
         let mut timers: Vec<(&OverseerNode, Vec<String>)> = Vec::new();
         for root in nodes {
             let mut p: Vec<String> = Vec::new();
-            collect(&mut timers, root, &mut p);
+            collect(&mut timers, root, &mut p, false, &template_def_paths);
         }
 
         let mut next_ms: Option<i64> = None;
@@ -135,15 +206,15 @@ impl ActionExecutor {
             #[cfg(feature = "debug-resolver")]
             {
                 let off_dbg = match off_val { Some(OverseerValue::String(s))=>Some(s.clone()), Some(OverseerValue::Integer(i))=>Some(i.to_string()), _=>None };
-                eprintln!("[SCHED] scanned timer name='{}' active={} at={:?} offset={:?} next_due_ms={}", t.name, active, at, off_dbg, due_ms);
+                debug_sched!("[SCHED] scanned timer name='{}' active={} at={:?} offset={:?} next_due_ms={}", t.name, active, at, off_dbg, due_ms);
             }
             next_ms = Some(match next_ms { Some(prev) => prev.min(due_ms), None => due_ms });
         }
         if timers_debug() {
             if let Some(ms) = next_ms {
-                eprintln!("[SCHED] next_due_ms => {} ({} timers scanned)", ms, timers.len());
+                debug_sched!("[SCHED] next_due_ms => {} ({} timers scanned)", ms, timers.len());
             } else {
-                eprintln!("[SCHED] next_due_ms => None (no active timers)");
+                debug_sched!("[SCHED] next_due_ms => None (no active timers)");
             }
         }
         next_ms
@@ -314,7 +385,13 @@ impl ActionExecutor {
     let now_dt = chrono::Utc::now();
         // Collect paths to timers to avoid borrow issues
         let mut timer_paths: Vec<Vec<String>> = Vec::new();
-        fn collect(paths: &mut Vec<Vec<String>>, cur: &OverseerNode, path: &mut Vec<String>) {
+        fn is_under_any(prefixes: &Vec<Vec<String>>, path: &Vec<String>) -> bool {
+            prefixes.iter().any(|pre| path.len() >= pre.len() && &path[..pre.len()] == pre.as_slice())
+        }
+        fn collect(paths: &mut Vec<Vec<String>>, cur: &OverseerNode, path: &mut Vec<String>, mut inside_instance: bool, template_defs: &Vec<Vec<String>>) {
+            if let Some(OverseerValue::Boolean(true)) = cur.parameters.get("_from_template") {
+                inside_instance = true;
+            }
             // Only push a segment when the node has a non-empty name; skip unnamed wrappers
             let pushed = if !cur.name.is_empty() { path.push(cur.name.clone()); true } else { false };
             // Identify timer by node_type or original type param
@@ -325,20 +402,47 @@ impl ActionExecutor {
                     .map(|v| matches!(v, OverseerValue::String(s) if s == "timer"))
                     .unwrap_or(false);
             if is_timer {
-                paths.push(path.clone());
+                if inside_instance || !is_under_any(template_defs, path) {
+                    paths.push(path.clone());
+                }
             }
-            for child in &cur.children { collect(paths, child, path); }
+            for child in &cur.children { collect(paths, child, path, inside_instance, template_defs); }
             if pushed { path.pop(); }
         }
+    let template_def_paths = {
+            // reuse logic from next_due_ms by reconstructing quickly here
+            fn gather(root: &OverseerNode, names: &mut std::collections::HashSet<String>, out: &mut Vec<Vec<String>>, path: &mut Vec<String>) {
+                if root.node_type == "list" {
+                    if let Some(v) = root.parameters.get("entry") {
+                        match v { OverseerValue::Template(t) => { names.insert(t.trim().trim_matches(['<','>']).to_string()); }, OverseerValue::String(s) => { names.insert(s.trim().to_string()); }, _ => {} }
+                    }
+                }
+                path.push(root.name.clone());
+                for ch in &root.children { gather(ch, names, out, path); }
+                path.pop();
+            }
+            let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for r in nodes.iter() { let mut p=Vec::new(); let mut dummy=Vec::new(); gather(r, &mut names, &mut dummy, &mut p); }
+            // Search again to collect paths matching names
+            fn collect_named(cur: &OverseerNode, path: &mut Vec<String>, names: &std::collections::HashSet<String>, acc: &mut Vec<Vec<String>>) {
+                path.push(cur.name.clone());
+                if names.contains(&cur.name) { acc.push(path.clone()); }
+                for ch in &cur.children { collect_named(ch, path, names, acc); }
+                path.pop();
+            }
+            let mut acc: Vec<Vec<String>> = Vec::new();
+            for r in nodes.iter() { let mut p=Vec::new(); collect_named(r, &mut p, &names, &mut acc); }
+            acc
+        };
     for root in nodes.iter() {
             let mut p: Vec<String> = Vec::new();
-            collect(&mut timer_paths, root, &mut p);
+            collect(&mut timer_paths, root, &mut p, false, &template_def_paths);
         }
     if timers_debug() { eprintln!("[TIMER] found {} timer path(s)", timer_paths.len()); }
 
     // Use snapshot for safe evaluation contexts
     let snapshot = nodes.clone();
-        // Evaluate and fire timers
+    // Evaluate and fire timers
     'timers: for tpath in timer_paths {
             if actions_budget == 0 { if timers_debug() { eprintln!("[TIMER] global actions budget exhausted; stopping scan"); } break 'timers; }
             // Resolve node by path
@@ -382,15 +486,31 @@ impl ActionExecutor {
                             let off_ms = off.num_milliseconds();
                             if off_ms > 0 {
                                 is_recurring = true;
-                                // Calculate how many intervals are overdue
+                                // Calculate how many intervals are overdue and track last due time
                                 let mut t = base + off;
+                                let mut last_due: Option<chrono::DateTime<chrono::Utc>> = None;
                                 while t <= now_dt {
                                     fire_count += 1;
+                                    last_due = Some(t);
                                     t = t + off;
                                     if fire_count > 100 { break; }
                                 }
-                            } else if base <= now_dt { fire_count = 1; }
-                        } else if base <= now_dt { fire_count = 1; }
+                                // If at least one overdue, set the evaluator's time override to the last due instant
+                                if fire_count > 0 {
+                                    if let Some(ld) = last_due {
+                                        crate::formula_evaluator::FormulaEvaluator::set_time_override(Some(ld));
+                                    }
+                                }
+                            } else if base <= now_dt {
+                                fire_count = 1;
+                                // One-shot with non-positive offset: simulate time at base
+                                crate::formula_evaluator::FormulaEvaluator::set_time_override(Some(base));
+                            }
+                        } else if base <= now_dt {
+                            fire_count = 1;
+                            // One-shot with no offset and overdue: simulate time at base
+                            crate::formula_evaluator::FormulaEvaluator::set_time_override(Some(base));
+                        }
 
                         if fire_count > 0 {
                             let capped = fire_count.min(MAX_REPEATS_PER_TICK);
@@ -422,10 +542,20 @@ impl ActionExecutor {
                                 let exec_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                     'outer: for r in 0..repeats {
                     if timers_debug() { eprintln!("[TIMER] repeat {}/{} for '{}' at {}", r+1, repeats, timer_name, dbg_path); }
+                                        // For recurring catch-up, simulate time at the intended firing instant for this repeat.
+                                        if is_recurring {
+                                            // Compute intended time: base + (k)*off where k is number of intervals up to this repeat
+                                            if let Some(off) = offset {
+                                                if r+1 <= fire_count {
+                                                    let intended = base + off * ((fire_count - repeats + r + 1) as i32);
+                                                    crate::formula_evaluator::FormulaEvaluator::set_time_override(Some(intended));
+                                                }
+                                            }
+                                        }
                                         // Re-resolve owner indices & path before each action in case document mutated
                                         let (owner_ptr, owner_indices) = match Self::get_node_mut_by_path(nodes, &tpath) {
                                             Some(p) => p,
-                                            None => { eprintln!("[TIMER] owner path disappeared during actions: {:?}", tpath); break 'outer; }
+                                            None => { if timers_debug() { eprintln!("[TIMER] owner path disappeared during actions: {:?}", tpath); } break 'outer; }
                                         };
                                         drop(owner_ptr); // don't keep pointer around
                                         let owner_path = Self::build_disambiguated_path(&nodes.clone(), &owner_indices);
@@ -452,6 +582,8 @@ impl ActionExecutor {
                                         return Err(OverseerError::RuntimeError(format!("Timer '{}' panicked during actions", timer_name)));
                                     }
                                 }
+                                // Clear override after executing actions for this timer to avoid leaking simulated time
+                                crate::formula_evaluator::FormulaEvaluator::set_time_override(None);
                                 if one_shot {
                                     // Deactivate one-shot timers after firing.
                                     // If 'active' is a Formula, do NOT overwrite it; the formula should determine activity.
@@ -579,7 +711,16 @@ impl ActionExecutor {
                     Some(OverseerValue::String(s)) => s.as_str(),
                     _ => "local",
                 };
-                let now = if clock == "utc" { Utc::now().date_naive() } else { Local::now().date_naive() };
+                let now = if clock == "utc" {
+                    if let Some(ovr) = crate::formula_evaluator::FormulaEvaluator::get_time_override() {
+                        ovr.date_naive()
+                    } else { Utc::now().date_naive() }
+                } else {
+                    if let Some(ovr) = crate::formula_evaluator::FormulaEvaluator::get_time_override() {
+                        let local_dt: chrono::DateTime<Local> = chrono::DateTime::<Local>::from(ovr);
+                        local_dt.date_naive()
+                    } else { Local::now().date_naive() }
+                };
                 let val = OverseerValue::Date(now.to_string());
                 Self::set_value(nodes, owner_indices, owner_path, &target, val)
             }
@@ -593,7 +734,8 @@ impl ActionExecutor {
                     Some(OverseerValue::String(s)) => s.parse::<i64>().unwrap_or(0),
                     _ => 0,
                 };
-                let ts = (Utc::now() + Duration::seconds(offset_secs)).to_rfc3339();
+                let base = if let Some(ovr) = crate::formula_evaluator::FormulaEvaluator::get_time_override() { ovr } else { Utc::now() };
+                let ts = (base + Duration::seconds(offset_secs)).to_rfc3339();
                 let val = OverseerValue::Timestamp(ts);
                 // If target specifies a parameter explicitly (../node.param), set that parameter; else set 'value'
                 let (_segments, explicit_param, _anchored) = Self::split_path_and_param(&target);
@@ -673,6 +815,50 @@ impl ActionExecutor {
                     _ => return Err(OverseerError::ValidationError("remove.keyValue required".to_string())),
                 };
                 Self::remove_from_list(nodes, owner_path, &list_path, &key_field, &key_value)
+            }
+            "set_in_list" => {
+                // set_in_list(list=/path, keyField=..., keyValue=..., field=..., value=...)
+                let list_path = Self::require_string(&action.parameters, "list")?;
+                let key_field = Self::require_string(&action.parameters, "keyField").unwrap_or_default();
+                let field_name = Self::require_string(&action.parameters, "field")?;
+                // Evaluate keyValue and value in the owner's context (if provided as formulas)
+                let snapshot = nodes.clone();
+                let key_value = match action.parameters.get("keyValue") {
+                    Some(v) => Self::evaluate_in_context(v, owner_path, &snapshot)?,
+                    None => return Err(OverseerError::ValidationError("set_in_list.keyValue required".to_string())),
+                };
+                let new_value = match action.parameters.get("value") {
+                    Some(v) => Self::evaluate_in_context(v, owner_path, &snapshot)?,
+                    None => return Err(OverseerError::ValidationError("set_in_list.value required".to_string())),
+                };
+                // Resolve list by path using snapshot for path calculation, then mutate on nodes
+                let (segments, _explicit_param, anchored) = Self::split_path_and_param(&list_path);
+                let indices = match Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments) {
+                    Some(ix) => ix,
+                    None => return Err(OverseerError::ValidationError(format!("List not found: {}", list_path))),
+                };
+                let list_node = Self::get_node_mut_by_indices(nodes, &indices)
+                    .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
+                if list_node.node_type != "list" {
+                    return Err(OverseerError::ValidationError("set_in_list target must be a list".to_string()));
+                }
+                // Determine effective key field (prefer explicit, else list.key)
+                let effective_key_field = if !key_field.is_empty() {
+                    key_field
+                } else if let Some(OverseerValue::String(s)) = list_node.parameters.get("key") {
+                    s.clone()
+                } else {
+                    return Err(OverseerError::ValidationError("set_in_list.keyField missing and list has no key".to_string()));
+                };
+                // Find matching item and set field value
+                if let Some(item) = list_node
+                    .children
+                    .iter_mut()
+                    .find(|it| Self::get_field_value(it, &effective_key_field).map_or(false, |v| Self::value_equals(v, &key_value)))
+                {
+                    Self::set_field_value_on_item(item, &field_name, new_value);
+                }
+                Ok(())
             }
             "append" => {
                 // append(list=/path, template=<...>?){ overrides... } for template lists
@@ -1293,7 +1479,7 @@ impl ActionExecutor {
         let indices = match Self::resolve_target_indices(&nodes, owner_path, anchored, &segments) {
             Some(ix) => ix,
             None => {
-                // Always log in tests to help diagnose path resolution
+                #[cfg(feature = "debug-resolver")]
                 eprintln!("[ACTIONS] toggle: Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
                 return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
             }
@@ -2343,6 +2529,30 @@ div Ext {
         let root = nodes.iter().find(|n| n.name == "Root").unwrap();
         let list = root.children.iter().find(|c| c.name == "Tasks").unwrap();
         assert!(list.children.iter().all(|it| it.children.iter().all(|f| !(f.name=="id" && f.parameters.get("value")==Some(&OverseerValue::String("x1".to_string()))))));
+    }
+
+    #[test]
+    fn test_set_in_list_updates_item_field_by_key() {
+        let input = r#"
+        div Root {
+            div Task { string id = "" string title = "" }
+            list Tasks (entry=<Task>, key="id") {
+                - Task { id = "a1" title = "Old" }
+                - Task { id = "b2" title = "Other" }
+            }
+            button UpdateA1 { on click { set_in_list(list="/Root/Tasks", keyField="id", keyValue="a1", field="title", value="New Title") } }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let path = vec!["Root".to_string(), "UpdateA1".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let list = root.children.iter().find(|c| c.name == "Tasks").unwrap();
+        let a1 = list.children.iter().find(|it| it.children.iter().any(|f| f.name=="id" && f.parameters.get("value") == Some(&OverseerValue::String("a1".into())))).unwrap();
+        let title = a1.children.iter().find(|f| f.name=="title").and_then(|f| f.parameters.get("value"));
+        assert_eq!(title, Some(&OverseerValue::String("New Title".to_string())));
     }
 
     #[test]

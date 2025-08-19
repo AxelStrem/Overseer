@@ -283,29 +283,6 @@ timer daily_backup (at="09:00", active=true) {
 }
 ```
 
-#### Action Types:
-```overseer
-// Set action - assigns a value
-action Set (target=../field_name) = new_value
-
-// Add action - adds to numeric values
-action Add (target=../counter) = 5
-
-// Create action - creates new items in lists
-action Create (target=../task_list, template=<../TaskTemplate>)
-
-// Delete action - removes items
-action Delete (target=../items/5)
-```
-
-#### Triggers:
-```overseer
-// Conditional trigger
-trigger (condition=$(../priority > 20)) {
-    action Set (target=../urgent) = true
-    action Set (target=../background-color) = "#FFE6E6"
-}
-```
 
 ### 3. Layout and Styling
 

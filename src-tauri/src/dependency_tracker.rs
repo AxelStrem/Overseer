@@ -41,6 +41,14 @@ pub struct DependencyGraph {
     formula_cache: HashMap<String, Vec<String>>,
 }
 
+// Debug logging macro for dependency tracker
+macro_rules! debug_dep {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug-deps")]
+        println!($($arg)*);
+    };
+}
+
 impl DependencyGraph {
     pub fn new() -> Self {
         Self {
@@ -56,9 +64,9 @@ impl DependencyGraph {
     pub fn build_from_document(&mut self, nodes: &[OverseerNode]) -> Result<(), OverseerError> {
         self.clear();
         
-        println!("🔍 Building dependency graph from {} top-level nodes", nodes.len());
+        debug_dep!("🔍 Building dependency graph from {} top-level nodes", nodes.len());
         for (i, node) in nodes.iter().enumerate() {
-            println!("🔍 Analyzing top-level node {}: '{}' type='{}' params={:?}", 
+            debug_dep!("🔍 Analyzing top-level node {}: '{}' type='{}' params={:?}", 
                      i, node.name, node.node_type, node.parameters.keys().collect::<Vec<_>>());
         }
         
@@ -67,8 +75,8 @@ impl DependencyGraph {
             self.analyze_node(node, &mut Vec::new())?;
         }
         
-        println!("🔍 Dependency graph built. Dependencies: {:?}", self.dependencies);
-        println!("🔍 Dependents: {:?}", self.dependents);
+    debug_dep!("🔍 Dependency graph built. Dependencies: {:?}", self.dependencies);
+    debug_dep!("🔍 Dependents: {:?}", self.dependents);
         
         Ok(())
     }
@@ -152,8 +160,8 @@ impl DependencyGraph {
         path.push(node.name.clone());
         let node_path = path.join("/");
         
-        println!("🔍 Analyzing node: '{}' at path '{}' type='{}' params={:?}", 
-                 node.name, node_path, node.node_type, node.parameters.keys().collect::<Vec<_>>());
+    debug_dep!("🔍 Analyzing node: '{}' at path '{}' type='{}' params={:?}", 
+         node.name, node_path, node.node_type, node.parameters.keys().collect::<Vec<_>>());
 
         // Check if this is a timer node
         if node.node_type == "timer" {
@@ -171,15 +179,15 @@ impl DependencyGraph {
         for (param_name, value) in &node.parameters {
             let param_path = format!("{}/{}", node_path, param_name);
             
-            println!("🔍   Parameter '{}' = {:?}", param_name, value);
+            debug_dep!("🔍   Parameter '{}' = {:?}", param_name, value);
             
             if let OverseerValue::Formula(formula) = value {
-                println!("🔍   Found formula in '{}': '{}'", param_path, formula);
+                debug_dep!("🔍   Found formula in '{}': '{}'", param_path, formula);
                 // Extract dependencies from this formula
                 let dependencies = self.extract_formula_dependencies(formula, &node_path)?;
-                println!("🔍   Dependencies for '{}': {:?}", param_path, dependencies);
+                debug_dep!("🔍   Dependencies for '{}': {:?}", param_path, dependencies);
                 for dep in dependencies {
-                    println!("🔍   Adding dependency: '{}' depends on '{}'", param_path, dep);
+                    debug_dep!("🔍   Adding dependency: '{}' depends on '{}'", param_path, dep);
                     self.add_dependency(param_path.clone(), dep);
                 }
             }
@@ -196,7 +204,7 @@ impl DependencyGraph {
 
     /// Analyze a timer node to extract timing information
     fn analyze_timer_node(&mut self, node: &OverseerNode, path: &str) -> Result<(), OverseerError> {
-        let timer_info = TimerInfo {
+    let timer_info = TimerInfo {
             node_path: path.to_string(),
             next_due: None, // Will be calculated by timer system
             interval_ms: None, // Extract from node parameters if available
@@ -241,14 +249,14 @@ impl DependencyGraph {
         let mut seen: HashSet<String> = HashSet::new();
         let mut path_segments: HashSet<String> = HashSet::new();
         
-        println!("🔍   Extracting path references from formula: '{}'", formula);
+    debug_dep!("🔍   Extracting path references from formula: '{}'", formula);
         
         // 1) Absolute paths like "/root/field_b" (one or more segments)
         let abs_re = regex::Regex::new(r"/[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*)*").unwrap();
         for m in abs_re.find_iter(formula) {
             let p = m.as_str().to_string();
             if seen.insert(p.clone()) {
-                println!("🔍     Found absolute path: '{}'", p);
+                debug_dep!("🔍     Found absolute path: '{}'", p);
                 // Track path segments to avoid later duplicate bare identifiers
                 for seg in p.trim_start_matches('/').split('/') {
                     path_segments.insert(seg.to_string());
@@ -262,7 +270,7 @@ impl DependencyGraph {
         for m in rel_up_re.find_iter(formula) {
             let p = m.as_str().to_string();
             if seen.insert(p.clone()) {
-                println!("🔍     Found relative-up path: '{}'", p);
+                debug_dep!("🔍     Found relative-up path: '{}'", p);
                 // Track segments after the ../ prefixes
                 let after = p.trim_start_matches("../");
                 for seg in after.split('/') {
@@ -277,18 +285,18 @@ impl DependencyGraph {
         for mat in ident_re.find_iter(formula) {
             let token = mat.as_str();
             if self.is_formula_keyword(token) { 
-                println!("🔍     Skipping keyword: '{}'", token);
+                debug_dep!("🔍     Skipping keyword: '{}'", token);
                 continue;
             }
             // Skip if the token is already part of a captured path (as a segment)
             if path_segments.contains(token) { continue; }
             if seen.insert(token.to_string()) {
-                println!("🔍     Found bare field reference: '{}'", token);
+                debug_dep!("🔍     Found bare field reference: '{}'", token);
                 references.push(token.to_string());
             }
         }
         
-        println!("🔍   Extracted references: {:?}", references);
+    debug_dep!("🔍   Extracted references: {:?}", references);
         references
     }
     
@@ -311,12 +319,12 @@ impl DependencyGraph {
 
     /// Resolve a path reference relative to the current context
     fn resolve_path_reference(&self, path_ref: &str, context_path: &str) -> String {
-        println!("🔍     Resolving path reference '{}' in context '{}'", path_ref, context_path);
+    debug_dep!("🔍     Resolving path reference '{}' in context '{}'", path_ref, context_path);
         
         if path_ref.starts_with('/') {
             // Absolute path from root
             let resolved = path_ref.trim_start_matches('/').to_string();
-            println!("🔍     Absolute path resolved to: '{}'", resolved);
+            debug_dep!("🔍     Absolute path resolved to: '{}'", resolved);
             resolved
         } else if path_ref.starts_with("../") {
             // Relative path going up
@@ -336,12 +344,12 @@ impl DependencyGraph {
             }
             
             let resolved = resolved_parts.join("/");
-            println!("🔍     Relative path resolved to: '{}'", resolved);
+            debug_dep!("🔍     Relative path resolved to: '{}'", resolved);
             resolved
         } else {
             // Simple relative reference: append to current context
             let resolved = if context_path.is_empty() { path_ref.to_string() } else { format!("{}/{}", context_path, path_ref) };
-            println!("🔍     Sibling field resolved to: '{}'", resolved);
+            debug_dep!("🔍     Sibling field resolved to: '{}'", resolved);
             resolved
         }
     }

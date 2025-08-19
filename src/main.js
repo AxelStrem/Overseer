@@ -1,13 +1,21 @@
 import { invoke } from '@tauri-apps/api/tauri'
 
-// Set this to false to disable all debug UI/status output
+// Debug is opt-in only via ?debug=1; localStorage flag is ignored to avoid accidental noise
 const DEBUG_MODE = (() => {
     try {
         const qs = typeof window !== 'undefined' && window.location && typeof window.location.search === 'string' ? window.location.search : ''
-        const ls = typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('overseer_debug') : null
-        return (qs && qs.includes('debug=1')) || ls === '1'
+        return !!(qs && qs.includes('debug=1'))
     } catch { return false }
 })();
+
+// Quiet console noise in non-debug mode while preserving warnings/errors
+try {
+    if (!DEBUG_MODE) {
+        console.debug = () => {}
+        const _origLog = console.log.bind(console)
+        console.log = () => {}
+    }
+} catch {}
 import { open, save } from '@tauri-apps/api/dialog'
 import { appWindow } from '@tauri-apps/api/window'
 import { OverseerRenderer } from './renderer.js'
@@ -287,7 +295,7 @@ tab Main {
      * Update only specific fields in the current document instead of replacing the entire document
      */
     updateDocumentSelectively(currentDocument, resolvedDocument, changedFieldPaths) {
-        console.log('🔧 Selectively updating document fields:', changedFieldPaths)
+    if (DEBUG_MODE) console.log('🔧 Selectively updating document fields:', changedFieldPaths)
         
         for (const fieldPath of changedFieldPaths) {
             try {
@@ -295,7 +303,7 @@ tab Main {
                 const newValue = this.getFieldValueByPath(resolvedDocument, fieldPath)
                 if (newValue !== undefined) {
                     this.setFieldValueByPath(currentDocument, fieldPath, newValue)
-                    console.log('🔧 Updated field:', fieldPath, 'to:', newValue)
+                    if (DEBUG_MODE) console.log('🔧 Updated field:', fieldPath, 'to:', newValue)
                 }
             } catch (error) {
                 console.warn('⚠️ Failed to update field selectively:', fieldPath, error)
@@ -422,7 +430,7 @@ tab Main {
                     if (key === 'value') {
                         const nodePath = currentPath || node1.name
                         changedFields.push(nodePath)
-                        console.log(`🔍 Field value changed: ${nodePath} from`, value1, 'to', value2)
+                        if (DEBUG_MODE) console.log(`🔍 Field value changed: ${nodePath} from`, value1, 'to', value2)
                     } else if (key.startsWith('_computed_')) {
                         // For computed parameters, include both the node path and parameter name
                         const paramName = key.replace('_computed_', '')
@@ -434,7 +442,7 @@ tab Main {
                             // For other computed parameters, use full path
                             changedFields.push(`${nodePath}/${paramName}`)
                         }
-                        console.log(`🔍 Field computed value changed: ${nodePath}/${paramName} from`, value1, 'to', value2)
+                        if (DEBUG_MODE) console.log(`🔍 Field computed value changed: ${nodePath}/${paramName} from`, value1, 'to', value2)
                     }
                 }
             }
@@ -472,19 +480,19 @@ tab Main {
         try {
             if (!this.currentDocument) return { domOnly: false }
             
-            console.log('🔄 Selective update triggered for fields:', changedFieldPaths)
+            if (DEBUG_MODE) console.log('🔄 Selective update triggered for fields:', changedFieldPaths)
             if (fieldChanges.length > 0) {
-                console.log('📝 Field changes:', fieldChanges)
+                if (DEBUG_MODE) console.log('📝 Field changes:', fieldChanges)
             }
 
             // Check if we can handle this as a pure DOM-only update (no backend needed)
             const canHandleDOMOnly = this.canHandleAsDOMOnlyUpdate(fieldChanges)
             
             if (canHandleDOMOnly) {
-                console.log('🚀 Handling as DOM-only update (no backend call needed)')
+                if (DEBUG_MODE) console.log('🚀 Handling as DOM-only update (no backend call needed)')
                 // Just do the DOM update directly without any backend processing
                 if (changedFieldPaths.length > 0) {
-                    console.log('🎯 Attempting DOM-only update for specific fields')
+                    if (DEBUG_MODE) console.log('🎯 Attempting DOM-only update for specific fields')
                     
                     // Use the current document as both old and new for DOM updates
                     const selectiveUpdateSuccessful = this.renderer.updateSelectiveFields(
@@ -492,10 +500,10 @@ tab Main {
                     )
                     
                     if (selectiveUpdateSuccessful) {
-                        console.log('✅ DOM-only update completed successfully (charts completely untouched)')
+                        if (DEBUG_MODE) console.log('✅ DOM-only update completed successfully (charts completely untouched)')
                         return { domOnly: true, success: true }
                     } else {
-                        console.log('⚠️ DOM-only update failed, falling back to backend processing')
+                        if (DEBUG_MODE) console.log('⚠️ DOM-only update failed, falling back to backend processing')
                     }
                 }
             }
@@ -505,13 +513,13 @@ tab Main {
             
             // Serialize current nodes to DSL
             const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
-            console.log('📤 Serialized content being sent to backend:', content.substring(0, 500))
+            if (DEBUG_MODE) console.log('📤 Serialized content being sent to backend:', content.substring(0, 500))
             // Parse + resolve + evaluate on backend with selective updates
             const resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths })
             
             // Instead of full re-render, do selective DOM updates if we have specific changed fields
             if (changedFieldPaths.length > 0) {
-                console.log('🎯 Attempting selective DOM update for specific fields')
+                if (DEBUG_MODE) console.log('🎯 Attempting selective DOM update for specific fields')
                 
                 // Try selective rendering for the changed fields using field change info
                 let selectiveUpdateSuccessful = false
@@ -529,7 +537,7 @@ tab Main {
                     const hasCascadeChanges = this.detectCascadeChanges(this.currentDocument, resolved, changedFieldPaths)
                     
                     if (hasCascadeChanges) {
-                        console.log('🔄 Cascade changes detected, updating DOM for affected fields')
+                        if (DEBUG_MODE) console.log('🔄 Cascade changes detected, updating DOM for affected fields')
                         // Get the actual cascade fields that were detected
                         const allChangedFields = this.findChangedFieldsBetweenDocuments(this.currentDocument, resolved)
                         const cascadeFields = allChangedFields.filter(field => !changedFieldPaths.includes(field))
@@ -541,16 +549,16 @@ tab Main {
                             console.warn('Failed to update cascade fields in DOM:', e)
                         }
                     } else {
-                        console.log('✅ No cascade changes detected - document object unchanged (prevents chart refresh)')
+                        if (DEBUG_MODE) console.log('✅ No cascade changes detected - document object unchanged (prevents chart refresh)')
                     }
                     
                     // Update the current document with the resolved result
                     this.currentDocument = resolved
                     
-                    console.log('✅ Selective update completed successfully')
+                    if (DEBUG_MODE) console.log('✅ Selective update completed successfully')
                     return { domOnly: false, success: true }
                 } else {
-                    console.log('🔄 Falling back to full re-render')
+                    if (DEBUG_MODE) console.log('🔄 Falling back to full re-render')
                     this.currentDocument = resolved
                     try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback re-render):', e); this.showError('Render error', e) }
                     return { domOnly: false, success: true }

@@ -1,31 +1,47 @@
 tab Tasks {
     div (hidden=true) {
-        div ActiveTask (spacing=0, background-color=$(
+        div ActiveTask (layout="horizontal", background-color=$(
             effective_priority > 100 ? "#320505ff" :
             (effective_priority > 50 ? "#2c2920ff" : "inherit")
-            ), padding=6, layout="horizontal") {
+            ), padding=6, spacing=0) {
             int id (hidden=true) = 0
             int rid (hidden=true) = 0
             string description (font-size=18px, label="", margin=0) = ""
-            string comment (label="", margin=0) = ""
-            int points (label="Points", margin=0) = 1
+            string comment (margin=0, label="") = ""
+            int points (margin=0, label="Points") = 1
             int priority (hidden=true, margin=0) = 0
-            int priority_gain (label="Daily Gain", margin=0) = 0
-            timestamp task_created (mode="elapsed", label="Since", hidden=true, margin=0) = $(now())
+            int priority_gain (margin=0, label="Daily Gain") = 0
+            timestamp task_created (label="Since", margin=0, hidden=true, mode="elapsed") = $(now())
             int effective_priority (label="Priority") = $(priority + priority_gain * days_since(task_created))
-            button Done (margin=0, label="Done") {
+            button Done (label="Done", margin=0) {
                 on click {
                     append (template="<CompletedRecord>", list="/Tasks/Completed") {
                         - description = $(../description)
                         - points = $(../points)
                         - completed_at = $(now())
                     }
+                    set_in_list (list="/Tasks/Recurring", field="active", keyValue=$(../rid), keyField="rid") = false
+                    set_in_list (keyField="rid", list="/Tasks/Recurring", field="last_triggered_at", keyValue=$(../rid)) = $(
+                            /Tasks/Recurring.filter(|x| x/rid == ../rid).first()/reset_on_unpause
+                                ? now()
+                                : /Tasks/Recurring.filter(|x| x/rid == ../rid).first()/last_triggered_at
+                        )
                     remove (from="/Tasks/Active", keyValue=$(../id), keyField="id")
                 }
             }
+            button Cancel (label="Cancel", margin=0) {
+                on click {
+                    set_in_list (list="/Tasks/Recurring", keyField="rid", field="last_triggered_at", keyValue=$(../rid)) = $(
+                            /Tasks/Recurring.filter(|x| x/rid == ../rid).first()/reset_on_unpause
+                                ? now()
+                                : /Tasks/Recurring.filter(|x| x/rid == ../rid).first()/last_triggered_at
+                        )
+                    remove (keyValue=$(../id), keyField="id", from="/Tasks/Active")
+                }
+            }
         }
-        div CompletedRecord (layout="horizontal", spacing=8, padding=4) {
-            string description (label="", margin=0) = ""
+        div CompletedRecord (spacing=8, padding=4, layout="horizontal") {
+            string description (margin=0, label="") = ""
             int points (margin=0, label="") = 1
             timestamp completed_at (margin=0, label="Completed", format="long")
         }
@@ -33,52 +49,60 @@ tab Tasks {
         }
         <CompletedRecord> CompletedSample {
         }
-        div RecurringTask (layout="horizontal", padding=6, spacing=4) {
-            int rid (margin=0, label="Recurrence Id") = 1
-            string description (label="Task", margin=0) = ""
+        div RecurringTask (layout="horizontal", spacing=4, padding=6) {
+            int rid (label="Recurrence Id", margin=0) = 1
+            string description (margin=0, label="Task") = ""
             string comment (margin=0, label="Comment") = ""
             int points (label="Points", margin=0) = 1
-            int base_priority (margin=0, label="Base Priority") = 0
-            int priority_gain (margin=0, label="Daily Gain") = 0
-            string mode (label="Mode", margin=0) = "interval"
+            int base_priority (label="Base Priority", margin=0) = 0
+            int priority_gain (label="Daily Gain", margin=0) = 0
+            string mode (margin=0, label="Mode") = "interval"
             string interval (margin=0, label="Every") = "7d"
-            checkbox pause_when_active (label="Pause When Active", margin=0) = true
+            checkbox pause_when_active (margin=0, label="Pause When Active") = true
+            checkbox reset_on_unpause (label="Reset on Unpause", margin=0) = false
+            bool active (hidden=true) = false
             bool manual_pause (hidden=true) = false
-            timestamp last_triggered_at (mode="elapsed", label="Since", margin=0) = $(now())
-            timer generator (at=$(../last_triggered_at), one_shot=$(../pause_when_active), active=$(mode == "interval" && !../manual_pause && (!../pause_when_active || /Tasks/Active.filter(|x| x/rid == ../rid).count() == 0)), offset=$(interval)) {
+            timestamp last_triggered_at (margin=0, label="Since", mode="elapsed") = $(now())
+            timer generator (active=$(
+                    ../mode == "interval"
+                    && (../manual_pause == false)
+                    && (../pause_when_active == false || ../../../Active.filter(|x| x/rid == ../rid).count() == 0)
+                ), at=$(../last_triggered_at), one_shot=false, offset=$(../interval)) {
                 on timeout {
-                    append (template="<ActiveTask>", list="/Tasks/Active") {
+                    // Append a new active task (firing is already gated by the timer's active formula)
+                    append (list="../../../Active", template="<ActiveTask>") {
                         - description = $(../description)
                         - comment = $(../comment)
                         - points = $(../points)
                         - priority = $(../base_priority)
                         - priority_gain = $(../priority_gain)
                         - rid = $(../rid)
-                        - id = $(/Tasks/State/next_id)
+                        - id = $(../../../State/next_id)
                         - task_created = $(now())
                     }
-                    inc (path="/Tasks/State/next_id")
+                    inc (path="../../../State/next_id")
                     set_now_ts (path="../last_triggered_at")
                 }
             }
-            button start (label="Start / Resume", margin=0) {
+            button start (margin=0, label="Start / Resume") {
                 on click {
                     set_now_ts (path="../last_triggered_at")
-                    set (path="../manual_pause", mode="value") = false
+                    set (mode="value", path="../manual_pause") = false
                 }
             }
             button pause (label="Pause", margin=0) {
                 on click {
-                    set (mode="value", path="../manual_pause") = true
+                    set (path="../manual_pause", mode="value") = true
                 }
             }
         }
     }
+
     div State (hidden=true) {
-        int next_id = 44
+        int next_id = 48
     }
-    div NewTask (spacing=6, layout="horizontal", padding=6) {
-        string description (margin=0, label="Task") = ""
+    div NewTask (padding=6, spacing=6, layout="horizontal") {
+        string description (label="Task", margin=0) = ""
         string commentary (margin=0, label="Comment") = ""
         int points (margin=0, label="Points") = 1
         int priority (margin=0, label="Priority") = 0
@@ -96,15 +120,16 @@ tab Tasks {
                     - task_created = $(now())
                 }
                 inc (path="/Tasks/State/next_id")
-                set (path="/Tasks/NewTask/description", mode="value") = ""
+                set (mode="value", path="/Tasks/NewTask/description") = ""
                 set (mode="value", path="/Tasks/NewTask/commentary") = ""
                 set (path="/Tasks/NewTask/points", mode="value") = 1
-                set (mode="value", path="/Tasks/NewTask/priority") = 0
+                set (path="/Tasks/NewTask/priority", mode="value") = 0
                 set (mode="value", path="/Tasks/NewTask/priority_gain") = 0
             }
         }
     }
-    list Active (layout="vertical", sort_by=$(|x| 0 - x/effective_priority), spacing=6, entry=<ActiveTask>, key="id") {
+    list Active (layout="vertical", entry=<ActiveTask>, key="id", spacing=6, sort_by=$(|x| 0 - x/effective_priority)) {
+        
         - {
             - id = 2
             - description = "Clean the balcony"
@@ -196,12 +221,6 @@ tab Tasks {
             - effective_priority = $(priority + priority_gain * days_since(task_created))
         }
         - {
-            - id = 23
-            - description = "Start 3D treatment"
-            - priority = 10
-            - task_created = "2025-08-16T14:45:29.984214400+00:00"
-        }
-        - {
             - id = 24
             - description = "Practice and record some vocals"
             - priority = 10
@@ -248,6 +267,16 @@ tab Tasks {
             - priority = 2
             - priority_gain = 0
             - task_created = "2025-08-18T20:27:40.364742900+00:00"
+        }
+        - {
+            - id = 46
+            - rid = 17
+            - description = "Motoric practice"
+            - comment = ""
+            - points = 1
+            - priority = 3
+            - priority_gain = 0
+            - task_created = "2025-08-19T00:00:00+00:00"
         }
     }
     list Completed (spacing=4, entry=<CompletedRecord>, layout="vertical") {
@@ -361,8 +390,28 @@ tab Tasks {
             - points = 1
             - completed_at = "2025-08-18T20:28:44.849951400+00:00"
         }
+        - {
+            - description = "Start 3D treatment"
+            - points = 1
+            - completed_at = "2025-08-19T05:42:47.093962100+00:00"
+        }
+        - {
+            - description = "Take care of the cat"
+            - points = 3
+            - completed_at = "2025-08-19T13:34:48.945780600+00:00"
+        }
+        - {
+            - description = "Morning routine"
+            - points = 1
+            - completed_at = "2025-08-19T13:35:35.591987600+00:00"
+        }
+        - {
+            - description = "Take care of the cat"
+            - points = 3
+            - completed_at = "2025-08-19T13:37:04.819313600+00:00"
+        }
     }
-    list Recurring (entry=<RecurringTask>, layout="vertical", key="rid", spacing=8) {
+    list Recurring (spacing=8, entry=<RecurringTask>, layout="vertical", key="rid") {
         - {
             - rid = 1
             - description = "Wash clothes"
@@ -396,7 +445,8 @@ tab Tasks {
             - mode = "interval"
             - interval = "1d"
             - pause_when_active = false
-            - last_triggered_at = "2025-08-18T20:27:32.481749300+00:00"
+            - active = false
+            - last_triggered_at = "2025-08-19T00:00:00+00:00"
         }
         - {
             - rid = 4
@@ -550,7 +600,19 @@ tab Tasks {
             - mode = "interval"
             - interval = "1d"
             - pause_when_active = true
-            - last_triggered_at = "2025-08-18T20:28:35.932359100+00:00"
+            - last_triggered_at = "2025-08-19T00:00:00+00:00"
+        }
+        - {
+            - rid = 18
+            - description = "Take care of the cat"
+            - comment = "toilet, food, water"
+            - points = 3
+            - base_priority = 6
+            - mode = "interval"
+            - interval = "1d"
+            - pause_when_active = true
+            - active = false
+            - last_triggered_at = "2025-08-19T00:00:00+00:00"
         }
     }
 }
