@@ -36,6 +36,17 @@ macro_rules! debug_sched {
 pub struct ActionExecutor;
 
 impl ActionExecutor {
+    // Convert an OverseerValue into a boolean using common truthiness rules
+    fn to_bool(v: &OverseerValue) -> bool {
+        match v {
+            OverseerValue::Boolean(b) => *b,
+            OverseerValue::String(s) => s.eq_ignore_ascii_case("true") || s == "1",
+            OverseerValue::Integer(i) => *i != 0,
+            OverseerValue::Float(f) => *f != 0.0,
+            OverseerValue::Date(_) | OverseerValue::Timestamp(_) => true,
+            _ => false,
+        }
+    }
     /// Scheduler tick: scan and fire timers due as of now
     pub fn tick(nodes: &mut Vec<OverseerNode>) -> Result<(), OverseerError> {
         Self::run_timers(nodes)
@@ -621,6 +632,23 @@ impl ActionExecutor {
     ) -> Result<(), OverseerError> {
         debug_actions!("[ACTIONS] Executing action {} with params {:?}", action.node_type, action.parameters);
         match action.node_type.as_str() {
+            "if" => {
+                // if(cond=...) { <actions...> }
+                // Evaluate cond in owner's context (defaults to false if missing)
+                let snapshot = nodes.clone();
+                let cond_val = match action.parameters.get("cond") {
+                    Some(v) => Self::evaluate_in_context(v, owner_path, &snapshot)?,
+                    None => OverseerValue::Boolean(false),
+                };
+                if Self::to_bool(&cond_val) {
+                    for child in &action.children {
+                        let res = Self::execute_action(nodes, owner_indices, owner_path, child);
+                        if let Err(e) = res { return Err(e); }
+                        resolver::resolve_document(nodes);
+                    }
+                }
+                Ok(())
+            }
             "load_mount" => {
                 Self::execute_load_mount(nodes, owner_indices, owner_path, action)?;
                 Ok(())
@@ -3050,5 +3078,72 @@ button Add { on click { append (template="<T>", list="/L") { - a = "hello" - b =
         assert!(s.contains("- {"));
         assert!(s.contains("- a = \"hello\""));
         assert!(s.contains("- b = 42"));
+    }
+}
+
+#[cfg(test)]
+mod tests_if_action {
+    use super::*;
+    use crate::parser::parse_document;
+    use crate::resolver::resolve_document;
+
+    #[test]
+    fn test_if_cond_true_executes_children() {
+        let input = r#"
+        div Root {
+            int A = 0
+            button B { on click {
+                if (cond=$(true)) { set(path="/Root/A", mode="value") = 42 }
+            } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let path = vec!["Root".to_string(), "B".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        // Verify A updated
+        fn find<'a>(nodes: &'a [OverseerNode], path: &[&str]) -> Option<&'a OverseerNode> {
+            if path.is_empty() { return None; }
+            let mut cur: Option<&OverseerNode> = None;
+            for (i, seg) in path.iter().enumerate() {
+                let list = if i == 0 { nodes } else { &cur.unwrap().children };
+                cur = list.iter().find(|n| n.name == *seg);
+                if cur.is_none() { return None; }
+            }
+            cur
+        }
+        let a = find(&nodes, &["Root", "A"]).unwrap();
+        assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(42)));
+    }
+
+    #[test]
+    fn test_if_cond_false_skips_children() {
+        let input = r#"
+        div Root {
+            int A = 0
+            button B { on click {
+                if (cond=$(false)) { set(path="/Root/A", mode="value") = 42 }
+            } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let path = vec!["Root".to_string(), "B".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+        // Verify A unchanged
+        fn find<'a>(nodes: &'a [OverseerNode], path: &[&str]) -> Option<&'a OverseerNode> {
+            if path.is_empty() { return None; }
+            let mut cur: Option<&OverseerNode> = None;
+            for (i, seg) in path.iter().enumerate() {
+                let list = if i == 0 { nodes } else { &cur.unwrap().children };
+                cur = list.iter().find(|n| n.name == *seg);
+                if cur.is_none() { return None; }
+            }
+            cur
+        }
+        let a = find(&nodes, &["Root", "A"]).unwrap();
+        assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(0)));
     }
 }

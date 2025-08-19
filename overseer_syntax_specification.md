@@ -283,6 +283,29 @@ timer daily_backup (at="09:00", active=true) {
 }
 ```
 
+#### Conditional actions inside action blocks
+
+You can conditionally execute actions inside any `on ... {}` block using an `if` action node. The condition is provided via the `cond` parameter (usually a formula) and, when truthy, the nested actions will run. When falsy, the nested actions are skipped.
+
+Syntax:
+
+```overseer
+on click {
+    if (cond=$(/* boolean expression here */)) {
+        // any number of nested actions
+        set (path="../flag", mode="value") = true
+        append (list="../Items", template="<Item>") {
+            - name = "Created"
+        }
+    }
+}
+```
+
+Notes:
+- `cond` should evaluate to a boolean. Standard formula comparisons and logical operations are supported.
+- Nested content of `if { ... }` must be actions; field assignments inside action blocks follow the usual `- field = value` rules when used within `append`/`prepend` object initializers.
+- This conditional is available only within action contexts (e.g., inside `on click {}` or `on timeout {}` blocks).
+
 
 ### 3. Layout and Styling
 

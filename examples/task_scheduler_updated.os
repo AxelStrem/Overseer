@@ -13,14 +13,14 @@ tab Tasks {
             int priority_gain (margin=0, label="Daily Gain") = 0
             timestamp task_created (margin=0, hidden=true, mode="elapsed", label="Since") = $(now())
             int effective_priority (label="Priority") = $(priority + priority_gain * days_since(task_created))
-            button Done (margin=0, label="Done") {
+        button Done (margin=0, label="Done") {
                 on click {
-                    append (list="/Tasks/Completed", template="<CompletedRecord>") {
+            append (list="../../../Completed", template="<CompletedRecord>") {
                         - description = $(../description)
                         - points = $(../points)
                         - completed_at = $(now())
                     }
-                    remove (from="/Tasks/Active", keyField="id", keyValue=$(../id))
+            remove (from="../../../Active", keyField="id", keyValue=$(../id))
                 }
             }
         }
@@ -46,17 +46,17 @@ tab Tasks {
             timestamp last_triggered_at (mode="elapsed", margin=0, label="Since") = $(now())
             timer generator (at=$(../last_triggered_at), active=$(mode == "interval"), offset=$(interval), one_shot=$(../pause_when_active)) {
                 on timeout {
-                    append (template="<ActiveTask>", list="/Tasks/Active") {
+                    append (template="<ActiveTask>", list="../../../Active") {
                         - description = $(../description)
                         - comment = $(../comment)
                         - points = $(../points)
                         - priority = $(../base_priority)
                         - priority_gain = $(../priority_gain)
                         - rid = $(../rid)
-                        - id = $(/Tasks/State/next_id)
+                        - id = $(../../../State/next_id)
                         - task_created = $(now())
                     }
-                    inc (path="/Tasks/State/next_id")
+                    inc (path="../../../State/next_id")
                     set_now_ts (path="../last_triggered_at")
                 }
             }
@@ -84,22 +84,22 @@ tab Tasks {
         int priority_gain (margin=0, label="Daily Gain") = 0
         button Create (label="Create Task", margin=0) {
             on click {
-                append (template="<ActiveSample>", list="/Tasks/Active") {
+                append (template="<ActiveSample>", list="../../Active") {
                     - description = $(../description)
                     - comment = $(../commentary)
                     - points = $(../points)
                     - priority = $(../priority)
                     - priority_gain = $(../priority_gain)
                     - rid = 0
-                    - id = $(/Tasks/State/next_id)
+                    - id = $(../../State/next_id)
                     - task_created = $(now())
                 }
-                inc (path="/Tasks/State/next_id")
-                set (mode="value", path="/Tasks/NewTask/description") = ""
-                set (mode="value", path="/Tasks/NewTask/commentary") = ""
-                set (path="/Tasks/NewTask/points", mode="value") = 1
-                set (mode="value", path="/Tasks/NewTask/priority") = 0
-                set (mode="value", path="/Tasks/NewTask/priority_gain") = 0
+                inc (path="../../State/next_id")
+                set (mode="value", path="../description") = ""
+                set (mode="value", path="../commentary") = ""
+                set (path="../points", mode="value") = 1
+                set (mode="value", path="../priority") = 0
+                set (mode="value", path="../priority_gain") = 0
             }
         }
     }
