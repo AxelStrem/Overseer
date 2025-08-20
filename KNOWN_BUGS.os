@@ -175,25 +175,28 @@ tab known_bugs (label="Known Bugs") {
             - id = 9
             - description = "`text` nodes render as plain text, with no markdown formatting enabled by default. (markdown=true) should be set by default for `text`"
             - storypoints = 1
-            - fixed = false
+            - fix_date = 19.08
+            - fixed = true
         }
         - {
             - id = 10
             - description = "the way buttons are rendered is sometimes inconsistent with other elements, buttons tend to align to the top of the div with no padding at all;
                             in other cases though buttons align as expected, in line with other elements, so this inconsistency should be investigated."
             - storypoints = 1
-            - fixed = false
+            - fix_date = 19.08
+            - fixed = true
         }
         - {
             - id = 11
             - description = "When nodes are serialized, the parameters change order in which they are listed (seemingly at random). Node parameters should always be serialized in the same order, and they should preserve the original order when deserialized."
             - storypoints = 1
-            - fixed = false
+            - fix_date = 19.08
+            - fixed = true
         }
         - {
             - id = 12
             - description = "Field values in template inheritance hierarchies get reset during periodic document re-evaluation, causing user input to disappear and UI to flicker. This was caused by the reevaluateDocument() function performing full document serialize->parse->resolve cycles every 60 seconds, which destroyed user modifications and caused performance issues."
-            - storypoints = 8
+            - storypoints = 2
             - fix_date = 26.12
             - fixed = true
         }

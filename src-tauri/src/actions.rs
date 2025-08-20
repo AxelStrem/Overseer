@@ -3146,4 +3146,46 @@ mod tests_if_action {
         let a = find(&nodes, &["Root", "A"]).unwrap();
         assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(0)));
     }
+
+    #[test]
+    fn test_if_executes_multiple_children_when_true() {
+        let input = r#"
+        div Root {
+            int A = 0
+            list L (entry=int) { }
+            button Btn { on click {
+                if (cond=$(1 == 1)) {
+                    append (list="/Root/L", value=7)
+                    inc (path="/Root/A", by=5)
+                }
+            } }
+        }
+        "#;
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+        let path = vec!["Root".to_string(), "Btn".to_string()];
+        let res = ActionExecutor::execute_event(&mut nodes, &path, "click");
+        assert!(res.is_ok());
+
+        // Verify A incremented
+        fn find<'a>(nodes: &'a [OverseerNode], path: &[&str]) -> Option<&'a OverseerNode> {
+            if path.is_empty() { return None; }
+            let mut cur: Option<&OverseerNode> = None;
+            for (i, seg) in path.iter().enumerate() {
+                let list = if i == 0 { nodes } else { &cur.unwrap().children };
+                cur = list.iter().find(|n| n.name == *seg);
+                if cur.is_none() { return None; }
+            }
+            cur
+        }
+        let a = find(&nodes, &["Root", "A"]).unwrap();
+        assert_eq!(a.parameters.get("value"), Some(&OverseerValue::Integer(5)));
+
+        // Verify list L has one item with value 7
+        let l = find(&nodes, &["Root", "L"]).unwrap();
+        assert_eq!(l.children.len(), 1, "Expected one item appended to list L");
+        let entry = &l.children[0];
+        let val = entry.parameters.get("value").cloned().unwrap_or(OverseerValue::Integer(-1));
+        assert_eq!(val, OverseerValue::Integer(7));
+    }
 }

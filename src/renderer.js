@@ -321,6 +321,9 @@ export class OverseerRenderer {
         }
 
         switch (nodeType.toLowerCase()) {
+            case '-':
+                // Simple list entry (dash) parsed form
+                return this.createListItemElement(node)
             case 'timer':
                 return this.createTimerElement(node)
             case 'tab':
@@ -425,8 +428,8 @@ export class OverseerRenderer {
         })
         container.appendChild(btn)
 
-        // Apply general styles
-        this.applyLayoutStyles(container, node)
+    // Apply general styles
+    this.applyLayoutStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -434,7 +437,8 @@ export class OverseerRenderer {
     createTabElement(node) {
         const tabButton = document.createElement('button')
         tabButton.className = 'tab-button'
-        tabButton.textContent = node.name || 'Tab'
+    // Bug 8: Tabs should use a 'label' parameter instead of exposing node name
+    tabButton.textContent = this.getParameterValue(node, 'label') || node.name || 'Tab'
         
         const tabContent = document.createElement('div')
         tabContent.className = 'tab-content'
@@ -581,7 +585,9 @@ export class OverseerRenderer {
             }
         }
 
-        this.applyNodeStyles(listItem, node)
+    // Apply layout and node styles so spacing/appearance are consistent
+    try { this.applyLayoutStyles(listItem, node) } catch(_) {}
+    this.applyNodeStyles(listItem, node)
         return listItem
     }
 
@@ -597,8 +603,8 @@ export class OverseerRenderer {
             container.appendChild(label)
         }
         
-        const value = document.createElement('span')
-        value.className = 'field-value'
+    const value = document.createElement('span')
+    value.className = 'field-value'
         value.textContent = this.getNodeValue(node) || ''
         
         // Make it editable on double-click
@@ -608,8 +614,10 @@ export class OverseerRenderer {
         
         container.appendChild(value)
         
-        // Apply default field styling if no explicit parameters are set
-        this.applyFieldDefaultStyles(container, node)
+    // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
+    this.applyLayoutStyles(container, node)
+    // Apply default field styling if no explicit parameters are set
+    this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -629,8 +637,9 @@ export class OverseerRenderer {
         const value = document.createElement('div')
         value.className = 'field-value text-content'
         
-        // Check if markdown is enabled for this text field
-        const isMarkdownEnabled = this.getParameterValue(node, 'markdown') === true
+    // Check if markdown is enabled for this text field. Default to true when not specified.
+    const markdownParam = this.getParameterValue(node, 'markdown')
+    const isMarkdownEnabled = (markdownParam === undefined || markdownParam === null) ? true : markdownParam === true
         const textContent = this.getNodeValue(node) || ''
         
         if (isMarkdownEnabled) {
@@ -660,8 +669,10 @@ export class OverseerRenderer {
         
         container.appendChild(value)
         
-        // Apply default field styling if no explicit parameters are set
-        this.applyFieldDefaultStyles(container, node)
+    // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
+    this.applyLayoutStyles(container, node)
+    // Apply default field styling if no explicit parameters are set
+    this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -678,9 +689,30 @@ export class OverseerRenderer {
             container.appendChild(label)
         }
         
-        const value = document.createElement('span')
-        value.className = 'field-value'
-        value.textContent = this.getNodeValue(node) || '0'
+    const value = document.createElement('span')
+    value.className = 'field-value'
+        // Support precision, prefix, suffix formatting for numeric nodes
+        const rawVal = this.getNodeValue(node)
+        const pref = this.getParameterValue(node, 'prefix') || ''
+        const suf = this.getParameterValue(node, 'suffix') || ''
+        const precRaw = this.getParameterValue(node, 'precision')
+        const fmtNumber = (v) => {
+            if (v === null || v === undefined) return '0'
+            // Try to coerce to number when possible
+            let n = (typeof v === 'number') ? v : Number(v)
+            if (!isNaN(n)) {
+                const p = (precRaw === null || precRaw === undefined) ? undefined : parseInt(precRaw, 10)
+                if (!isNaN(p) && p >= 0) {
+                    return n.toFixed(p)
+                }
+                // No precision specified; render integers without decimals
+                if (Number.isInteger(n)) return String(n)
+                return String(n)
+            }
+            // Fallback to string
+            return String(v)
+        }
+        value.textContent = `${pref}${fmtNumber(rawVal)}${suf}`
         
         // Make it editable on double-click
         value.addEventListener('dblclick', () => {
@@ -689,9 +721,11 @@ export class OverseerRenderer {
         
         container.appendChild(value)
         
+    // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
+    this.applyLayoutStyles(container, node)
         
-        // Apply default field styling if no explicit parameters are set
-        this.applyFieldDefaultStyles(container, node)
+    // Apply default field styling if no explicit parameters are set
+    this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -708,14 +742,16 @@ export class OverseerRenderer {
             container.appendChild(label)
         }
         
-        const value = document.createElement('span')
-        value.className = 'field-value'
+    const value = document.createElement('span')
+    value.className = 'field-value'
         value.textContent = this.getNodeValue(node) || ''
         
         container.appendChild(value)
+    // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
+    this.applyLayoutStyles(container, node)
         
-        // Apply default field styling if no explicit parameters are set
-        this.applyFieldDefaultStyles(container, node)
+    // Apply default field styling if no explicit parameters are set
+    this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -731,8 +767,8 @@ export class OverseerRenderer {
             container.appendChild(label)
         }
 
-        const value = document.createElement('span')
-        value.className = 'field-value'
+    const value = document.createElement('span')
+    value.className = 'field-value'
         container.appendChild(value)
 
         const mode = (this.getParameterValue(node, 'mode') || '').toString().toLowerCase()
@@ -824,7 +860,8 @@ export class OverseerRenderer {
             intervalId = this._registerInterval(setInterval(update, 1000))
         }
 
-        this.applyFieldDefaultStyles(container, node)
+    this.applyLayoutStyles(container, node)
+    this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -938,7 +975,8 @@ export class OverseerRenderer {
     update()
     intervalId = this._registerInterval(setInterval(update, 1000))
 
-        this.applyFieldDefaultStyles(container, node)
+    this.applyLayoutStyles(container, node)
+    this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -979,8 +1017,10 @@ export class OverseerRenderer {
             }
         })
         
-        // Apply default field styling if no explicit parameters are set
-        this.applyFieldDefaultStyles(container, node)
+    // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
+    this.applyLayoutStyles(container, node)
+    // Apply default field styling if no explicit parameters are set
+    this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -1028,8 +1068,9 @@ export class OverseerRenderer {
                 console.warn('Action execution failed:', err)
             }
         })
-        
-        this.applyNodeStyles(button, node)
+    // Honor explicit margin/padding on buttons (do not apply container defaults)
+    this.applyLayoutStyles(button, node)
+    this.applyNodeStyles(button, node)
         return button
     }
 
@@ -1089,8 +1130,10 @@ export class OverseerRenderer {
             }
         })
 
-        // Apply default field styling if no explicit parameters are set
-        this.applyFieldDefaultStyles(container, node)
+    // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
+    this.applyLayoutStyles(container, node)
+    // Apply default field styling if no explicit parameters are set
+    this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -1399,6 +1442,14 @@ export class OverseerRenderer {
         const spacing = this.getParameterValue(node, 'spacing')
         const margin = this.getParameterValue(node, 'margin')
         const isTightLayout = (spacing === 0 || margin === 0)
+        // Mark tight layout so CSS rules can respect it (e.g., suppress top breathing room)
+        try {
+            if (isTightLayout) {
+                element.setAttribute('data-tight', '1')
+            } else {
+                element.removeAttribute('data-tight')
+            }
+        } catch (_) { /* no-op */ }
         // Apply cross-axis alignment if provided (near|center|far)
         const layout = this.getEffectiveLayout(node)
         const align = (this.getParameterValue(node, '_effective_alignment') || this.getParameterValue(node, 'alignment') || '').toString().toLowerCase()
@@ -1419,37 +1470,79 @@ export class OverseerRenderer {
             }
         }
 
-    // Apply default padding unless explicitly overridden or in tight layout mode
+        // Helper to convert numeric to px, pass through strings
+        const cssSize = (v) => {
+            if (v === null || v === undefined) return undefined
+            if (typeof v === 'number') return `${v}px`
+            const s = String(v).trim()
+            if (!s) return undefined
+            return s
+        }
 
-        
-    // Check if any margin/padding parameters are explicitly set
+        // Apply explicit margin/padding if provided
         const hasExplicitMargin = node.parameters.margin !== undefined ||
-                                node.parameters['margin-top'] !== undefined ||
-                                node.parameters['margin-bottom'] !== undefined ||
-                                node.parameters['margin-left'] !== undefined ||
-                                node.parameters['margin-right'] !== undefined
-        
+                                  node.parameters['margin-top'] !== undefined ||
+                                  node.parameters['margin-bottom'] !== undefined ||
+                                  node.parameters['margin-left'] !== undefined ||
+                                  node.parameters['margin-right'] !== undefined
         const hasExplicitPadding = node.parameters.padding !== undefined ||
-                                 node.parameters['padding-top'] !== undefined ||
-                                 node.parameters['padding-bottom'] !== undefined ||
-                                 node.parameters['padding-left'] !== undefined ||
-                                 node.parameters['padding-right'] !== undefined
-        
+                                   node.parameters['padding-top'] !== undefined ||
+                                   node.parameters['padding-bottom'] !== undefined ||
+                                   node.parameters['padding-left'] !== undefined ||
+                                   node.parameters['padding-right'] !== undefined
+
+        if (node.parameters.margin !== undefined) {
+            const v = cssSize(node.parameters.margin)
+            if (v !== undefined) element.style.margin = v
+        }
+        if (node.parameters['margin-top'] !== undefined) {
+            const v = cssSize(node.parameters['margin-top']); if (v !== undefined) element.style.marginTop = v
+        }
+        if (node.parameters['margin-bottom'] !== undefined) {
+            const v = cssSize(node.parameters['margin-bottom']); if (v !== undefined) element.style.marginBottom = v
+        }
+        if (node.parameters['margin-left'] !== undefined) {
+            const v = cssSize(node.parameters['margin-left']); if (v !== undefined) element.style.marginLeft = v
+        }
+        if (node.parameters['margin-right'] !== undefined) {
+            const v = cssSize(node.parameters['margin-right']); if (v !== undefined) element.style.marginRight = v
+        }
+
+        if (node.parameters.padding !== undefined) {
+            const v = cssSize(node.parameters.padding)
+            if (v !== undefined) element.style.padding = v
+        }
+        if (node.parameters['padding-top'] !== undefined) {
+            const v = cssSize(node.parameters['padding-top']); if (v !== undefined) element.style.paddingTop = v
+        }
+        if (node.parameters['padding-bottom'] !== undefined) {
+            const v = cssSize(node.parameters['padding-bottom']); if (v !== undefined) element.style.paddingBottom = v
+        }
+        if (node.parameters['padding-left'] !== undefined) {
+            const v = cssSize(node.parameters['padding-left']); if (v !== undefined) element.style.paddingLeft = v
+        }
+        if (node.parameters['padding-right'] !== undefined) {
+            const v = cssSize(node.parameters['padding-right']); if (v !== undefined) element.style.paddingRight = v
+        }
+
         // Apply defaults only if not explicitly set
-            if (!hasExplicitMargin) {
-                if (isTightLayout) {
-                    element.style.margin = '0px'
-                } else {
-                    // symmetric top/bottom margins for more balanced look
-                    element.style.marginTop = '8px'
-                    element.style.marginBottom = '8px'
-                }
-            }
-        if (!hasExplicitPadding) {
+        if (!hasExplicitMargin) {
             if (isTightLayout) {
-                element.style.padding = '2px' // Minimal padding for readability
+                element.style.margin = '0px'
             } else {
-                element.style.padding = '8px'
+                element.style.marginTop = '8px'
+                element.style.marginBottom = '8px'
+            }
+        }
+        if (!hasExplicitPadding) {
+            const nodeTypeLower = ((node.node_type || node.type || '') + '').toLowerCase()
+            // Keep button internal padding from CSS; only override if explicitly set
+            if (nodeTypeLower !== 'button') {
+                if (isTightLayout) {
+                    element.style.padding = '0px'
+                } else {
+                    element.style.padding = '8px'
+                }
             }
         }
     }
@@ -2389,26 +2482,71 @@ export class OverseerRenderer {
             let currentNodes = document
             let targetNode = null
             
+            const exactName = (n) => (n ?? '').toString()
+            const normalizeName = (n) => exactName(n).replace(/__\d+$/, '') // drop instance suffix like __6
+            const segInfo = (part) => {
+                const idx = part.indexOf('#')
+                return idx >= 0 ? { base: part.slice(0, idx), ord: parseInt(part.slice(idx+1), 10) || 0 } : { base: part, ord: 0 }
+            }
+            const isTransparent = (node) => {
+                try {
+                    const nn = exactName(node.name)
+                    const nt = exactName(node.node_type || node.type)
+                    return node.is_hierarchy_transparent === true || !nn || nn.toLowerCase() === nt.toLowerCase()
+                } catch (_) { return false }
+            }
+            const findMatches = (nodes, wantBase, wantOrd) => {
+                // Prefer exact matches first (including instance suffixes)
+                let matches = nodes.filter(n => exactName(n.name) === wantBase)
+                if (matches.length === 0) {
+                    // Fallback to normalized-name match (ignoring instance suffixes like __6)
+                    const baseNorm = normalizeName(wantBase)
+                    matches = nodes.filter(n => normalizeName(n.name) === baseNorm)
+                }
+                if (matches.length === 0) return null
+                return matches[wantOrd] || matches[0] || null
+            }
+            
             // Navigate to the target node
             for (let i = 0; i < pathParts.length; i++) {
                 const part = pathParts[i]
-                
-                // Handle array-style names with ordinals (e.g., "item#1")
-                const [baseName, ordinal] = part.includes('#') ? 
-                    part.split('#') : [part, '0']
-                const ordinalIndex = parseInt(ordinal, 10)
-                
-                const matches = currentNodes.filter(node => node.name === baseName)
-                if (ordinalIndex >= matches.length) {
+                const { base, ord } = segInfo(part)
+
+                // 1) Try direct match among current level
+                let nextNode = findMatches(currentNodes, base, ord)
+
+                // 2) If not found, try searching through any transparent wrappers without consuming extra path segments
+                if (!nextNode) {
+                    // BFS across transparent wrapper layers (depth-limited)
+                    let frontier = currentNodes.slice()
+                    let depth = 0
+                    const maxDepth = 4
+                    while (!nextNode && depth < maxDepth) {
+                        const childrenOfTransparents = []
+                        for (const n of frontier) {
+                            if (isTransparent(n) && Array.isArray(n.children)) {
+                                // Check among these children for a match first (at this depth)
+                                const candidate = findMatches(n.children, base, ord)
+                                if (candidate) { nextNode = candidate; break }
+                                // Otherwise, continue to expand
+                                childrenOfTransparents.push(...n.children)
+                            }
+                        }
+                        frontier = childrenOfTransparents
+                        depth++
+                    }
+                }
+
+                if (!nextNode) {
                     console.warn('❌ Could not find node at path:', fieldPath, 'missing:', part)
                     return false
                 }
-                
-                targetNode = matches[ordinalIndex]
-                
-                // If not the last part, move to children
+
+                targetNode = nextNode
+
+                // If not the last part, move to children for next iteration
                 if (i < pathParts.length - 1) {
-                    currentNodes = targetNode.children || []
+                    currentNodes = Array.isArray(targetNode.children) ? targetNode.children : []
                 }
             }
             
@@ -2547,32 +2685,41 @@ export class OverseerRenderer {
                 if (changeInfo) {
                     if (DEBUG_MODE) console.log('📝 Field change detected:', changeInfo)
                     
-                    // Find the specific element to update
-                    const elements = document.querySelectorAll(`[data-path]`)
-                    
-                    for (const element of elements) {
+                    // Find all candidate elements with the same data-path and pick the deepest one
+                    const all = Array.from(document.querySelectorAll('[data-path]'))
+                    const candidates = []
+                    for (const el of all) {
                         try {
-                            const elementPath = JSON.parse(element.dataset.path || '[]')
-                            const elementPathStr = elementPath.join('/')
-                            
-                            // Check if this element's path exactly matches the changed field
-                            if (elementPathStr === fieldPath) {
-                                if (DEBUG_MODE) console.log('🎯 Found exact matching element for path:', elementPathStr)
-                                
-                                // Find the corresponding node in the new document
-                                const newNode = this.findNodeByPath(newDocument, elementPath)
-                                
-                                if (newNode) {
-                                    if (DEBUG_MODE) console.log('📝 Updating element for changed field:', newNode.name, 'from', changeInfo.oldValue, 'to', changeInfo.newValue)
-                                    this.updateSingleElement(element, newNode, elementPath)
-                                    updateCount++
-                                } else {
-                                    if (DEBUG_MODE) console.log('❌ Node not found:', { path: elementPath })
-                                }
-                                break // Found the exact match, no need to continue
+                            const p = JSON.parse(el.dataset.path || '[]').join('/')
+                            if (p === fieldPath) {
+                                // compute DOM depth
+                                let depth = 0, cur = el
+                                while (cur && cur !== document.body) { depth++; cur = cur.parentElement }
+                                candidates.push({ el, depth })
                             }
-                        } catch (error) {
-                            console.warn('Error processing element:', error)
+                        } catch (_) {}
+                    }
+                    if (candidates.length > 0) {
+                        candidates.sort((a,b) => b.depth - a.depth)
+                        const targetEl = candidates[0].el
+                        const elementPath = JSON.parse(targetEl.dataset.path || '[]')
+                        const newNode = this.findNodeByPath(newDocument, elementPath)
+                        if (newNode) {
+                            if (DEBUG_MODE) console.log('📝 Updating deepest element for changed field:', newNode.name)
+                            if (this.updateSingleElement(targetEl, newNode, elementPath)) {
+                                updateCount++
+                                // Safety net: if this field lives under a list, re-render that list subtree
+                                try {
+                                    const listAncestorPath = this.findNearestAncestorOfTypePath(newDocument, elementPath, 'list')
+                                    if (listAncestorPath) {
+                                        // Re-render only the affected list subtree to keep structure intact
+                                        if (DEBUG_MODE) console.log('🔁 Re-rendering ancestor list subtree at path:', listAncestorPath.join('/'))
+                                        this.rerenderSubtree(newDocument, listAncestorPath)
+                                    }
+                                } catch (e) { if (DEBUG_MODE) console.warn('List subtree re-render skipped:', e) }
+                            }
+                        } else {
+                            if (DEBUG_MODE) console.log('❌ Node not found for path:', elementPath)
                         }
                     }
                 } else {
@@ -2590,6 +2737,87 @@ export class OverseerRenderer {
             console.error('Error in selective DOM update:', error)
             return false
         }
+    }
+
+    // Find the nearest ancestor path (including self if matches) whose node_type equals typeName
+    findNearestAncestorOfTypePath(documentArray, pathArray, typeName) {
+        try {
+            // Walk up from deepest to root
+            for (let i = pathArray.length; i >= 1; i--) {
+                const ancestorPath = pathArray.slice(0, i)
+                const node = this.findNodeByPath(documentArray, ancestorPath)
+                if (!node) continue
+                const ty = (node.node_type || node.type || '').toLowerCase()
+                if (ty === String(typeName).toLowerCase()) return ancestorPath
+            }
+        } catch (_) {}
+        return null
+    }
+
+    // Replace a rendered subtree at a given path with a freshly rendered one from the provided document
+    rerenderSubtree(documentArray, pathArray) {
+        try {
+            // Determine the node at this path to infer expected container class
+            const node = this.findNodeByPath(documentArray, pathArray)
+            if (!node) return false
+            const nodeType = (node.node_type || node.type || '').toLowerCase()
+            const expectedClass = (() => {
+                switch (nodeType) {
+                    case 'list': return 'overseer-list'
+                    case 'list_item':
+                    case '-': return 'overseer-list-item'
+                    case 'div': return 'overseer-div'
+                    default: return null // fall back to any element with matching data-path
+                }
+            })()
+
+            // Gather all elements whose dataset.path matches exactly
+            const all = Array.from(document.querySelectorAll('[data-path]'))
+            const matches = []
+            for (const cand of all) {
+                try {
+                    const p = JSON.parse(cand.dataset.path || '[]')
+                    if (Array.isArray(p) && p.length === pathArray.length && p.every((v, i) => v === pathArray[i])) {
+                        matches.push(cand)
+                    }
+                } catch (_) { /* ignore */ }
+            }
+            if (matches.length === 0) return false
+
+            // Prefer elements that look like the expected container class (avoids transparent descendants)
+            let candidates = matches
+            if (expectedClass) {
+                const typed = matches.filter(el => el.classList && el.classList.contains(expectedClass))
+                if (typed.length > 0) candidates = typed
+            }
+
+            // Choose the shallowest element (closest to the root) to represent the subtree root
+            let el = null
+            let bestDepth = Number.POSITIVE_INFINITY
+            for (const cand of candidates) {
+                let depth = 0, cur = cand
+                while (cur && cur !== document.body) { depth++; cur = cur.parentElement }
+                if (depth < bestDepth) { bestDepth = depth; el = cand }
+            }
+            if (!el || !el.parentElement) return false
+            const parent = el.parentElement
+            const idx = Array.prototype.indexOf.call(parent.children, el)
+
+            // Create a temporary wrapper and render into it so dataset.path is correct
+            const wrapper = document.createElement('div')
+            // Inherit background from current parent to keep look stable during render
+            const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null
+            const inherited = { backgroundColor: bg }
+            this.renderNode(node, wrapper, inherited, pathArray)
+            const fresh = wrapper.firstElementChild
+            if (fresh) {
+                parent.replaceChild(fresh, parent.children[idx])
+                return true
+            }
+        } catch (e) {
+            if (DEBUG_MODE) console.warn('Failed to re-render subtree:', e)
+        }
+        return false
     }
     
     /**
@@ -2674,13 +2902,13 @@ export class OverseerRenderer {
         
         for (const element of elements) {
             try {
-                const elementPath = JSON.parse(element.dataset.path || '[]').join('/')
-                if (elementPath === fieldPath || (elementPath === fieldPath && element.dataset.path)) {
-                    // Get the new computed value
-                    const newValue = this.getComputedValueFromDocument(newDocument, fieldPath)
-                    if (newValue !== undefined) {
-                        if (DEBUG_MODE) console.log(`📝 Updating cascade field ${fieldPath} to:`, newValue)
-                        this.updateElementDisplayValue(element, newValue)
+                const elementPathArr = JSON.parse(element.dataset.path || '[]')
+                const elementPath = elementPathArr.join('/')
+                if (elementPath === fieldPath) {
+                    const newNode = this.findNodeByPath(newDocument, elementPathArr)
+                    if (newNode) {
+                        if (DEBUG_MODE) console.log(`📝 Updating cascade field via node re-render: ${fieldPath}`)
+                        this.updateSingleElement(element, newNode, elementPathArr)
                     }
                 }
             } catch (e) {
@@ -2853,6 +3081,31 @@ export class OverseerRenderer {
             const nodeType = (newNode.node_type || newNode.type || '').toLowerCase()
             
             switch (nodeType) {
+                case '-':
+                case 'list_item': {
+                    // Simple list entries render a span.overseer-list-value inside the container
+                    let holder = element.querySelector('.overseer-list-value')
+                    const val = this.getNodeValue(newNode)
+                    if (!holder) {
+                        // For typed list items rendered via field components, try common holders
+                        holder = element.querySelector('.field-value') || element.querySelector('.text-content')
+                    }
+                    if (holder) {
+                        const txt = (val === null || val === undefined) ? '' : String(val)
+                        if (holder.textContent !== txt) holder.textContent = txt
+                        if (DEBUG_MODE) console.log('📝 Updated list item value:', txt)
+                        break
+                    }
+                    // As a last resort, don't clobber the whole container; create the span
+                    try {
+                        const span = document.createElement('span')
+                        span.className = 'overseer-list-value'
+                        span.textContent = (val === null || val === undefined) ? '' : String(val)
+                        element.appendChild(span)
+                        if (DEBUG_MODE) console.log('📝 Inserted new list value holder for selective update')
+                    } catch (_) { /* no-op */ }
+                    break
+                }
                 case 'string':
                 case 'text':
                     this.updateTextElement(element, newNode)
@@ -2862,7 +3115,16 @@ export class OverseerRenderer {
                 case 'float':
                     this.updateNumericElement(element, newNode)
                     break
-                    
+                case 'date':
+                case 'timestamp':
+                    this.updateTextElement(element, newNode)
+                    break
+                case 'bool':
+                    this.updateCheckboxElement(element, newNode)
+                    break
+                case 'button':
+                    // No visual incremental update needed
+                    return true
                 case 'checkbox':
                     this.updateCheckboxElement(element, newNode)
                     break
@@ -2883,12 +3145,26 @@ export class OverseerRenderer {
      * Update a text/string element
      */
     updateTextElement(element, newNode) {
-        const textElement = element.querySelector('.field-content, .field-value') || element
+        // Only update dedicated content holders to avoid corrupting container markup
+        // Prefer markdown container when present
+        const textElement = element.querySelector('.text-content') || element.querySelector('.field-content, .field-value')
+        if (!textElement) {
+            if (DEBUG_MODE) console.log('⏭️ No inner text holder found; skipping container text update')
+            return
+        }
         const computedValue = this.getNodeValue(newNode)
-        
-        if (textElement.textContent !== computedValue) {
-            textElement.textContent = computedValue
-            if (DEBUG_MODE) console.log('📝 Updated text element:', computedValue)
+        // If this is a markdown-enabled block, update innerHTML; otherwise textContent
+        if (textElement.classList.contains('text-content') && textElement.classList.contains('markdown-enabled')) {
+            const html = this.renderMarkdown(String(computedValue ?? ''))
+            if (textElement.innerHTML !== html) {
+                textElement.innerHTML = html
+                if (DEBUG_MODE) console.log('📝 Updated markdown element')
+            }
+        } else {
+            if (textElement.textContent !== computedValue) {
+                textElement.textContent = computedValue
+                if (DEBUG_MODE) console.log('📝 Updated text element:', computedValue)
+            }
         }
     }
 
@@ -2904,7 +3180,7 @@ export class OverseerRenderer {
                 if (DEBUG_MODE) console.log('📝 Updated numeric element:', computedValue)
             }
         } else {
-            // Fallback to text update
+            // Only update if there's a known text holder; otherwise skip
             this.updateTextElement(element, newNode)
         }
     }

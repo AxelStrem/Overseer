@@ -387,9 +387,13 @@ impl FileOperations {
             .collect();
         if !regular_params.is_empty() {
             output.push_str(" (");
-            let params_str: Vec<String> = regular_params
-                .iter()
-                .map(|(k, v)| {
+            // Emit parameters in a deterministic order to avoid random reordering in saves
+            let mut keys: Vec<&String> = regular_params.keys().collect();
+            keys.sort();
+            let params_str: Vec<String> = keys
+                .into_iter()
+                .map(|k| {
+                    let v = regular_params.get(k).unwrap();
                     let value_str = if k.as_str() == "entry" {
                         // Special handling for entry parameters - they should be type names, not quoted strings
                         match v {

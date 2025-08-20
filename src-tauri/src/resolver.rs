@@ -1031,6 +1031,51 @@ fn charts_depend_on_fields(nodes: &[OverseerNode], field_paths: &std::collection
     false
 }
 
+#[cfg(test)]
+mod tests_inheritance_bug7 {
+        use super::*;
+        use crate::parser::parse_document;
+
+        // Bug 7: When creating node from template, parent node should inherit the template's parameters (not only children)
+        #[test]
+        fn template_instance_parent_inherits_parameters() {
+                let input = r#"
+tab Root {
+    div Templates {
+        div Colorful (background-color=#123456, font-color=#eeeeee) {
+            string Title (value="Hello")
+        }
+    }
+    <Colorful> Instance {}
+}
+"#;
+
+                let mut nodes = parse_document(input).unwrap().1;
+                resolve_document(&mut nodes);
+
+                // Find the instance node
+                fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+                        for n in nodes {
+                                if n.name == name { return Some(n); }
+                                if let Some(f) = find(&n.children, name) { return Some(f); }
+                        }
+                        None
+                }
+                let inst = find(&nodes, "Instance").expect("instance exists");
+
+                // Expect parent-level parameters copied from template (and marked _from_template)
+                assert_eq!(inst.node_type, "Colorful");
+                assert!(matches!(inst.parameters.get("_from_template"), Some(OverseerValue::Boolean(true))));
+                assert!(matches!(inst.parameters.get("background-color"), Some(OverseerValue::Color(_))));
+                assert!(matches!(inst.parameters.get("font-color"), Some(OverseerValue::Color(_))));
+
+                // And child inherited (Title) exists
+                let title = inst.children.iter().find(|c| c.name == "Title").expect("title child");
+                assert_eq!(title.node_type, "string");
+                assert!(matches!(title.parameters.get("value"), Some(OverseerValue::String(v)) if v == "Hello"));
+        }
+}
+
 /// Recursively check if a chart node or its children depend on the specified field paths
 fn chart_node_depends_on_fields(node: &OverseerNode, field_paths: &std::collections::HashSet<String>, current_path: &str) -> bool {
     let node_path = if current_path.is_empty() { 

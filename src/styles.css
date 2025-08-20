@@ -162,7 +162,32 @@ body {
     border-radius: 8px;
     padding-top: 8px; /* ensure content isn’t glued to top */
 }
+/* Suppress top margin when container explicitly marked tight */
+.overseer-div[data-tight="1"].layout-vertical > :first-child,
+.overseer-list[data-tight="1"].layout-vertical > :first-child {
+    margin-top: 0 !important;
+}
 
+/* Tighter look when explicitly requested */
+.overseer-div[data-tight="1"],
+.overseer-list[data-tight="1"] {
+    padding-top: 0;
+}
+
+/* In tight lists with spacing=0, avoid extra margins on fields/buttons inside */
+.overseer-list[data-tight="1"] .overseer-field,
+.overseer-list[data-tight="1"] .overseer-button {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+/* Also tighten inner field padding and label spacing in tight mode */
+.overseer-list[data-tight="1"] .overseer-field .field-value {
+    padding-top: 2px;
+    padding-bottom: 2px;
+}
+.overseer-list[data-tight="1"] .overseer-field label {
+    margin-bottom: 2px;
+}
 .overseer-list h3 {
     margin: 0 0 12px 0;
     color: var(--text-color);
@@ -230,6 +255,11 @@ body {
 .overseer-div.layout-vertical > :first-child,
 .overseer-list.layout-vertical > :first-child {
     margin-top: 8px !important;
+}
+/* But if container is explicitly tight, suppress the breathing room */
+.overseer-div[data-tight="1"].layout-vertical > :first-child,
+.overseer-list[data-tight="1"].layout-vertical > :first-child {
+    margin-top: 0 !important;
 }
 
 .overseer-field:hover {
@@ -320,8 +350,8 @@ body {
     gap: 0; /* avoid stray inline gap artifacts next to text */
     overflow: hidden; /* hide any stray inline decorations */
     padding: 8px 16px;
-    margin-bottom: 8px; /* default vertical spacing; inline styles can override */
-    margin-right: 8px;  /* helpful spacing in horizontal layouts */
+    /* Balanced margins so controls are not glued to the top in rows */
+    margin: 6px 8px 6px 0;  /* top right bottom left */
     background: var(--primary-color);
     color: white;
     border: 1px solid var(--border-color); /* restore visible border */
@@ -343,9 +373,9 @@ body {
 
 /* Icon-only buttons */
 .overseer-button.icon-button {
-    padding: 6px;
-    width: 28px;
-    height: 28px;
+    padding: 6px; /* keep internal breathing room */
+    width: 32px;  /* align with typical field row heights */
+    height: 32px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -397,6 +427,12 @@ body {
 .overseer-button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+/* In horizontal layouts, center buttons vertically to match fields */
+.overseer-div.layout-horizontal > .overseer-button,
+.overseer-list.layout-horizontal > .overseer-button {
+    align-self: center;
 }
 
 .overseer-button .overseer-button-label {
