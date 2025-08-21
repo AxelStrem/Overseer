@@ -2708,18 +2708,42 @@ export class OverseerRenderer {
                             if (DEBUG_MODE) console.log('📝 Updating deepest element for changed field:', newNode.name)
                             if (this.updateSingleElement(targetEl, newNode, elementPath)) {
                                 updateCount++
-                                // Safety net: if this field lives under a list, re-render that list subtree
+                                // Safety net: if this field lives under a list, consider re-rendering that list subtree.
+                                // However, skip when the newDocument's list items appear as generic '-' nodes, which
+                                // indicates a partially resolved structure from selective backend processing.
                                 try {
                                     const listAncestorPath = this.findNearestAncestorOfTypePath(newDocument, elementPath, 'list')
                                     if (listAncestorPath) {
-                                        // Re-render only the affected list subtree to keep structure intact
-                                        if (DEBUG_MODE) console.log('🔁 Re-rendering ancestor list subtree at path:', listAncestorPath.join('/'))
-                                        this.rerenderSubtree(newDocument, listAncestorPath)
+                                        const listNode = this.findNodeByPath(newDocument, listAncestorPath)
+                                        const children = Array.isArray(listNode?.children) ? listNode.children : []
+                                        const hasGenericDash = children.some(ch => (ch?.node_type||'').toLowerCase() === '-')
+                                        const hasTemplatedInstances = children.some(ch => ch?.parameters && (ch.parameters._original_type || ch.parameters._from_template))
+                                        // Only re-render when we have templated instances; avoid clobbering UI with generic '-' placeholders
+                                        if (hasTemplatedInstances && !hasGenericDash) {
+                                            if (DEBUG_MODE) console.log('🔁 Re-rendering ancestor list subtree at path:', listAncestorPath.join('/'))
+                                            this.rerenderSubtree(newDocument, listAncestorPath)
+                                        } else {
+                                            if (DEBUG_MODE) console.log('⏭️ Skipping list subtree re-render due to generic/partial children')
+                                        }
                                     }
                                 } catch (e) { if (DEBUG_MODE) console.warn('List subtree re-render skipped:', e) }
                             }
                         } else {
-                            if (DEBUG_MODE) console.log('❌ Node not found for path:', elementPath)
+                            if (DEBUG_MODE) console.log('❌ Node not found for path:', elementPath, '— applying DOM-only fallback using changeInfo')
+                            // DOM-only fallback: update visible text using changeInfo when backend provided partial structure
+                            try {
+                                const holder = targetEl.querySelector('.field-value, .text-content, .overseer-list-value') || targetEl
+                                const nv = (changeInfo.newValue == null) ? '' : String(changeInfo.newValue)
+                                if (holder) {
+                                    // If markdown-enabled, avoid innerHTML changes here; treat as plain text
+                                    if (holder.classList && holder.classList.contains('text-content') && holder.classList.contains('markdown-enabled')) {
+                                        holder.textContent = nv
+                                    } else {
+                                        holder.textContent = nv
+                                    }
+                                    updateCount++
+                                }
+                            } catch (_) { /* ignore */ }
                         }
                     }
                 } else {

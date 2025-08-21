@@ -739,25 +739,9 @@ tab Main {
         let nextMs = null
         try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
         if (nextMs == null) nextMs = findNextDue(this.currentDocument)
-                // With dependency tracking, periodic full refreshes are no longer needed
-                // Selective updates will handle formula dependencies when fields actually change
-                // Keep minimal timer support for any remaining time-based formulas like days_since()
-                const periodicRefreshMs = 300000 // Reduced to 5 minutes
-                if (!nextMs) {
-                    this._scheduler.id = setTimeout(async () => {
-                        try {
-                            if (!this.currentDocument) return
-                            // Skip reevaluation if document has been modified to preserve user changes
-                            if (!this.isDocumentModified) {
-                                // Use selective update with empty change list for minimal time-based formula refresh
-                                await this.reevaluateDocumentSelective([])
-                            }
-                        } finally {
-                            scheduleNext()
-                        }
-                    }, periodicRefreshMs)
-                    return
-                }
+                // With dependency tracking and live UI timers, periodic full refreshes are no longer needed.
+                // If there are no timers due, stay idle (no background refresh to avoid flicker/scroll resets).
+                if (!nextMs) { if (DEBUG_MODE) console.log('[SCHED] no timers; idle (no periodic refresh)'); return }
         const now = Date.now()
         if (DEBUG_MODE) console.log('[SCHED] next due ms from backend:', nextMs)
         let delay = nextMs - now
@@ -782,13 +766,16 @@ tab Main {
                     if (DEBUG_MODE) console.log('[SCHED] tick invoking backend')
                     const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
                     if (updated) {
-                        this.currentDocument = updated
-                        try {
-                            this.renderer.renderDocument(updated)
-                        } catch (e) {
-                            console.error('Render error during scheduler tick:', e)
-                            this.showError('Render error', e)
-                            return
+                        // Only re-render if there are actual changes to visible document
+                        if (!docsEqual(this.currentDocument, updated)) {
+                            this.currentDocument = updated
+                            try {
+                                this.renderer.renderDocument(updated)
+                            } catch (e) {
+                                console.error('Render error during scheduler tick:', e)
+                                this.showError('Render error', e)
+                                return
+                            }
                         }
                         // Invalidate cached next due after a state change
                         this._scheduler.cachedNextMs = null
