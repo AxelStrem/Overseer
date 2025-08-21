@@ -112,6 +112,18 @@ tab known_bugs (label="Known Bugs") {
 
             }
         }
+
+        div Feature (width=400px) {
+            int id (hidden=true) = 0
+            string description = ""
+            div {
+                int storypoints (label="Story Points") = 1
+                string implemented_on (label="Implemented On") = 10.07
+                int priority (label="Priority") = 0
+                checkbox fixed (label="Fixed") = false
+
+            }
+        }
     }
     
     list BugList (entry=<Bug>) {
@@ -200,5 +212,53 @@ tab known_bugs (label="Known Bugs") {
             - fix_date = 26.12
             - fixed = true
         }
+        - {
+            - id = 13
+            - description = "When editing a field in the UI that is a part of a list, the document gets corrupted (looks like all lists lose their entry templates); This only happens on frontend, after save and reload everything looks correct, including the change"
+            - storypoints = 5
+            - fixed = false
+        }
+        - {
+            - id = 14
+            - description = "Documents refresh periodically, resetting the UI scroll and causing flicker and refresh animation on plot charts. This is an old behavior that was needed before dependency graph for formulas was introduced. Now it's redundant and has to be removed."
+            - storypoints = 5
+            - fixed = false
+        }
+        - {
+            - id = 15
+            - description = "Timers are not immediately updated upon loading a document; instead user has to wait for a few seconds looking at an incorrect unupdated document before the timers fire. All timers in the document should be checked and processed at the moment the document is loaded, before rendering it and presenting to the user"
+            - storypoints = 5
+            - fixed = false
+        }
     }
+
+     list FeatureList (entry=<Feature>) {
+         - {
+            - id = 1
+            - description = "primitive type should also have `layout` parameter that would only affect the placement of the label relative to the field value; this layout parameter should follow the default logic of div layout: opposite to parent by default"
+            - storypoints = 1
+            - fixed = false
+        }
+
+        - {
+            - id = 2
+            - description = "buttons should not simply inherit parent div background color; instead button default background color should be same hue as parent background but 20% brighter, on hover it should be 20% more brighter yet, and on press it should be 20% darker. Also all of these colors should be configurable via parameters"
+            - storypoints = 2
+            - fixed = false
+        }
+
+         - {
+            - id = 3
+            - description = "add support for themes and styles"
+            - storypoints = 4
+            - fixed = false
+        }
+
+         - {
+            - id = 4
+            - description = "add support for background formulas (hidden from UI)"
+            - storypoints = 5
+            - fixed = false
+        }
+     }
 }
