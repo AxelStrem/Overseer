@@ -216,19 +216,28 @@ tab known_bugs (label="Known Bugs") {
             - id = 13
             - description = "When editing a field in the UI that is a part of a list, the document gets corrupted (looks like all lists lose their entry templates); This only happens on frontend, after save and reload everything looks correct, including the change"
             - storypoints = 5
-            - fixed = false
+            - fixed = true
+            - fix_date = 22.08
         }
         - {
             - id = 14
             - description = "Documents refresh periodically, resetting the UI scroll and causing flicker and refresh animation on plot charts. This is an old behavior that was needed before dependency graph for formulas was introduced. Now it's redundant and has to be removed."
             - storypoints = 5
-            - fixed = false
+            - fixed = true
+            - fix_date = 22.08
         }
         - {
             - id = 15
             - description = "Timers are not immediately updated upon loading a document; instead user has to wait for a few seconds looking at an incorrect unupdated document before the timers fire. All timers in the document should be checked and processed at the moment the document is loaded, before rendering it and presenting to the user"
             - storypoints = 5
             - fixed = false
+        }
+        - {
+            - id = 16
+            - description = "Formula propagation is broken on the frontend; Document has to be saved and reloaded to display the correct values"
+            - storypoints = 3
+            - fix_date = 22.08
+            - fixed = true
         }
     }
 
@@ -259,6 +268,17 @@ tab known_bugs (label="Known Bugs") {
             - description = "add support for background formulas (hidden from UI)"
             - storypoints = 5
             - fixed = false
+        }
+        - {
+            - id = 5
+            - description = "add support for more chart types (dots, bars, pie charts)"
+            - storypoints = 5
+        }
+        
+        - {
+            - id = 6
+            - description = "add support for "
+            - storypoints = 5
         }
      }
 }

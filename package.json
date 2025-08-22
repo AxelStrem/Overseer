@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-  "test": "npm run test:js && npm run test:rust",
+  "test": "node scripts/run-all-tests.js",
   "test:js": "vitest run -c tests/vitest.config.mjs",
     "test:rust": "cd src-tauri && cargo test",
     "test:rust:watch": "cd src-tauri && cargo watch -x test",

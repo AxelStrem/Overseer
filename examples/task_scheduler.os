@@ -251,16 +251,6 @@ tab Tasks {
             - task_created = "2025-08-21T07:25:06.483164900+00:00"
         }
         - {
-            - id = 72
-            - rid = 3
-            - description = "Morning routine"
-            - comment = "3D, acid"
-            - points = 1
-            - priority = 10
-            - priority_gain = 0
-            - task_created = "2025-08-22T00:00:00+00:00"
-        }
-        - {
             - id = 73
             - rid = 4
             - description = "Evening routine"
@@ -299,16 +289,6 @@ tab Tasks {
             - priority = 8
             - priority_gain = 0
             - task_created = "2025-08-21T20:27:40.082313100+00:00"
-        }
-        - {
-            - id = 78
-            - rid = 17
-            - description = "Motoric practice"
-            - comment = ""
-            - points = 1
-            - priority = 3
-            - priority_gain = 0
-            - task_created = "2025-08-22T00:00:00+00:00"
         }
     }
     list Completed (entry=<CompletedRecord>, layout="vertical", spacing=4) {
@@ -536,6 +516,16 @@ tab Tasks {
             - description = "Leetcode practice"
             - points = 1
             - completed_at = "2025-08-22T05:51:51.335201800+00:00"
+        }
+        - {
+            - description = "Morning routine"
+            - points = 1
+            - completed_at = "2025-08-22T06:29:31.376576300+00:00"
+        }
+        - {
+            - description = "Motoric practice"
+            - points = 1
+            - completed_at = "2025-08-22T06:29:40.260107900+00:00"
         }
     }
     list Recurring (entry=<RecurringTask>, key="rid", layout="vertical", spacing=8) {

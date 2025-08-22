@@ -1938,7 +1938,7 @@ export class OverseerRenderer {
             return node
         }
 
-        // Prefer raw value if present and not a Formula; otherwise prefer computed
+        // Prefer raw value when it is not a Formula; otherwise defer to computed
         if (node.parameters && node.parameters["value"] !== undefined) {
             const raw = node.parameters["value"]
             const isFormula = typeof raw === 'object' && raw !== null && raw.Formula !== undefined
@@ -1958,7 +1958,7 @@ export class OverseerRenderer {
                 }
                 return String(raw)
             }
-            // If it's a Formula, fall through to computed if available
+            // It's a Formula: do not surface raw formula text; fall through to computed or blank
         }
 
         // Use computed value if present
@@ -1972,7 +1972,8 @@ export class OverseerRenderer {
                 if (value.Boolean !== undefined) return value.Boolean.toString()
                 if (value.Date !== undefined) return value.Date
                 if (value.Timestamp !== undefined) return this.formatTimestampValue(node, value.Timestamp)
-                if (value.Formula !== undefined) return value.Formula
+                // Computed value should not be a Formula at display time; if it is, do not show literal
+                if (value.Formula !== undefined) return ''
             }
             return value.toString()
         }
@@ -1994,13 +1995,13 @@ export class OverseerRenderer {
                 if (value.Boolean !== undefined) return value.Boolean.toString()
                 if (value.Date !== undefined) return value.Date
                 if (value.Timestamp !== undefined) return this.formatTimestampValue(node, value.Timestamp)
-                if (value.Formula !== undefined) return value.Formula
+                if (value.Formula !== undefined) return ''
             }
             return value.toString()
         }
 
         // Fallback: check node.value directly
-        if (node.value !== undefined && node.value !== null) {
+    if (node.value !== undefined && node.value !== null) {
             if (DEBUG_MODE) console.log('[DEBUG] getNodeValue: found node.value:', node.value, 'in node:', node);
             if (typeof node.value === 'string') return node.value
             if (typeof node.value === 'object') {
@@ -2010,7 +2011,7 @@ export class OverseerRenderer {
                 if (node.value.Boolean !== undefined) return node.value.Boolean.toString()
                 if (node.value.Date !== undefined) return node.value.Date
                 if (node.value.Timestamp !== undefined) return this.formatTimestampValue(node, node.value.Timestamp)
-                if (node.value.Formula !== undefined) return node.value.Formula
+        if (node.value.Formula !== undefined) return ''
             }
             return node.value.toString()
         }
@@ -2863,7 +2864,11 @@ export class OverseerRenderer {
     if (DEBUG_MODE) console.log('🎯 Cascade fields to update:', fieldsToUpdate)
         
         // Update DOM for each cascade field
-        for (const fieldPath of fieldsToUpdate) {
+        for (let fieldPath of fieldsToUpdate) {
+            // If the change points to a nested property like '/value', repaint the node element itself
+            if (fieldPath.endsWith('/value')) {
+                fieldPath = fieldPath.slice(0, -('/value'.length))
+            }
             try {
                 this.updateSingleFieldInDOM(oldDocument, newDocument, fieldPath)
             } catch (e) {
@@ -2877,7 +2882,21 @@ export class OverseerRenderer {
      */
     findAllChangedFields(node1, node2, currentPath) {
         const changedFields = []
-        this.collectChangedFields(node1, node2, currentPath, changedFields)
+        // Support both node objects and top-level document arrays
+        const isArr1 = Array.isArray(node1)
+        const isArr2 = Array.isArray(node2)
+        if (isArr1 && isArr2) {
+            const len = Math.min(node1.length || 0, node2.length || 0)
+            for (let i = 0; i < len; i++) {
+                const a = node1[i]
+                const b = node2[i]
+                if (!a || !b) continue
+                const childPath = currentPath ? `${currentPath}/${a.name}` : (a.name || '')
+                this.collectChangedFields(a, b, childPath, changedFields)
+            }
+        } else {
+            this.collectChangedFields(node1, node2, currentPath, changedFields)
+        }
         return changedFields
     }
 
@@ -2900,6 +2919,17 @@ export class OverseerRenderer {
                     }
                 }
             }
+            // Also detect plain value changes (when computed absent but raw differs)
+            try {
+                const v1 = node1.parameters.value
+                const v2 = node2.parameters.value
+                const eq = (a,b) => JSON.stringify(a) === JSON.stringify(b)
+                if (!eq(v1, v2)) {
+                    const fp = currentPath ? `${currentPath}/value` : 'value'
+                    changedFields.push(fp)
+                    if (DEBUG_MODE) console.log(`📝 Detected raw value change: ${fp}`)
+                }
+            } catch(_) {}
         }
 
         // Recursively check children
@@ -2928,10 +2958,11 @@ export class OverseerRenderer {
             try {
                 const elementPathArr = JSON.parse(element.dataset.path || '[]')
                 const elementPath = elementPathArr.join('/')
-                if (elementPath === fieldPath) {
+                // Match exact path or parent-of-field (e.g., element 'g' for field 'g/value')
+                if (elementPath === fieldPath || fieldPath.startsWith(elementPath + '/')) {
                     const newNode = this.findNodeByPath(newDocument, elementPathArr)
                     if (newNode) {
-                        if (DEBUG_MODE) console.log(`📝 Updating cascade field via node re-render: ${fieldPath}`)
+                        if (DEBUG_MODE) console.log(`📝 Updating cascade field via node re-render: ${fieldPath} -> element ${elementPath}`)
                         this.updateSingleElement(element, newNode, elementPathArr)
                     }
                 }

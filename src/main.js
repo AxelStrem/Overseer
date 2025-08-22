@@ -31,7 +31,7 @@ function docsEqual(a, b) {
     }
 }
 
-class OverseerApp {
+export class OverseerApp {
     constructor() {
         this.currentFile = null
         this.currentDocument = null
@@ -73,17 +73,24 @@ class OverseerApp {
 
     initializeEventListeners() {
         // File operations
-        document.getElementById('open-file-btn').addEventListener('click', () => this.openFile())
-        document.getElementById('new-file-btn').addEventListener('click', () => this.newFile())
-        document.getElementById('save-file-btn').addEventListener('click', () => this.saveFile())
-    document.getElementById('reload-file-btn').addEventListener('click', () => this.reloadFile())
+    const openBtn = document.getElementById('open-file-btn')
+    if (openBtn) openBtn.addEventListener('click', () => this.openFile())
+    const newBtn = document.getElementById('new-file-btn')
+    if (newBtn) newBtn.addEventListener('click', () => this.newFile())
+    const saveBtn = document.getElementById('save-file-btn')
+    if (saveBtn) saveBtn.addEventListener('click', () => this.saveFile())
+    const reloadBtn = document.getElementById('reload-file-btn')
+    if (reloadBtn) reloadBtn.addEventListener('click', () => this.reloadFile())
         
         // Welcome screen
-        document.getElementById('welcome-open-btn').addEventListener('click', () => this.openFile())
-        document.getElementById('welcome-new-btn').addEventListener('click', () => this.newFile())
+    const welcomeOpen = document.getElementById('welcome-open-btn')
+    if (welcomeOpen) welcomeOpen.addEventListener('click', () => this.openFile())
+    const welcomeNew = document.getElementById('welcome-new-btn')
+    if (welcomeNew) welcomeNew.addEventListener('click', () => this.newFile())
         
         // Error screen
-        document.getElementById('error-back-btn').addEventListener('click', () => this.showWelcomeScreen())
+    const errorBack = document.getElementById('error-back-btn')
+    if (errorBack) errorBack.addEventListener('click', () => this.showWelcomeScreen())
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
@@ -391,6 +398,39 @@ tab Main {
         return cascadeFields.length > 0
     }
 
+    // Heuristic: if any remaining Formula in document references one of the changed field base names, we may need a full recompute
+    formulasReferenceChangedNames(doc, changedFieldPaths) {
+        try {
+            const names = new Set(
+                (changedFieldPaths || []).map(p => {
+                    const seg = (p || '').split('/').pop()
+                    return seg || ''
+                }).filter(Boolean)
+            )
+            if (names.size === 0) return false
+            const nameRegexes = Array.from(names).map(n => new RegExp(`(^|[^A-Za-z0-9_])${n}([^A-Za-z0-9_]|$)`))
+            let found = false
+            const visit = (n) => {
+                if (!n || typeof n !== 'object') return
+                const p = n.parameters || {}
+                const val = p.value
+                const comp = p._computed_value
+                const checkVal = (vv) => {
+                    if (vv && typeof vv === 'object' && vv.Formula) {
+                        const s = String(vv.Formula)
+                        for (const rx of nameRegexes) { if (rx.test(s)) { found = true; return } }
+                    }
+                }
+                checkVal(val)
+                checkVal(comp)
+                if (Array.isArray(n.children)) for (const c of n.children) { if (found) break; visit(c) }
+            }
+            if (Array.isArray(doc)) { for (const r of doc) { if (found) break; visit(r) } }
+            else visit(doc)
+            return found
+        } catch(_) { return false }
+    }
+
     /**
      * Find all fields that have different values between two documents
      */
@@ -533,10 +573,24 @@ tab Main {
                     // The backend has processed cascade dependencies, so we need to update DOM for 
                     // both the user-changed fields AND any cascade fields that were updated
                     
-                    // For now, detect if there might be cascade changes by comparing resolved document
+                    // Detect potential cascade changes and formula references
                     const hasCascadeChanges = this.detectCascadeChanges(this.currentDocument, resolved, changedFieldPaths)
-                    
-                    if (hasCascadeChanges) {
+                    const hasFormulaRefs = this.formulasReferenceChangedNames(resolved, changedFieldPaths)
+
+                    // If formulas reference changed fields, prefer full resolve immediately to recompute dependents
+                    if (hasFormulaRefs) {
+                        if (DEBUG_MODE) console.log('ℹ️ Formula references to changed fields detected; performing full resolve fallback')
+                        try {
+                            const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
+                            const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
+                            this.currentDocument = fullResolved
+                            if (DEBUG_MODE) console.log('🔁 Applied full resolve fallback due to formula references')
+                            try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve fallback):', e); this.showError('Render error', e) }
+                            return { domOnly: false, success: true }
+                        } catch (e) {
+                            if (DEBUG_MODE) console.warn('Full resolve fallback failed, continuing with selective result:', e)
+                        }
+                    } else if (hasCascadeChanges) {
                         if (DEBUG_MODE) console.log('🔄 Cascade changes detected, updating DOM for affected fields')
                         // Get the actual cascade fields that were detected
                         const allChangedFields = this.findChangedFieldsBetweenDocuments(this.currentDocument, resolved)
@@ -549,7 +603,18 @@ tab Main {
                             console.warn('Failed to update cascade fields in DOM:', e)
                         }
                     } else {
-                        if (DEBUG_MODE) console.log('✅ No cascade changes detected - document object unchanged (prevents chart refresh)')
+                        if (DEBUG_MODE) console.log('ℹ️ No cascade changes detected after selective update')
+                        // Fallback: some dependencies might not be captured in selective mode; do a full resolve
+                        try {
+                            const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
+                            const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
+                            this.currentDocument = fullResolved
+                            if (DEBUG_MODE) console.log('🔁 Applied full resolve fallback to refresh dependent formulas')
+                            try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve fallback):', e); this.showError('Render error', e) }
+                            return { domOnly: false, success: true }
+                        } catch (e) {
+                            if (DEBUG_MODE) console.warn('Full resolve fallback failed, continuing with selective result:', e)
+                        }
                     }
                     
                     // Update the current document with the resolved result
@@ -561,6 +626,17 @@ tab Main {
                     if (DEBUG_MODE) console.log('🔄 Falling back to full re-render')
                     this.currentDocument = resolved
                     try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback re-render):', e); this.showError('Render error', e) }
+                    // After re-rendering the selective result, if formulas still reference changed fields,
+                    // do a full resolve fallback to ensure dependent values are recomputed
+                    try {
+                        if (this.formulasReferenceChangedNames(resolved, changedFieldPaths)) {
+                            if (DEBUG_MODE) console.log('ℹ️ Post-fallback formulas still reference changed fields; performing full resolve')
+                            const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
+                            const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
+                            this.currentDocument = fullResolved
+                            try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve after fallback):', e); this.showError('Render error', e) }
+                        }
+                    } catch (_) { /* non-fatal */ }
                     return { domOnly: false, success: true }
                 }
             } else {
