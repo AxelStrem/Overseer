@@ -1940,15 +1940,71 @@ export class OverseerRenderer {
 
         // Prefer raw value when it is not a Formula; otherwise defer to computed
         if (node.parameters && node.parameters["value"] !== undefined) {
-            const raw = node.parameters["value"]
+        const raw = node.parameters["value"]
             const isFormula = typeof raw === 'object' && raw !== null && raw.Formula !== undefined
             if (!isFormula) {
                 if (typeof raw === 'string') {
+                    // Treat literal "Null" as explicit null and use fallback
+                    if (raw.trim().toLowerCase() === 'null') {
+                        try {
+                            const fb = node.parameters?._computed_fallback
+                            if (fb && typeof fb === 'object') {
+                                if (fb.String !== undefined) return fb.String
+                                if (fb.Integer !== undefined) return String(fb.Integer)
+                                if (fb.Float !== undefined) return String(fb.Float)
+                                if (fb.Boolean !== undefined) return String(fb.Boolean)
+                                if (fb.Date !== undefined) return fb.Date
+                                if (fb.Timestamp !== undefined) return this.formatTimestampValue(node, fb.Timestamp)
+                            } else if (typeof fb === 'string') {
+                                return fb
+                            }
+                            const rawFb = node.parameters?.fallback
+                            if (rawFb && typeof rawFb === 'object') {
+                                if (rawFb.String !== undefined) return rawFb.String
+                                if (rawFb.Integer !== undefined) return String(rawFb.Integer)
+                                if (rawFb.Float !== undefined) return String(rawFb.Float)
+                                if (rawFb.Boolean !== undefined) return String(rawFb.Boolean)
+                                if (rawFb.Date !== undefined) return rawFb.Date
+                                if (rawFb.Timestamp !== undefined) return this.formatTimestampValue(node, rawFb.Timestamp)
+                            } else if (typeof rawFb === 'string') {
+                                return rawFb
+                            }
+                        } catch(_) { /* fall through */ }
+                        return ''
+                    }
                     const nt = (node.node_type || node.type || '').toLowerCase()
                     if (nt === 'timestamp') return this.formatTimestampValue(node, raw)
                     return raw
                 }
                 if (typeof raw === 'object' && raw !== null) {
+            if (raw.Null !== undefined) {
+                        // If value is explicitly Null, try to surface fallback (computed first, then raw)
+                        try {
+                            const fb = node.parameters?._computed_fallback
+                            if (fb && typeof fb === 'object') {
+                                if (fb.String !== undefined) return fb.String
+                                if (fb.Integer !== undefined) return String(fb.Integer)
+                                if (fb.Float !== undefined) return String(fb.Float)
+                                if (fb.Boolean !== undefined) return String(fb.Boolean)
+                                if (fb.Date !== undefined) return fb.Date
+                                if (fb.Timestamp !== undefined) return this.formatTimestampValue(node, fb.Timestamp)
+                            } else if (typeof fb === 'string') {
+                                return fb
+                            }
+                            const rawFb = node.parameters?.fallback
+                            if (rawFb && typeof rawFb === 'object') {
+                                if (rawFb.String !== undefined) return rawFb.String
+                                if (rawFb.Integer !== undefined) return String(rawFb.Integer)
+                                if (rawFb.Float !== undefined) return String(rawFb.Float)
+                                if (rawFb.Boolean !== undefined) return String(rawFb.Boolean)
+                                if (rawFb.Date !== undefined) return rawFb.Date
+                                if (rawFb.Timestamp !== undefined) return this.formatTimestampValue(node, rawFb.Timestamp)
+                            } else if (typeof rawFb === 'string') {
+                                return rawFb
+                            }
+                        } catch (_) { /* ignore and fall through to blank */ }
+                        return ''
+                    }
                     if (raw.String !== undefined) return raw.String
                     if (raw.Integer !== undefined) return raw.Integer.toString()
                     if (raw.Float !== undefined) return raw.Float.toString()
@@ -1964,8 +2020,40 @@ export class OverseerRenderer {
         // Use computed value if present
         if (node.parameters && node.parameters["_computed_value"] !== undefined) {
             const value = node.parameters["_computed_value"]
-            if (typeof value === 'string') return value
+            if (typeof value === 'string') {
+                // Some backends may serialize explicit Null as the literal string "Null"
+                // Treat this as an explicit null and surface fallback instead of showing "Null" to users.
+                if (value.trim().toLowerCase() === 'null') {
+                    try {
+                        const fb = node.parameters?._computed_fallback
+                        if (fb && typeof fb === 'object') {
+                            if (fb.String !== undefined) return fb.String
+                            if (fb.Integer !== undefined) return String(fb.Integer)
+                            if (fb.Float !== undefined) return String(fb.Float)
+                            if (fb.Boolean !== undefined) return String(fb.Boolean)
+                            if (fb.Date !== undefined) return fb.Date
+                            if (fb.Timestamp !== undefined) return this.formatTimestampValue(node, fb.Timestamp)
+                        } else if (typeof fb === 'string') {
+                            return fb
+                        }
+                        const rawFb = node.parameters?.fallback
+                        if (rawFb && typeof rawFb === 'object') {
+                            if (rawFb.String !== undefined) return rawFb.String
+                            if (rawFb.Integer !== undefined) return String(rawFb.Integer)
+                            if (rawFb.Float !== undefined) return String(rawFb.Float)
+                            if (rawFb.Boolean !== undefined) return String(rawFb.Boolean)
+                            if (rawFb.Date !== undefined) return rawFb.Date
+                            if (rawFb.Timestamp !== undefined) return this.formatTimestampValue(node, rawFb.Timestamp)
+                        } else if (typeof rawFb === 'string') {
+                            return rawFb
+                        }
+                    } catch (_) { /* fall through to blank */ }
+                    return ''
+                }
+                return value
+            }
             if (typeof value === 'object') {
+                if (value && value.Null !== undefined) return ''
                 if (value.String !== undefined) return value.String
                 if (value.Integer !== undefined) return value.Integer.toString()
                 if (value.Float !== undefined) return value.Float.toString()
@@ -1983,12 +2071,41 @@ export class OverseerRenderer {
             const value = node.parameters["value"]
             if (DEBUG_MODE) console.log('[DEBUG] getNodeValue: found parameters["value"]:', value, 'in node:', node);
             if (typeof value === 'string') {
+                // Guard against literal "Null" strings produced upstream
+                if (value.trim().toLowerCase() === 'null') {
+                    try {
+                        const fb = node.parameters?._computed_fallback
+                        if (fb && typeof fb === 'object') {
+                            if (fb.String !== undefined) return fb.String
+                            if (fb.Integer !== undefined) return String(fb.Integer)
+                            if (fb.Float !== undefined) return String(fb.Float)
+                            if (fb.Boolean !== undefined) return String(fb.Boolean)
+                            if (fb.Date !== undefined) return fb.Date
+                            if (fb.Timestamp !== undefined) return this.formatTimestampValue(node, fb.Timestamp)
+                        } else if (typeof fb === 'string') {
+                            return fb
+                        }
+                        const rawFb = node.parameters?.fallback
+                        if (rawFb && typeof rawFb === 'object') {
+                            if (rawFb.String !== undefined) return rawFb.String
+                            if (rawFb.Integer !== undefined) return String(rawFb.Integer)
+                            if (rawFb.Float !== undefined) return String(rawFb.Float)
+                            if (rawFb.Boolean !== undefined) return String(rawFb.Boolean)
+                            if (rawFb.Date !== undefined) return rawFb.Date
+                            if (rawFb.Timestamp !== undefined) return this.formatTimestampValue(node, rawFb.Timestamp)
+                        } else if (typeof rawFb === 'string') {
+                            return rawFb
+                        }
+                    } catch (_) { /* fall through */ }
+                    return ''
+                }
                 // If this node is a timestamp-typed field, format string value as timestamp
                 const nt = (node.node_type || node.type || '').toLowerCase()
                 if (nt === 'timestamp') return this.formatTimestampValue(node, value)
                 return value
             }
             if (typeof value === 'object') {
+                if (value && value.Null !== undefined) return ''
                 if (value.String !== undefined) return value.String
                 if (value.Integer !== undefined) return value.Integer.toString()
                 if (value.Float !== undefined) return value.Float.toString()
@@ -2003,8 +2120,39 @@ export class OverseerRenderer {
         // Fallback: check node.value directly
     if (node.value !== undefined && node.value !== null) {
             if (DEBUG_MODE) console.log('[DEBUG] getNodeValue: found node.value:', node.value, 'in node:', node);
-            if (typeof node.value === 'string') return node.value
+            if (typeof node.value === 'string') {
+                // Guard against literal "Null" strings produced upstream
+                if (node.value.trim().toLowerCase() === 'null') {
+                    try {
+                        const fb = node.parameters?._computed_fallback
+                        if (fb && typeof fb === 'object') {
+                            if (fb.String !== undefined) return fb.String
+                            if (fb.Integer !== undefined) return String(fb.Integer)
+                            if (fb.Float !== undefined) return String(fb.Float)
+                            if (fb.Boolean !== undefined) return String(fb.Boolean)
+                            if (fb.Date !== undefined) return fb.Date
+                            if (fb.Timestamp !== undefined) return this.formatTimestampValue(node, fb.Timestamp)
+                        } else if (typeof fb === 'string') {
+                            return fb
+                        }
+                        const rawFb = node.parameters?.fallback
+                        if (rawFb && typeof rawFb === 'object') {
+                            if (rawFb.String !== undefined) return rawFb.String
+                            if (rawFb.Integer !== undefined) return String(rawFb.Integer)
+                            if (rawFb.Float !== undefined) return String(rawFb.Float)
+                            if (rawFb.Boolean !== undefined) return String(rawFb.Boolean)
+                            if (rawFb.Date !== undefined) return rawFb.Date
+                            if (rawFb.Timestamp !== undefined) return this.formatTimestampValue(node, rawFb.Timestamp)
+                        } else if (typeof rawFb === 'string') {
+                            return rawFb
+                        }
+                    } catch (_) { /* fall through */ }
+                    return ''
+                }
+                return node.value
+            }
             if (typeof node.value === 'object') {
+                if (node.value && node.value.Null !== undefined) return ''
                 if (node.value.String !== undefined) return node.value.String
                 if (node.value.Integer !== undefined) return node.value.Integer.toString()
                 if (node.value.Float !== undefined) return node.value.Float.toString()
@@ -2604,6 +2752,12 @@ export class OverseerRenderer {
         // Normalize input
         const text = (newValue ?? '').toString()
 
+        // Empty text maps to explicit Null sentinel
+        if (text.trim() === '') {
+            node.parameters.value = { Null: null }
+            return
+        }
+
         // If user entered a formula like $(...), store as Formula preserving the inner expression
         const formulaMatch = text.match(/^\s*\$\(([\s\S]*)\)\s*$/)
         if (formulaMatch) {
@@ -2614,7 +2768,7 @@ export class OverseerRenderer {
 
         // Prefer node type when coercing values
         const nodeType = (node.node_type || node.type || '').toLowerCase()
-        if (nodeType === 'int') {
+    if (nodeType === 'int') {
             const intVal = parseInt(text, 10)
             if (!isNaN(intVal)) { node.parameters.value = { Integer: intVal }; return }
         }
@@ -2629,6 +2783,7 @@ export class OverseerRenderer {
         // Try to preserve the original type if possible
         const currentValue = node.parameters.value
         if (currentValue && typeof currentValue === 'object') {
+            if (currentValue.Null !== undefined) { node.parameters.value = { String: text }; return }
             if (currentValue.Integer !== undefined) {
                 const numValue = parseInt(text, 10)
                 if (!isNaN(numValue)) { node.parameters.value = { Integer: numValue }; return }

@@ -1209,6 +1209,14 @@ unsafe fn recursively_evaluate_node_formulas(
         // Create a fresh context each pass; its immutable borrow ends before we mutate parameters
         let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
         let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
+        // Compute fallback first if declared
+        if let Some(fb) = node.parameters.get("fallback").cloned() {
+            let fb_val = match fb {
+                OverseerValue::Formula(f) => FormulaEvaluator::evaluate_formula(f.as_str(), &context).unwrap_or(OverseerValue::Null),
+                other => other,
+            };
+            computed_params.push(("_computed_fallback".to_string(), fb_val));
+        }
         for (key, formula_src) in &formula_pairs {
             debug_resolver!("[RESOLVER] Evaluating formula in {}.{}: {}", node.name, key, formula_src);
             let shadow_key = if key == "value" { "_computed_value".to_string() } else { format!("_computed_{}", key) };

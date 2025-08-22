@@ -71,6 +71,7 @@ impl OverseerNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum OverseerValue {
+    Null, // Explicit null sentinel used for fallback formulas and empty values
     String(String),
     Integer(i64),
     Float(f64),

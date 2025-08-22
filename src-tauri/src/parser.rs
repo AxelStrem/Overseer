@@ -227,6 +227,7 @@ fn parse_block(input: &str) -> IResult<&str, Vec<OverseerNode>> {
 fn parse_value(input: &str) -> IResult<&str, OverseerValue> {
     alt((
         parse_template_value,
+        parse_null_value,
         parse_formula_value,
         parse_boolean_value,
         parse_border_style_value, // Parse border styles
@@ -236,6 +237,11 @@ fn parse_value(input: &str) -> IResult<&str, OverseerValue> {
         parse_quoted_string_value,
         parse_unquoted_string_value, // Must be last as it's a fallback
     ))(input)
+}
+
+/// Parse null literal
+fn parse_null_value(input: &str) -> IResult<&str, OverseerValue> {
+    map(tag("null"), |_| OverseerValue::Null)(input)
 }
 
 /// Parse formula like $(expression) with support for nested parentheses

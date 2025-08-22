@@ -1,5 +1,7 @@
 use crate::types::{OverseerValue, OverseerError, OverseerNode};
 use chrono::{DateTime, Utc, Local};
+use std::cell::RefCell;
+use std::collections::HashSet;
 use nom::{
     IResult,
     branch::alt,
@@ -112,12 +114,28 @@ impl FormulaEvaluator {
         static TIME_OVERRIDE_UTC: std::cell::RefCell<Option<DateTime<Utc>>> = const { std::cell::RefCell::new(None) };
     }
 
+    // Thread-local evaluation guard to detect cycles; stores keys like "path1/path2|formula"
+    thread_local! {
+    static EVAL_GUARD: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    }
+
     pub fn set_time_override(dt: Option<DateTime<Utc>>) {
         Self::TIME_OVERRIDE_UTC.with(|cell| { *cell.borrow_mut() = dt; });
     }
 
     pub fn get_time_override() -> Option<DateTime<Utc>> {
         Self::TIME_OVERRIDE_UTC.with(|cell| cell.borrow().clone())
+    }
+
+    fn guard_key(path: &[String], formula: &str) -> String {
+        let mut s = String::new();
+        for (i, seg) in path.iter().enumerate() {
+            if i > 0 { s.push('/'); }
+            s.push_str(seg);
+        }
+        s.push('|');
+        s.push_str(formula);
+        s
     }
     /// Evaluate a list-source expression used for plots, returning the base path and filtered items (nodes).
     /// Supported forms:
@@ -295,7 +313,15 @@ impl FormulaEvaluator {
         // return None so callers can decide to evaluate the raw formula in the correct context (avoids stale ordering).
         if key == "value" {
             if let Some(raw) = params.get("value") {
-                if !matches!(raw, OverseerValue::Formula(_)) {
+                // If explicitly Null, consult fallback
+                if matches!(raw, OverseerValue::Null) {
+                    if let Some(fb) = params.get("_computed_fallback") { return Some(fb); }
+                    if let Some(fb_raw) = params.get("fallback") {
+                        if !matches!(fb_raw, OverseerValue::Formula(_)) { return Some(fb_raw); }
+                    }
+                    // No fallback provided; treat as an effective Null value
+                    return Some(raw);
+                } else if !matches!(raw, OverseerValue::Formula(_)) {
                     return Some(raw);
                 }
             }
@@ -325,8 +351,21 @@ impl FormulaEvaluator {
         };
         debug_evaluator!("[EVAL] Parsed AST: {:?}", expression);
 
+        // Cycle guard: if this (path,formula) is already in progress, short-circuit to Null
+        let key = Self::guard_key(&context.node_path, formula);
+        let in_progress = Self::EVAL_GUARD.with(|set| {
+            let mut set = set.borrow_mut();
+            if set.contains(&key) { true } else { set.insert(key.clone()); false }
+        });
+        if in_progress {
+            debug_evaluator!("[EVAL] Cycle detected for key {}, returning Null", key);
+            return Ok(OverseerValue::Null);
+        }
+
         // Evaluate the parsed expression
         let result = Self::evaluate_expression(&expression, context);
+        // Clear guard for this key
+        Self::EVAL_GUARD.with(|set| { set.borrow_mut().remove(&key); });
         debug_evaluator!("[EVAL] End evaluate_formula at path {:?}: result = {:?}", context.node_path, result);
         result
     }
@@ -1164,6 +1203,7 @@ impl FormulaEvaluator {
     /// Convert an OverseerValue to a number for arithmetic/comparisons
     fn value_to_number(value: &OverseerValue) -> Result<f64, OverseerError> {
         match value {
+            OverseerValue::Null => Err(OverseerError::FormulaError("Cannot convert null to number".to_string())),
             OverseerValue::Integer(i) => Ok(*i as f64), // i64
             OverseerValue::Float(f) => Ok(*f),
             OverseerValue::String(s) => {
@@ -1178,6 +1218,7 @@ impl FormulaEvaluator {
     /// Convert an OverseerValue to boolean for logical operations
     fn value_to_bool(value: &OverseerValue) -> Result<bool, OverseerError> {
         match value {
+            OverseerValue::Null => Ok(false),
             OverseerValue::Boolean(b) => Ok(*b),
             OverseerValue::Integer(i) => Ok(*i != 0),
             OverseerValue::Float(f) => Ok(*f != 0.0),
@@ -1186,7 +1227,7 @@ impl FormulaEvaluator {
                 if sl == "true" { Ok(true) }
                 else if sl == "false" { Ok(false) }
                 else if let Ok(n) = s.parse::<f64>() { Ok(n != 0.0) }
-                else { Err(OverseerError::FormulaError(format!("Cannot convert '{}' to bool", s))) }
+                else { Ok(!s.is_empty()) } // treat non-empty strings as true, empty as false
             }
             OverseerValue::Date(d) => Ok(!d.is_empty()),
             OverseerValue::Timestamp(ts) => Ok(!ts.is_empty()),
@@ -1263,6 +1304,7 @@ impl FormulaEvaluator {
 impl FormulaEvaluator {
     fn value_to_string(v: &OverseerValue) -> String {
         match v {
+            OverseerValue::Null => "".to_string(),
             OverseerValue::Integer(i) => i.to_string(),
             OverseerValue::Float(f) => f.to_string(),
             OverseerValue::String(s) => s.clone(),
@@ -1416,24 +1458,49 @@ fn expression(input: &str) -> IResult<&str, FormulaExpression> {
 
 /// Ternary operator: condition ? then : else
 fn ternary_expression(input: &str) -> IResult<&str, FormulaExpression> {
-    use nom::combinator::opt as nopt;
-    let (input, cond) = logical_or_expression(input)?;
-    let (input, maybe) = nopt(tuple((
-        delimited(multispace0, char('?'), multispace0),
-        // then branch can be any expression
-        ternary_expression,
-        delimited(multispace0, char(':'), multispace0),
-        ternary_expression,
-    )))(input)?;
-    if let Some((_, then_e, _, else_e)) = maybe {
-        Ok((input, FormulaExpression::Conditional {
-            condition: Box::new(cond),
-            then_branch: Box::new(then_e),
-            else_branch: Box::new(else_e),
-        }))
-    } else {
-        Ok((input, cond))
+    // Helper to skip ASCII whitespaces (consistent with multispace0 for our inputs)
+    fn skip_ws(s: &str) -> &str {
+        let mut i = 0usize;
+        for ch in s.chars() {
+            if ch.is_whitespace() { i += ch.len_utf8(); } else { break; }
+        }
+        &s[i..]
     }
+
+    let (mut rest, cond) = logical_or_expression(input)?;
+    // Try to parse '?' following the condition
+    let r1 = skip_ws(rest);
+    if r1.starts_with('?') {
+        let mut after_q = &r1[1..];
+        after_q = skip_ws(after_q);
+        if after_q.starts_with(':') {
+            // Elvis form: A ?: C  => then = A, else = C
+            let mut after_colon = &after_q[1..];
+            after_colon = skip_ws(after_colon);
+            let (rest_after, else_e) = ternary_expression(after_colon)?;
+            return Ok((rest_after, FormulaExpression::Conditional {
+                condition: Box::new(cond.clone()),
+                then_branch: Box::new(cond),
+                else_branch: Box::new(else_e),
+            }));
+        } else {
+            // Standard ternary: parse then and else branches
+            let (after_then, then_e) = ternary_expression(after_q)?;
+            let r2 = skip_ws(after_then);
+            if !r2.starts_with(':') {
+                return Err(nom::Err::Error(nom::error::Error { input: r2, code: nom::error::ErrorKind::Char }));
+            }
+            let mut after_colon = &r2[1..];
+            after_colon = skip_ws(after_colon);
+            let (rest_after, else_e) = ternary_expression(after_colon)?;
+            return Ok((rest_after, FormulaExpression::Conditional {
+                condition: Box::new(cond),
+                then_branch: Box::new(then_e),
+                else_branch: Box::new(else_e),
+            }));
+        }
+    }
+    Ok((rest, cond))
 }
 
 /// Logical OR (||) with short-circuit semantics at evaluation time
@@ -2613,5 +2680,158 @@ mod tests {
         let last_done = ex.get_accessible_children().into_iter().find(|c| c.name == "last_done").unwrap();
     let computed = last_done.parameters.get("_computed_value").cloned().unwrap();
     assert_eq!(computed, OverseerValue::String("2025-08-12T10:53:02.760779800+00:00".to_string()));
+    }
+
+    #[test]
+    fn test_circular_dependency_yields_null() {
+        let input = r#"
+        div Root {
+            int a = $(b)
+            int b = $(a)
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let a = root.get_accessible_children().into_iter().find(|c| c.name == "a").unwrap();
+        let b = root.get_accessible_children().into_iter().find(|c| c.name == "b").unwrap();
+        // Both should resolve to Null due to cycle
+        assert_eq!(a.parameters.get("_computed_value").cloned(), Some(OverseerValue::Null));
+        assert_eq!(b.parameters.get("_computed_value").cloned(), Some(OverseerValue::Null));
+    }
+
+    #[test]
+    fn test_fallback_used_when_value_null() {
+        let input = r#"
+        div Root {
+            string name (fallback="Untitled") = null
+            string shown = $(name)
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let name = root.get_accessible_children().into_iter().find(|c| c.name == "name").unwrap();
+        // Effective value should use fallback
+        let eff = name.parameters.get("_computed_value").or_else(|| name.parameters.get("_computed_fallback")).cloned();
+        assert_eq!(eff, Some(OverseerValue::String("Untitled".to_string())));
+        // And the dependent should see the same string
+        let shown = root.get_accessible_children().into_iter().find(|c| c.name == "shown").unwrap();
+        assert_eq!(shown.parameters.get("_computed_value").cloned(), Some(OverseerValue::String("Untitled".to_string())));
+    }
+
+    #[test]
+    fn test_elvis_operator_shortcut() {
+        let input = r#"
+        div Root {
+            string a = null
+            string b = $(a ?: "x")
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let b = root.get_accessible_children().into_iter().find(|c| c.name == "b").unwrap();
+        assert_eq!(b.parameters.get("_computed_value").cloned(), Some(OverseerValue::String("x".to_string())));
+    }
+
+    #[test]
+    fn test_elvis_with_false_boolean_falls_back() {
+        let content = r#"
+        div Root {
+            bool a = false
+            string b = $(a ?: "x")
+        }
+        "#;
+    let mut nodes = crate::parser::parse_document(content).unwrap().1;
+    crate::resolver::resolve_document(&mut nodes);
+    let root = &nodes[0];
+    let b = root.get_accessible_children().into_iter().find(|c| c.name == "b").unwrap();
+        let eff = b
+            .parameters
+            .get("_computed_value")
+            .or_else(|| b.parameters.get("_computed_fallback"))
+            .cloned();
+        match eff {
+            Some(OverseerValue::String(s)) => assert_eq!(s, "x"),
+            other => panic!("unexpected value: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_elvis_with_zero_integer_falls_back() {
+        let content = r#"
+        div Root {
+            int a = 0
+            int b = $(a ?: 42)
+        }
+        "#;
+    let mut nodes = crate::parser::parse_document(content).unwrap().1;
+    crate::resolver::resolve_document(&mut nodes);
+    let root = &nodes[0];
+    let b = root.get_accessible_children().into_iter().find(|c| c.name == "b").unwrap();
+        let eff = b
+            .parameters
+            .get("_computed_value")
+            .or_else(|| b.parameters.get("_computed_fallback"))
+            .cloned();
+        match eff {
+            Some(OverseerValue::Integer(i)) => assert_eq!(i, 42),
+            other => panic!("unexpected value: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_elvis_with_empty_string_falls_back() {
+        let content = r#"
+        div Root {
+            string a = ""
+            string b = $(a ?: "fallback")
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(content).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let b = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "b")
+            .unwrap();
+        let eff = b
+            .parameters
+            .get("_computed_value")
+            .or_else(|| b.parameters.get("_computed_fallback"))
+            .cloned();
+        match eff {
+            Some(OverseerValue::String(s)) => assert_eq!(s, "fallback"),
+            other => panic!("unexpected value: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_elvis_with_nonempty_string_keeps_value() {
+        let content = r#"
+        div Root {
+            string a = "hello"
+            string b = $(a ?: "fallback")
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(content).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let b = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "b")
+            .unwrap();
+        let eff = b
+            .parameters
+            .get("_computed_value")
+            .or_else(|| b.parameters.get("_computed_fallback"))
+            .cloned();
+        match eff {
+            Some(OverseerValue::String(s)) => assert_eq!(s, "hello"),
+            other => panic!("unexpected value: {:?}", other),
+        }
     }
 }

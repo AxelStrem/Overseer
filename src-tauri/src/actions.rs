@@ -2260,6 +2260,9 @@ impl ActionExecutor {
     fn compare_overseer_values(a: &OverseerValue, b: &OverseerValue) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         match (a, b) {
+            (OverseerValue::Null, OverseerValue::Null) => Ordering::Equal,
+            (OverseerValue::Null, other) => Self::value_to_string(other).cmp(&"".to_string()),
+            (other, OverseerValue::Null) => "".to_string().cmp(&Self::value_to_string(other)),
             (OverseerValue::Integer(x), OverseerValue::Integer(y)) => x.cmp(y),
             (OverseerValue::Float(x), OverseerValue::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
             (OverseerValue::Integer(x), OverseerValue::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(Ordering::Equal),
@@ -2274,6 +2277,7 @@ impl ActionExecutor {
 
     fn value_to_string(v: &OverseerValue) -> String {
         match v {
+            OverseerValue::Null => "".to_string(),
             OverseerValue::Integer(i) => i.to_string(),
             OverseerValue::Float(f) => f.to_string(),
             OverseerValue::String(s) => s.clone(),

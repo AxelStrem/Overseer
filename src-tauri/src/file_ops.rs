@@ -563,6 +563,7 @@ impl FileOperations {
 
     fn serialize_value(value: &OverseerValue) -> String {
         match value {
+            OverseerValue::Null => "null".to_string(),
             OverseerValue::String(s) => format!("\"{}\"", s),
             OverseerValue::Integer(i) => i.to_string(),
             OverseerValue::Float(f) => f.to_string(),
