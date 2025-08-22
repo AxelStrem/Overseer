@@ -292,34 +292,67 @@ unsafe fn recursively_compute_chart_series(
             OverseerValue::String(s) => {
                 // Try plain number first
                 if let Ok(n) = s.parse::<f64>() { return Some(n); }
-                // Try RFC3339 timestamp
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                    return Some(dt.timestamp_millis() as f64);
-                }
-                // Try date-only YYYY-MM-DD -> midnight UTC
-                if let Ok(nd) = chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d") {
-                    if let Some(ndt) = nd.and_hms_opt(0, 0, 0) {
-                        let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
-                        return Some(dt.timestamp_millis() as f64);
-                    }
-                }
-                None
+                // Try a variety of time string forms
+                parse_time_string_to_epoch_ms(&s)
             }
             OverseerValue::Timestamp(ts) => {
-                // Parse to epoch ms via chrono if available
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&ts) {
-                    Some(dt.timestamp_millis() as f64)
-                } else { None }
+                // Parse to epoch ms via robust parser
+                parse_time_string_to_epoch_ms(&ts)
             }
             OverseerValue::Date(d) => {
                 // Treat YYYY-MM-DD as midnight UTC
                 let ts = format!("{}T00:00:00Z", d);
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&ts) {
-                    Some(dt.timestamp_millis() as f64)
-                } else { None }
+                parse_time_string_to_epoch_ms(&ts)
             }
             _ => None,
         }
+    }
+
+    // Parse various timestamp string formats to epoch millis (as f64)
+    fn parse_time_string_to_epoch_ms(s: &str) -> Option<f64> {
+        let txt = s.trim();
+        // 1) RFC3339 (supports timezone offsets and fractional seconds)
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(txt) {
+            return Some(dt.timestamp_millis() as f64);
+        }
+        // 2) Allow a space instead of 'T' (optionally with trailing Z)
+        //    e.g., "YYYY-MM-DD HH:MM:SSZ" or "YYYY-MM-DD HH:MM:SS"
+        {
+            let mut patched = txt.replace('T', " ");
+            // If there's a trailing 'Z' with a space format, drop it and treat as UTC naive
+            let had_z = patched.ends_with('Z');
+            if had_z { patched = patched.trim_end_matches('Z').trim_end().to_string(); }
+            // Try with fractional seconds first
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S%.f") {
+                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                return Some(dt.timestamp_millis() as f64);
+            }
+            // Then without fractional
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S") {
+                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                return Some(dt.timestamp_millis() as f64);
+            }
+        }
+        // 3) No timezone with 'T': treat as UTC
+        {
+            let patched = txt;
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(patched, "%Y-%m-%dT%H:%M:%S%.f") {
+                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                return Some(dt.timestamp_millis() as f64);
+            }
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(patched, "%Y-%m-%dT%H:%M:%S") {
+                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                return Some(dt.timestamp_millis() as f64);
+            }
+        }
+        // 4) Date-only -> start of day UTC
+        if let Ok(nd) = chrono::NaiveDate::parse_from_str(txt, "%Y-%m-%d") {
+            if let Some(ndt) = nd.and_hms_opt(0, 0, 0) {
+                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                return Some(dt.timestamp_millis() as f64);
+            }
+        }
+        None
     }
 
     fn series_to_json(series: &Vec<(f64, f64)>) -> String {

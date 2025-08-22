@@ -265,19 +265,13 @@ tab known_bugs (label="Known Bugs") {
 
          - {
             - id = 4
-            - description = "add support for background formulas (hidden from UI)"
+            - description = "add support for background fallback formulas (hidden from UI)"
             - storypoints = 5
             - fixed = false
         }
         - {
             - id = 5
             - description = "add support for more chart types (dots, bars, pie charts)"
-            - storypoints = 5
-        }
-        
-        - {
-            - id = 6
-            - description = "add support for "
             - storypoints = 5
         }
      }
