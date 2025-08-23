@@ -2360,14 +2360,36 @@ export class OverseerRenderer {
     }
 
     makeFieldEditable(element, node, isMultiline = false) {
-        // Capture the old value before editing starts
+        // Capture the old displayed value before editing starts (for selective update diff only)
         const oldValue = element.textContent
-        
-        // Prefer editing the raw formula if this field has one; otherwise use displayed text
+
+        // Initialize editor with the raw user-provided value, not the displayed fallback/computed value
         const originalParam = node?.parameters?.value
         const hasFormula = originalParam && typeof originalParam === 'object' && originalParam.Formula !== undefined
-        const currentValue = element.textContent
-        const initialEditorText = hasFormula ? `$(${originalParam.Formula})` : currentValue
+        const initialEditorText = (() => {
+            // 1) If raw value is a formula, show it
+            if (hasFormula) return `$(${originalParam.Formula})`
+            // 2) Prefer parameters.value, else node.value
+            const raw = (originalParam !== undefined) ? originalParam : (node && node.value !== undefined ? node.value : undefined)
+            if (raw === undefined || raw === null) return ''
+            if (typeof raw === 'string') {
+                // Treat literal "Null" as empty when editing
+                return raw.trim().toLowerCase() === 'null' ? '' : raw
+            }
+            if (typeof raw === 'object') {
+                if (raw.Null !== undefined) return ''
+                if (raw.String !== undefined) return String(raw.String)
+                if (raw.Integer !== undefined) return String(raw.Integer)
+                if (raw.Float !== undefined) return String(raw.Float)
+                if (raw.Boolean !== undefined) return String(raw.Boolean)
+                if (raw.Date !== undefined) return String(raw.Date)
+                if (raw.Timestamp !== undefined) return String(raw.Timestamp)
+                if (raw.Formula !== undefined) return `$(${raw.Formula})`
+                // Unknown shape -> best-effort
+                try { return JSON.stringify(raw) } catch(_) { return '' }
+            }
+            try { return String(raw) } catch(_) { return '' }
+        })()
 
         const input = document.createElement(isMultiline ? 'textarea' : 'input')
         input.value = initialEditorText

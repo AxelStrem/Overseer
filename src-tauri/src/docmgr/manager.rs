@@ -1,6 +1,7 @@
 use crate::types::{OverseerNode, Result};
 use std::path::{Path, PathBuf};
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct DocumentId {
     pub path: PathBuf,
@@ -10,6 +11,7 @@ pub struct DocumentId {
 #[derive(Default)]
 pub struct DocumentManager {}
 
+#[allow(dead_code)]
 impl DocumentManager {
     pub fn new() -> Self { Self {} }
 

@@ -1140,7 +1140,7 @@ fn chart_node_depends_on_fields(node: &OverseerNode, field_paths: &std::collecti
 }
 
 /// Check if a specific plot depends on any of the changed field paths
-fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::HashSet<String>, chart_path: &str) -> bool {
+fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::HashSet<String>, _chart_path: &str) -> bool {
     use crate::types::OverseerValue;
     
     // Check the 'source' parameter to see what data the plot references
@@ -1517,7 +1517,7 @@ mod tests {
         // After resolution, we should still have both nodes (template and instance)
         // But hidden templates may be filtered out in actual rendering, not in tests
     debug_resolver!("Number of nodes after resolution: {}", nodes.len());
-        for (i, node) in nodes.iter().enumerate() {
+    for (_i, _node) in nodes.iter().enumerate() {
             debug_resolver!("Node {}: {} (type: {})", i, node.name, node.node_type);
         }
         
@@ -1529,7 +1529,7 @@ mod tests {
         };
         
     debug_resolver!("Resolved task children: {}", resolved_task.children.len());
-        for (i, child) in resolved_task.children.iter().enumerate() {
+    for (_i, _child) in resolved_task.children.iter().enumerate() {
             debug_resolver!("  Child {}: {} (type: {})", i, child.name, child.node_type);
         }
         

@@ -231,7 +231,7 @@ async fn parse_overseer_content_selective(content: String, changed_fields: Vec<S
             } else {
                 // Build dependency graph and do selective updates
                 let mut dep_graph = DependencyGraph::new();
-                if let Err(e) = dep_graph.build_from_document(&nodes) {
+                if let Err(_e) = dep_graph.build_from_document(&nodes) {
                     // If dependency tracking fails, fall back to full resolution
                     #[cfg(feature = "debug-resolver")]
                     println!("❌ Dependency tracking failed: {:?}, falling back to full resolution", e);
@@ -266,7 +266,7 @@ async fn parse_overseer_content_selective(content: String, changed_fields: Vec<S
                         
                         // No need for any resolution - just restore the user values
                         for (field_path, value) in preserved_values {
-                            if let Err(e) = set_field_value_by_path(&mut nodes, &field_path, value) {
+                            if let Err(_e) = set_field_value_by_path(&mut nodes, &field_path, value) {
                                 #[cfg(feature = "debug-resolver")]
                                 println!("⚠️  Failed to restore field '{}': {:?}", field_path, e);
                             } else {
@@ -294,7 +294,7 @@ async fn parse_overseer_content_selective(content: String, changed_fields: Vec<S
                         
                         // Restore the preserved user input values
                         for (field_path, value) in preserved_values {
-                            if let Err(e) = set_field_value_by_path(&mut nodes, &field_path, value) {
+                            if let Err(_e) = set_field_value_by_path(&mut nodes, &field_path, value) {
                                 #[cfg(feature = "debug-resolver")]
                                 println!("⚠️  Failed to restore field '{}': {:?}", field_path, e);
                             } else {

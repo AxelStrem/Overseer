@@ -12,8 +12,10 @@ macro_rules! debug_serializer {
     };
 }
 
+#[allow(dead_code)]
 pub struct FileOperations;
 
+#[allow(dead_code)]
 impl FileOperations {
     pub async fn read_file(path: &str) -> Result<String> {
         match fs::read_to_string(path).await {
@@ -687,7 +689,7 @@ impl OverseerFileHandler {
             if line.trim_start().starts_with("//") || line.trim().is_empty() && !started {
                 leading_block.push(line.to_string());
             } else {
-                started = true;
+                let _started_flag = { started = true; started };
                 break;
             }
         }

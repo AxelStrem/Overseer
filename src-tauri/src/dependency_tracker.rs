@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use crate::types::{OverseerNode, OverseerValue, OverseerError};
-use crate::formula_evaluator::FormulaEvaluator;
+// use crate::formula_evaluator::FormulaEvaluator; // not used in this module
 
 /// Information about a timer node
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TimerInfo {
     pub node_path: String,
@@ -13,6 +14,7 @@ pub struct TimerInfo {
 }
 
 /// Represents a field update that needs to be propagated
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FieldUpdate {
     pub path: String,
@@ -65,7 +67,7 @@ impl DependencyGraph {
         self.clear();
         
         debug_dep!("🔍 Building dependency graph from {} top-level nodes", nodes.len());
-        for (i, node) in nodes.iter().enumerate() {
+    for (_i, _node) in nodes.iter().enumerate() {
             debug_dep!("🔍 Analyzing top-level node {}: '{}' type='{}' params={:?}", 
                      i, node.name, node.node_type, node.parameters.keys().collect::<Vec<_>>());
         }
@@ -109,6 +111,7 @@ impl DependencyGraph {
     }
 
     /// Get all fields that the given field depends on
+    #[allow(dead_code)]
     pub fn get_dependencies(&self, field_path: &str) -> Vec<String> {
         self.dependents.get(field_path).cloned().unwrap_or_default()
     }
@@ -143,11 +146,13 @@ impl DependencyGraph {
     }
 
     /// Get all active timers
+    #[allow(dead_code)]
     pub fn get_active_timers(&self) -> Vec<&TimerInfo> {
         self.timers.values().filter(|t| t.active).collect()
     }
 
     /// Get the next timer due time
+    #[allow(dead_code)]
     pub fn get_next_timer_due(&self) -> Option<i64> {
         self.get_active_timers()
             .iter()
@@ -203,7 +208,7 @@ impl DependencyGraph {
     }
 
     /// Analyze a timer node to extract timing information
-    fn analyze_timer_node(&mut self, node: &OverseerNode, path: &str) -> Result<(), OverseerError> {
+    fn analyze_timer_node(&mut self, _node: &OverseerNode, path: &str) -> Result<(), OverseerError> {
     let timer_info = TimerInfo {
             node_path: path.to_string(),
             next_due: None, // Will be calculated by timer system

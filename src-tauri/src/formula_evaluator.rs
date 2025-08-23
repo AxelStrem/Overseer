@@ -1467,7 +1467,7 @@ fn ternary_expression(input: &str) -> IResult<&str, FormulaExpression> {
         &s[i..]
     }
 
-    let (mut rest, cond) = logical_or_expression(input)?;
+    let (rest, cond) = logical_or_expression(input)?;
     // Try to parse '?' following the condition
     let r1 = skip_ws(rest);
     if r1.starts_with('?') {

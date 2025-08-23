@@ -15,6 +15,7 @@ pub struct IndexCache {
     pub entries: HashMap<String, FileIndexEntry>,
 }
 
+#[allow(dead_code)]
 impl IndexCache {
     pub fn new() -> Self { Self { entries: HashMap::new() } }
 

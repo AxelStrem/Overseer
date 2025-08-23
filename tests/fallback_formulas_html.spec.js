@@ -65,6 +65,30 @@ describe('fallback_formulas.os HTML output', () => {
     expect(/null/i.test(html)).toBe(false)
   })
 
+  it('edit box shows empty when value is null and fallback displays 10', async () => {
+    const app = new OverseerApp()
+    const doc = [
+      {
+        name: 'Root',
+        node_type: 'div',
+        parameters: {},
+        children: [
+          { name: 'v', node_type: 'int', parameters: { value: { Null: null }, fallback: { Integer: 10 } }, children: [] }
+        ]
+      }
+    ]
+    app.currentDocument = doc
+    app.renderer.renderDocument(doc)
+
+    const valueEl = document.querySelector('.number-field .field-value')
+    expect(valueEl.textContent.trim()).toBe('10')
+    // Enter edit mode
+    valueEl.dispatchEvent(new Event('dblclick'))
+    const input = valueEl.parentElement.querySelector('input.field-editor')
+    expect(input).toBeTruthy()
+    expect(input.value).toBe('')
+  })
+
   it('treats computed_value string "Null" as empty and uses fallback', async () => {
     const app = new OverseerApp()
 

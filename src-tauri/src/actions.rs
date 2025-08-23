@@ -52,22 +52,11 @@ impl ActionExecutor {
         Self::run_timers(nodes)
     }
 
-    // Simple equality for key comparisons
-    fn compare_values_simple(a: &OverseerValue, b: &OverseerValue) -> bool {
-        match (a, b) {
-            (OverseerValue::Integer(x), OverseerValue::Integer(y)) => x == y,
-            (OverseerValue::Float(x), OverseerValue::Float(y)) => (*x - *y).abs() < std::f64::EPSILON,
-            (OverseerValue::String(x), OverseerValue::String(y)) => x == y,
-            (OverseerValue::Boolean(x), OverseerValue::Boolean(y)) => x == y,
-            (OverseerValue::Date(x), OverseerValue::Date(y)) => x == y,
-            (OverseerValue::Timestamp(x), OverseerValue::Timestamp(y)) => x == y,
-            _ => false,
-        }
-    }
+    // (removed unused compare_values_simple)
     /// Compute the next due time (epoch ms) for any active timer in the document.
     /// Returns Some(now) if any timer is already due; None if there are no timers.
     pub fn next_due_ms(nodes: &Vec<OverseerNode>) -> Option<i64> {
-        let now = chrono::Utc::now();
+            let now = chrono::Utc::now();
         // Build a snapshot for formula evaluation
         let snapshot = nodes.clone();
         // Compute template definition root paths referenced by any list.entry
@@ -91,7 +80,7 @@ impl ActionExecutor {
             fn search_by_name<'a>(acc: &mut Vec<Vec<String>>, cur: &'a OverseerNode, path: &mut Vec<String>, roots: &'a [OverseerNode], names: &std::collections::HashSet<String>) {
                 // Build disambiguated segment for this node (name with #k if duplicates among siblings)
                 let pushed = {
-                    let parent_children = path.len(); // use length as a proxy; we'll recompute properly below
+                    let _parent_children = path.len(); // use length as a proxy; we'll recompute properly below
                     // We don't have parent here; push raw name which is enough for prefix matching within this traversal
                     path.push(cur.name.clone());
                     true
@@ -142,7 +131,7 @@ impl ActionExecutor {
             for ch in &cur.children { collect(acc, ch, path, inside_instance, template_defs); }
             if pushed { path.pop(); }
         }
-        let mut timers: Vec<(&OverseerNode, Vec<String>)> = Vec::new();
+            let mut timers: Vec<(&OverseerNode, Vec<String>)> = Vec::new();
         for root in nodes {
             let mut p: Vec<String> = Vec::new();
             collect(&mut timers, root, &mut p, false, &template_def_paths);
@@ -222,7 +211,7 @@ impl ActionExecutor {
             next_ms = Some(match next_ms { Some(prev) => prev.min(due_ms), None => due_ms });
         }
         if timers_debug() {
-            if let Some(ms) = next_ms {
+            if let Some(_ms) = next_ms {
                 debug_sched!("[SCHED] next_due_ms => {} ({} timers scanned)", ms, timers.len());
             } else {
                 debug_sched!("[SCHED] next_due_ms => None (no active timers)");
@@ -457,7 +446,7 @@ impl ActionExecutor {
     'timers: for tpath in timer_paths {
             if actions_budget == 0 { if timers_debug() { eprintln!("[TIMER] global actions budget exhausted; stopping scan"); } break 'timers; }
             // Resolve node by path
-            if let Some((ptr, indices_initial)) = Self::get_node_mut_by_path(nodes, &tpath) {
+            if let Some((ptr, _indices_initial)) = Self::get_node_mut_by_path(nodes, &tpath) {
                 let timer_node: &mut OverseerNode = unsafe { &mut *ptr };
                 // Check active
                 let active = match Self::get_effective(&timer_node.parameters, "active").or_else(|| timer_node.parameters.get("active")) {
@@ -568,7 +557,7 @@ impl ActionExecutor {
                                             Some(p) => p,
                                             None => { if timers_debug() { eprintln!("[TIMER] owner path disappeared during actions: {:?}", tpath); } break 'outer; }
                                         };
-                                        drop(owner_ptr); // don't keep pointer around
+                                        let _ = owner_ptr; // don't keep pointer around
                                         let owner_path = Self::build_disambiguated_path(&nodes.clone(), &owner_indices);
                                         for action in &actions {
                                             if actions_budget == 0 { if timers_debug() { eprintln!("[TIMER] actions budget exhausted (timer='{}' path={})", timer_name, dbg_path); } break 'outer; }
@@ -588,7 +577,7 @@ impl ActionExecutor {
                                 match exec_result {
                                     Ok(Ok(())) => { if timers_debug() { eprintln!("[TIMER] actions complete for '{}' at {}", timer_name, dbg_path); } }
                                     Ok(Err(e)) => { return Err(e); }
-                                    Err(panic_info) => {
+                                    Err(_panic_info) => {
                                         eprintln!("[TIMER] PANIC while executing actions for '{}' at {:?}", timer_name, tpath);
                                         return Err(OverseerError::RuntimeError(format!("Timer '{}' panicked during actions", timer_name)));
                                     }

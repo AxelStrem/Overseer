@@ -274,5 +274,20 @@ tab known_bugs (label="Known Bugs") {
             - description = "add support for more chart types (dots, bars, pie charts)"
             - storypoints = 5
         }
+        - {
+            - id = 6
+            - description = "add a 'hide-labels` parameter to divs and other container nodes"
+            - storypoints = 5
+        }
+        - {
+            - id = 7
+            - description = "add list headers"
+            - storypoints = 5
+        }
+        - {
+            - id = 8
+            - description = "add support for list scrolling (and maybe for other containers too?)"
+            - storypoints = 5
+        }
      }
 }
