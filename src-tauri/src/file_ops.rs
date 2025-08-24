@@ -192,7 +192,7 @@ impl FileOperations {
                         // Criteria:
                         //  - value present AND no non-internal, non-value params AND no children
                         //  - AND (explicit override marker present OR value differs from template default if available)
-            fn collect_descendant_value_overrides<'a>(
+                        fn collect_descendant_value_overrides<'a>(
                             node: &'a OverseerNode,
                             _name_filter_unused: &Option<Vec<String>>,
                             out: &mut Vec<(&'a str, &'a OverseerValue)>,
@@ -200,15 +200,15 @@ impl FileOperations {
                             // Check current node
                             let has_value = node.parameters.contains_key("value");
                             if has_value {
-                let non_internal_non_value_params = node
+                                let non_internal_non_value_params = node
                                     .parameters
                                     .iter()
                                     .filter(|(k, _)| {
                                         let ks = k.as_str();
-                    if ks.starts_with('_') || ks == "value" { return false; }
-                    // Ignore template-derived params (have a corresponding _template_ marker)
-                    let marker = format!("_template_{}", ks);
-                    !node.parameters.contains_key(&marker)
+                                        if ks.starts_with('_') || ks == "value" { return false; }
+                                        // Ignore template-derived params (have a corresponding _template_ marker)
+                                        let marker = format!("_template_{}", ks);
+                                        !node.parameters.contains_key(&marker)
                                     })
                                     .count();
                                 let only_value_override =
@@ -254,14 +254,14 @@ impl FileOperations {
                     }
                     if suppress_template_children {
                         let has_value = child.parameters.contains_key("value");
-            let non_internal_non_value_params = child
+                        let non_internal_non_value_params = child
                             .parameters
                             .iter()
                             .filter(|(k, _)| {
                                 let ks = k.as_str();
-                if ks.starts_with('_') || ks == "value" { return false; }
-                let marker = format!("_template_{}", ks);
-                !child.parameters.contains_key(&marker)
+                                if ks.starts_with('_') || ks == "value" { return false; }
+                                let marker = format!("_template_{}", ks);
+                                !child.parameters.contains_key(&marker)
                             })
                             .count();
                         let only_value_override =
@@ -292,7 +292,7 @@ impl FileOperations {
             } else {
                 // Non-list context override: allow "- name = value" syntax
                 if let Some(value) = node.parameters.get("value") {
-                    if !node.name.is_empty() {
+                    if !node.name.is_empty() && node.children.is_empty() {
                         output.push_str("- ");
                         output.push_str(&node.name);
                         output.push_str(" = ");
@@ -300,6 +300,17 @@ impl FileOperations {
                         output.push('\n');
                         return Ok(());
                     }
+                }
+                // Non-list context override: named nested block "- name { ... }"
+                if !node.name.is_empty() && !node.children.is_empty() {
+                    output.push_str("- ");
+                    output.push_str(&node.name);
+                    output.push_str(" {\n");
+                    for child in &node.children {
+                        Self::serialize_node_context(child, output, indent_level + 1, false)?;
+                    }
+                    output.push_str(&format!("{}}}\n", indent));
+                    return Ok(());
                 }
                 // Else: fall through to normal serialization
             }
@@ -390,9 +401,10 @@ impl FileOperations {
         if !regular_params.is_empty() {
             output.push_str(" (");
             // Emit parameters in a deterministic order to avoid random reordering in saves
-            let mut keys: Vec<&String> = regular_params.keys().collect();
-            keys.sort();
-            let params_str: Vec<String> = keys
+            let keys: Vec<&String> = regular_params.keys().collect();
+            let mut keys_sorted = keys.clone();
+            keys_sorted.sort();
+            let params_str: Vec<String> = keys_sorted
                 .into_iter()
                 .map(|k| {
                     let v = regular_params.get(k).unwrap();
@@ -519,16 +531,16 @@ impl FileOperations {
                 // For template instances/clones, if a child was overridden with only a simple value, prefer the concise "- name = value" form
                 if suppress_template_children && has_explicit_override && listed_in_instance_overrides {
                     let has_value = child.parameters.contains_key("value");
-            let non_internal_non_value_params = child
+                    let non_internal_non_value_params = child
                         .parameters
                         .iter()
                         .filter(|(k, _)| {
                             let ks = k.as_str();
-                // allow 'value' only; ignore internal keys starting with '_'
-                if ks.starts_with('_') || ks == "value" { return false; }
-                // also ignore params that are template-derived (paired _template_param exists)
-                let marker = format!("_template_{}", ks);
-                !child.parameters.contains_key(&marker)
+                            // allow 'value' only; ignore internal keys starting with '_'
+                            if ks.starts_with('_') || ks == "value" { return false; }
+                            // also ignore params that are template-derived (paired _template_param exists)
+                            let marker = format!("_template_{}", ks);
+                            !child.parameters.contains_key(&marker)
                         })
                         .count();
                     let only_value_override = has_value && non_internal_non_value_params == 0 && child.children.is_empty();

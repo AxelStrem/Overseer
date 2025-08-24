@@ -335,6 +335,49 @@ impl FormulaEvaluator {
         }
     }
 
+    /// Compute a node's effective value, including evaluating fallback formulas when value is Null.
+    pub fn get_effective_value_for_node(
+        node: &OverseerNode,
+        path: &[String],
+        document_root: &[OverseerNode],
+    ) -> Result<OverseerValue, OverseerError> {
+        // 1) Computed shadow takes precedence
+        if let Some(comp) = node.parameters.get("_computed_value") {
+            return Ok(comp.clone());
+        }
+        // 2) Raw value handling
+        if let Some(raw) = node.parameters.get("value") {
+            match raw {
+                OverseerValue::Formula(f) => {
+                    let ctx = EvaluationContext::new_with_current(node, path.to_vec(), document_root);
+                    return FormulaEvaluator::evaluate_formula(f, &ctx);
+                }
+                OverseerValue::Null => {
+                    // Use computed fallback if present; else evaluate fallback formula if any; else literal fallback; else Null
+                    if let Some(fb) = node.parameters.get("_computed_fallback") {
+                        return Ok(fb.clone());
+                    }
+                    if let Some(fb_raw) = node.parameters.get("fallback") {
+                        match fb_raw {
+                            OverseerValue::Formula(f) => {
+                                let ctx = EvaluationContext::new_with_current(node, path.to_vec(), document_root);
+                                return FormulaEvaluator::evaluate_formula(f, &ctx);
+                            }
+                            other => return Ok(other.clone()),
+                        }
+                    }
+                    return Ok(OverseerValue::Null);
+                }
+                other => return Ok(other.clone()),
+            }
+        }
+        // 3) No explicit value: if we have computed fallback, use it
+        if let Some(fb) = node.parameters.get("_computed_fallback") {
+            return Ok(fb.clone());
+        }
+        Ok(OverseerValue::Null)
+    }
+
     /// Evaluate a formula expression string within the given context
     pub fn evaluate_formula(
         formula: &str,
@@ -487,7 +530,7 @@ impl FormulaEvaluator {
                 }
             }
             FormulaExpression::PathFollow { base, segments } => {
-                // Resolve base to a node, then follow child segments and return final node's value
+                // Resolve base to a node, then follow child segments and return final node's effective value
                 if let Some(mut cur) = Self::eval_expr_to_node(base, context) {
                     let mut p = context.node_path.clone();
                     for seg in segments {
@@ -498,14 +541,7 @@ impl FormulaEvaluator {
                             return Err(OverseerError::FormulaError(format!("Path segment not found: {}", seg)));
                         }
                     }
-                    // Prefer evaluating a raw value formula if present
-                    if let Some(OverseerValue::Formula(f)) = cur.parameters.get("value") {
-                        let child_ctx = EvaluationContext::new_with_current(cur, p, context.document_root);
-                        return FormulaEvaluator::evaluate_formula(f, &child_ctx);
-                    }
-                    if let Some(v) = Self::get_effective_param(&cur.parameters, "value") { return Ok(v.clone()); }
-                    // If no value, return a null-ish string for now
-                    return Ok(OverseerValue::String("null".to_string()));
+                    return FormulaEvaluator::get_effective_value_for_node(cur, &p, context.document_root);
                 }
                 Err(OverseerError::FormulaError("Base of path does not resolve to a node".to_string()))
             }
@@ -536,7 +572,7 @@ impl FormulaEvaluator {
             return Ok(val.clone());
         }
 
-        // 2) Try to find a child node with this name and return its "value" parameter if present
+        // 2) Try to find a child node with this name and return its effective value (value or fallback)
         if let Some(child) = context
             .current_node
             .get_accessible_children()
@@ -544,17 +580,9 @@ impl FormulaEvaluator {
             .find(|c| c.name == field_name)
         {
             debug_evaluator!("[EVAL] Found child '{}' under current node", field_name);
-            // Prefer effective/computed value first to avoid triggering recursive dependencies
-            if let Some(val) = Self::get_effective_param(&child.parameters, "value") {
-                return Ok(val.clone());
-            }
-            // If no effective/computed value exists (e.g., child hasn't been resolved yet), evaluate raw value formula
-            if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
-                let mut path = context.node_path.clone();
-                path.push(child.name.clone());
-                let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
-                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-            }
+            let mut path = context.node_path.clone();
+            path.push(child.name.clone());
+            return FormulaEvaluator::get_effective_value_for_node(child, &path, context.document_root);
         }
 
         // 3) Look up in parent scope: siblings or parent parameters
@@ -571,16 +599,9 @@ impl FormulaEvaluator {
                     // b) Child of ancestor by name
                     if let Some(child) = ancestor.get_accessible_children().into_iter().find(|c| c.name == field_name) {
                         debug_evaluator!("[EVAL] Found ancestor child '{}' under {:?}", field_name, ancestor_path);
-                        if let Some(val) = Self::get_effective_param(&child.parameters, "value") {
-                            return Ok(val.clone());
-                        }
-                        // Only if no effective/computed value exists, evaluate raw value formula for ancestor child
-                        if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
-                            let mut path = ancestor_path.to_vec();
-                            path.push(child.name.clone());
-                            let child_ctx = EvaluationContext::new_with_current(child, path, context.document_root);
-                            return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                        }
+                        let mut path = ancestor_path.to_vec();
+                        path.push(child.name.clone());
+                        return FormulaEvaluator::get_effective_value_for_node(child, &path, context.document_root);
                     }
                     // c) Deep search under ancestor (first match)
                     if let Some(val) = FormulaEvaluator::find_value_by_name_deep(ancestor, field_name) {
@@ -600,14 +621,8 @@ impl FormulaEvaluator {
         // 4) Fallback: search the entire document for a node with this name and return its value
         if let Some(node) = FormulaEvaluator::find_node_by_name(context.document_root, field_name) {
             debug_evaluator!("[EVAL] Global fallback found node '{}' at root search", field_name);
-            if let Some(v) = Self::get_effective_param(&node.parameters, "value") {
-                if let OverseerValue::Formula(formula_expr) = v {
-                    // Best-effort: evaluate with current path (unknown exact path)
-                    let child_ctx = EvaluationContext::new(context.node_path.clone(), context.document_root);
-                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                }
-                return Ok(v.clone());
-            }
+            let guess_path = vec![node.name.clone()];
+            return FormulaEvaluator::get_effective_value_for_node(node, &guess_path, context.document_root);
         }
 
         Err(OverseerError::FormulaError(format!(
@@ -682,21 +697,9 @@ impl FormulaEvaluator {
                 return Ok(val.clone());
             }
             if let Some(child) = current.get_accessible_children().into_iter().find(|c| &c.name == last) {
-                if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
-                    if let OverseerValue::Formula(formula_expr) = v {
-                        let mut cp = p.clone();
-                        cp.push(child.name.clone());
-                        let child_ctx = EvaluationContext::new_with_current(child, cp, context.document_root);
-                        return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                    }
-                    return Ok(v.clone());
-                }
-                if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
-                    let mut cp = p.clone();
-                    cp.push(child.name.clone());
-                    let child_ctx = EvaluationContext::new_with_current(child, cp, context.document_root);
-                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                }
+                // Return the child's effective value (handles computed, raw, and fallback-on-demand)
+                p.push(child.name.clone());
+                return FormulaEvaluator::get_effective_value_for_node(child, &p, context.document_root);
             }
             // Fallback: deep search within found_start subtree
             if let Some(v) = FormulaEvaluator::find_value_by_name_deep(found_start, last) { return Ok(v); }
@@ -797,29 +800,39 @@ impl FormulaEvaluator {
                         }
                     }
                     if traversed_all {
-                        // If we ended on a node (e.g., x), prefer its value
-                        if let Some(v) = Self::get_effective_param(&node.parameters, "value") { return Ok(v.clone()); }
-                        // No computed value; evaluate raw value formula if present
-                        if let Some(OverseerValue::Formula(formula_expr)) = node.parameters.get("value") {
-                            let mut p = anc_path.to_vec();
-                            p.extend(path.iter().cloned());
-                            let child_ctx = EvaluationContext::new_with_current(node, p, context.document_root);
-                            return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                        }
-                        // Or last segment as parameter on that final node
-                        if let Some(last) = path.last() {
-                            if let Some(v) = Self::get_effective_param(&node.parameters, last) { return Ok(v.clone()); }
-                            // If raw parameter exists as a Formula, evaluate it on-demand at this node
-                            if let Some(OverseerValue::Formula(formula_expr)) = node.parameters.get(last) {
-                                let mut p = anc_path.to_vec();
-                                p.extend(path.iter().cloned());
-                                let child_ctx = EvaluationContext::new_with_current(node, p, context.document_root);
-                                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                            }
-                        }
+                        // If we ended on a node (e.g., x), return its effective value (supports fallback)
+                        let mut p = anc_path.to_vec();
+                        p.extend(path.iter().cloned());
+                        return FormulaEvaluator::get_effective_value_for_node(node, &p, context.document_root);
                     }
                 }
                 end -= 1;
+            }
+            // Extra root-level fallback: if first segment matches a top-level node, start from there
+            if let Some(first) = path.first() {
+                if let Some(mut node) = context.document_root.iter().find(|n| &n.name == first) {
+                    if path.len() == 1 {
+                        return FormulaEvaluator::get_effective_value_for_node(node, &[node.name.clone()], context.document_root);
+                    }
+                    let mut p = vec![node.name.clone()];
+                    for (i, seg) in path.iter().enumerate().skip(1) {
+                        if let Some(next) = node.get_accessible_children().into_iter().find(|c| &c.name == seg) {
+                            p.push(next.name.clone());
+                            node = next;
+                        } else {
+                            if i == path.len() - 1 {
+                                if let Some(v) = Self::get_effective_param(&node.parameters, seg) { return Ok(v.clone()); }
+                                if let Some(OverseerValue::Formula(formula_expr)) = node.parameters.get(seg) {
+                                    let child_ctx = EvaluationContext::new_with_current(node, p, context.document_root);
+                                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    // Ended on a node; return its effective value
+                    return FormulaEvaluator::get_effective_value_for_node(node, &p, context.document_root);
+                }
             }
             return Err(OverseerError::FormulaError(format!("Path not found: {}", path.join("/"))));
         }
@@ -877,28 +890,13 @@ impl FormulaEvaluator {
             return Ok(val.clone());
         }
         if let Some(child) = current.get_accessible_children().into_iter().find(|c| &c.name == last) {
-            if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
-                if let OverseerValue::Formula(formula_expr) = v {
-                    let mut p = ancestor_segments.to_vec();
-                    // include any traversed segments leading to 'current'
-                    if !remaining.is_empty() {
-                        p.extend(remaining[..remaining.len()-1].iter().cloned());
-                    }
-                    p.push(child.name.clone());
-                    let child_ctx = EvaluationContext::new_with_current(child, p, context.document_root);
-                    return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-                }
-                return Ok(v.clone());
+            // Return the child's effective value (supports fallback)
+            let mut p = ancestor_segments.to_vec();
+            if !remaining.is_empty() {
+                p.extend(remaining[..remaining.len()-1].iter().cloned());
             }
-            if let Some(OverseerValue::Formula(formula_expr)) = child.parameters.get("value") {
-                let mut p = ancestor_segments.to_vec();
-                if !remaining.is_empty() {
-                    p.extend(remaining[..remaining.len()-1].iter().cloned());
-                }
-                p.push(child.name.clone());
-                let child_ctx = EvaluationContext::new_with_current(child, p, context.document_root);
-                return FormulaEvaluator::evaluate_formula(formula_expr, &child_ctx);
-            }
+            p.push(child.name.clone());
+            return FormulaEvaluator::get_effective_value_for_node(child, &p, context.document_root);
         }
 
         // Fallback: search upwards from ancestor for a descendant with this name
@@ -1296,6 +1294,67 @@ impl FormulaEvaluator {
                     Err(OverseerError::FormulaError("days_since: unable to parse timestamp/date".to_string()))
                 }
             }
+            // same_day(a, b): true if both timestamps/dates fall on the same calendar day (local time for timestamps)
+            "same_day" => {
+                if args.len() != 2 {
+                    return Err(OverseerError::FormulaError("same_day(a, b) takes exactly 2 arguments".to_string()));
+                }
+                let a = Self::evaluate_expression(&args[0], context)?;
+                let b = Self::evaluate_expression(&args[1], context)?;
+                // Helper: parse date or timestamp to NaiveDate using local time for timestamps
+                fn to_naive_date(v: &OverseerValue) -> Option<chrono::NaiveDate> {
+                    use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, Utc};
+                    match v {
+                        OverseerValue::Date(d) => NaiveDate::parse_from_str(d, "%Y-%m-%d").ok(),
+                        OverseerValue::Timestamp(ts) | OverseerValue::String(ts) => {
+                            let txt = ts.trim();
+                            // 1) RFC3339 (timezone-aware)
+                            if let Ok(dt) = DateTime::parse_from_rfc3339(txt) {
+                                let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
+                                return Some(local_dt.date_naive());
+                            }
+                            // 2) Allow space instead of 'T' (optionally with trailing Z)
+                            {
+                                let mut patched = txt.replace('T', " ");
+                                let had_z = patched.ends_with('Z');
+                                if had_z { patched = patched.trim_end_matches('Z').trim_end().to_string(); }
+                                if let Ok(ndt) = NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S%.f") {
+                                    let dt = chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc);
+                                    let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
+                                    return Some(local_dt.date_naive());
+                                }
+                                if let Ok(ndt) = NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S") {
+                                    let dt = chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc);
+                                    let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
+                                    return Some(local_dt.date_naive());
+                                }
+                            }
+                            // 3) No timezone with 'T': treat as UTC
+                            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(txt, "%Y-%m-%dT%H:%M:%S%.f") {
+                                let dt = chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc);
+                                let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
+                                return Some(local_dt.date_naive());
+                            }
+                            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(txt, "%Y-%m-%dT%H:%M:%S") {
+                                let dt = chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc);
+                                let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
+                                return Some(local_dt.date_naive());
+                            }
+                            // 4) Date-only
+                            if let Ok(nd) = chrono::NaiveDate::parse_from_str(txt, "%Y-%m-%d") {
+                                return Some(nd);
+                            }
+                            None
+                        }
+                        _ => None,
+                    }
+                }
+                if let (Some(da), Some(db)) = (to_naive_date(&a), to_naive_date(&b)) {
+                    Ok(OverseerValue::Boolean(da == db))
+                } else {
+                    Err(OverseerError::FormulaError("same_day: unable to parse arguments as date/timestamp".to_string()))
+                }
+            }
             _ => Err(OverseerError::FormulaError(format!("Unknown function: {}", name))),
         }
     }
@@ -1412,9 +1471,10 @@ impl FormulaEvaluator {
     fn find_value_by_name_deep(node: &OverseerNode, name: &str) -> Option<OverseerValue> {
         for child in &node.children {
             if child.name == name {
-                if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
-                    return Some(v.clone());
-                }
+                // Prefer computed/effective value if present
+                if let Some(v) = Self::get_effective_param(&child.parameters, "value") { return Some(v.clone()); }
+                // If value is Null and a fallback exists, try literal fallback here (formulas evaluated elsewhere)
+                if let Some(fb) = child.parameters.get("_computed_fallback") { return Some(fb.clone()); }
             }
             if let Some(v) = Self::find_value_by_name_deep(child, name) {
                 return Some(v);
@@ -1924,32 +1984,43 @@ impl FormulaEvaluator {
                         let proj = &call.args[0];
                         let mut total: f64 = 0.0;
                         for item in &list {
-                            let v_res = match item {
-                                ListItem::Node(n) => {
-                                    // Evaluate expression with current node = item
-                                    let ctx = EvaluationContext::new_with_current_and_parent(
-                                        *n,
-                                        Self::eval_expr_to_node(base, context),
-                                        {
-                                            // Best-effort path: start from current path, append base and item names
-                                            let mut p = context.node_path.clone();
-                                            // Append base name if resolvable
-                                            if let Some(bn) = Self::eval_expr_to_node(base, context) { p.push(bn.name.clone()); }
-                                            p.push(n.name.clone());
-                                            p
-                                        },
-                                        context.document_root,
-                                    );
-                                    Self::evaluate_expression(proj, &ctx)
-                                }
-                                ListItem::Value(val) => {
-                                    // Bind x to the value and evaluate
-                                    let mut ctx = context.clone();
-                                    ctx = ctx.with_var("x", BoundValue::Value(val.clone()));
-                                    Self::evaluate_expression(proj, &ctx)
+                            // If projection is a lambda, evaluate it with the item bound; otherwise, preserve existing behavior
+                            let v_res = match proj {
+                                FormulaExpression::Lambda { .. } => match item {
+                                    ListItem::Node(n) => Self::eval_lambda(proj, None, Some(*n), None, context),
+                                    ListItem::Value(val) => Self::eval_lambda(proj, None, None, Some(val.clone()), context),
+                                },
+                                _ => match item {
+                                    ListItem::Node(n) => {
+                                        // Evaluate expression with current node = item
+                                        let ctx = EvaluationContext::new_with_current_and_parent(
+                                            *n,
+                                            Self::eval_expr_to_node(base, context),
+                                            {
+                                                // Best-effort path: start from current path, append base and item names
+                                                let mut p = context.node_path.clone();
+                                                // Append base name if resolvable
+                                                if let Some(bn) = Self::eval_expr_to_node(base, context) { p.push(bn.name.clone()); }
+                                                p.push(n.name.clone());
+                                                p
+                                            },
+                                            context.document_root,
+                                        );
+                                        Self::evaluate_expression(proj, &ctx)
+                                    }
+                                    ListItem::Value(val) => {
+                                        // Bind x to the value and evaluate
+                                        let mut ctx = context.clone();
+                                        ctx = ctx.with_var("x", BoundValue::Value(val.clone()));
+                                        Self::evaluate_expression(proj, &ctx)
+                                    }
                                 }
                             };
-                            if let Ok(v) = v_res { if let Ok(n) = Self::value_to_number(&v) { total += n; } }
+                            if let Ok(v) = v_res {
+                                if let Ok(n) = Self::value_to_number(&v) {
+                                    if n.is_finite() { total += n; }
+                                }
+                            }
                         }
                         let res = Self::normalize_number(total);
                         debug_evaluator!("[EVAL] sum(arg) => {:?}", res);
@@ -1957,7 +2028,11 @@ impl FormulaEvaluator {
                     } else {
                         // sum() without args: sum numeric items directly
                         let mut total: f64 = 0.0;
-                        for item in &list { if let Some(num) = Self::item_to_number(item) { total += num; } }
+                        for item in &list {
+                            if let Some(num) = Self::item_to_number(item) {
+                                if num.is_finite() { total += num; }
+                            }
+                        }
                         let res = Self::normalize_number(total);
                         debug_evaluator!("[EVAL] sum => {:?}", res);
                         return Ok(res);
@@ -2008,12 +2083,61 @@ impl FormulaEvaluator {
                     debug_evaluator!("[EVAL] min => {:?}", res);
                     return Ok(res);
                 }
-                "avg" => {
-                    let mut sum: f64 = 0.0; let mut cnt: usize = 0;
-                    for item in &list { if let Some(num) = Self::item_to_number(item) { sum += num; cnt += 1; } }
-                    let res = if cnt == 0 { OverseerValue::String("null".to_string()) } else { OverseerValue::Float(sum / cnt as f64) };
-                    debug_evaluator!("[EVAL] avg => {:?}", res);
-                    return Ok(res);
+                "avg" | "average" => {
+                    // Support optional projection arg: avg(expr)
+                    if let Some(proj) = call.args.get(0) {
+                        let mut sum: f64 = 0.0; let mut cnt: usize = 0;
+                        for item in &list {
+                            // If projection is a lambda, evaluate it with the item bound; otherwise, preserve existing behavior
+                            let v_res = match proj {
+                                FormulaExpression::Lambda { .. } => match item {
+                                    ListItem::Node(n) => Self::eval_lambda(proj, None, Some(*n), None, context),
+                                    ListItem::Value(val) => Self::eval_lambda(proj, None, None, Some(val.clone()), context),
+                                },
+                                _ => match item {
+                                    ListItem::Node(n) => {
+                                        // Evaluate expression with current node = item
+                                        let ctx = EvaluationContext::new_with_current_and_parent(
+                                            *n,
+                                            Self::eval_expr_to_node(base, context),
+                                            {
+                                                let mut p = context.node_path.clone();
+                                                if let Some(bn) = Self::eval_expr_to_node(base, context) { p.push(bn.name.clone()); }
+                                                p.push(n.name.clone());
+                                                p
+                                            },
+                                            context.document_root,
+                                        );
+                                        Self::evaluate_expression(proj, &ctx)
+                                    }
+                                    ListItem::Value(val) => {
+                                        let mut ctx = context.clone();
+                                        ctx = ctx.with_var("x", BoundValue::Value(val.clone()));
+                                        Self::evaluate_expression(proj, &ctx)
+                                    }
+                                }
+                            };
+                            if let Ok(v) = v_res {
+                                if let Ok(n) = Self::value_to_number(&v) {
+                                    if n.is_finite() { sum += n; cnt += 1; }
+                                }
+                            }
+                        }
+                        let res = if cnt == 0 { OverseerValue::String("null".to_string()) } else { OverseerValue::Float(sum / cnt as f64) };
+                        debug_evaluator!("[EVAL] avg(arg) => {:?}", res);
+                        return Ok(res);
+                    } else {
+                        // No-arg: average numeric items directly
+                        let mut sum: f64 = 0.0; let mut cnt: usize = 0;
+                        for item in &list {
+                            if let Some(num) = Self::item_to_number(item) {
+                                if num.is_finite() { sum += num; cnt += 1; }
+                            }
+                        }
+                        let res = if cnt == 0 { OverseerValue::String("null".to_string()) } else { OverseerValue::Float(sum / cnt as f64) };
+                        debug_evaluator!("[EVAL] avg => {:?}", res);
+                        return Ok(res);
+                    }
                 }
                 "first" => {
                     // Returns the first item in the list as a value; if Node, returns its effective value
@@ -2087,9 +2211,9 @@ impl FormulaEvaluator {
                     while end > 0 {
                         let parent_end = end - 1;
                         if parent_end == 0 {
-                            // root has no parent to search siblings under; but we can still check root's children directly
-                            if let Some(root_node) = FormulaEvaluator::resolve_path_to_node(&context.node_path[..end], context.document_root) {
-                                if let Some(found) = root_node.get_accessible_children().into_iter().find(|c| &c.name == name) { return Some(found); }
+                            // At top-level: search among document root nodes (siblings of current)
+                            if let Some(found) = context.document_root.iter().find(|n| &n.name == name) {
+                                return Some(found);
                             }
                             break;
                         }
@@ -2833,5 +2957,78 @@ mod tests {
             Some(OverseerValue::String(s)) => assert_eq!(s, "hello"),
             other => panic!("unexpected value: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_top_level_reference_and_path_multiplication() {
+        // Verifies: int a1 = $(b1*D/c1) resolves at the document root
+        let input = r#"
+        div Root {
+            int a1 = $(b1*D/c1)
+            int b1 = 2
+            div D { int c1 = 10 }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let a1 = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "a1")
+            .unwrap();
+        let v = a1.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(v, OverseerValue::Integer(20));
+    }
+
+    #[test]
+    fn test_mealcalc_calories_fallback_uses_nested_path() {
+        // Minimal repro of weight_tracker MealCalc scenario
+        let input = r#"
+        div MealCalc {
+            float calories (fallback=$(item*per_item/cal)) = null
+            int item = 1
+            div per_item {
+                int cal (fallback=$(weight)) = null
+                float weight = 100
+            }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let meal = &nodes[0];
+        let calories = meal
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "calories")
+            .unwrap();
+        // Effective value should come from fallback: item(1) * per_item/cal(100) = 100
+        let eff = calories
+            .parameters
+            .get("_computed_value")
+            .or_else(|| calories.parameters.get("_computed_fallback"))
+            .cloned()
+            .unwrap();
+        match eff {
+            OverseerValue::Integer(i) => assert_eq!(i, 100),
+            OverseerValue::Float(f) => assert!((f - 100.0).abs() < 1e-9),
+            other => panic!("unexpected value for calories: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_top_level_roots_field_and_path_resolution() {
+        // Reproduce examples/basic/fallback_formulas.os top-level case (no enclosing container)
+        let input = r#"
+        int a1 = $(b1*D/c1)
+        int b1 = 2
+        div D { int c1 = 10 }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        // Find the 'a1' node among top-level roots
+        let a1 = nodes.iter().find(|n| n.name == "a1").expect("a1 not found at root");
+        let v = a1.parameters.get("_computed_value").cloned().unwrap();
+        assert_eq!(v, OverseerValue::Integer(20));
     }
 }

@@ -1199,7 +1199,7 @@ unsafe fn recursively_evaluate_node_formulas(
         .parameters
         .iter()
         .filter_map(|(k, v)| match v {
-            OverseerValue::Formula(s) => Some((k.clone(), s.clone())),
+            OverseerValue::Formula(s) if k != "fallback" => Some((k.clone(), s.clone())),
             _ => None,
         })
         .collect();

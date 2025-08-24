@@ -2035,6 +2035,22 @@ impl ActionExecutor {
                 // Recurse into children overrides
                 if !ov.children.is_empty() {
                     Self::apply_overrides_evaluated(child, &ov.children, owner_path, snapshot)?;
+                    // If any descendant was explicitly overridden, ensure the container child itself is marked
+                    if Self::has_explicit_override_descendant(child) {
+                        child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                        child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
+                        // Track at parent level so serializers can include this container
+                        let entry = target
+                            .parameters
+                            .entry("_explicit_overrides".to_string())
+                            .or_insert(OverseerValue::String(String::new()));
+                        if let OverseerValue::String(s) = entry {
+                            if !s.split(',').any(|n| n == child.name) {
+                                if !s.is_empty() { s.push(','); }
+                                s.push_str(&child.name);
+                            }
+                        }
+                    }
                 }
             } else {
                 // Create new child with inferred type from override/value
@@ -2105,6 +2121,17 @@ impl ActionExecutor {
             }
         }
         Ok(())
+    }
+
+    // Detect whether any descendant node in this subtree carries an explicit override marker
+    fn has_explicit_override_descendant(node: &OverseerNode) -> bool {
+        for ch in &node.children {
+            if matches!(ch.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true))) {
+                return true;
+            }
+            if Self::has_explicit_override_descendant(ch) { return true; }
+        }
+        false
     }
 
     fn evaluate_in_context(
@@ -3071,6 +3098,64 @@ button Add { on click { append (template="<T>", list="/L") { - a = "hello" - b =
         assert!(s.contains("- {"));
         assert!(s.contains("- a = \"hello\""));
         assert!(s.contains("- b = 42"));
+    }
+
+    #[test]
+    fn append_with_nested_container_overrides_preserved_on_save() {
+        // Mirrors the weight_tracker scenario: list of MealRecord with a nested per_item container.
+        // Appending an item with overrides under per_item should preserve the per_item container in serialization.
+        let input = r#"
+div MealRecord {
+    string description = ""
+    int amount = 1
+    float calories = $(amount*per_item/calories)
+    div per_item { float calories = 100 float weight = 50 }
+}
+list Intake (entry=<MealRecord>) { }
+button Add { on click {
+    append (list="/Intake", template="<MealRecord>") {
+        - description = "coffee"
+        - amount = 2
+        - per_item {
+            - calories = 120
+            - weight = 60
+        }
+    }
+} }
+"#;
+        let mut nodes = parse_document(input).unwrap().1;
+        // Click Add
+        assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Add".into()], "click").is_ok());
+        // Verify structure in memory
+        let intake = nodes.iter().find(|n| n.name=="Intake").unwrap();
+        assert_eq!(intake.children.len(), 1);
+        let item = &intake.children[0];
+        // Ensure per_item container exists and has overrides
+        let per_item = item.children.iter().find(|c| c.name=="per_item").expect("per_item missing");
+        let cal = per_item.children.iter().find(|c| c.name=="calories").unwrap();
+        assert_eq!(cal.parameters.get("value"), Some(&OverseerValue::Integer(120)));
+        let wt = per_item.children.iter().find(|c| c.name=="weight").unwrap();
+        assert_eq!(wt.parameters.get("value"), Some(&OverseerValue::Integer(60)));
+        // Serialize and check that the per_item block is emitted with nested overrides
+        let s = OverseerFileHandler::serialize_nodes(&nodes).unwrap();
+    assert!(s.contains("list Intake (entry=<MealRecord>)"), "{}", s);
+    // Must have a nested per_item override block, not flattened fields
+    assert!(s.contains("per_item {"), "expected per_item block in serialization\n{}", s);
+    // Accept either concise "- name = value" overrides or typed field lines inside per_item
+    let has_calories = s.contains("- calories = 120") || s.contains("float calories = 120");
+    let has_weight = s.contains("- weight = 60") || s.contains("float weight = 60");
+    assert!(has_calories, "missing nested calories override/value in per_item\n{}", s);
+    assert!(has_weight, "missing nested weight override/value in per_item\n{}", s);
+        // Round-trip parse and ensure structure remains
+        let (_rem, mut nodes2) = parse_document(&s).unwrap();
+        crate::resolver::resolve_document(&mut nodes2);
+        let intake2 = nodes2.iter().find(|n| n.name=="Intake").unwrap();
+        let item2 = &intake2.children[0];
+        let per_item2 = item2.children.iter().find(|c| c.name=="per_item").expect("per_item missing after roundtrip");
+        let cal2 = per_item2.children.iter().find(|c| c.name=="calories").unwrap();
+        assert_eq!(cal2.parameters.get("value"), Some(&OverseerValue::Integer(120)));
+        let wt2 = per_item2.children.iter().find(|c| c.name=="weight").unwrap();
+        assert_eq!(wt2.parameters.get("value"), Some(&OverseerValue::Integer(60)));
     }
 }
 

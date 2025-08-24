@@ -180,7 +180,7 @@ impl DependencyGraph {
             }
         }
 
-        // Analyze parameters for formula dependencies
+    // Analyze parameters for formula dependencies
         for (param_name, value) in &node.parameters {
             let param_path = format!("{}/{}", node_path, param_name);
             
@@ -196,6 +196,21 @@ impl DependencyGraph {
                     self.add_dependency(param_path.clone(), dep);
                 }
             }
+        }
+
+        // Also analyze fallback formulas, which affect a node's effective value when value is Null
+        if let Some(OverseerValue::Formula(formula)) = node.parameters.get("fallback") {
+            let param_path = format!("{}/{}", node_path, "fallback");
+            debug_dep!("🔍   Found fallback formula in '{}': '{}'", param_path, formula);
+            let dependencies = self.extract_formula_dependencies(formula, &node_path)?;
+            debug_dep!("🔍   Fallback dependencies for '{}': {:?}", param_path, dependencies);
+            for dep in dependencies {
+                debug_dep!("🔍   Adding dependency: '{}' depends on '{}'", param_path, dep);
+                self.add_dependency(param_path.clone(), dep);
+            }
+            // Additionally, the node's value depends on its fallback when value is Null; map value dependency to fallback
+            let value_param = format!("{}/{}", node_path, "value");
+            self.add_dependency(value_param, param_path);
         }
 
         // Recursively analyze children
