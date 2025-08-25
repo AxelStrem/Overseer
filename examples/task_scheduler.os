@@ -101,7 +101,7 @@ tab Tasks {
     }
 
     div State (hidden=true) {
-        int next_id = 99
+        int next_id = 109
     }
     div NewTask (layout="horizontal", padding=6, spacing=6) {
         string description (label="Task", margin=0) = ""
@@ -227,26 +227,6 @@ tab Tasks {
             - priority = 6
             - priority_gain = 0
             - task_created = "2025-08-20T00:00:00+00:00"
-        }
-        - {
-            - id = 71
-            - rid = 9
-            - description = "Work on project: Stream"
-            - comment = ""
-            - points = 5
-            - priority = 8
-            - priority_gain = 0
-            - task_created = "2025-08-21T07:25:06.483164900+00:00"
-        }
-        - {
-            - id = 80
-            - rid = 2
-            - description = "Back up photos"
-            - comment = "External drive"
-            - points = 2
-            - priority = 10
-            - priority_gain = 2
-            - task_created = "2025-08-22T20:27:30.827047100+00:00"
         }
         - {
             - id = 87
@@ -602,6 +582,36 @@ tab Tasks {
             - points = 2
             - completed_at = "2025-08-24T11:55:02.522538500+00:00"
         }
+        - {
+            - description = "Leetcode practice"
+            - points = 1
+            - completed_at = "2025-08-25T06:19:25.148786600+00:00"
+        }
+        - {
+            - description = "Guitar practice"
+            - points = 2
+            - completed_at = "2025-08-25T06:19:35.058224300+00:00"
+        }
+        - {
+            - description = "Morning routine"
+            - points = 1
+            - completed_at = "2025-08-25T07:53:21.652089600+00:00"
+        }
+        - {
+            - description = "Work on project: Stream"
+            - points = 5
+            - completed_at = "2025-08-25T07:53:25.849114400+00:00"
+        }
+        - {
+            - description = "Drum practice"
+            - points = 2
+            - completed_at = "2025-08-25T07:53:48.608931400+00:00"
+        }
+        - {
+            - description = "Motoric practice"
+            - points = 1
+            - completed_at = "2025-08-25T07:53:51.874616700+00:00"
+        }
     }
     list Recurring (entry=<RecurringTask>, key="rid", layout="vertical", spacing=8) {
         - {
@@ -626,7 +636,7 @@ tab Tasks {
             - mode = "interval"
             - interval = "2d"
             - pause_when_active = false
-            - last_triggered_at = "2025-08-22T20:27:30.827047100+00:00"
+            - last_triggered_at = "2025-08-24T20:27:30.827047100+00:00"
         }
         - {
             - rid = 3
@@ -638,7 +648,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-24T00:00:00+00:00"
+            - last_triggered_at = "2025-08-25T00:00:00+00:00"
         }
         - {
             - rid = 4
@@ -662,7 +672,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = false
             - active = false
-            - last_triggered_at = "2025-08-23T20:27:36.310847300+00:00"
+            - last_triggered_at = "2025-08-24T20:27:36.310847300+00:00"
         }
         - {
             - rid = 6
@@ -674,7 +684,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = false
             - active = false
-            - last_triggered_at = "2025-08-23T20:27:37.749113200+00:00"
+            - last_triggered_at = "2025-08-24T20:27:37.749113200+00:00"
         }
         - {
             - rid = 7
@@ -686,7 +696,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = false
             - active = false
-            - last_triggered_at = "2025-08-23T20:27:39.282424500+00:00"
+            - last_triggered_at = "2025-08-24T20:27:39.282424500+00:00"
         }
         - {
             - rid = 8
@@ -709,7 +719,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-21T07:25:06.483164900+00:00"
+            - last_triggered_at = "2025-08-25T07:25:06.483164900+00:00"
         }
         - {
             - rid = 10
@@ -800,7 +810,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-24T00:00:00+00:00"
+            - last_triggered_at = "2025-08-25T00:00:00+00:00"
         }
         - {
             - rid = 18
@@ -824,7 +834,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-24T00:00:00+00:00"
+            - last_triggered_at = "2025-08-25T00:00:00+00:00"
         }
     }
 }
