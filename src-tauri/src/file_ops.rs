@@ -137,11 +137,11 @@ impl FileOperations {
                         node.parameters.get("_from_template"),
                         Some(OverseerValue::Boolean(true))
                     );
-                if let Some(value) = node.parameters.get("value") {
+        if let Some(value) = node.parameters.get("value") {
                     // Only emit as simple value when NOT a template instance (true primitive lists)
                     if !is_template_instance {
-                        output.push_str("- ");
-                        output.push_str(&Self::serialize_value(value));
+            output.push_str("- ");
+            output.push_str(&Self::serialize_value_with_node(node, value));
                         output.push('\n');
                         return Ok(());
                     }
@@ -242,7 +242,7 @@ impl FileOperations {
                                     "{}    - {} = {}\n",
                                     indent,
                                     n,
-                                    Self::serialize_value(v)
+                                    Self::serialize_value_with_node(child, v)
                                 ));
                             }
                             continue; // Skip normal emission of the transparent wrapper
@@ -277,7 +277,7 @@ impl FileOperations {
                                     "{}    - {} = {}\n",
                                     indent,
                                     child.name,
-                                    Self::serialize_value(val)
+                                    Self::serialize_value_with_node(child, val)
                                 ));
                                 continue;
                             }
@@ -296,7 +296,7 @@ impl FileOperations {
                         output.push_str("- ");
                         output.push_str(&node.name);
                         output.push_str(" = ");
-                        output.push_str(&Self::serialize_value(value));
+                        output.push_str(&Self::serialize_value_with_node(node, value));
                         output.push('\n');
                         return Ok(());
                     }
@@ -413,10 +413,10 @@ impl FileOperations {
                         match v {
                             OverseerValue::String(s) => s.clone(), // Don't quote type names
                             OverseerValue::Template(t) => format!("<{}>", t),
-                            _ => Self::serialize_value(&v),
+                            _ => Self::serialize_value_with_node(node, &v),
                         }
                     } else {
-                        Self::serialize_value(&v)
+                        Self::serialize_value_with_node(node, &v)
                     };
                     format!("{}={}", k, value_str)
                 })
@@ -427,7 +427,7 @@ impl FileOperations {
 
         // Handle body (value assignment, block, or nothing)
         if let Some(value) = node.parameters.get("value") {
-            output.push_str(&format!(" = {}\n", Self::serialize_value(value)));
+            output.push_str(&format!(" = {}\n", Self::serialize_value_with_node(node, value)));
         } else if node.children.is_empty() {
             output.push('\n');
         } else {
@@ -514,12 +514,12 @@ impl FileOperations {
                     let mut desc_overrides: Vec<(&str, &OverseerValue)> = Vec::new();
                     collect_descendant_value_overrides(child, &explicit_names, &mut desc_overrides);
                     if !desc_overrides.is_empty() {
-                        for (n, v) in desc_overrides {
+            for (n, v) in desc_overrides {
                             output.push_str(&format!(
                                 "{}    - {} = {}\n",
                                 indent,
                                 n,
-                                Self::serialize_value(v)
+                Self::serialize_value_with_node(child, v)
                             ));
                         }
                         continue;
@@ -562,7 +562,7 @@ impl FileOperations {
                             "{}    - {} = {}\n",
                             indent,
                             child.name,
-                            Self::serialize_value(val)
+                            Self::serialize_value_with_node(child, val)
                         ));
                         continue;
                     }
@@ -666,6 +666,34 @@ impl FileOperations {
                 }
             },
         }
+    }
+
+    // Variant of serialize_value that can look at the node's parameters to apply
+    // precision-aware persistence for dates/timestamps (e.g., precision="day").
+    fn serialize_value_with_node(node: &OverseerNode, value: &OverseerValue) -> String {
+        // If this node indicates day precision, collapse Timestamp values to date-only.
+        // We check both the node's own precision param and the common convention of field name 'date'.
+        let day_precision = match node.parameters.get("precision") {
+            Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("day") || s.eq_ignore_ascii_case("days"),
+            _ => false,
+        };
+
+        if day_precision {
+            match value {
+                OverseerValue::Timestamp(ts) => {
+                    // Best-effort: extract YYYY-MM-DD from RFC3339; fall back to ts
+                    let date_only = ts.split('T').next().unwrap_or(ts);
+                    return format!("\"{}\"", date_only.to_string());
+                }
+                OverseerValue::Date(d) => {
+                    // Already date-only; emit as-is quoted
+                    return format!("\"{}\"", d);
+                }
+                _ => { /* fall through */ }
+            }
+        }
+        // Default behavior
+        Self::serialize_value(value)
     }
 }
 

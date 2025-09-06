@@ -101,7 +101,7 @@ tab Tasks {
     }
 
     div State (hidden=true) {
-        int next_id = 109
+        int next_id = 133
     }
     div NewTask (layout="horizontal", padding=6, spacing=6) {
         string description (label="Task", margin=0) = ""
@@ -196,16 +196,6 @@ tab Tasks {
             - task_created = "2025-08-16T07:25:06.479807300+00:00"
         }
         - {
-            - id = 20
-            - rid = 11
-            - description = "Work on project: Godot Line3D"
-            - comment = ""
-            - points = 5
-            - priority = 8
-            - priority_gain = 0
-            - task_created = "2025-08-16T07:25:06.487650500+00:00"
-        }
-        - {
             - id = 22
             - description = "Verify the account"
             - comment = "(exchange)"
@@ -217,16 +207,6 @@ tab Tasks {
             - description = "Practice and record some vocals"
             - priority = 10
             - task_created = "2025-08-16T18:26:00.088930300+00:00"
-        }
-        - {
-            - id = 54
-            - rid = 18
-            - description = "Take care of the cat"
-            - comment = "toilet, food, water"
-            - points = 3
-            - priority = 6
-            - priority_gain = 0
-            - task_created = "2025-08-20T00:00:00+00:00"
         }
         - {
             - id = 87
@@ -259,16 +239,6 @@ tab Tasks {
             - task_created = "2025-08-23T20:27:36.310847300+00:00"
         }
         - {
-            - id = 94
-            - rid = 7
-            - description = "Guitar practice"
-            - comment = "basic riffs"
-            - points = 2
-            - priority = 3
-            - priority_gain = 0
-            - task_created = "2025-08-23T20:27:39.282424500+00:00"
-        }
-        - {
             - id = 95
             - rid = 10
             - description = "Work on project: Overseer"
@@ -279,11 +249,55 @@ tab Tasks {
             - task_created = "2025-08-23T20:27:40.082313100+00:00"
         }
         - {
-            - id = 98
-            - description = "Выписка из банка"
+            - id = 120
+            - rid = 9
+            - description = "Work on project: Stream"
+            - comment = ""
             - points = 5
-            - priority = 15
-            - task_created = "2025-08-24T11:55:42.561361500+00:00"
+            - priority = 8
+            - priority_gain = 0
+            - task_created = "2025-08-26T07:25:06.483164900+00:00"
+        }
+        - {
+            - id = 123
+            - rid = 11
+            - description = "Work on project: Godot Line3D"
+            - comment = ""
+            - points = 5
+            - priority = 8
+            - priority_gain = 0
+            - task_created = "2025-08-26T07:25:06.488520700+00:00"
+        }
+        - {
+            - id = 128
+            - comment = "Выкинуть лишнюю одежду"
+            - points = 10
+            - priority = 8
+            - task_created = "2025-08-27T07:29:33.689915400+00:00"
+        }
+        - {
+            - id = 129
+            - description = "Отчистить плесень в ванной"
+            - points = 8
+            - priority = 8
+            - task_created = "2025-08-27T07:29:55.527988800+00:00"
+        }
+        - {
+            - id = 130
+            - rid = 1
+            - description = "Wash clothes"
+            - comment = "Laundry day"
+            - points = 1
+            - priority = 0
+            - priority_gain = 1
+            - task_created = "2025-08-27T10:48:25.886134500+00:00"
+        }
+        - {
+            - id = 131
+            - description = "купить штаны и рубашку/футболку?"
+            - points = 5
+            - priority = 5
+            - task_created = "2025-08-27T16:43:28.680831100+00:00"
         }
     }
     list Completed (entry=<CompletedRecord>, layout="vertical", spacing=4) {
@@ -612,6 +626,51 @@ tab Tasks {
             - points = 1
             - completed_at = "2025-08-25T07:53:51.874616700+00:00"
         }
+        - {
+            - description = "Выписка из банка"
+            - points = 5
+            - completed_at = "2025-08-26T05:41:55.555367700+00:00"
+        }
+        - {
+            - description = "Leetcode practice"
+            - points = 1
+            - completed_at = "2025-08-26T05:42:21.329740600+00:00"
+        }
+        - {
+            - description = "Morning routine"
+            - points = 1
+            - completed_at = "2025-08-27T04:11:05.445386+00:00"
+        }
+        - {
+            - description = "Work on project: Godot Line3D"
+            - points = 5
+            - completed_at = "2025-08-27T04:11:07.635431300+00:00"
+        }
+        - {
+            - description = "Take care of the cat"
+            - points = 3
+            - completed_at = "2025-08-27T04:11:53.467630100+00:00"
+        }
+        - {
+            - description = "Drum practice"
+            - points = 2
+            - completed_at = "2025-08-27T16:43:38.850073900+00:00"
+        }
+        - {
+            - description = "Leetcode practice"
+            - points = 1
+            - completed_at = "2025-08-27T16:43:43.299112200+00:00"
+        }
+        - {
+            - description = "Motoric practice"
+            - points = 1
+            - completed_at = "2025-08-27T16:43:46.796457600+00:00"
+        }
+        - {
+            - description = "Guitar practice"
+            - points = 2
+            - completed_at = "2025-08-27T16:43:50.220149700+00:00"
+        }
     }
     list Recurring (entry=<RecurringTask>, key="rid", layout="vertical", spacing=8) {
         - {
@@ -624,7 +683,7 @@ tab Tasks {
             - mode = "interval"
             - interval = "7d"
             - pause_when_active = true
-            - last_triggered_at = "2025-08-20T10:48:25.886134500+00:00"
+            - last_triggered_at = "2025-08-27T10:48:25.886134500+00:00"
         }
         - {
             - rid = 2
@@ -636,7 +695,7 @@ tab Tasks {
             - mode = "interval"
             - interval = "2d"
             - pause_when_active = false
-            - last_triggered_at = "2025-08-24T20:27:30.827047100+00:00"
+            - last_triggered_at = "2025-08-26T20:27:30.827047100+00:00"
         }
         - {
             - rid = 3
@@ -648,7 +707,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-25T00:00:00+00:00"
+            - last_triggered_at = "2025-08-27T00:00:00+00:00"
         }
         - {
             - rid = 4
@@ -672,7 +731,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = false
             - active = false
-            - last_triggered_at = "2025-08-24T20:27:36.310847300+00:00"
+            - last_triggered_at = "2025-08-26T20:27:36.310847300+00:00"
         }
         - {
             - rid = 6
@@ -684,7 +743,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = false
             - active = false
-            - last_triggered_at = "2025-08-24T20:27:37.749113200+00:00"
+            - last_triggered_at = "2025-08-26T20:27:37.749113200+00:00"
         }
         - {
             - rid = 7
@@ -696,7 +755,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = false
             - active = false
-            - last_triggered_at = "2025-08-24T20:27:39.282424500+00:00"
+            - last_triggered_at = "2025-08-26T20:27:39.282424500+00:00"
         }
         - {
             - rid = 8
@@ -719,7 +778,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-25T07:25:06.483164900+00:00"
+            - last_triggered_at = "2025-08-26T07:25:06.483164900+00:00"
         }
         - {
             - rid = 10
@@ -742,7 +801,8 @@ tab Tasks {
             - mode = "interval"
             - interval = "1d"
             - pause_when_active = true
-            - last_triggered_at = "2025-08-16T07:25:06.488520700+00:00"
+            - active = false
+            - last_triggered_at = "2025-08-26T07:25:06.488520700+00:00"
         }
         - {
             - rid = 12
@@ -810,7 +870,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-25T00:00:00+00:00"
+            - last_triggered_at = "2025-08-27T00:00:00+00:00"
         }
         - {
             - rid = 18
@@ -822,7 +882,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-20T00:00:00+00:00"
+            - last_triggered_at = "2025-08-27T00:00:00+00:00"
         }
         - {
             - rid = 19
@@ -834,7 +894,7 @@ tab Tasks {
             - interval = "1d"
             - pause_when_active = true
             - active = false
-            - last_triggered_at = "2025-08-25T00:00:00+00:00"
+            - last_triggered_at = "2025-08-27T00:00:00+00:00"
         }
     }
 }

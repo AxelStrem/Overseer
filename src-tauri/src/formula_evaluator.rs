@@ -1294,6 +1294,42 @@ impl FormulaEvaluator {
                     Err(OverseerError::FormulaError("days_since: unable to parse timestamp/date".to_string()))
                 }
             }
+            // date_add_days(x, n): add n days to a Date (YYYY-MM-DD) or Timestamp (RFC3339)
+            "date_add_days" => {
+                if args.len() != 2 {
+                    return Err(OverseerError::FormulaError("date_add_days(x, n) takes exactly 2 arguments".to_string()));
+                }
+                let val = Self::evaluate_expression(&args[0], context)?;
+                let days_val = Self::evaluate_expression(&args[1], context)?;
+                let n_days: i64 = match days_val {
+                    OverseerValue::Integer(i) => i,
+                    OverseerValue::Float(f) => f as i64,
+                    OverseerValue::String(ref s) => s.parse::<i64>().map_err(|_| OverseerError::FormulaError("date_add_days: n must be integer".to_string()))?,
+                    _ => return Err(OverseerError::FormulaError("date_add_days: n must be integer".to_string())),
+                };
+                match val {
+                    OverseerValue::Date(ref d) => {
+                        let nd = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                            .map_err(|_| OverseerError::FormulaError("date_add_days: invalid date".to_string()))?;
+                        let nd2 = nd + chrono::Duration::days(n_days);
+                        Ok(OverseerValue::Date(nd2.format("%Y-%m-%d").to_string()))
+                    }
+                    OverseerValue::Timestamp(ref ts) | OverseerValue::String(ref ts) => {
+                        // Try RFC3339
+                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                            let dt2 = dt + chrono::Duration::days(n_days);
+                            return Ok(OverseerValue::Timestamp(dt2.to_rfc3339()));
+                        }
+                        // Try date-only string
+                        if let Ok(nd) = chrono::NaiveDate::parse_from_str(ts, "%Y-%m-%d") {
+                            let nd2 = nd + chrono::Duration::days(n_days);
+                            return Ok(OverseerValue::Date(nd2.format("%Y-%m-%d").to_string()));
+                        }
+                        Err(OverseerError::FormulaError("date_add_days: unable to parse timestamp/date".to_string()))
+                    }
+                    _ => Err(OverseerError::FormulaError("date_add_days: unsupported argument type".to_string())),
+                }
+            }
             // same_day(a, b): true if both timestamps/dates fall on the same calendar day (local time for timestamps)
             "same_day" => {
                 if args.len() != 2 {
@@ -3030,5 +3066,28 @@ mod tests {
         let a1 = nodes.iter().find(|n| n.name == "a1").expect("a1 not found at root");
         let v = a1.parameters.get("_computed_value").cloned().unwrap();
         assert_eq!(v, OverseerValue::Integer(20));
+    }
+
+    #[test]
+    fn test_date_add_days_on_date_and_timestamp() {
+        let input = r#"
+        div Root {
+            date d1 = $(date_add_days("2024-08-10", 2))
+            timestamp t1 = $(date_add_days("2024-08-10T05:30:00Z", 1))
+            date d2 = $(date_add_days("2024-08-10", -10))
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        crate::resolver::resolve_document(&mut nodes);
+        let root = &nodes[0];
+        let d1 = root.get_accessible_children().into_iter().find(|c| c.name == "d1").unwrap();
+        let t1 = root.get_accessible_children().into_iter().find(|c| c.name == "t1").unwrap();
+        let d2 = root.get_accessible_children().into_iter().find(|c| c.name == "d2").unwrap();
+        assert_eq!(d1.parameters.get("_computed_value"), Some(&OverseerValue::Date("2024-08-12".to_string())));
+        match t1.parameters.get("_computed_value").cloned().unwrap() {
+            OverseerValue::Timestamp(s) => assert!(s.starts_with("2024-08-11T")),
+            other => panic!("unexpected: {:?}", other),
+        }
+        assert_eq!(d2.parameters.get("_computed_value"), Some(&OverseerValue::Date("2024-07-31".to_string())));
     }
 }

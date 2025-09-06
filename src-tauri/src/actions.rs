@@ -648,6 +648,106 @@ impl ActionExecutor {
             }
             "set" => {
                 let target = Self::require_string(&action.parameters, "path")?;
+                // New: support cloning entire nodes into the target node when specifying a source
+                // - fromList + keyField + keyValue [+ template?] -> find item by key and clone
+                // - or fromPath -> clone node at path
+                // Only applies when no explicit parameter was specified (i.e., path points to a node, not node.param)
+                let (segments, explicit_param, anchored) = Self::split_path_and_param(&target);
+                if explicit_param.is_none() && (action.parameters.contains_key("fromList") || action.parameters.contains_key("fromPath")) {
+                    // Use a snapshot for all reads to avoid &mut conflicts
+                    let snapshot = nodes.clone();
+                    // Resolve target indices using snapshot first
+                    let target_indices = match Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments) {
+                        Some(ix) => ix,
+                        None => {
+                            #[cfg(feature = "debug-resolver")] eprintln!("[ACTIONS] set(from*): Target not found: {} (owner_path={:?}, anchored={}, segments={:?})", target, owner_path, anchored, segments);
+                            return Err(OverseerError::ValidationError(format!("Target not found: {}", target)));
+                        }
+                    };
+
+                    // Determine source node to clone
+                    let source_node_opt: Option<OverseerNode> = if let Some(from_list_val) = action.parameters.get("fromList") {
+                        // fromList path + keyField + keyValue required
+                        let from_list_path = Self::evaluate_in_context(from_list_val, owner_path, &snapshot)?;
+                        let list_path_str = match from_list_path { OverseerValue::String(s) => s, other => return Err(OverseerError::ValidationError(format!("fromList must evaluate to string path, got {:?}", other))) };
+                        let key_field = match action.parameters.get("keyField") { Some(OverseerValue::String(s)) => s.clone(), _ => return Err(OverseerError::ValidationError("Missing keyField".to_string())) };
+                        let key_val_raw = action.parameters.get("keyValue").ok_or_else(|| OverseerError::ValidationError("Missing keyValue".to_string()))?.clone();
+                        let key_value = Self::evaluate_in_context(&key_val_raw, owner_path, &snapshot)?;
+                        let (list_segments, _exp, list_anchored) = Self::split_path_and_param(&list_path_str);
+                        let list_indices = match Self::resolve_target_indices(&snapshot, owner_path, list_anchored, &list_segments) {
+                            Some(ix) => ix,
+                            None => return Err(OverseerError::ValidationError(format!("List not found: {}", list_path_str)))
+                        };
+                        // Read via a temporary mutable clone of snapshot to get an owned node
+                        let list_node = {
+                            let mut snap2 = snapshot.clone();
+                            Self::get_node_mut_by_indices(&mut snap2, &list_indices)
+                                .map(|n| n.clone())
+                                .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path_str)))?
+                        };
+                        if list_node.node_type != "list" { return Err(OverseerError::ValidationError("set(fromList): target is not a list".to_string())); }
+            // Find the first item matching keyField==keyValue
+                        let mut found: Option<OverseerNode> = None;
+                        'search: for it in &list_node.children {
+                            if let Some(v) = Self::get_field_value(it, &key_field) {
+                if Self::value_equals_with_key_precision(&list_node, v, &key_value) { found = Some(it.clone()); break 'search; }
+                            }
+                        }
+                        found
+                    } else if let Some(from_path_val) = action.parameters.get("fromPath") {
+                        let from_path_eval = Self::evaluate_in_context(from_path_val, owner_path, &snapshot)?;
+                        let from_path = match from_path_eval { OverseerValue::String(s) => s, other => return Err(OverseerError::ValidationError(format!("fromPath must evaluate to string path, got {:?}", other))) };
+                        let (src_segments, _exp, src_anchored) = Self::split_path_and_param(&from_path);
+                        let src_indices = match Self::resolve_target_indices(&snapshot, owner_path, src_anchored, &src_segments) {
+                            Some(ix) => ix,
+                            None => return Err(OverseerError::ValidationError(format!("Source not found: {}", from_path)))
+                        };
+                        let src_node = {
+                            let mut snap2 = snapshot.clone();
+                            Self::get_node_mut_by_indices(&mut snap2, &src_indices)
+                                .map(|n| n.clone())
+                                .ok_or_else(|| OverseerError::ValidationError(format!("Source not found: {}", from_path)))?
+                        };
+                        Some(src_node)
+                    } else { None };
+
+                    if let Some(mut source_node) = source_node_opt {
+                        // Clear any computed shadows so values recompute in the new context
+                        Self::clear_computed_recursive(&mut source_node);
+                        // Finally borrow target node mutably in the real tree and apply
+                        let target_node = Self::get_node_mut_by_indices(nodes, &target_indices)
+                            .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+                        // Clone parameters and children into the target, preserving target name/type
+                        target_node.parameters = source_node.parameters.clone();
+                        target_node.children = source_node.children.clone();
+                        // Mark explicit override for serializer when this target is a template instance child
+                        if !target_indices.is_empty() {
+                            let mut anc = target_indices.clone();
+                            let child_name = target_node.name.clone();
+                            anc.pop();
+                            while !anc.is_empty() {
+                                if let Some(parent) = Self::get_node_mut_by_indices(nodes, &anc) {
+                                    let is_instance = matches!(parent.parameters.get("_from_template"), Some(OverseerValue::Boolean(true)))
+                                        || parent.parameters.contains_key("_template_origin");
+                                    if is_instance {
+                                        let entry = parent.parameters.entry("_explicit_overrides".to_string()).or_insert(OverseerValue::String(String::new()));
+                                        if let OverseerValue::String(s) = entry {
+                                            if !s.split(',').any(|n| n == child_name) {
+                                                if !s.is_empty() { s.push(','); }
+                                                s.push_str(&child_name);
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                                anc.pop();
+                            }
+                        }
+                        return Ok(());
+                    } else {
+                        return Err(OverseerError::ValidationError("Source item not found for set(from*)".to_string()));
+                    }
+                }
                 // Optional mode: "value" (default) evaluates and writes the result; "formula" copies raw formula
                 let mode = match action.parameters.get("mode") {
                     Some(OverseerValue::String(s)) => s.to_lowercase(),
@@ -1719,6 +1819,32 @@ impl ActionExecutor {
         a == b
     }
 
+    // Compare values with optional keyPrecision semantics defined on a list node (e.g., "day").
+    fn value_equals_with_key_precision(list_node: &OverseerNode, a: &OverseerValue, b: &OverseerValue) -> bool {
+        // Support keyPrecision="day" to treat timestamps/dates on the same calendar day as equal
+        let precision = list_node
+            .parameters
+            .get("keyPrecision")
+            .or_else(|| list_node.parameters.get("key_precision"));
+        if let Some(OverseerValue::String(p)) = precision {
+            if p == "day" {
+                fn to_date(v: &OverseerValue) -> Option<chrono::NaiveDate> {
+                    match v {
+                        OverseerValue::Date(s) => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok(),
+                        OverseerValue::Timestamp(s) | OverseerValue::String(s) => {
+                            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                                Some(dt.with_timezone(&chrono::Utc).date_naive())
+                            } else if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") { Some(d) } else { None }
+                        }
+                        _ => None,
+                    }
+                }
+                if let (Some(da), Some(db)) = (to_date(a), to_date(b)) { return da == db; }
+            }
+        }
+        Self::value_equals(a, b)
+    }
+
     fn get_field_value<'a>(item: &'a OverseerNode, field: &'a str) -> Option<&'a OverseerValue> {
         item.children.iter().find(|c| c.name == field).and_then(|c| c.parameters.get("value"))
     }
@@ -1747,13 +1873,16 @@ impl ActionExecutor {
             s.clone()
         } else { return Err(OverseerError::ValidationError("ensure_in_list.keyField missing and list has no key".to_string())); };
 
-        // If exists, do nothing
-        if list_node.children.iter().any(|it| Self::get_field_value(it, &effective_key_field).map_or(false, |v| Self::value_equals(v, &key_value))) {
+    // If exists, do nothing
+    if list_node.children.iter().any(|it| Self::get_field_value(it, &effective_key_field).map_or(false, |v| Self::value_equals_with_key_precision(&list_node, v, &key_value))) {
             return Ok(());
         }
 
-        // Find template by name
-    let template_def = Self::find_node_by_name(&snapshot, template_name)
+        // Find template by name (accept both "Record" and "<Record>" forms)
+    let tn = if template_name.starts_with('<') && template_name.ends_with('>') && template_name.len() >= 2 {
+            &template_name[1..template_name.len()-1]
+        } else { template_name };
+    let template_def = Self::find_node_by_name(&snapshot, tn)
             .ok_or_else(|| OverseerError::ValidationError(format!("Template not found: {}", template_name)))?;
         let mut new_item = Self::clone_from_template(template_def);
         Self::set_field_value_on_item(&mut new_item, &effective_key_field, key_value);
@@ -1791,7 +1920,7 @@ impl ActionExecutor {
             s.clone()
         } else { return Err(OverseerError::ValidationError("remove.keyField missing and list has no key".to_string())); };
 
-        if let Some(pos) = list_node.children.iter().position(|it| Self::get_field_value(it, &effective_key_field).map_or(false, |v| Self::value_equals(v, key_value))) {
+    if let Some(pos) = list_node.children.iter().position(|it| Self::get_field_value(it, &effective_key_field).map_or(false, |v| Self::value_equals_with_key_precision(&list_node, v, key_value))) {
             list_node.children.remove(pos);
             // Mark this list field as explicitly overridden so mutations persist on template instances
             Self::mark_field_explicit_override(nodes, &indices);
@@ -2551,6 +2680,31 @@ div Ext {
         let list = root.children.iter().find(|c| c.name == "Tasks").unwrap();
         assert_eq!(list.node_type, "list");
         assert!(list.children.iter().any(|it| it.children.iter().any(|f| f.name=="id" && f.parameters.get("value")==Some(&OverseerValue::String("a1".to_string())))));
+    }
+
+    #[test]
+    fn test_ensure_in_list_with_key_precision_day() {
+        // Ensure that two timestamps on the same day are treated equal when keyPrecision="day"
+        let input = r#"
+    div Record (hidden=true) {
+            timestamp date = "2024-08-12T10:53:02+00:00"
+        }
+        list History (entry=<Record>, key="date", keyPrecision="day") {}
+        div Owner {
+            on mount { ensure_in_list(list="/History", keyField="date", keyValue="2024-08-12", template="<Record>") }
+        }
+        "#;
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+    // Execute via direct helper calls (bypassing event executor)
+    let owner_path: Vec<String> = vec!["Owner".to_string()];
+    // Run ensure_in_list via direct call to avoid building a full runtime action executor for tests
+        // Instead, simulate call by invoking ensure_in_list
+    ActionExecutor::ensure_in_list(&mut nodes, &owner_path, "/History", "<Record>", "date", OverseerValue::String("2024-08-12".to_string())).unwrap();
+        // Now try to ensure with a timestamp on the same day; should no-op (no duplicate)
+    ActionExecutor::ensure_in_list(&mut nodes, &owner_path, "/History", "<Record>", "date", OverseerValue::String("2024-08-12T23:10:00Z".to_string())).unwrap();
+        // Verify History has exactly 1 child
+        let history = nodes.iter().find(|n| n.name == "History").unwrap();
+        assert_eq!(history.children.len(), 1);
     }
 
     #[test]
