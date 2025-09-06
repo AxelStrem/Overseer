@@ -255,6 +255,56 @@ export class OverseerRenderer {
                 }
 
                 // Render children (filter out non-visual action/event nodes)
+                // Special case: link proxy — render another subtree inside this container
+                // A container declaring (link="/path") acts as a view into that target.
+                // Edits and events should route to the target via dataset.path of the rendered subtree.
+                const linkVal = this.getParameterValue(node, 'link')
+                if (linkVal !== null && linkVal !== undefined) {
+                    try {
+                        // Resolve target path and node
+                        const { targetNode, targetPath } = this.resolveLinkTarget(linkVal, path)
+                        if (targetNode && targetPath && Array.isArray(targetPath)) {
+                            // Guard against runaway recursion in case of cycles
+                            this._linkDepth = (this._linkDepth || 0) + 1
+                            if (this._linkDepth <= 6) {
+                                // Even when acting as a link proxy, expose any event controls (e.g., on click -> button)
+                                try { this.renderEventControls(node, element) } catch(_) {}
+                                // Render the target subtree inside this container
+                                this.renderNode(targetNode, element, nextInherited, targetPath.slice())
+                                // Do not render this node's own children for a link-proxy container
+                                this._linkDepth -= 1
+                                return
+                            } else {
+                                if (DEBUG_MODE) console.warn('Link depth exceeded; skipping nested link rendering')
+                            }
+                            this._linkDepth -= 1
+                        } else {
+                            // Show minimal placeholder to indicate broken link
+                            const placeholder = document.createElement('div')
+                            placeholder.className = 'overseer-link-placeholder'
+                            placeholder.textContent = '⚠ broken link: ' + String(linkVal)
+                            placeholder.style.opacity = '0.7'
+                            placeholder.style.fontStyle = 'italic'
+                            element.appendChild(placeholder)
+                            // Also render any event controls present on this container
+                            try { this.renderEventControls(node, element) } catch(_) {}
+                            // Skip own children to avoid confusion
+                            return
+                        }
+                    } catch (e) {
+                        if (DEBUG_MODE) console.warn('Failed to render link target:', e)
+                        const placeholder = document.createElement('div')
+                        placeholder.className = 'overseer-link-placeholder'
+                        placeholder.textContent = '⚠ link error'
+                        placeholder.style.opacity = '0.7'
+                        placeholder.style.fontStyle = 'italic'
+                        element.appendChild(placeholder)
+                        // Render any event controls even if link resolution failed
+                        try { this.renderEventControls(node, element) } catch(_) {}
+                        return
+                    }
+                }
+
                 if (node.children && Array.isArray(node.children)) {
                     // For list nodes, render in UI-sorted order using _ui_sort_key
                     const renderChildren = () => {
@@ -359,6 +409,77 @@ export class OverseerRenderer {
                 // Treat unknown node types as divs (custom templates/components)
                 return this.createDivElement(node)
         }
+    }
+
+    // Resolve a link value (string or object-wrapped String) to a target node and its disambiguated path array
+    resolveLinkTarget(linkParam, currentPathArray) {
+        try {
+            const linkStr = (typeof linkParam === 'string') ? linkParam
+                : (linkParam && typeof linkParam === 'object' && linkParam.String !== undefined) ? linkParam.String
+                : String(linkParam)
+            const doc = (window.app && window.app.currentDocument) ? window.app.currentDocument : null
+            if (!doc || !linkStr) return { targetNode: null, targetPath: null }
+            const { node, path } = this.resolvePathStringToNode(doc, currentPathArray, String(linkStr))
+            return { targetNode: node, targetPath: path }
+        } catch (_) {
+            return { targetNode: null, targetPath: null }
+        }
+    }
+
+    // Resolve a path string to a node and canonical path array with name#k disambiguation
+    // Supports absolute paths starting with '/' and relative paths from the parent of currentPathArray
+    resolvePathStringToNode(documentArray, currentPathArray, pathStr) {
+        const segsRaw = String(pathStr).split('/').filter(s => s.length > 0)
+        let startNodes = documentArray
+        let basePath = []
+        if (String(pathStr).startsWith('/')) {
+            // Absolute from root; first segment must match a root node name
+            if (segsRaw.length === 0) return { node: null, path: null }
+        } else {
+            // Relative: start from parent of current node path
+            const parentPath = Array.isArray(currentPathArray) ? currentPathArray.slice(0, -1) : []
+            // Resolve parentPath into a concrete node to get its children
+            const parentNode = this.findNodeByPath(documentArray, parentPath)
+            if (parentNode && Array.isArray(parentNode.children)) {
+                startNodes = parentNode.children
+                basePath = parentPath.slice()
+            }
+        }
+
+        // Helper: parse an ordinal suffix (e.g., "Title#1") into base name + ordinal integer
+        const parseSeg = (seg) => {
+            if (typeof seg !== 'string') return { base: String(seg), ord: 0 }
+            const idx = seg.lastIndexOf('#')
+            if (idx > 0) {
+                const base = seg.slice(0, idx)
+                const ordStr = seg.slice(idx + 1)
+                const ord = Math.max(0, parseInt(ordStr, 10) || 0)
+                return { base, ord }
+            }
+            return { base: seg, ord: 0 }
+        }
+
+        let currentNodes = startNodes
+        let outPath = basePath
+        let currentNode = null
+        for (let i = 0; i < segsRaw.length; i++) {
+            const raw = segsRaw[i]
+            if (!Array.isArray(currentNodes)) return { node: null, path: null }
+
+            const { base, ord } = parseSeg(raw)
+            // Choose among children by exact base name match and ordinal
+            const matches = currentNodes.filter(n => (n && (n.name === base)))
+            if (matches.length === 0) return { node: null, path: null }
+            const picked = matches[ord] || matches[0]
+            // Determine actual ordinal of picked among siblings with same base name
+            const idxOfPicked = currentNodes.findIndex(n => n === picked)
+            const actualOrd = currentNodes.slice(0, idxOfPicked).filter(n => n && n.name === base).length
+            const segWithOrd = actualOrd > 0 ? `${base}#${actualOrd}` : base
+            outPath = outPath.concat([segWithOrd])
+            currentNode = picked
+            currentNodes = Array.isArray(picked.children) ? picked.children : []
+        }
+        return { node: currentNode, path: outPath }
     }
 
     // Mount placeholder renderer (Phase 1): shows summary/placeholder, defers loading
@@ -589,6 +710,48 @@ export class OverseerRenderer {
     try { this.applyLayoutStyles(listItem, node) } catch(_) {}
     this.applyNodeStyles(listItem, node)
         return listItem
+    }
+
+    // Render simple controls for event handler blocks (e.g., an on click button)
+    renderEventControls(node, container) {
+        try {
+            if (!node || !Array.isArray(node.children)) return
+            const handlers = node.children.filter(ch => this.isEventHandlerName(ch?.name))
+            for (const h of handlers) {
+                const ev = String(h.name).toLowerCase()
+                // Look for a button under the handler to derive label/icon
+                let label = 'Action'
+                let icon = null
+                try {
+                    const btn = (h.children || []).find(c => (c.node_type || c.type || '').toLowerCase() === 'button')
+                    if (btn) {
+                        const maybe = this.getParameterValue(btn, 'label')
+                        if (maybe) label = String(maybe)
+                        const ic = this.getParameterValue(btn, 'icon')
+                        if (ic) icon = String(ic)
+                    }
+                } catch(_) {}
+
+                const btnEl = document.createElement('button')
+                btnEl.className = 'overseer-button'
+                if (icon) {
+                    btnEl.classList.add('icon-button')
+                    const span = document.createElement('span')
+                    span.className = `icon glyph-${icon}`
+                    span.setAttribute('aria-hidden', 'true')
+                    btnEl.appendChild(span)
+                } else {
+                    const labelSpan = document.createElement('span')
+                    labelSpan.className = 'overseer-button-label'
+                    labelSpan.textContent = label
+                    btnEl.appendChild(labelSpan)
+                }
+                btnEl.addEventListener('click', async () => {
+                    try { await this.emitEvent(node, container, ev) } catch(_) {}
+                })
+                container.appendChild(btnEl)
+            }
+        } catch(_) { /* ignore */ }
     }
 
     createStringElement(node) {
@@ -2654,7 +2817,9 @@ export class OverseerRenderer {
             let targetNode = null
             
             const exactName = (n) => (n ?? '').toString()
-            const normalizeName = (n) => exactName(n).replace(/__\d+$/, '') // drop instance suffix like __6
+            const normalizeName = (n) => exactName(n)
+                .replace(/__\d+$/, '')   // drop instance suffix like __6
+                .replace(/#\d+$/, '')    // drop ordinal path suffix like #1
             const segInfo = (part) => {
                 const idx = part.indexOf('#')
                 return idx >= 0 ? { base: part.slice(0, idx), ord: parseInt(part.slice(idx+1), 10) || 0 } : { base: part, ord: 0 }
@@ -2667,15 +2832,16 @@ export class OverseerRenderer {
                 } catch (_) { return false }
             }
             const findMatches = (nodes, wantBase, wantOrd) => {
-                // Prefer exact matches first (including instance suffixes)
-                let matches = nodes.filter(n => exactName(n.name) === wantBase)
-                if (matches.length === 0) {
-                    // Fallback to normalized-name match (ignoring instance suffixes like __6)
-                    const baseNorm = normalizeName(wantBase)
-                    matches = nodes.filter(n => normalizeName(n.name) === baseNorm)
-                }
-                if (matches.length === 0) return null
-                return matches[wantOrd] || matches[0] || null
+                const baseNorm = normalizeName(wantBase)
+                const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
+                // If ordinal is zero and we have an exact match, return it immediately
+                if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
+                // If there are enough exact matches to satisfy the ordinal, use those
+                if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
+                // Otherwise, fall back to normalized-name grouping to account for ordinal suffixes like '#k'
+                const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
+                if (normMatches.length === 0) return null
+                return normMatches[wantOrd] || normMatches[0] || null
             }
             
             // Navigate to the target node
