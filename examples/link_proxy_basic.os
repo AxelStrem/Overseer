@@ -17,12 +17,12 @@ tab Demo {
     //    The container becomes a view into the target node; edits here update the source.
     div TitleView (link="/Demo/Data") {}
 
-    // 2) Link to a list item by ordinal. "-#1" is the second anonymous list entry.
-    //    Click the action button to switch the link to the first item (-#0).
-    div ItemView (link="/Demo/Data/-#1") {
+    // 2) Link to a list item by index using bracket syntax. Items[1] is the second entry (0-based).
+    //    Click the action button to switch the link to the first item (Items[0]).
+    div ItemView (link="/Demo/Data/Items[1]") {
         on click {
             // Switch this view from second item to first item
-            set (path="../link") = "/Demo/Data/-#0"
+            set (path="/Demo/ItemView.link") = "/Demo/Data/Items[0]"
         }
     }
 

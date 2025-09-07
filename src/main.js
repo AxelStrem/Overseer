@@ -51,10 +51,12 @@ export class OverseerApp {
 
     // Normalize in-memory document before sending to Rust: convert certain raw booleans
     // in parameters to OverseerValue-shaped objects expected by Serde, e.g., { Boolean: true }.
-    // We only touch known internal flags we might have set from the UI: _override_present, _explicit_child_override.
+    // We touch known internal flags that can be set client-side.
     normalizeDocumentForSerialization(doc) {
         const visit = (node) => {
             if (!node || typeof node !== 'object') return
+            // Ensure required schema property exists for all nodes
+            if (typeof node.is_hierarchy_transparent !== 'boolean') node.is_hierarchy_transparent = false
             const p = node.parameters
             if (p && typeof p === 'object') {
                 const fix = (k) => {
@@ -63,6 +65,8 @@ export class OverseerApp {
                 }
                 fix('_override_present')
                 fix('_explicit_child_override')
+                // Flags introduced by renderer for UI/rerender hints
+                fix('_from_template')
             }
             if (Array.isArray(node.children)) node.children.forEach(visit)
         }
@@ -841,12 +845,16 @@ tab Main {
                     if (this._scheduler) this._scheduler.inFlight = true
                     if (DEBUG_MODE) console.log('[SCHED] tick invoking backend')
                     const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
-                    if (updated) {
+                    // Accept only shapes that look like a document
+                    const looksLikeDocArray = Array.isArray(updated) && updated.every(n => n && typeof n === 'object')
+                    const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)
+                    if (looksLikeDocArray || looksLikeDocObject) {
+                        const nextDoc = looksLikeDocArray ? updated : updated.children
                         // Only re-render if there are actual changes to visible document
-                        if (!docsEqual(this.currentDocument, updated)) {
-                            this.currentDocument = updated
+                        if (!docsEqual(this.currentDocument, nextDoc)) {
+                            this.currentDocument = nextDoc
                             try {
-                                this.renderer.renderDocument(updated)
+                                this.renderer.renderDocument(this.currentDocument)
                             } catch (e) {
                                 console.error('Render error during scheduler tick:', e)
                                 this.showError('Render error', e)
@@ -855,6 +863,8 @@ tab Main {
                         }
                         // Invalidate cached next due after a state change
                         this._scheduler.cachedNextMs = null
+                    } else if (updated != null) {
+                        if (DEBUG_MODE) console.warn('[SCHED] scheduler_tick returned non-document value; ignoring:', updated)
                     }
                 } catch (e) {
                     const msg = e?.message || (typeof e === 'string' ? e : JSON.stringify(e))

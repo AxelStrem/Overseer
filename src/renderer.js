@@ -43,6 +43,157 @@ export class OverseerRenderer {
         this._liveIntervals = new Set()
     }
 
+    // Build a non-persistent preview item based on list's entry template, with key preset.
+    _buildPhantomItemPreview(documentArray, listNode, templateName, keyField, keyValue) {
+        try {
+            // Find template definition by name at document root
+            const roots = Array.isArray(documentArray) ? documentArray : []
+            let tmpl = null
+            if (templateName) {
+                // Deep-search for a node with matching name anywhere in the document (DFS)
+                const findByName = (nodes, name) => {
+                    if (!Array.isArray(nodes)) return null
+                    for (const n of nodes) {
+                        if (!n) continue
+                        if (n.name === name) return n
+                        const found = findByName(n.children || [], name)
+                        if (found) return found
+                    }
+                    return null
+                }
+                tmpl = findByName(roots, templateName) || null
+            }
+            // If no template found, create a minimal generic container
+            const preview = tmpl ? JSON.parse(JSON.stringify(tmpl)) : { name: templateName || 'Item', node_type: 'div', parameters: {}, children: [] }
+            // Ensure key field child exists and has the keyValue
+            if (!preview.children) preview.children = []
+            let keyChild = preview.children.find(c => c && c.name === keyField)
+            if (!keyChild) {
+                keyChild = { name: keyField, node_type: 'string', parameters: {}, children: [] }
+                preview.children.unshift(keyChild)
+            }
+            if (!keyChild.parameters) keyChild.parameters = {}
+            keyChild.parameters.value = (typeof keyValue === 'number') ? { Integer: keyValue } : { String: String(keyValue) }
+            // Reflect that this is a template-derived instance for styling/layout if needed
+            preview.parameters = Object.assign({}, preview.parameters || {}, { _from_template: true })
+            return preview
+        } catch(_) { return { name: templateName || 'Item', node_type: 'div', parameters: {}, children: [] } }
+    }
+
+    // Materialize missing list item by calling ensure_in_list via event executor, update the link param, and return a concrete field path for the edited element.
+    async _materializePhantomAndComputePath(meta) {
+        try {
+            if (!window.app || !window.app.currentDocument) return null
+            // meta.listPath is path array to the list node
+            const listPathArr = Array.isArray(meta.listPath) ? meta.listPath : []
+            const listPathStr = listPathArr.join('/')
+            const ownerEl = document.querySelector(`[data-path='${JSON.stringify(listPathArr)}']`)
+            const ownerNode = ownerEl ? null : null // unused; actions are path-based
+            // Build a synthetic owner path: use the list container path for event context
+            const eventContextPath = listPathArr
+            // Execute ensure_in_list by invoking backend through a tiny synthetic action: we piggyback on execute_overseer_event with an injected action is complex,
+            // instead, reuse the existing command interface by creating a minimal action block would require serialization changes.
+            // Simpler: directly mutate currentDocument here to append, using list entry template name.
+            const doc = window.app.currentDocument
+            // Locate list node in document by path
+            const listNode = this.findNodeByPath(doc, listPathArr)
+            if (!listNode || (listNode.node_type || '').toLowerCase() !== 'list') return null
+            // Determine effective key field
+            let keyField = meta.keyField
+            if (!keyField) {
+                const k = listNode.parameters?.key || listNode.parameters?._computed_key
+                keyField = (typeof k === 'string') ? k : (k && k.String !== undefined ? String(k.String) : 'id')
+            }
+            // Find template
+            let tmplName = meta.templateName
+            if (!tmplName) {
+                const entry = listNode.parameters?.entry
+                if (entry) {
+                    if (typeof entry === 'string') tmplName = entry
+                    else if (typeof entry === 'object' && entry.Template !== undefined) tmplName = String(entry.Template)
+                    else if (typeof entry === 'object' && entry.String !== undefined) tmplName = String(entry.String)
+                }
+            }
+            if (tmplName && tmplName.startsWith('<') && tmplName.endsWith('>')) tmplName = tmplName.slice(1, -1)
+            // Clone template (deep-search by name anywhere in the document)
+            const roots = doc
+            const findByNameDeep = (nodes, name) => {
+                if (!Array.isArray(nodes)) return null
+                for (const n of nodes) {
+                    if (!n) continue
+                    if (n.name === name) return n
+                    const found = findByNameDeep(n.children || [], name)
+                    if (found) return found
+                }
+                return null
+            }
+            const tmpl = tmplName ? findByNameDeep(roots, tmplName) : null
+            let newItem = tmpl ? JSON.parse(JSON.stringify(tmpl)) : { name: tmplName || 'Item', node_type: 'div', parameters: {}, children: [] }
+            // Ensure required schema fields exist on the new item
+            if (newItem.is_hierarchy_transparent === undefined) newItem.is_hierarchy_transparent = (tmpl && typeof tmpl.is_hierarchy_transparent === 'boolean') ? tmpl.is_hierarchy_transparent : false
+            // Mark as originating from a template to help selective UI rerenders detect templated instances
+            try { newItem.parameters = Object.assign({}, newItem.parameters || {}, { _from_template: true }) } catch (_) {}
+            // Assign a unique instance name similar to backend logic (T__N)
+            const ordinal = listNode.children.length + 1
+            newItem.name = `${tmplName || newItem.name}__${ordinal}`
+            // Set key field value
+            if (!newItem.children) newItem.children = []
+            let keyChild = newItem.children.find(c => c && c.name === keyField)
+            if (!keyChild) { keyChild = { name: keyField, node_type: 'string', parameters: {}, children: [] }; newItem.children.unshift(keyChild) }
+            if (keyChild.is_hierarchy_transparent === undefined) keyChild.is_hierarchy_transparent = false
+            if (!keyChild.parameters) keyChild.parameters = {}
+            const kv = meta.keyValue
+            keyChild.parameters.value = (typeof kv === 'number') ? { Integer: kv } : { String: String(kv) }
+            // Append to list
+            listNode.children.push(newItem)
+            // Mark explicit override so it persists
+            listNode.parameters = Object.assign({}, listNode.parameters || {}, { _explicit_overrides: { String: (listNode.parameters?._explicit_overrides?.String || '') } })
+            // Do not mutate the original link; keep it dynamic so it can follow future date changes.
+            // Return a real field path if the edit targeted a child in tailSegments; otherwise the item path
+            // Use the actual item name (with instance suffix) for correct path resolution
+            const siblings = listNode.children
+            const idxNew = siblings.length - 1
+            const itemBaseName = newItem.name
+            const itemOrd = siblings.slice(0, idxNew).filter(c => c && c.name === itemBaseName).length
+            const itemSeg = itemOrd > 0 ? `${itemBaseName}#${itemOrd}` : itemBaseName
+            let realPathArr = listPathArr.concat([itemSeg])
+            // Traverse tail segments directly on the newly created item, creating missing fields on demand,
+            // and construct canonical path segments using the actual picked names and true ordinal among siblings.
+            const parseSeg = (seg) => {
+                const i = typeof seg === 'string' ? seg.lastIndexOf('#') : -1
+                return i > 0 ? { base: seg.slice(0, i), ord: parseInt(seg.slice(i + 1), 10) || 0 } : { base: String(seg), ord: 0 }
+            }
+            const normalize = (s) => String(s || '').replace(/__\d+$/, '')
+            let curRef = newItem
+            const tailSegs = Array.isArray(meta.tailSegments) ? meta.tailSegments.slice() : []
+            for (let tIdx = 0; tIdx < tailSegs.length; tIdx++) {
+                const t = tailSegs[tIdx]
+                const { base, ord } = parseSeg(t)
+                let kidsNow = Array.isArray(curRef.children) ? curRef.children : []
+                // Prefer exact name match first, then normalized name match
+                let candidates = kidsNow.filter(n => n && n.name === base)
+                if (candidates.length === 0) {
+                    candidates = kidsNow.filter(n => n && normalize(n.name) === base)
+                }
+                let pick = candidates[ord] || candidates[0]
+                if (!pick) {
+                    // Create the missing child; assume leaf is string, otherwise a transparent container
+                    const isLast = (tIdx === tailSegs.length - 1)
+                    pick = { name: base, node_type: isLast ? 'string' : 'div', parameters: {}, children: [], is_hierarchy_transparent: false }
+                    curRef.children = Array.isArray(curRef.children) ? curRef.children : []
+                    curRef.children.push(pick)
+                    kidsNow = curRef.children
+                }
+                const idxPick = kidsNow.indexOf(pick)
+                const ordPick = idxPick > 0 ? kidsNow.slice(0, idxPick).filter(n => n && n.name === pick.name).length : 0
+                const segName = ordPick > 0 ? `${pick.name}#${ordPick}` : pick.name
+                realPathArr = realPathArr.concat([segName])
+                curRef = pick
+            }
+            return realPathArr.join('/')
+        } catch(_) { return null }
+    }
+
     // Interval management: avoid per-element MutationObservers by clearing on re-render
     _registerInterval(id) {
         try { this._liveIntervals.add(id) } catch(_) {}
@@ -258,17 +409,54 @@ export class OverseerRenderer {
                 // Special case: link proxy — render another subtree inside this container
                 // A container declaring (link="/path") acts as a view into that target.
                 // Edits and events should route to the target via dataset.path of the rendered subtree.
-                const linkVal = this.getParameterValue(node, 'link')
+                // Always read raw link; we'll compute a transient _computed_link each render.
+                // Always read the RAW link parameter; do not use _computed_link here
+                let linkVal = null
+                try {
+                    const p = node.parameters || {}
+                    if (p.link !== undefined) {
+                        const v = p.link
+                        linkVal = (typeof v === 'object' && v !== null && v.String !== undefined) ? v.String : v
+                    } else {
+                        // Fallback: legacy documents may only have computed
+                        linkVal = this.getParameterValue(node, 'link')
+                    }
+                } catch(_) { linkVal = this.getParameterValue(node, 'link') }
                 if (linkVal !== null && linkVal !== undefined) {
                     try {
                         // Resolve target path and node
-                        const { targetNode, targetPath } = this.resolveLinkTarget(linkVal, path)
-                        if (targetNode && targetPath && Array.isArray(targetPath)) {
+                        const { targetNode, targetPath, phantomPreviewNode, phantomMeta, computedLink } = this.resolveLinkTarget(linkVal, path)
+                        // Cache resolved/interpolated link into computed param to help dependency tracking/refresh
+                        try {
+                            if (!node.parameters) node.parameters = {}
+                            if (computedLink !== undefined) node.parameters._computed_link = { String: String(computedLink) }
+                        } catch(_) {}
+                        if (phantomPreviewNode && phantomMeta) {
+                            // Missing-key phantom: render a preview and tag the container
+                            this._linkDepth = (this._linkDepth || 0) + 1
+                            if (this._linkDepth <= 6) {
+                                try { this.renderEventControls(node, element) } catch(_) {}
+                                try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
+                                try { element.setAttribute('data-link-phantom', JSON.stringify(phantomMeta)) } catch(_) {}
+                                // Render preview under a synthetic path; edits will be intercepted
+                                const syntheticPath = path.concat(['<phantom>'])
+                                this.renderNode(phantomPreviewNode, element, nextInherited, syntheticPath)
+                                this._linkDepth -= 1
+                                return
+                            } else {
+                                if (DEBUG_MODE) console.warn('Link depth exceeded; skipping nested phantom rendering')
+                            }
+                            this._linkDepth -= 1
+                        } else if (targetNode && targetPath && Array.isArray(targetPath)) {
                             // Guard against runaway recursion in case of cycles
                             this._linkDepth = (this._linkDepth || 0) + 1
                             if (this._linkDepth <= 6) {
+                                // Clear any stale phantom flag when binding to a real target
+                                try { element.removeAttribute('data-link-phantom') } catch(_) {}
                                 // Even when acting as a link proxy, expose any event controls (e.g., on click -> button)
                                 try { this.renderEventControls(node, element) } catch(_) {}
+                                // Mark this container as a link proxy to enable event bubbling on edit
+                                try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
                                 // Render the target subtree inside this container
                                 this.renderNode(targetNode, element, nextInherited, targetPath.slice())
                                 // Do not render this node's own children for a link-proxy container
@@ -286,6 +474,8 @@ export class OverseerRenderer {
                             placeholder.style.opacity = '0.7'
                             placeholder.style.fontStyle = 'italic'
                             element.appendChild(placeholder)
+                            // Ensure phantom flag is cleared on broken link as well
+                            try { element.removeAttribute('data-link-phantom') } catch(_) {}
                             // Also render any event controls present on this container
                             try { this.renderEventControls(node, element) } catch(_) {}
                             // Skip own children to avoid confusion
@@ -414,20 +604,68 @@ export class OverseerRenderer {
     // Resolve a link value (string or object-wrapped String) to a target node and its disambiguated path array
     resolveLinkTarget(linkParam, currentPathArray) {
         try {
-            const linkStr = (typeof linkParam === 'string') ? linkParam
+            let linkStr = (typeof linkParam === 'string') ? linkParam
                 : (linkParam && typeof linkParam === 'object' && linkParam.String !== undefined) ? linkParam.String
                 : String(linkParam)
             const doc = (window.app && window.app.currentDocument) ? window.app.currentDocument : null
             if (!doc || !linkStr) return { targetNode: null, targetPath: null }
-            const { node, path } = this.resolvePathStringToNode(doc, currentPathArray, String(linkStr))
-            return { targetNode: node, targetPath: path }
+            // Support basic $(...) interpolation inside link strings, e.g.,
+            // "/Root/List[key=$(../selected_date)]". We evaluate inner expressions
+            // only for simple relative paths and field reads, returning their display string.
+            const interpolate = (s) => {
+                try {
+                    return String(s).replace(/\$\(([^)]*)\)/g, (_m, expr) => {
+                        const e = String(expr || '').trim()
+                        // Only support absolute/relative path reads for now
+                        // e.g., ../selected_date or /Root/A/B
+                        // Evaluate relative to the CURRENT node, not its parent (the resolver bases on parent)
+                        const baseForExpr = Array.isArray(currentPathArray) ? currentPathArray.concat(['<self>']) : ['<self>']
+                        const target = this.resolvePathStringToNode(doc, baseForExpr, e)
+                        if (target && target.node) {
+                            // Prefer raw underlying value (unformatted) for link keys to avoid timezone drift
+                            try {
+                                const params = target.node.parameters || {}
+                                const raw = (params._computed_value !== undefined) ? params._computed_value : params.value
+                                if (raw !== undefined && raw !== null) {
+                                    if (typeof raw === 'object') {
+                                        if (raw.Timestamp !== undefined) return String(raw.Timestamp)
+                                        if (raw.Date !== undefined) return String(raw.Date)
+                                        if (raw.String !== undefined) return String(raw.String)
+                                        if (raw.Integer !== undefined) return String(raw.Integer)
+                                        if (raw.Float !== undefined) return String(raw.Float)
+                                        if (raw.Boolean !== undefined) return String(raw.Boolean)
+                                    } else {
+                                        return String(raw)
+                                    }
+                                }
+                            } catch(_) { /* fall back to display value */ }
+                            const v = this.getNodeValue(target.node)
+                            return (v === null || v === undefined) ? '' : String(v)
+                        }
+                        return ''
+                    })
+                } catch(_) { return s }
+            }
+            // Perform interpolation before resolution
+            linkStr = interpolate(linkStr)
+            const resolved = this.resolvePathStringToNode(doc, currentPathArray, String(linkStr))
+            if (resolved && resolved.phantomMeta) {
+                return { targetNode: null, targetPath: null, phantomPreviewNode: resolved.phantomPreviewNode, phantomMeta: resolved.phantomMeta, computedLink: linkStr }
+            }
+            const { node, path } = resolved
+            return { targetNode: node, targetPath: path, phantomPreviewNode: null, phantomMeta: null, computedLink: linkStr }
         } catch (_) {
-            return { targetNode: null, targetPath: null }
+            return { targetNode: null, targetPath: null, computedLink: undefined }
         }
     }
 
     // Resolve a path string to a node and canonical path array with name#k disambiguation
-    // Supports absolute paths starting with '/' and relative paths from the parent of currentPathArray
+    // Supports:
+    // - absolute paths starting with '/'
+    // - relative paths from the parent of currentPathArray
+    // - ordinal suffixes using name#k (existing)
+    // - list indexing via bracket syntax: List[2] -> selects the 3rd list item (0-based)
+    // - list key selection via bracket syntax: List[id=foo] -> selects item whose field 'id' equals 'foo'
     resolvePathStringToNode(documentArray, currentPathArray, pathStr) {
         const segsRaw = String(pathStr).split('/').filter(s => s.length > 0)
         let startNodes = documentArray
@@ -458,14 +696,188 @@ export class OverseerRenderer {
             }
             return { base: seg, ord: 0 }
         }
+        // Helper: stringify an OverseerValue into a JS primitive for comparison/rendering
+        const toPrimitive = (val) => {
+            if (val === null || val === undefined) return null
+            if (typeof val !== 'object') return val
+            if ('String' in val) return String(val.String)
+            if ('Integer' in val) return Number(val.Integer)
+            if ('Float' in val) return Number(val.Float)
+            if ('Boolean' in val) return !!val.Boolean
+            if ('Date' in val) return String(val.Date)
+            if ('Timestamp' in val) return String(val.Timestamp)
+            return String(val)
+        }
+        // Helper: get a child field value by name from a complex node
+        const getFieldValue = (node, fieldName) => {
+            try {
+                if (!node || !Array.isArray(node.children)) return null
+                const ch = node.children.find(c => (c?.name === fieldName))
+                if (!ch) return null
+                const v = ch.parameters ? (ch.parameters._computed_value ?? ch.parameters.value) : undefined
+                return toPrimitive(v)
+            } catch { return null }
+        }
 
         let currentNodes = startNodes
         let outPath = basePath
         let currentNode = null
         for (let i = 0; i < segsRaw.length; i++) {
-            const raw = segsRaw[i]
+            let raw = segsRaw[i]
             if (!Array.isArray(currentNodes)) return { node: null, path: null }
 
+            // Support explicit current and parent directory semantics in relative paths
+            if (raw === '.' || raw === '') {
+                // no-op, stay at current level
+                currentNode = this.findNodeByPath(documentArray, outPath) || currentNode
+                continue
+            }
+            if (raw === '..') {
+                // Move up one level in base path and reset currentNodes accordingly
+                outPath = outPath.slice(0, -1)
+                const parentNode = this.findNodeByPath(documentArray, outPath)
+                currentNodes = Array.isArray(parentNode?.children) ? parentNode.children : documentArray
+                currentNode = parentNode || null
+                continue
+            }
+
+            // Support bracket syntax on this segment: Name[expr]
+            // expr can be a numeric index (0-based) or key selection key=value
+            const bracket = (typeof raw === 'string') ? raw.match(/^(.*)\[(.+)\]$/) : null
+            if (bracket) {
+                // baseName may itself have an ordinal suffix (#k).
+                const baseNameRaw = bracket[1]
+                const selectorRaw = bracket[2]
+                const { base: baseName, ord: baseOrd } = parseSeg(baseNameRaw)
+                // First pick the base node among currentNodes
+                const baseMatches = currentNodes.filter(n => (n && n.name === baseName))
+                if (baseMatches.length === 0) return { node: null, path: null }
+                const basePicked = baseMatches[baseOrd] || baseMatches[0]
+                // Canonicalize base segment with its actual ordinal
+                const idxBase = currentNodes.findIndex(n => n === basePicked)
+                const actualBaseOrd = currentNodes.slice(0, idxBase).filter(n => n && n.name === baseName).length
+                const baseSegWithOrd = actualBaseOrd > 0 ? `${baseName}#${actualBaseOrd}` : baseName
+                outPath = outPath.concat([baseSegWithOrd])
+
+                // Now select child under the picked base
+                const children = Array.isArray(basePicked.children) ? basePicked.children : []
+                if (!Array.isArray(children)) return { node: null, path: null }
+
+                // Determine selection type: numeric index or key=value
+                let pickedChild = null
+                const numIdx = selectorRaw.match(/^\s*(\d+)\s*$/)
+                if (numIdx) {
+                    const k = parseInt(numIdx[1], 10)
+                    pickedChild = (k >= 0 && k < children.length) ? children[k] : null
+                } else {
+                    // key selection: fieldName=value (value may be quoted; allow empty)
+                    const kv = selectorRaw.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)\s*$/)
+                    if (!kv) return { node: null, path: null }
+                    let keyField = kv[1]
+                    let rhs = kv[2]
+                    // Strip quotes if present
+                    if ((rhs.startsWith('"') && rhs.endsWith('"')) || (rhs.startsWith("'") && rhs.endsWith("'"))) {
+                        rhs = rhs.slice(1, -1)
+                    }
+                    // Try number if purely numeric
+                    const rhsPrim = /^-?\d+(?:\.\d+)?$/.test(rhs) && rhs !== '' ? Number(rhs) : rhs
+                    // Normalize by keyPrecision when present (e.g., day precision for dates)
+                    const keyPrecisionRaw = basePicked?.parameters?.keyPrecision || basePicked?.parameters?._computed_keyPrecision
+                    const keyPrecision = (typeof keyPrecisionRaw === 'object' && keyPrecisionRaw.String !== undefined) ? String(keyPrecisionRaw.String) : (typeof keyPrecisionRaw === 'string' ? keyPrecisionRaw : '')
+                    const normalizeByPrecision = (prec, val) => {
+                        try {
+                            if (val === null || val === undefined) return ''
+                            const s = String(val)
+                            if (!prec) return s
+                            const p = prec.toLowerCase()
+                            if (p === 'day' || p === 'days') {
+                                // Accept YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD, or RFC3339 strings
+                                const m = s.match(/^(\d{4})[./-](\d{2})[./-](\d{2})(?:.*)?$/)
+                                if (m) return `${m[1]}-${m[2]}-${m[3]}`
+                                const d = new Date(s)
+                                if (!isNaN(d.getTime())) {
+                                    const pad = (n) => String(n).padStart(2, '0')
+                                    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+                                }
+                                return s
+                            }
+                            return s
+                        } catch(_) { return String(val) }
+                    }
+                    // If selector used 'key=value', use the list's configured key field name
+                    if (keyField.toLowerCase() === 'key') {
+                        try {
+                            const listKey = basePicked?.parameters?.key || basePicked?.parameters?._computed_key
+                            if (typeof listKey === 'string') keyField = listKey
+                            else if (listKey && typeof listKey === 'object' && listKey.String !== undefined) keyField = String(listKey.String)
+                        } catch(_) {}
+                    }
+                    const rhsNorm = normalizeByPrecision(keyPrecision, rhsPrim)
+                    pickedChild = children.find(ch => {
+                        const v = getFieldValue(ch, keyField)
+                        const vNorm = normalizeByPrecision(keyPrecision, v)
+                        // Loose equality on normalized values
+                        return (vNorm == rhsNorm)
+                    }) || null
+
+                    // If no such item exists (or key empty), construct a phantom preview and return with meta
+                    if (!pickedChild) {
+                        // Determine template name
+                        let tmplName = null
+                        try {
+                            const entry = basePicked?.parameters?.entry
+                            if (entry) {
+                                if (typeof entry === 'string') tmplName = entry
+                                else if (typeof entry === 'object' && entry.Template !== undefined) tmplName = String(entry.Template)
+                                else if (typeof entry === 'object' && entry.String !== undefined) tmplName = String(entry.String)
+                            }
+                        } catch(_) {}
+                        if (tmplName && tmplName.startsWith('<') && tmplName.endsWith('>') && tmplName.length >= 2) {
+                            tmplName = tmplName.slice(1, -1)
+                        }
+                        const previewItem = this._buildPhantomItemPreview(documentArray, basePicked, tmplName, keyField, rhsNorm)
+                        // Follow remaining segments (if any) into preview tree
+                        let previewNode = previewItem
+                        let relNodes = Array.isArray(previewItem.children) ? previewItem.children : []
+                        const tail = segsRaw.slice(i + 1)
+                        let tailPath = []
+                        for (const t of tail) {
+                            const { base: tb, ord: to } = parseSeg(t)
+                            const matches = relNodes.filter(n => n && n.name === tb)
+                            if (matches.length === 0) { previewNode = null; break }
+                            const picked = matches[to] || matches[0]
+                            const idxp = relNodes.findIndex(n => n === picked)
+                            const aord = relNodes.slice(0, idxp).filter(n => n && n.name === tb).length
+                            const segWithOrd = aord > 0 ? `${tb}#${aord}` : tb
+                            tailPath.push(segWithOrd)
+                            previewNode = picked
+                            relNodes = Array.isArray(picked.children) ? picked.children : []
+                        }
+                        // Pack meta
+                        const phantomMeta = {
+                            listPath: outPath.slice(),
+                            keyField,
+                            keyValue: rhsNorm,
+                            templateName: tmplName,
+                            tailSegments: segsRaw.slice(i + 1)
+                        }
+                        return { node: null, path: null, phantomMeta, phantomPreviewNode: previewNode || previewItem }
+                    }
+                }
+
+                if (!pickedChild) return { node: null, path: null }
+                // Append canonical child segment using its display name + ordinal among siblings
+                const childBase = (pickedChild.name || pickedChild.node_type || pickedChild.type || 'child')
+                const idxChild = children.findIndex(n => n === pickedChild)
+                const childOrd = children.slice(0, idxChild).filter(n => (n && (n.name || n.node_type || n.type) === childBase)).length
+                const childSeg = childOrd > 0 ? `${childBase}#${childOrd}` : childBase
+                outPath = outPath.concat([childSeg])
+                currentNode = pickedChild
+                currentNodes = Array.isArray(pickedChild.children) ? pickedChild.children : []
+                continue
+            }
+
+            // Default: support name and optional #ordinal suffix
             const { base, ord } = parseSeg(raw)
             // Choose among children by exact base name match and ordinal
             const matches = currentNodes.filter(n => (n && (n.name === base)))
@@ -479,7 +891,7 @@ export class OverseerRenderer {
             currentNode = picked
             currentNodes = Array.isArray(picked.children) ? picked.children : []
         }
-        return { node: currentNode, path: outPath }
+    return { node: currentNode, path: outPath }
     }
 
     // Mount placeholder renderer (Phase 1): shows summary/placeholder, defers loading
@@ -2573,7 +2985,7 @@ export class OverseerRenderer {
             if (editingFinished) return
             editingFinished = true
             
-            // Capture field path before any DOM manipulation
+            // Capture field path before any DOM manipulation (may be synthetic for phantom)
             let fieldPath = null
             try {
                 fieldPath = this.buildNodePath(element).join('/')
@@ -2595,14 +3007,55 @@ export class OverseerRenderer {
                 console.warn('Input element already removed:', e)
             }
             
-            // Update the node value in the document structure
+            // If this edit is under a phantom link preview, materialize the item first and recompute a real path
+            try {
+                let p = element
+                while (p && p !== document.body && !p.hasAttribute?.('data-link-phantom')) { p = p.parentElement }
+                if (p && p.hasAttribute && p.hasAttribute('data-link-phantom')) {
+                    const meta = JSON.parse(p.getAttribute('data-link-phantom') || '{}')
+                    // Derive tail segments from the edited element's synthetic path relative to the link container
+                    let metaWithTail = meta
+                    try {
+                        const containerPathArr = JSON.parse(p.dataset.path || '[]')
+                        const elementPathArr = this.buildNodePath(element)
+                        // Expect element path: [...containerPathArr, '<phantom>', ...tail]
+                        const idxAfterPhantom = containerPathArr.length + 1
+                        const hasPhantomMarker = elementPathArr[containerPathArr.length] === '<phantom>'
+                        if (hasPhantomMarker && elementPathArr.length > idxAfterPhantom) {
+                            const derivedTail = elementPathArr.slice(idxAfterPhantom)
+                            const existingTail = Array.isArray(meta.tailSegments) ? meta.tailSegments : []
+                            // Remove common prefix to avoid duplication when link already included trailing segments
+                            let i = 0
+                            while (i < derivedTail.length && i < existingTail.length && derivedTail[i] === existingTail[i]) i++
+                            const toAdd = derivedTail.slice(i)
+                            metaWithTail = Object.assign({}, meta, { tailSegments: existingTail.concat(toAdd) })
+                        }
+                    } catch (_) { /* fallback to original meta */ }
+                    const realPath = await this._materializePhantomAndComputePath(metaWithTail)
+                    if (realPath) { fieldPath = realPath }
+                    try { p.removeAttribute('data-link-phantom') } catch(_) {}
+                }
+            } catch(_) {}
+
+            // Update the node value in the document structure (using real path if computed)
             // Instead of using the local node reference, find and update the node in the main document
+            let skipElementEvent = false
             if (fieldPath && window.app && window.app.currentDocument) {
                 if (DEBUG_MODE) console.log('🔧 Updating node in main document at path:', fieldPath, 'with value:', newValue)
                 const success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
                 if (!success) {
-                    console.warn('⚠️ Failed to update node by path, falling back to local node update')
-                    this.updateNodeValue(node, newValue)
+                    console.warn('⚠️ Failed to update node by path, attempting loose path resolution')
+                    try {
+                        const targetNode = this.resolveNodeByPathLoose(window.app.currentDocument, fieldPath)
+                        if (targetNode) {
+                            this.updateNodeValue(targetNode, newValue)
+                        } else {
+                            console.warn('⚠️ Loose resolver could not find target; falling back to local node update')
+                            this.updateNodeValue(node, newValue)
+                        }
+                    } catch (_) {
+                        this.updateNodeValue(node, newValue)
+                    }
                 }
             } else {
                 this.updateNodeValue(node, newValue)
@@ -2637,11 +3090,11 @@ export class OverseerRenderer {
                     // Skip event emission for any successful selective update (DOM-only or backend selective)
                     if (updateResult && updateResult.success) {
                         if (updateResult.domOnly) {
-                            if (DEBUG_MODE) console.log('🎯 Skipping event emission for DOM-only update (prevents chart refresh)')
+                            if (DEBUG_MODE) console.log('🎯 Skipping element event for DOM-only update (prevents chart refresh)')
                         } else {
-                            if (DEBUG_MODE) console.log('🎯 Skipping event emission for successful selective backend update (prevents chart refresh)')
+                            if (DEBUG_MODE) console.log('🎯 Skipping element event for successful selective backend update (prevents chart refresh)')
                         }
-                        return // Skip the event emission below
+                        skipElementEvent = true
                     }
                 } else {
                     console.warn('No field path available, falling back to full update')
@@ -2649,7 +3102,15 @@ export class OverseerRenderer {
                 }
             }
             // Emit change event for actions (only if not DOM-only update)
-            try { await this.emitEvent(node, element, 'change') } catch(_) {}
+            if (!skipElementEvent) {
+                try { await this.emitEvent(node, element, 'change') } catch(_) {}
+            }
+            // Also bubble a change event to the nearest link-proxy container (if any)
+            try {
+                let p = element
+                while (p && p !== document.body && !p.hasAttribute?.('data-link-proxy')) { p = p.parentElement }
+                if (p && p.dataset && p.dataset.path) { await this.emitEvent(node, p, 'change') }
+            } catch(_) {}
         }
         
         input.addEventListener('blur', finishEditing)
@@ -2667,6 +3128,73 @@ export class OverseerRenderer {
                 }
             }
         })
+    }
+
+    // Resolve a node by a canonical field path, tolerating instance suffixes ("__N") and ordinal segments ("#k"),
+    // and traversing through transparent wrappers when necessary.
+    resolveNodeByPathLoose(document, fieldPath) {
+        try {
+            const pathParts = String(fieldPath).split('/')
+            let currentNodes = document
+            let targetNode = null
+
+            const exactName = (n) => (n ?? '').toString()
+            const normalizeName = (n) => exactName(n)
+                .replace(/__\d+$/, '')   // drop instance suffix like __6
+                .replace(/#\d+$/, '')    // drop ordinal path suffix like #1
+            const segInfo = (part) => {
+                const idx = part.indexOf('#')
+                return idx >= 0 ? { base: part.slice(0, idx), ord: parseInt(part.slice(idx+1), 10) || 0 } : { base: part, ord: 0 }
+            }
+            const isTransparent = (node) => {
+                try {
+                    const nn = exactName(node.name)
+                    const nt = exactName(node.node_type || node.type)
+                    return node.is_hierarchy_transparent === true || !nn || nn.toLowerCase() === nt.toLowerCase()
+                } catch (_) { return false }
+            }
+            const findMatches = (nodes, wantBase, wantOrd) => {
+                const baseNorm = normalizeName(wantBase)
+                const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
+                if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
+                if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
+                const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
+                if (normMatches.length === 0) return null
+                return normMatches[wantOrd] || normMatches[0] || null
+            }
+
+            for (let i = 0; i < pathParts.length; i++) {
+                const part = pathParts[i]
+                const { base, ord } = segInfo(part)
+                // Try direct among current level
+                let nextNode = findMatches(currentNodes, base, ord)
+                // If not found, walk across transparent wrappers (BFS up to a small depth)
+                if (!nextNode) {
+                    let frontier = currentNodes.slice()
+                    let depth = 0
+                    const maxDepth = 4
+                    while (!nextNode && depth < maxDepth) {
+                        const childrenOfTransparents = []
+                        for (const n of frontier) {
+                            if (isTransparent(n) && Array.isArray(n.children)) {
+                                const candidate = findMatches(n.children, base, ord)
+                                if (candidate) { nextNode = candidate; break }
+                                childrenOfTransparents.push(...n.children)
+                            }
+                        }
+                        frontier = childrenOfTransparents
+                        depth++
+                    }
+                }
+
+                if (!nextNode) return null
+                targetNode = nextNode
+                if (i < pathParts.length - 1) {
+                    currentNodes = Array.isArray(targetNode.children) ? targetNode.children : []
+                }
+            }
+            return targetNode
+        } catch (_) { return null }
     }
 
     makeMarkdownFieldEditable(element, node) {
@@ -2768,6 +3296,15 @@ export class OverseerRenderer {
                 }
         // Emit change event for actions
         try { await this.emitEvent(node, element, 'change') } catch(_) {}
+        // Also bubble a change event to the nearest link-proxy container (if any),
+        // so containers can react (e.g., ensure_in_list for phantom links)
+        try {
+            let p = element
+            while (p && p !== document.body && !p.hasAttribute?.('data-link-proxy')) { p = p.parentElement }
+            if (p && p.dataset && p.dataset.path) {
+                await this.emitEvent(node, p, 'change')
+            }
+        } catch(_) {}
             }
             
             // Clean up
@@ -2802,9 +3339,19 @@ export class OverseerRenderer {
             nodePath: path,
             eventName
         })
-        window.app.currentDocument = updated
-        window.app.renderer.renderDocument(updated)
-        window.app.markDocumentModified && window.app.markDocumentModified()
+        // Only replace the document when the backend actually returned a document structure.
+        const looksLikeDocArray = Array.isArray(updated) && updated.every(n => n && typeof n === 'object')
+        const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)
+        if (looksLikeDocArray || looksLikeDocObject) {
+            window.app.currentDocument = looksLikeDocArray ? updated : updated.children
+            window.app.renderer.renderDocument(window.app.currentDocument)
+            window.app.markDocumentModified && window.app.markDocumentModified()
+        } else {
+            // Backend returned a status/boolean or unexpected shape; keep current document
+            if (DEBUG_MODE) console.warn('[Overseer] emitEvent returned non-document value; preserving current document:', updated)
+            // As a safety net, re-render the existing document if needed
+            try { window.app.renderer.renderDocument(window.app.currentDocument) } catch (_) {}
+        }
     // Reschedule timers based on the new document state
     try { window.app.startScheduler && window.app.startScheduler() } catch(_) {}
     }
