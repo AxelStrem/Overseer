@@ -73,7 +73,65 @@ export class OverseerRenderer {
                 preview.children.unshift(keyChild)
             }
             if (!keyChild.parameters) keyChild.parameters = {}
-            keyChild.parameters.value = (typeof keyValue === 'number') ? { Integer: keyValue } : { String: String(keyValue) }
+            // Coerce key value to match key field type when possible
+            const ty = String(keyChild.node_type || keyChild.type || '').toLowerCase()
+            const toDate = (s) => {
+                const str = String(s || '')
+                // Accept YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD or RFC3339
+                const m = str.match(/^(\d{4})[./-](\d{2})[./-](\d{2})(?:.*)?$/)
+                if (m) return `${m[1]}-${m[2]}-${m[3]}`
+                const d = new Date(str); if (!isNaN(d.getTime())) {
+                    const pad = (n) => String(n).padStart(2, '0')
+                    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+                }
+                return String(str)
+            }
+            const toTs = (s) => {
+                const str = String(s || '')
+                // If already RFC3339-like keep it, else assume day precision start of day UTC
+                if (/^\d{4}-\d{2}-\d{2}T/.test(str)) return str
+                const d = toDate(str)
+                return `${d}T00:00:00Z`
+            }
+            const toNum = (s, f=false) => {
+                const n = f ? parseFloat(String(s)) : parseInt(String(s), 10)
+                return isNaN(n) ? null : n
+            }
+            let coerced
+            switch (ty) {
+                case 'date':
+                    // Store as String normalized to YYYY-MM-DD so tests and existing data match
+                    coerced = { String: toDate(keyValue) }
+                    break
+                case 'timestamp':
+                    // Store as String day-precision (YYYY-MM-DD) for consistency with existing documents
+                    coerced = { String: toDate(keyValue) }
+                    break
+                case 'int':
+                case 'integer': {
+                    const n = toNum(keyValue, false)
+                    coerced = n === null ? { String: String(keyValue) } : { Integer: n }
+                    break
+                }
+                case 'float': {
+                    const n = toNum(keyValue, true)
+                    coerced = n === null ? { String: String(keyValue) } : { Float: n }
+                    break
+                }
+                case 'bool':
+                case 'boolean': {
+                    const s = String(keyValue).toLowerCase()
+                    if (s === 'true' || s === 'false') coerced = { Boolean: s === 'true' }
+                    else coerced = { String: String(keyValue) }
+                    break
+                }
+                default:
+                    coerced = (typeof keyValue === 'number') ? { Integer: keyValue } : { String: String(keyValue) }
+            }
+            // Assign coerced value and also override any stale computed value coming from the template
+            // so the preview displays the selected key immediately (even if template had $today()).
+            keyChild.parameters.value = coerced
+            try { keyChild.parameters._computed_value = coerced } catch(_) {}
             // Reflect that this is a template-derived instance for styling/layout if needed
             preview.parameters = Object.assign({}, preview.parameters || {}, { _from_template: true })
             return preview
@@ -143,7 +201,42 @@ export class OverseerRenderer {
             if (keyChild.is_hierarchy_transparent === undefined) keyChild.is_hierarchy_transparent = false
             if (!keyChild.parameters) keyChild.parameters = {}
             const kv = meta.keyValue
-            keyChild.parameters.value = (typeof kv === 'number') ? { Integer: kv } : { String: String(kv) }
+            // Match key value type to the field's node type where possible
+            const keyTy = String(keyChild.node_type || keyChild.type || '').toLowerCase()
+            const toDate2 = (s) => {
+                const str = String(s || '')
+                const m = str.match(/^(\d{4})[./-](\d{2})[./-](\d{2})(?:.*)?$/)
+                if (m) return `${m[1]}-${m[2]}-${m[3]}`
+                const d = new Date(str); if (!isNaN(d.getTime())) {
+                    const pad = (n) => String(n).padStart(2, '0')
+                    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+                }
+                return String(str)
+            }
+            const toTs2 = (s) => {
+                const str = String(s || '')
+                if (/^\d{4}-\d{2}-\d{2}T/.test(str)) return str
+                const d = toDate2(str)
+                return `${d}T00:00:00Z`
+            }
+            const numParse = (s, f=false) => {
+                const n = f ? parseFloat(String(s)) : parseInt(String(s), 10)
+                return isNaN(n) ? null : n
+            }
+            let kvTyped
+            switch (keyTy) {
+                case 'date': kvTyped = { String: toDate2(kv) }; break
+                case 'timestamp': kvTyped = { String: toDate2(kv) }; break
+                case 'int':
+                case 'integer': { const n = numParse(kv, false); kvTyped = (n===null)?{ String: String(kv) }:{ Integer: n }; break }
+                case 'float': { const n = numParse(kv, true); kvTyped = (n===null)?{ String: String(kv) }:{ Float: n }; break }
+                case 'bool':
+                case 'boolean': { const s = String(kv).toLowerCase(); kvTyped = (s==='true'||s==='false')?{ Boolean: s==='true' }:{ String: String(kv) }; break }
+                default: kvTyped = (typeof kv === 'number') ? { Integer: kv } : { String: String(kv) }
+            }
+            // Assign the key and mirror it in _computed_value to avoid template-computed fallbacks overriding display
+            keyChild.parameters.value = kvTyped
+            try { keyChild.parameters._computed_value = kvTyped } catch(_) {}
             // Append to list
             listNode.children.push(newItem)
             // Mark explicit override so it persists
@@ -3645,6 +3738,24 @@ export class OverseerRenderer {
                 }
             }
             
+            // Additionally, refresh all link-proxy containers because their computed targets
+            // may depend on interpolated fields (e.g., $(../selected_date)). This ensures
+            // dynamic link bindings update without requiring a full document render.
+            try {
+                const linkEls = Array.from(document.querySelectorAll('[data-link-proxy]'))
+                if (linkEls.length > 0 && changedFieldPaths && changedFieldPaths.length > 0) {
+                    if (DEBUG_MODE) console.log(`🔗 Refreshing ${linkEls.length} link proxy container(s) due to changes:`, changedFieldPaths)
+                    for (const el of linkEls) {
+                        try {
+                            const p = JSON.parse(el.dataset.path || '[]')
+                            if (Array.isArray(p) && p.length > 0) {
+                                this.rerenderSubtree(newDocument, p)
+                            }
+                        } catch (_) { /* ignore individual failures */ }
+                    }
+                }
+            } catch (_) { /* best-effort only */ }
+
             if (DEBUG_MODE) console.log(`✅ Selective update completed: ${updateCount} elements updated`)
             return updateCount > 0
             
