@@ -134,6 +134,86 @@ export class OverseerRenderer {
             try { keyChild.parameters._computed_value = coerced } catch(_) {}
             // Reflect that this is a template-derived instance for styling/layout if needed
             preview.parameters = Object.assign({}, preview.parameters || {}, { _from_template: true })
+
+            // Clean any stale computed shadows copied from the template to avoid misleading values in preview
+            const scrubComputed = (node) => {
+                if (!node || typeof node !== 'object') return
+                if (node.parameters && typeof node.parameters === 'object') {
+                    try { if ('_computed_value' in node.parameters) delete node.parameters._computed_value } catch(_) {}
+                    try { if ('_computed_fallback' in node.parameters) delete node.parameters._computed_fallback } catch(_) {}
+                }
+                const ch = Array.isArray(node.children) ? node.children : []
+                for (const c of ch) scrubComputed(c)
+            }
+            scrubComputed(preview)
+
+            // Best-effort compute a preview fallback for common patterns like weight-from-prior-history.
+            // Only for phantom preview, using local document array and the provided listNode context.
+            try {
+                const normDay = (s) => {
+                    const str = String(s || '')
+                    const m = str.match(/^(\d{4})[./-](\d{2})[./-](\d{2})/)
+                    if (m) return `${m[1]}-${m[2]}-${m[3]}`
+                    const d = new Date(str); if (!isNaN(d.getTime())) {
+                        const pad = (n) => String(n).padStart(2, '0')
+                        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+                    }
+                    return str
+                }
+                const readFieldNode = (parent, name) => (parent && Array.isArray(parent.children)) ? parent.children.find(c => c && c.name === name) : null
+                const readStringOrNumber = (valObj) => {
+                    if (valObj === null || valObj === undefined) return null
+                    if (typeof valObj === 'number') return valObj
+                    if (typeof valObj === 'string') return valObj
+                    if (typeof valObj === 'object') {
+                        if ('String' in valObj) return valObj.String
+                        if ('Float' in valObj) return valObj.Float
+                        if ('Integer' in valObj) return valObj.Integer
+                        if ('Timestamp' in valObj) return valObj.Timestamp
+                        if ('Date' in valObj) return valObj.Date
+                    }
+                    return null
+                }
+                const readEffectiveParam = (node, key) => {
+                    if (!node || !node.parameters) return null
+                    const shadow = node.parameters[`_computed_${key}`]
+                    if (shadow !== undefined) return shadow
+                    const raw = node.parameters[key]
+                    return raw
+                }
+                // Only attempt for a child named 'weight' (float) when value is missing/empty or explicitly Null
+                const weightChild = readFieldNode(preview, 'weight')
+                const weightVal = weightChild?.parameters?.value
+                const weightMissing = (weightVal === undefined) || weightVal === null ||
+                    (typeof weightVal === 'object' && weightVal !== null && ('Null' in weightVal)) ||
+                    (typeof weightVal === 'string' && weightVal.trim().toLowerCase() === 'null')
+                if (weightChild && weightMissing && listNode && Array.isArray(listNode.children)) {
+                    const targetDay = normDay(readStringOrNumber(coerced) || keyValue)
+                    const candidates = []
+                    for (const item of listNode.children) {
+                        const dNode = readFieldNode(item, keyField)
+                        const dVal = readStringOrNumber(readEffectiveParam(dNode, 'value'))
+                        const day = normDay(dVal)
+                        if (!day || !/\d{4}-\d{2}-\d{2}/.test(day)) continue
+                        if (day < targetDay) candidates.push({ day, item })
+                    }
+                    candidates.sort((a, b) => a.day < b.day ? 1 : (a.day > b.day ? -1 : 0))
+                    let prev = candidates.length ? candidates[0].item : null
+                    let prevWeight = null
+                    if (prev) {
+                        const wNode = readFieldNode(prev, 'weight')
+                        const wVal = readEffectiveParam(wNode, 'value')
+                        const n = readStringOrNumber(wVal)
+                        prevWeight = typeof n === 'string' ? parseFloat(n) : n
+                    }
+                    if (typeof prevWeight !== 'number' || isNaN(prevWeight)) prevWeight = 80.0
+                    // Surface as computed fallback so UI shows it when value is null
+                    if (!weightChild.parameters) weightChild.parameters = {}
+                    // Surface both computed fallback and computed value to ensure display shows the number in preview
+                    weightChild.parameters._computed_fallback = { Float: prevWeight }
+                    weightChild.parameters._computed_value = { Float: prevWeight }
+                }
+            } catch(_) { /* non-fatal */ }
             return preview
         } catch(_) { return { name: templateName || 'Item', node_type: 'div', parameters: {}, children: [] } }
     }
@@ -1365,7 +1445,13 @@ export class OverseerRenderer {
         const suf = this.getParameterValue(node, 'suffix') || ''
         const precRaw = this.getParameterValue(node, 'precision')
         const fmtNumber = (v) => {
-            if (v === null || v === undefined) return '0'
+            if (v === null || v === undefined) return ''
+            if (typeof v === 'string') {
+                const t = v.trim()
+                if (t === '') return ''
+                // treat literal "Null" as empty
+                if (t.toLowerCase() === 'null') return ''
+            }
             // Try to coerce to number when possible
             let n = (typeof v === 'number') ? v : Number(v)
             if (!isNaN(n)) {
