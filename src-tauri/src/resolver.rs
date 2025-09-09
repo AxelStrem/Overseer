@@ -952,15 +952,22 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                     debug_resolver!("[RESOLVER] set explicit override (list children) on '{}'", template_field.name);
                 }
             } else if !override_field.children.is_empty() {
-                // For non-list fields, override children only if they differ from template
-                let differs = template_field.children != override_field.children;
-                if differs {
-                    template_field.children = override_field.children.clone();
+                // For non-list container nodes, deep-merge override children by name
+                // rather than replacing the entire children array. This preserves defaults
+                // for siblings that are not explicitly overridden.
+                let mut child_overrides: HashMap<String, &OverseerNode> = HashMap::new();
+                for ch in &override_field.children {
+                    child_overrides.insert(ch.name.clone(), ch);
+                }
+                if !child_overrides.is_empty() {
+                    // Mark the container as having explicit child overrides
                     template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                     template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                    debug_resolver!("[RESOLVER] set explicit override (children) on '{}'", template_field.name);
+                    debug_resolver!("[RESOLVER] deep-merging {} child override(s) into container '{}'", child_overrides.len(), template_field.name);
+                    // Recursively merge into this container field
+                    merge_node(template_field, &child_overrides);
                 } else {
-                    debug_resolver!("[RESOLVER]     Override children identical to template; skipping override marking");
+                    debug_resolver!("[RESOLVER]     No child overrides to merge for '{}'", template_field.name);
                 }
             }
             // Ensure node_type is preserved from template (do not overwrite)
@@ -1041,16 +1048,16 @@ fn evaluate_formulas_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_pa
 
 /// Selective chart computation that only processes charts affected by specific field changes
 fn compute_chart_series_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
-    debug_resolver!("🎯 Selective chart computation for fields: {:?}", field_paths);
+    debug_resolver!("[RESOLVER] Selective chart computation for changed fields: {:?}", field_paths);
     
     // Analyze if any charts actually depend on the changed field paths
     let charts_need_update = charts_depend_on_fields(nodes, field_paths);
     
     if charts_need_update {
-    debug_resolver!("🔄 Charts depend on changed fields, performing selective chart recomputation");
+    debug_resolver!("[RESOLVER] Charts depend on changed fields, performing selective chart recomputation");
         compute_chart_series(nodes);
     } else {
-    debug_resolver!("✅ No charts depend on changed fields, skipping chart computation");
+    debug_resolver!("[RESOLVER] No charts depend on changed fields, skipping chart computation");
     }
 }
 
@@ -1066,47 +1073,195 @@ fn charts_depend_on_fields(nodes: &[OverseerNode], field_paths: &std::collection
 
 #[cfg(test)]
 mod tests_inheritance_bug7 {
-        use super::*;
-        use crate::parser::parse_document;
+    use super::*;
+    use crate::parser::parse_document;
 
-        // Bug 7: When creating node from template, parent node should inherit the template's parameters (not only children)
-        #[test]
-        fn template_instance_parent_inherits_parameters() {
-                let input = r#"
-tab Root {
-    div Templates {
-        div Colorful (background-color=#123456, font-color=#eeeeee) {
-            string Title (value="Hello")
-        }
-    }
-    <Colorful> Instance {}
-}
-"#;
-
-                let mut nodes = parse_document(input).unwrap().1;
-                resolve_document(&mut nodes);
-
-                // Find the instance node
-                fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
-                        for n in nodes {
-                                if n.name == name { return Some(n); }
-                                if let Some(f) = find(&n.children, name) { return Some(f); }
-                        }
-                        None
+    // Bug 7: When creating node from template, parent node should inherit the template's parameters (not only children)
+    #[test]
+    fn template_instance_parent_inherits_parameters() {
+        let input = r#"
+        tab Root {
+            div Templates {
+                div Colorful (background-color=#123456, font-color=#eeeeee) {
+                    string Title (value="Hello")
                 }
-                let inst = find(&nodes, "Instance").expect("instance exists");
-
-                // Expect parent-level parameters copied from template (and marked _from_template)
-                assert_eq!(inst.node_type, "Colorful");
-                assert!(matches!(inst.parameters.get("_from_template"), Some(OverseerValue::Boolean(true))));
-                assert!(matches!(inst.parameters.get("background-color"), Some(OverseerValue::Color(_))));
-                assert!(matches!(inst.parameters.get("font-color"), Some(OverseerValue::Color(_))));
-
-                // And child inherited (Title) exists
-                let title = inst.children.iter().find(|c| c.name == "Title").expect("title child");
-                assert_eq!(title.node_type, "string");
-                assert!(matches!(title.parameters.get("value"), Some(OverseerValue::String(v)) if v == "Hello"));
+            }
+            <Colorful> Instance {}
         }
+        "#;
+
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+
+        // Find the instance node
+        fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+            for n in nodes {
+                if n.name == name { return Some(n); }
+                if let Some(f) = find(&n.children, name) { return Some(f); }
+            }
+            None
+        }
+        let inst = find(&nodes, "Instance").expect("instance exists");
+
+        // Expect parent-level parameters copied from template (and marked _from_template)
+        assert_eq!(inst.node_type, "Colorful");
+        assert!(matches!(inst.parameters.get("_from_template"), Some(OverseerValue::Boolean(true))));
+        assert!(matches!(inst.parameters.get("background-color"), Some(OverseerValue::Color(_))));
+        assert!(matches!(inst.parameters.get("font-color"), Some(OverseerValue::Color(_))));
+
+        // And child inherited (Title) exists
+        let title = inst.children.iter().find(|c| c.name == "Title").expect("title child");
+        assert_eq!(title.node_type, "string");
+        assert!(matches!(title.parameters.get("value"), Some(OverseerValue::String(v)) if v == "Hello"));
+    }
+}
+
+#[cfg(test)]
+mod tests_nested_named_container_defaults_in_list_items {
+    use super::*;
+    use crate::parser::parse_document;
+
+    // When a list item template has a named container (e.g., per_item)
+    // with several default fields, providing an override for one child
+    // (e.g., per_item/calories) must preserve the defaults of the other
+    // children (e.g., per_item/weight) in the resolved instance.
+    #[test]
+    fn list_item_named_container_preserves_sibling_defaults_on_child_override() {
+        let input = r#"
+        tab Root {
+            div MealRecord (hidden=true) {
+                div per_item {
+                    float calories = 0.0
+                    float weight = 100.0
+                }
+            }
+            list Intake (entry=<MealRecord>) {
+                - {
+                    - per_item {
+                        - calories = 250.0
+                    }
+                }
+            }
+        }
+        "#;
+
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+
+        // Find Intake list item (resolved MealRecord)
+        let root = nodes.iter().find(|n| n.name == "Root").expect("root present");
+        let intake = root.children.iter().find(|n| n.name == "Intake").expect("intake present");
+        assert_eq!(intake.node_type, "list");
+        assert_eq!(intake.children.len(), 1);
+        let item = &intake.children[0];
+        assert_eq!(item.node_type, "MealRecord");
+
+        // Access per_item fields
+        let per_item = item.children.iter().find(|c| c.name == "per_item").expect("per_item present");
+        // calories should be overridden
+        let calories = per_item.children.iter().find(|c| c.name == "calories").expect("calories present");
+        assert!(matches!(calories.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 250.0).abs() < 1e-6));
+        // weight should remain from template default (100.0)
+        let weight = per_item.children.iter().find(|c| c.name == "weight").expect("weight present");
+        assert!(matches!(weight.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 100.0).abs() < 1e-6));
+        // And weight should still be marked as template-derived (has _template_value)
+        assert!(weight.parameters.contains_key("_template_value"), "weight should keep template marker since it wasn't overridden");
+    }
+
+    // Multiple overrides in the same named container should not drop other defaults
+    #[test]
+    fn list_item_named_container_multiple_sibling_overrides_preserve_other_defaults() {
+        let input = r#"
+        tab Root {
+            div T (hidden=true) {
+                div group {
+                    float a = 1.0
+                    float b = 2.0
+                    float c = 3.0
+                    string label = "x"
+                }
+            }
+            list L (entry=<T>) {
+                - {
+                    - group {
+                        - a = 10.0
+                        - c = 30.0
+                        - label = "over"
+                    }
+                }
+            }
+        }
+        "#;
+
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let list = root.children.iter().find(|n| n.name == "L").unwrap();
+        assert_eq!(list.children.len(), 1);
+        let item = &list.children[0];
+        assert_eq!(item.node_type, "T");
+        let group = item.children.iter().find(|c| c.name == "group").unwrap();
+        let a = group.children.iter().find(|c| c.name == "a").unwrap();
+        let b = group.children.iter().find(|c| c.name == "b").unwrap();
+        let c = group.children.iter().find(|c| c.name == "c").unwrap();
+        let label = group.children.iter().find(|c| c.name == "label").unwrap();
+        assert!(matches!(a.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 10.0).abs() < 1e-6));
+        assert!(matches!(c.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 30.0).abs() < 1e-6));
+        assert!(matches!(label.parameters.get("value"), Some(OverseerValue::String(v)) if v == "over"));
+        // Non-overridden 'b' should remain default and carry template marker
+        assert!(matches!(b.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 2.0).abs() < 1e-6));
+        assert!(b.parameters.contains_key("_template_value"));
+    }
+
+    // Deeply nested containers: overrides at inner level should preserve defaults of siblings at the same inner level
+    #[test]
+    fn list_item_deep_nested_container_child_override_preserves_inner_sibling_defaults() {
+        let input = r#"
+        tab Root {
+            div T (hidden=true) {
+                div outer {
+                    div inner {
+                        float x = 1.0
+                        float y = 2.0
+                    }
+                    float z = 3.0
+                }
+            }
+            list L (entry=<T>) {
+                - {
+                    - outer {
+                        - inner {
+                            - x = 10.0
+                        }
+                    }
+                }
+            }
+        }
+        "#;
+
+        let mut nodes = parse_document(input).unwrap().1;
+        resolve_document(&mut nodes);
+
+        let root = nodes.iter().find(|n| n.name == "Root").unwrap();
+        let list = root.children.iter().find(|n| n.name == "L").unwrap();
+        assert_eq!(list.children.len(), 1);
+        let item = &list.children[0];
+        assert_eq!(item.node_type, "T");
+        let outer = item.children.iter().find(|c| c.name == "outer").unwrap();
+        let inner = outer.children.iter().find(|c| c.name == "inner").unwrap();
+        let x = inner.children.iter().find(|c| c.name == "x").unwrap();
+        let y = inner.children.iter().find(|c| c.name == "y").unwrap();
+        let z = outer.children.iter().find(|c| c.name == "z").unwrap();
+        // Override applied
+        assert!(matches!(x.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 10.0).abs() < 1e-6));
+        // Sibling default preserved with template marker
+        assert!(matches!(y.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 2.0).abs() < 1e-6));
+        assert!(y.parameters.contains_key("_template_value"));
+        // Unaffected cousin at outer level should remain default
+        assert!(matches!(z.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 3.0).abs() < 1e-6));
+        assert!(z.parameters.contains_key("_template_value"));
+    }
 }
 
 /// Recursively check if a chart node or its children depend on the specified field paths
@@ -1122,7 +1277,7 @@ fn chart_node_depends_on_fields(node: &OverseerNode, field_paths: &std::collecti
         for child in &node.children {
             if child.node_type == "plot" {
                 if plot_depends_on_fields(child, field_paths, &node_path) {
-                    debug_resolver!("📊 Chart plot '{}' depends on changed fields", format!("{}/{}", node_path, child.name));
+                    debug_resolver!("[RESOLVER] Chart plot '{}' depends on changed fields", format!("{}/{}", node_path, child.name));
                     return true;
                 }
             }
@@ -1145,7 +1300,7 @@ fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::H
     
     // Check the 'source' parameter to see what data the plot references
     if let Some(OverseerValue::String(source_path)) = plot.parameters.get("source") {
-    debug_resolver!("🔍 Checking if plot source '{}' intersects with changed fields: {:?}", source_path, field_paths);
+    debug_resolver!("[RESOLVER] Checking if plot source '{}' intersects with changed fields: {:?}", source_path, field_paths);
         
         // If the source path (like "/data") intersects with any changed field paths
         for field_path in field_paths {
@@ -1154,13 +1309,13 @@ fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::H
             
             // Direct path match (e.g., field "data" affects source "/data")
             if field_path == source_clean || field_path.starts_with(&format!("{}/", source_clean)) {
-                debug_resolver!("� Plot source '{}' directly affected by field change '{}'", source_path, field_path);
+                debug_resolver!("[RESOLVER] Plot source '{}' directly affected by field change '{}'", source_path, field_path);
                 return true;
             }
             
             // Reverse check: source affects field (e.g., source "/data" affects field "data/item")
             if source_clean.starts_with(field_path) || source_clean.starts_with(&format!("{}/", field_path)) {
-                debug_resolver!("📊 Plot source '{}' contains changed field '{}'", source_path, field_path);
+                debug_resolver!("[RESOLVER] Plot source '{}' contains changed field '{}'", source_path, field_path);
                 return true;
             }
         }
@@ -1168,7 +1323,7 @@ fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::H
     
     // For now, assume plot formulas (x, y parameters) only depend on lambda variables and source data
     // They typically don't depend on external fields like 'a' or 'b'
-    debug_resolver!("✅ Plot '{}' does not depend on changed fields", format!("{}/{}", chart_path, plot.name));
+    debug_resolver!("[RESOLVER] Plot '{}' does not depend on changed fields", format!("{}/{}", _chart_path, plot.name));
     false
 }
 

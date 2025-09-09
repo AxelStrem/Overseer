@@ -234,7 +234,9 @@ export class OverseerRenderer {
     }
 
     // Materialize missing list item by calling ensure_in_list via event executor, update the link param, and return a concrete field path for the edited element.
-    async _materializePhantomAndComputePath(meta) {
+    // Options:
+    //  - position: 'append' | 'prepend' (default: 'append')
+    async _materializePhantomAndComputePath(meta, options = {}) {
         try {
             if (!window.app || !window.app.currentDocument) return null
             // meta.listPath is path array to the list node
@@ -332,15 +334,21 @@ export class OverseerRenderer {
             // Assign the key and mirror it in _computed_value to avoid template-computed fallbacks overriding display
             keyChild.parameters.value = kvTyped
             try { keyChild.parameters._computed_value = kvTyped } catch(_) {}
-            // Append to list
-            listNode.children.push(newItem)
+            // Insert into list honoring requested position
+            const pos = (options && typeof options.position === 'string') ? options.position.toLowerCase() : 'append'
+            if (pos === 'prepend') {
+                listNode.children.unshift(newItem)
+            } else {
+                listNode.children.push(newItem)
+            }
             // Mark explicit override so it persists
             listNode.parameters = Object.assign({}, listNode.parameters || {}, { _explicit_overrides: { String: (listNode.parameters?._explicit_overrides?.String || '') } })
             // Do not mutate the original link; keep it dynamic so it can follow future date changes.
             // Return a real field path if the edit targeted a child in tailSegments; otherwise the item path
             // Use the actual item name (with instance suffix) for correct path resolution
             const siblings = listNode.children
-            const idxNew = siblings.length - 1
+            // Find the actual index of the newly inserted item (works for both append and prepend)
+            const idxNew = siblings.indexOf(newItem)
             const itemBaseName = newItem.name
             const itemOrd = siblings.slice(0, idxNew).filter(c => c && c.name === itemBaseName).length
             const itemSeg = itemOrd > 0 ? `${itemBaseName}#${itemOrd}` : itemBaseName
@@ -626,6 +634,28 @@ export class OverseerRenderer {
                                 try { this.renderEventControls(node, element) } catch(_) {}
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
                                 try { element.setAttribute('data-link-phantom', JSON.stringify(phantomMeta)) } catch(_) {}
+                                // Policy: create on access if requested
+                                try {
+                                    const policyRaw = this.getParameterValue(node, 'phantom-materialize')
+                                    const policy = (policyRaw ? String(policyRaw) : 'none').toLowerCase()
+                                    if (policy.endsWith('on-access')) {
+                                        const isPrepend = policy.startsWith('prepend')
+                                        // Kick off materialization without blocking render
+                                        this._materializePhantomAndComputePath(Object.assign({}, phantomMeta), { position: isPrepend ? 'prepend' : 'append' })
+                                            .then((realPath) => {
+                                                if (!realPath) return
+                                                try { element.removeAttribute('data-link-phantom') } catch(_) {}
+                                                const pathArr = String(realPath).split('/')
+                                                const nodeReal = this.findNodeByPath(window.app.currentDocument, pathArr)
+                                                if (nodeReal) {
+                                                    // Replace contents with the real node subtree
+                                                    try { element.innerHTML = '' } catch(_) {}
+                                                    this.renderNode(nodeReal, element, nextInherited, pathArr)
+                                                }
+                                            })
+                                            .catch(() => {/* ignore */})
+                                    }
+                                } catch(_) { /* ignore policy errors; fall back to preview */ }
                                 // Apply per-link overrides to phantom preview as well
                                 let phantomToRender = phantomPreviewNode
                                 try {
@@ -3290,7 +3320,18 @@ export class OverseerRenderer {
                             metaWithTail = Object.assign({}, meta, { tailSegments: existingTail.concat(toAdd) })
                         }
                     } catch (_) { /* fallback to original meta */ }
-                    const realPath = await this._materializePhantomAndComputePath(metaWithTail)
+                    // Respect phantom-materialize policy on the link container element
+                    let position = 'append'
+                    try {
+                        const containerNodePath = JSON.parse(p.dataset.path || '[]')
+                        const containerNode = this.findNodeByPath(window.app.currentDocument, containerNodePath)
+                        const policyRaw = this.getParameterValue(containerNode, 'phantom-materialize')
+                        const policy = (policyRaw ? String(policyRaw) : 'none').toLowerCase()
+                        if (policy.endsWith('on-edit')) {
+                            position = policy.startsWith('prepend') ? 'prepend' : 'append'
+                        }
+                    } catch(_) { /* default to append */ }
+                    const realPath = await this._materializePhantomAndComputePath(metaWithTail, { position })
                     if (realPath) { fieldPath = realPath }
                     try { p.removeAttribute('data-link-phantom') } catch(_) {}
                 }
