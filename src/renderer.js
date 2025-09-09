@@ -213,6 +213,21 @@ export class OverseerRenderer {
                     weightChild.parameters._computed_fallback = { Float: prevWeight }
                     weightChild.parameters._computed_value = { Float: prevWeight }
                 }
+
+                // Compute simple totals for empty intake lists: total_calories = 0 when intake has no items
+                try {
+                    const intakeNode = readFieldNode(preview, 'intake')
+                    const intakeEmpty = !intakeNode || !Array.isArray(intakeNode.children) || intakeNode.children.length === 0
+                    if (intakeEmpty) {
+                        const totalNode = readFieldNode(preview, 'total_calories')
+                        if (totalNode) {
+                            if (!totalNode.parameters) totalNode.parameters = {}
+                            if (totalNode.parameters._computed_value === undefined) {
+                                totalNode.parameters._computed_value = { Integer: 0 }
+                            }
+                        }
+                    }
+                } catch(_) { /* non-fatal */ }
             } catch(_) { /* non-fatal */ }
             return preview
         } catch(_) { return { name: templateName || 'Item', node_type: 'div', parameters: {}, children: [] } }
@@ -611,9 +626,36 @@ export class OverseerRenderer {
                                 try { this.renderEventControls(node, element) } catch(_) {}
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
                                 try { element.setAttribute('data-link-phantom', JSON.stringify(phantomMeta)) } catch(_) {}
+                                // Apply per-link overrides to phantom preview as well
+                                let phantomToRender = phantomPreviewNode
+                                try {
+                                    const overrideSpecs = (node.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
+                                    if (overrideSpecs.length > 0) {
+                                        const clone = JSON.parse(JSON.stringify(phantomPreviewNode))
+                                        const applyOverrideRecursive = (tNode, oNode) => {
+                                            if (!tNode || !oNode) return
+                                            const kids = Array.isArray(tNode.children) ? tNode.children : []
+                                            const exact = kids.find(c => c && c.name === oNode.name)
+                                            let targetMatch = exact || (tNode.name === oNode.name ? tNode : null)
+                                            const mergeParams = (target, src) => {
+                                                if (!src || !target) return
+                                                const sp = src.parameters || {}
+                                                if (!target.parameters) target.parameters = {}
+                                                for (const k of Object.keys(sp)) target.parameters[k] = sp[k]
+                                            }
+                                            if (targetMatch) {
+                                                mergeParams(targetMatch, oNode)
+                                                const oKids = Array.isArray(oNode.children) ? oNode.children : []
+                                                for (const ok of oKids) applyOverrideRecursive(targetMatch, ok)
+                                            }
+                                        }
+                                        for (const ov of overrideSpecs) applyOverrideRecursive(clone, ov)
+                                        phantomToRender = clone
+                                    }
+                                } catch(_) { /* best-effort only */ }
                                 // Render preview under a synthetic path; edits will be intercepted
                                 const syntheticPath = path.concat(['<phantom>'])
-                                this.renderNode(phantomPreviewNode, element, nextInherited, syntheticPath)
+                                this.renderNode(phantomToRender, element, nextInherited, syntheticPath)
                                 this._linkDepth -= 1
                                 return
                             } else {
@@ -630,8 +672,46 @@ export class OverseerRenderer {
                                 try { this.renderEventControls(node, element) } catch(_) {}
                                 // Mark this container as a link proxy to enable event bubbling on edit
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
-                                // Render the target subtree inside this container
-                                this.renderNode(targetNode, element, nextInherited, targetPath.slice())
+                                // Apply per-link child overrides by cloning the target and merging override params
+                                let toRender = targetNode
+                                try {
+                                    const overrideSpecs = (node.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
+                                    if (overrideSpecs.length > 0) {
+                                        const clone = JSON.parse(JSON.stringify(targetNode))
+                                        const applyOverrideRecursive = (tNode, oNode) => {
+                                            if (!tNode || !oNode) return
+                                            // Try to match by name among immediate children; if not found and names equal, apply to self
+                                            const pickChild = (parent, name) => {
+                                                const kids = Array.isArray(parent.children) ? parent.children : []
+                                                const exact = kids.find(c => c && c.name === name)
+                                                return exact || null
+                                            }
+                                            // Merge parameters from override node into target match
+                                            const mergeParams = (target, src) => {
+                                                if (!src || !target) return
+                                                const sp = src.parameters || {}
+                                                if (!target.parameters) target.parameters = {}
+                                                for (const k of Object.keys(sp)) {
+                                                    // Copy all params; rely on author to avoid conflicting link overrides
+                                                    target.parameters[k] = sp[k]
+                                                }
+                                            }
+                                            // Find target child by override name
+                                            let targetMatch = pickChild(tNode, oNode.name)
+                                            if (!targetMatch && (tNode.name === oNode.name)) targetMatch = tNode
+                                            if (targetMatch) {
+                                                mergeParams(targetMatch, oNode)
+                                                // Recurse for nested overrides
+                                                const oKids = Array.isArray(oNode.children) ? oNode.children : []
+                                                for (const ok of oKids) applyOverrideRecursive(targetMatch, ok)
+                                            }
+                                        }
+                                        for (const ov of overrideSpecs) applyOverrideRecursive(clone, ov)
+                                        toRender = clone
+                                    }
+                                } catch(_) { /* best-effort only */ }
+                                // Render the (possibly overridden) target subtree inside this container
+                                this.renderNode(toRender, element, nextInherited, targetPath.slice())
                                 // Do not render this node's own children for a link-proxy container
                                 this._linkDepth -= 1
                                 return
