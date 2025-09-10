@@ -633,6 +633,8 @@ export class OverseerRenderer {
                             if (this._linkDepth <= 6) {
                                 try { this.renderEventControls(node, element) } catch(_) {}
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
+                                // Clear any previous target-path; phantom does not have a concrete target yet
+                                try { element.removeAttribute('data-link-target-path') } catch(_) {}
                                 try { element.setAttribute('data-link-phantom', JSON.stringify(phantomMeta)) } catch(_) {}
                                 // Policy: create on access if requested
                                 try {
@@ -702,6 +704,8 @@ export class OverseerRenderer {
                                 try { this.renderEventControls(node, element) } catch(_) {}
                                 // Mark this container as a link proxy to enable event bubbling on edit
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
+                                // Record the concrete target path this proxy is rendering, to aid selective updates
+                                try { element.setAttribute('data-link-target-path', JSON.stringify(targetPath)) } catch(_) {}
                                 // Apply per-link child overrides by cloning the target and merging override params
                                 let toRender = targetNode
                                 try {
@@ -3350,13 +3354,33 @@ export class OverseerRenderer {
                         if (targetNode) {
                             this.updateNodeValue(targetNode, newValue)
                         } else {
-                            console.warn('⚠️ Loose resolver could not find target; falling back to local node update')
-                            this.updateNodeValue(node, newValue)
+                            // Final fallback: use app-level robust resolver to locate the node
+                            try {
+                                const alt = (window.app && typeof window.app.getNodeByPath === 'function')
+                                    ? window.app.getNodeByPath(window.app.currentDocument, fieldPath)
+                                    : null
+                                if (alt) {
+                                    this.updateNodeValue(alt, newValue)
+                                } else {
+                                    console.warn('⚠️ Could not resolve target node via any resolver; falling back to local node update')
+                                    this.updateNodeValue(node, newValue)
+                                }
+                            } catch (_) {
+                                this.updateNodeValue(node, newValue)
+                            }
                         }
                     } catch (_) {
                         this.updateNodeValue(node, newValue)
                     }
                 }
+
+                // Immediately record this user edit for save-time merge to guard against
+                // any interim resolve that might overwrite the value before persisting.
+                try {
+                    if (window.app && window.app._pendingUserEdits && typeof window.app._pendingUserEdits.set === 'function') {
+                        window.app._pendingUserEdits.set(fieldPath, { value: newValue, ts: Date.now() })
+                    }
+                } catch(_) { /* best-effort only */ }
             } else {
                 this.updateNodeValue(node, newValue)
             }
@@ -3401,16 +3425,16 @@ export class OverseerRenderer {
                     await window.app.reevaluateDocumentSelective([])
                 }
             }
-            // Emit change event for actions (only if not DOM-only update)
+            // Emit change event for actions (only if not DOM-only/ selective backend update)
             if (!skipElementEvent) {
                 try { await this.emitEvent(node, element, 'change') } catch(_) {}
+                // Also bubble a change event to the nearest link-proxy container (if any)
+                try {
+                    let p = element
+                    while (p && p !== document.body && !p.hasAttribute?.('data-link-proxy')) { p = p.parentElement }
+                    if (p && p.dataset && p.dataset.path) { await this.emitEvent(node, p, 'change') }
+                } catch(_) {}
             }
-            // Also bubble a change event to the nearest link-proxy container (if any)
-            try {
-                let p = element
-                while (p && p !== document.body && !p.hasAttribute?.('data-link-proxy')) { p = p.parentElement }
-                if (p && p.dataset && p.dataset.path) { await this.emitEvent(node, p, 'change') }
-            } catch(_) {}
         }
         
         input.addEventListener('blur', finishEditing)
@@ -3455,12 +3479,25 @@ export class OverseerRenderer {
             }
             const findMatches = (nodes, wantBase, wantOrd) => {
                 const baseNorm = normalizeName(wantBase)
+                // 1) Exact name match first
                 const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
                 if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
                 if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
+                // 2) Name normalized match (handles '#k' and '__N')
                 const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
-                if (normMatches.length === 0) return null
-                return normMatches[wantOrd] || normMatches[0] || null
+                if (normMatches.length > 0) return normMatches[wantOrd] || normMatches[0] || null
+                // 3) Fallback: match by node_type when names differ (e.g., '-' vs 'WeightRecord')
+                const typeMatches = nodes.filter(n => normalizeName(n.node_type || n.type) === baseNorm)
+                if (typeMatches.length > 0) return typeMatches[wantOrd] || typeMatches[0] || null
+                // 4) Fallback: match by _original_type parameter (templated list items)
+                const origMatches = nodes.filter(n => {
+                    try {
+                        const ot = n.parameters && (n.parameters._original_type || n.parameters._template_type)
+                        return ot && normalizeName(ot) === baseNorm
+                    } catch(_) { return false }
+                })
+                if (origMatches.length > 0) return origMatches[wantOrd] || origMatches[0] || null
+                return null
             }
 
             for (let i = 0; i < pathParts.length; i++) {
@@ -3680,15 +3717,25 @@ export class OverseerRenderer {
             }
             const findMatches = (nodes, wantBase, wantOrd) => {
                 const baseNorm = normalizeName(wantBase)
+                // 1) Exact name match first
                 const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
-                // If ordinal is zero and we have an exact match, return it immediately
                 if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
-                // If there are enough exact matches to satisfy the ordinal, use those
                 if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
-                // Otherwise, fall back to normalized-name grouping to account for ordinal suffixes like '#k'
+                // 2) Name normalized match (handles '#k' and '__N')
                 const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
-                if (normMatches.length === 0) return null
-                return normMatches[wantOrd] || normMatches[0] || null
+                if (normMatches.length > 0) return normMatches[wantOrd] || normMatches[0] || null
+                // 3) Fallback: match by node_type when names differ (e.g., '-' vs 'WeightRecord')
+                const typeMatches = nodes.filter(n => normalizeName(n.node_type || n.type) === baseNorm)
+                if (typeMatches.length > 0) return typeMatches[wantOrd] || typeMatches[0] || null
+                // 4) Fallback: match by _original_type parameter (templated list items)
+                const origMatches = nodes.filter(n => {
+                    try {
+                        const ot = n.parameters && (n.parameters._original_type || n.parameters._template_type)
+                        return ot && normalizeName(ot) === baseNorm
+                    } catch(_) { return false }
+                })
+                if (origMatches.length > 0) return origMatches[wantOrd] || origMatches[0] || null
+                return null
             }
             
             // Navigate to the target node
@@ -3951,13 +3998,25 @@ export class OverseerRenderer {
             try {
                 const linkEls = Array.from(document.querySelectorAll('[data-link-proxy]'))
                 if (linkEls.length > 0 && changedFieldPaths && changedFieldPaths.length > 0) {
-                    if (DEBUG_MODE) console.log(`🔗 Refreshing ${linkEls.length} link proxy container(s) due to changes:`, changedFieldPaths)
+                    if (DEBUG_MODE) console.log(`🔗 Considering refresh for ${linkEls.length} link proxy container(s) due to changes:`, changedFieldPaths)
                     for (const el of linkEls) {
                         try {
                             const p = JSON.parse(el.dataset.path || '[]')
-                            if (Array.isArray(p) && p.length > 0) {
-                                this.rerenderSubtree(newDocument, p)
+                            if (!Array.isArray(p) || p.length === 0) continue
+                            const linkPath = p.join('/')
+                            // Skip re-rendering a proxy if the changed field is inside that proxy's subtree.
+                            // This prevents overwriting the just-updated DOM with a stale render.
+                            // Also skip if the changed field is inside the proxy's target subtree.
+                            let targetPathArr = null
+                            try { targetPathArr = JSON.parse(el.getAttribute('data-link-target-path') || 'null') } catch(_) { targetPathArr = null }
+                            const targetPathStr = Array.isArray(targetPathArr) ? targetPathArr.join('/') : null
+                            const containsChanged = changedFieldPaths.some(cf => cf.startsWith(linkPath + '/'))
+                                || (targetPathStr ? changedFieldPaths.some(cf => cf.startsWith(targetPathStr + '/')) : false)
+                            if (containsChanged) {
+                                if (DEBUG_MODE) console.log('⏭️ Skipping link proxy refresh for', linkPath, 'because it contains changed field(s)')
+                                continue
                             }
+                            this.rerenderSubtree(newDocument, p)
                         } catch (_) { /* ignore individual failures */ }
                     }
                 }

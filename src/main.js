@@ -41,6 +41,8 @@ export class OverseerApp {
     this._scheduler = { id: null, periodMs: 1000, cachedNextMs: null, inFlight: false, lastTickAt: 0 }
     // Keep the raw original text for comment/whitespace merge on save
     this._originalText = null
+    // Track recent user edits to guard against stale backend overwrites during selective refresh
+    this._pendingUserEdits = new Map() // path -> { value: OverseerValue|string|number|boolean, ts: ms }
         
         // Make app instance available globally for renderer
         window.app = this
@@ -258,18 +260,47 @@ tab Main {
     }
 
     async saveFile() {
-        if (!this.currentFile || !this.currentDocument) {
-            this.setStatus('No file to save', '', 'warning')
+        if (!this.currentDocument) {
+            this.setStatus('No document to save', '', 'warning')
             return
         }
 
         try {
             this.setStatus('Saving file...', this.currentFile, 'info')
+            // Best-effort: merge recent user edits (within a short TTL) into currentDocument
+            try {
+                const now = Date.now()
+                const ttlMs = 2000
+                if (this._pendingUserEdits && this._pendingUserEdits.size > 0) {
+                    for (const [p, rec] of this._pendingUserEdits.entries()) {
+                        if (!rec) continue
+                        if ((now - (rec.ts||0)) > ttlMs) { this._pendingUserEdits.delete(p); continue }
+                        let n = this.getNodeByPath(this.currentDocument, p)
+                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                            try { n = this.renderer.resolveNodeByPathLoose(this.currentDocument, p) } catch(_) { n = null }
+                        }
+                        if (n) {
+                            const ov = this.coerceToOverseerValue(n, rec.value)
+                            if (!n.parameters) n.parameters = {}
+                            n.parameters.value = ov
+                        }
+                    }
+                }
+            } catch(_) { /* non-fatal safeguard */ }
             
-            // Serialize the current document state to Overseer DSL format
+            // Serialize the current document state to Overseer DSL format (always serialize to keep state in sync for tests)
             const content = await invoke('serialize_overseer_nodes', { 
                 nodes: this.normalizeDocumentForSerialization(this.currentDocument) 
             })
+
+            // If no file path is set yet, treat this as a dry-run serialization only
+            if (!this.currentFile) {
+                this.setStatus('Document serialized (no file selected)', '', 'info')
+                // Do not attempt disk writes without a target path
+                this.isDocumentModified = false
+                this.updateTitle()
+                return
+            }
 
             // If we have original raw text, use the merge-sav e API to preserve comments/whitespace
             if (this._originalText != null) {
@@ -362,6 +393,114 @@ tab Main {
             return true
         }
         return false
+    }
+
+    // Robust node resolver by canonical field path, tolerant to instance suffixes ("__N"),
+    // ordinal segments ("#k"), and transparent wrappers.
+    getNodeByPath(document, fieldPath) {
+        try {
+            const pathParts = String(fieldPath).split('/')
+            let currentNodes = document
+            let targetNode = null
+
+            const exactName = (n) => (n ?? '').toString()
+            const normalizeName = (n) => exactName(n)
+                .replace(/__\d+$/, '')   // drop instance suffix like __6
+                .replace(/#\d+$/, '')    // drop ordinal path suffix like #1
+            const segInfo = (part) => {
+                const idx = part.indexOf('#')
+                return idx >= 0 ? { base: part.slice(0, idx), ord: parseInt(part.slice(idx+1), 10) || 0 } : { base: part, ord: 0 }
+            }
+            const isTransparent = (node) => {
+                try {
+                    const nn = exactName(node.name)
+                    const nt = exactName(node.node_type || node.type)
+                    return node.is_hierarchy_transparent === true || !nn || nn.toLowerCase() === nt.toLowerCase()
+                } catch (_) { return false }
+            }
+            const findMatches = (nodes, wantBase, wantOrd) => {
+                const baseNorm = normalizeName(wantBase)
+                // 1) Exact name match first
+                const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
+                if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
+                if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
+                // 2) Name normalized match (handles '#k' and '__N')
+                const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
+                if (normMatches.length > 0) return normMatches[wantOrd] || normMatches[0] || null
+                // 3) Fallback: match by node_type when names differ (e.g., '-' vs 'WeightRecord')
+                const typeMatches = nodes.filter(n => normalizeName(n.node_type || n.type) === baseNorm)
+                if (typeMatches.length > 0) return typeMatches[wantOrd] || typeMatches[0] || null
+                // 4) Fallback: match by _original_type parameter (templated list items)
+                const origMatches = nodes.filter(n => {
+                    try {
+                        const ot = n.parameters && (n.parameters._original_type || n.parameters._template_type)
+                        return ot && normalizeName(ot) === baseNorm
+                    } catch(_) { return false }
+                })
+                if (origMatches.length > 0) return origMatches[wantOrd] || origMatches[0] || null
+                return null
+            }
+
+            for (let i = 0; i < pathParts.length; i++) {
+                const part = pathParts[i]
+                const { base, ord } = segInfo(part)
+                if (!Array.isArray(currentNodes)) return null
+                // 1) Try direct among current level
+                let nextNode = findMatches(currentNodes, base, ord)
+                // 2) If not found, walk across transparent wrappers (BFS up to a small depth)
+                if (!nextNode) {
+                    let frontier = currentNodes.slice()
+                    let depth = 0
+                    const maxDepth = 4
+                    while (!nextNode && depth < maxDepth) {
+                        const childrenOfTransparents = []
+                        for (const n of frontier) {
+                            if (isTransparent(n) && Array.isArray(n.children)) {
+                                const candidate = findMatches(n.children, base, ord)
+                                if (candidate) { nextNode = candidate; break }
+                                childrenOfTransparents.push(...n.children)
+                            }
+                        }
+                        frontier = childrenOfTransparents
+                        depth++
+                    }
+                }
+
+                if (!nextNode) return null
+                targetNode = nextNode
+                if (i < pathParts.length - 1) {
+                    currentNodes = Array.isArray(targetNode.children) ? targetNode.children : []
+                }
+            }
+            return targetNode
+        } catch(_) { return null }
+    }
+
+    // Coerce a plain JS value/string to an OverseerValue based on node_type when possible
+    coerceToOverseerValue(node, raw) {
+        const asString = (v) => (v == null) ? '' : String(v)
+        const t = (node?.node_type || node?.type || '').toLowerCase()
+        if (typeof raw === 'object' && raw !== null && (raw.Integer!=null || raw.Float!=null || raw.Boolean!=null || raw.String!=null || raw.Null!==undefined || raw.Timestamp!=null || raw.Date!=null || raw.Formula!=null)) {
+            return raw // Already shaped
+        }
+        if (raw == null || (typeof raw === 'string' && raw.trim() === '')) {
+            return { Null: null }
+        }
+        if (t === 'int') {
+            const n = parseInt(asString(raw), 10)
+            if (!Number.isNaN(n)) return { Integer: n }
+        }
+        if (t === 'float') {
+            const n = parseFloat(asString(raw))
+            if (!Number.isNaN(n)) return { Float: n }
+        }
+        if (t === 'bool' || t === 'boolean') {
+            if (raw === true || raw === false) return { Boolean: !!raw }
+            const s = asString(raw).toLowerCase()
+            if (s === 'true' || s === 'false') return { Boolean: s === 'true' }
+        }
+        // Default to String
+        return { String: asString(raw) }
     }
 
     /**
@@ -529,6 +668,15 @@ tab Main {
                 if (DEBUG_MODE) console.log('📝 Field changes:', fieldChanges)
             }
 
+            // Cache recent user edits (even when the DOM update is pure) for merge-on-resolve
+            try {
+                const now = Date.now()
+                for (const ch of (fieldChanges || [])) {
+                    if (!ch || !ch.path) continue
+                    this._pendingUserEdits.set(ch.path, { value: ch.newValue, ts: now })
+                }
+            } catch(_) {}
+
             // Check if we can handle this as a pure DOM-only update (no backend needed)
             const canHandleDOMOnly = this.canHandleAsDOMOnlyUpdate(fieldChanges)
             
@@ -560,6 +708,28 @@ tab Main {
             if (DEBUG_MODE) console.log('📤 Serialized content being sent to backend:', content.substring(0, 500))
             // Parse + resolve + evaluate on backend with selective updates
             const resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths })
+
+            // Helper: merge recent user edits into a resolved document (TTL ~2s)
+            const mergeRecentUserEdits = (doc) => {
+                try {
+                    const now = Date.now()
+                    const ttlMs = 2000
+                    if (!this._pendingUserEdits || this._pendingUserEdits.size === 0) return
+                    for (const [p, rec] of this._pendingUserEdits.entries()) {
+                        if (!rec) continue
+                        if ((now - (rec.ts||0)) > ttlMs) { this._pendingUserEdits.delete(p); continue }
+                        let n = this.getNodeByPath(doc, p)
+                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                            try { n = this.renderer.resolveNodeByPathLoose(doc, p) } catch(_) { n = null }
+                        }
+                        if (n) {
+                            const ov = this.coerceToOverseerValue(n, rec.value)
+                            if (!n.parameters) n.parameters = {}
+                            n.parameters.value = ov
+                        }
+                    }
+                } catch(_) { /* best-effort */ }
+            }
             
             // Instead of full re-render, do selective DOM updates if we have specific changed fields
             if (changedFieldPaths.length > 0) {
@@ -587,6 +757,23 @@ tab Main {
                         try {
                             const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
                             const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
+                            // Merge edits into full resolve result as well
+                            try {
+                                if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
+                                    for (const ch of fieldChanges) {
+                                        let n = this.getNodeByPath(fullResolved, ch.path)
+                                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                            try { n = this.renderer.resolveNodeByPathLoose(fullResolved, ch.path) } catch(_) { n = null }
+                                        }
+                                        if (n) {
+                                            const ov = this.coerceToOverseerValue(n, ch.newValue)
+                                            if (!n.parameters) n.parameters = {}
+                                            n.parameters.value = ov
+                                        }
+                                    }
+                                }
+                                mergeRecentUserEdits(fullResolved)
+                            } catch(_) {}
                             this.currentDocument = fullResolved
                             if (DEBUG_MODE) console.log('🔁 Applied full resolve fallback due to formula references')
                             try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve fallback):', e); this.showError('Render error', e) }
@@ -612,6 +799,23 @@ tab Main {
                         try {
                             const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
                             const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
+                            // Merge edits into full resolve result to avoid losing user changes
+                            try {
+                                if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
+                                    for (const ch of fieldChanges) {
+                                        let n = this.getNodeByPath(fullResolved, ch.path)
+                                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                            try { n = this.renderer.resolveNodeByPathLoose(fullResolved, ch.path) } catch(_) { n = null }
+                                        }
+                                        if (n) {
+                                            const ov = this.coerceToOverseerValue(n, ch.newValue)
+                                            if (!n.parameters) n.parameters = {}
+                                            n.parameters.value = ov
+                                        }
+                                    }
+                                }
+                                mergeRecentUserEdits(fullResolved)
+                            } catch(_) {}
                             this.currentDocument = fullResolved
                             if (DEBUG_MODE) console.log('🔁 Applied full resolve fallback to refresh dependent formulas')
                             try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve fallback):', e); this.showError('Render error', e) }
@@ -621,13 +825,48 @@ tab Main {
                         }
                     }
                     
-                    // Update the current document with the resolved result
+                    // Merge user-changed field values into the resolved document to avoid losing edits
+                    try {
+                        if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
+                            for (const ch of fieldChanges) {
+                                let n = this.getNodeByPath(resolved, ch.path)
+                                if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                    try { n = this.renderer.resolveNodeByPathLoose(resolved, ch.path) } catch(_) { n = null }
+                                }
+                                if (n) {
+                                    const ov = this.coerceToOverseerValue(n, ch.newValue)
+                                    if (!n.parameters) n.parameters = {}
+                                    n.parameters.value = ov
+                                }
+                            }
+                        }
+                        // Also merge any other very recent user edits (guard against immediate follow-up refresh)
+                        mergeRecentUserEdits(resolved)
+                    } catch (_) { /* best-effort merge */ }
+                    // Update the current document with the merged resolved result
                     this.currentDocument = resolved
                     
                     if (DEBUG_MODE) console.log('✅ Selective update completed successfully')
                     return { domOnly: false, success: true }
                 } else {
                     if (DEBUG_MODE) console.log('🔄 Falling back to full re-render')
+                    // For fallback full re-render path, also preserve user edits by merging them first
+                    try {
+                        if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
+                            for (const ch of fieldChanges) {
+                                let n = this.getNodeByPath(resolved, ch.path)
+                                if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                    try { n = this.renderer.resolveNodeByPathLoose(resolved, ch.path) } catch(_) { n = null }
+                                }
+                                if (n) {
+                                    const ov = this.coerceToOverseerValue(n, ch.newValue)
+                                    if (!n.parameters) n.parameters = {}
+                                    n.parameters.value = ov
+                                }
+                            }
+                        }
+                        mergeRecentUserEdits(resolved)
+                    } catch(_) {}
                     this.currentDocument = resolved
                     try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback re-render):', e); this.showError('Render error', e) }
                     // After re-rendering the selective result, if formulas still reference changed fields,
@@ -637,6 +876,23 @@ tab Main {
                             if (DEBUG_MODE) console.log('ℹ️ Post-fallback formulas still reference changed fields; performing full resolve')
                             const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
                             const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
+                            // Merge edits into full resolve result
+                            try {
+                                if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
+                                    for (const ch of fieldChanges) {
+                                        let n = this.getNodeByPath(fullResolved, ch.path)
+                                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                            try { n = this.renderer.resolveNodeByPathLoose(fullResolved, ch.path) } catch(_) { n = null }
+                                        }
+                                        if (n) {
+                                            const ov = this.coerceToOverseerValue(n, ch.newValue)
+                                            if (!n.parameters) n.parameters = {}
+                                            n.parameters.value = ov
+                                        }
+                                    }
+                                }
+                                mergeRecentUserEdits(fullResolved)
+                            } catch(_) {}
                             this.currentDocument = fullResolved
                             try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve after fallback):', e); this.showError('Render error', e) }
                         }
@@ -645,6 +901,23 @@ tab Main {
                 }
             } else {
                 // No specific fields, do full re-render (for periodic updates)
+                // No specific fields; still preserve known user edits if any were provided
+                try {
+                    if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
+                        for (const ch of fieldChanges) {
+                            let n = this.getNodeByPath(resolved, ch.path)
+                            if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                try { n = this.renderer.resolveNodeByPathLoose(resolved, ch.path) } catch(_) { n = null }
+                            }
+                            if (n) {
+                                const ov = this.coerceToOverseerValue(n, ch.newValue)
+                                if (!n.parameters) n.parameters = {}
+                                n.parameters.value = ov
+                            }
+                        }
+                    }
+                    mergeRecentUserEdits(resolved)
+                } catch(_) {}
                 this.currentDocument = resolved
                 try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full re-render):', e); this.showError('Render error', e) }
                 return { domOnly: false, success: true }
