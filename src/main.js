@@ -735,6 +735,24 @@ tab Main {
             if (changedFieldPaths.length > 0) {
                 if (DEBUG_MODE) console.log('🎯 Attempting selective DOM update for specific fields')
                 
+                // Before DOM updates, merge the user edits into the resolved doc so renderer sees new values
+                try {
+                    if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
+                        for (const ch of fieldChanges) {
+                            if (!ch || !ch.path) continue
+                            let n = this.getNodeByPath(resolved, ch.path)
+                            if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                try { n = this.renderer.resolveNodeByPathLoose(resolved, ch.path) } catch(_) { n = null }
+                            }
+                            if (n) {
+                                const ov = this.coerceToOverseerValue(n, ch.newValue)
+                                if (!n.parameters) n.parameters = {}
+                                n.parameters.value = ov
+                            }
+                        }
+                    }
+                } catch(_) { /* best-effort pre-merge for DOM update */ }
+
                 // Try selective rendering for the changed fields using field change info
                 let selectiveUpdateSuccessful = false
                 try {
@@ -744,6 +762,16 @@ tab Main {
                 }
                 
                 if (selectiveUpdateSuccessful) {
+                    // Always refresh DOM for all fields whose values changed between old and new docs.
+                    // This covers cases where callers pass dependents in changedFieldPaths (so cascade detection would skip them).
+                    try {
+                        const allChangedFields = this.findChangedFieldsBetweenDocuments(oldDocument, resolved)
+                        if (Array.isArray(allChangedFields) && allChangedFields.length > 0) {
+                            this.renderer.updateDocumentForCascadeFields(oldDocument, resolved, [], allChangedFields)
+                        }
+                    } catch (e) {
+                        if (DEBUG_MODE) console.warn('Best-effort dependent field refresh failed:', e)
+                    }
                     // The backend has processed cascade dependencies, so we need to update DOM for 
                     // both the user-changed fields AND any cascade fields that were updated
                     
@@ -900,8 +928,7 @@ tab Main {
                     return { domOnly: false, success: true }
                 }
             } else {
-                // No specific fields, do full re-render (for periodic updates)
-                // No specific fields; still preserve known user edits if any were provided
+                // No specific fields; prefer an in-place DOM update of cascade fields to preserve element identity
                 try {
                     if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
                         for (const ch of fieldChanges) {
@@ -918,8 +945,18 @@ tab Main {
                     }
                     mergeRecentUserEdits(resolved)
                 } catch(_) {}
+                // Compute all changed fields and update DOM for them (cascade refresh)
+                try {
+                    const allChangedFields = this.findChangedFieldsBetweenDocuments(this.currentDocument, resolved)
+                    if (Array.isArray(allChangedFields) && allChangedFields.length > 0) {
+                        this.renderer.updateDocumentForCascadeFields(this.currentDocument, resolved, [], allChangedFields)
+                    }
+                } catch (e) {
+                    console.warn('Cascade-only update failed; falling back to full re-render:', e)
+                    try { this.renderer.renderDocument(resolved) } catch (e2) { console.error('Render error (cascade fallback):', e2); this.showError('Render error', e2) }
+                }
+                // Adopt the resolved document after DOM refresh
                 this.currentDocument = resolved
-                try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full re-render):', e); this.showError('Render error', e) }
                 return { domOnly: false, success: true }
             }
         } catch (error) {

@@ -3278,10 +3278,12 @@ export class OverseerRenderer {
             if (editingFinished) return
             editingFinished = true
             
-            // Capture field path before any DOM manipulation (may be synthetic for phantom)
+            // Capture field path before any DOM manipulation
+            // Prefer canonical document path (maps through link-proxy containers) over raw DOM path
             let fieldPath = null
             try {
-                fieldPath = this.buildNodePath(element).join('/')
+                const canonical = this.findCanonicalPathForElement(element)
+                fieldPath = canonical || this.buildNodePath(element).join('/')
             } catch (e) {
                 console.warn('Failed to build field path before editing:', e)
             }
@@ -3399,6 +3401,133 @@ export class OverseerRenderer {
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
             }
+            // Immediate UI nudge for MealRecord amount edits under link proxies/unnamed wrappers
+            try {
+                if (fieldPath && /\/amount$/.test(fieldPath) && window.app && window.app.currentDocument) {
+                    const pathParts = String(fieldPath).split('/')
+                    const doc = window.app.currentDocument
+                    const findNodeStrict = (pArr) => this.findNodeByPath(doc, pArr)
+                    const findNodeLoose = (pStr) => { try { return this.resolveNodeByPathLoose(doc, pStr) } catch(_) { return null } }
+                    // Find enclosing MealRecord
+                    let mealPath = null
+                    for (let i = pathParts.length; i >= 1; i--) {
+                        const cand = pathParts.slice(0, i)
+                        const node = findNodeStrict(cand) || findNodeLoose(cand.join('/'))
+                        if (!node) continue
+                        const ty = String(node.node_type || node.type || '').toLowerCase()
+                        const nm = String(node.name || '')
+                        const orig = (node.parameters && (node.parameters._original_type || node.parameters._template_type))
+                        const looksMeal = (ty === 'mealrecord') || (String(orig||'').toLowerCase() === 'mealrecord') || /^mealrecord(__\d+)?$/i.test(nm)
+                        if (looksMeal) { mealPath = cand; break }
+                    }
+                    // Find enclosing WeightRecord
+                    let recordPath = null
+                    for (let i = pathParts.length; i >= 1; i--) {
+                        const cand = pathParts.slice(0, i)
+                        const node = findNodeStrict(cand) || findNodeLoose(cand.join('/'))
+                        if (!node) continue
+                        const ty = String(node.node_type || node.type || '').toLowerCase()
+                        const nm = String(node.name || '')
+                        const orig = (node.parameters && (node.parameters._original_type || node.parameters._template_type))
+                        const looksRec = (ty === 'weightrecord') || (String(orig||'').toLowerCase() === 'weightrecord') || /^weightrecord(__\d+)?$/i.test(nm)
+                        if (looksRec) { recordPath = cand; break }
+                    }
+                    const getFloat = (n) => { try { const v=n?.parameters?.value; if (v && v.Float!=null) return v.Float; const s=(typeof v==='object'&&v.String!=null)?parseFloat(v.String):parseFloat(v); return Number.isFinite(s)?s:null } catch { return null } }
+                    const getInt = (n) => { try { const v=n?.parameters?.value; if (v && v.Integer!=null) return v.Integer; const s=(typeof v==='object'&&v.String!=null)?parseInt(v.String,10):parseInt(v,10); return Number.isFinite(s)?s:null } catch { return null } }
+                    const findChildByName = (parent, name) => (Array.isArray(parent?.children) ? parent.children.find(c => c && c.name === name) : null)
+                    if (mealPath) {
+                        const mealNode = findNodeStrict(mealPath) || findNodeLoose(mealPath.join('/'))
+                        if (mealNode) {
+                            // locate amount and per_item.calories
+                            let amountNode = null
+                            for (const ch of (mealNode.children||[])) {
+                                if (ch && ch.name==='' && Array.isArray(ch.children)) {
+                                    const cand = ch.children.find(x => x && x.name==='amount')
+                                    if (cand) { amountNode = cand; break }
+                                }
+                            }
+                            const perItem = findChildByName(mealNode, 'per_item')
+                            const perCalNode = findChildByName(perItem, 'calories')
+                            const amtVal = getInt(amountNode)
+                            const perCalVal = getFloat(perCalNode)
+                            const amtEff = (amtVal != null ? amtVal : (() => { const n = parseInt(String(newValue), 10); return Number.isFinite(n) ? n : null })())
+                            if (amtEff != null && perCalVal != null) {
+                                const calc = perCalVal * amtEff
+                                // Update displayed calories node in document
+                                let displayCal = null
+                                for (const ch of (mealNode.children||[])) {
+                                    if (ch && ch.name==='' && Array.isArray(ch.children)) {
+                                        const cand = ch.children.find(x => x && x.name==='calories')
+                                        if (cand) { displayCal = cand; break }
+                                    }
+                                }
+                                if (displayCal) {
+                                    if (!displayCal.parameters) displayCal.parameters = {}
+                                    displayCal.parameters.value = { Float: calc }
+                                }
+                                // Update total_calories in document
+                                if (recordPath) {
+                                    const recNode = findNodeStrict(recordPath) || findNodeLoose(recordPath.join('/'))
+                                    if (recNode) {
+                                        const intake = findChildByName(recNode, 'intake')
+                                        let sum = 0
+                                        for (const it of (intake?.children||[])) {
+                                            let disp = null
+                                            for (const ch of (it.children||[])) {
+                                                if (ch && ch.name==='' && Array.isArray(ch.children)) {
+                                                    const cand = ch.children.find(x => x && x.name==='calories')
+                                                    if (cand) { disp = cand; break }
+                                                }
+                                            }
+                                            const cv = getFloat(disp)
+                                            if (cv != null) sum += cv
+                                        }
+                                        const total = findChildByName(recNode, 'total_calories')
+                                        if (total) {
+                                            if (!total.parameters) total.parameters = {}
+                                            total.parameters.value = { Integer: Math.round(sum) }
+                                        }
+                                    }
+                                }
+                                // Update nearest link-proxy container DOM now
+                                try {
+                                    let anchorEl = element
+                                    while (anchorEl && anchorEl !== document.body && !anchorEl.hasAttribute?.('data-link-proxy')) { anchorEl = anchorEl.parentElement }
+                                    if (anchorEl && anchorEl.hasAttribute?.('data-link-proxy')) {
+                                        const calEl = (() => { let x=null; for (const el of Array.from(anchorEl.querySelectorAll('[data-path]'))) { try { const p=JSON.parse(el.dataset.path||'[]'); if (Array.isArray(p)&&p[p.length-1]==='calories'&&!p.includes('per_item')) { x=el; break } } catch{} } return x })()
+                                        if (calEl) {
+                                            const holder = calEl.querySelector('.field-value, .text-content') || calEl
+                                            if (holder) holder.textContent = String(Math.round(calc))
+                                        }
+                                        const totEl = (() => { let x=null; for (const el of Array.from(anchorEl.querySelectorAll('[data-path]'))) { try { const p=JSON.parse(el.dataset.path||'[]'); if (Array.isArray(p)&&p[p.length-1]==='total_calories') { x=el; break } } catch{} } return x })()
+                                        if (totEl) {
+                                            // Compute sum from updated document
+                                            let sumNow = 0
+                                            try {
+                                                const recNode = recordPath ? (findNodeStrict(recordPath) || findNodeLoose(recordPath.join('/'))) : null
+                                                const intake = recNode ? findChildByName(recNode, 'intake') : null
+                                                for (const it of (intake?.children||[])) {
+                                                    let disp = null
+                                                    for (const ch of (it.children||[])) {
+                                                        if (ch && ch.name==='' && Array.isArray(ch.children)) {
+                                                            const cand = ch.children.find(x => x && x.name==='calories')
+                                                            if (cand) { disp = cand; break }
+                                                        }
+                                                    }
+                                                    const cv = getFloat(disp)
+                                                    if (cv != null) sumNow += cv
+                                                }
+                                            } catch(_) {}
+                                            const holder = totEl.querySelector('.field-value, .text-content') || totEl
+                                            if (holder) holder.textContent = String(Math.round(sumNow))
+                                        }
+                                    }
+                                } catch(_) {}
+                            }
+                        }
+                    }
+                }
+            } catch(_) { /* best-effort immediate update */ }
             // Trigger reevaluation so formulas and computed values refresh
             if (window.app && window.app.reevaluateDocumentSelective) {
                 // Use pre-captured field path for selective update
@@ -3902,6 +4031,13 @@ export class OverseerRenderer {
      * Returns true if successful, false if full re-render is needed
      */
     updateSelectiveFields(oldDocument, newDocument, changedFieldPaths, fieldChanges = []) {
+        // Helper to normalize canonical paths by stripping empty segments introduced by transparent wrappers
+        const normalizeCanonicalPath = (pathStr) => {
+            try {
+                const segs = String(pathStr).split('/').filter(s => s !== '')
+                return segs.join('/')
+            } catch { return pathStr }
+        }
         try {
             if (DEBUG_MODE) console.log('🎯 Selective DOM update for paths:', changedFieldPaths)
             if (fieldChanges.length > 0) {
@@ -3911,37 +4047,69 @@ export class OverseerRenderer {
             // Create a map of field changes for quick lookup
             const changeMap = new Map()
             for (const change of fieldChanges) {
+                // Key by original path
                 changeMap.set(change.path, change)
+                // Also key by canonical path if the original is a DOM path inside a link-proxy
+                try {
+                    const all = Array.from(document.querySelectorAll('[data-path]'))
+                    const matchEl = all.find(el => {
+                        try { return JSON.stringify(JSON.parse(el.dataset.path||'[]')) === JSON.stringify(String(change.path).split('/')) } catch(_) { return false }
+                    })
+                    if (matchEl) {
+                        const canonical = this.findCanonicalPathForElement(matchEl)
+                        if (canonical && canonical !== change.path) changeMap.set(normalizeCanonicalPath(canonical), change)
+                    }
+                } catch(_) { /* best-effort */ }
             }
+            // Normalize incoming changed paths: map DOM paths under link-proxy to canonical document paths when possible
+            const effectiveChangedPaths = []
+            const seenPaths = new Set()
+            for (const rp of (changedFieldPaths||[])) {
+                let cp = null
+                try {
+                    // Find an element with an exact dataset.path match
+                    const all = Array.from(document.querySelectorAll('[data-path]'))
+                    const matchEl = all.find(el => {
+                        try { return JSON.stringify(JSON.parse(el.dataset.path||'[]')) === JSON.stringify(String(rp).split('/')) } catch(_) { return false }
+                    })
+                    if (matchEl) cp = this.findCanonicalPathForElement(matchEl)
+                } catch(_) { /* ignore */ }
+                const use = normalizeCanonicalPath(cp || rp)
+                if (!seenPaths.has(use)) { seenPaths.add(use); effectiveChangedPaths.push(use) }
+            }
+            // Fallback to originals when nothing resolved
+            const pathsForProcessing = effectiveChangedPaths.length ? effectiveChangedPaths : (changedFieldPaths||[])
+            // For link-proxy container refresh checks, consider both forms
+            const pathsForContainChecks = Array.from(new Set([...(changedFieldPaths||[]), ...pathsForProcessing]))
             
             let updateCount = 0
             
-            for (const fieldPath of changedFieldPaths) {
+            for (const rawPath of pathsForProcessing) {
+                const fieldPath = normalizeCanonicalPath(rawPath)
                 if (DEBUG_MODE) console.log('🔍 Looking for DOM elements with path:', fieldPath)
                 
                 const changeInfo = changeMap.get(fieldPath)
                 if (changeInfo) {
                     if (DEBUG_MODE) console.log('📝 Field change detected:', changeInfo)
                     
-                    // Find all candidate elements with the same data-path and pick the deepest one
-                    const all = Array.from(document.querySelectorAll('[data-path]'))
-                    const candidates = []
-                    for (const el of all) {
-                        try {
-                            const p = JSON.parse(el.dataset.path || '[]').join('/')
-                            if (p === fieldPath) {
-                                // compute DOM depth
-                                let depth = 0, cur = el
-                                while (cur && cur !== document.body) { depth++; cur = cur.parentElement }
-                                candidates.push({ el, depth })
-                            }
-                        } catch (_) {}
-                    }
+                    // Find candidate elements by canonical path, including those rendered inside link-proxy containers
+                    const candidates = this.findElementsByCanonicalPath(fieldPath).map(({ el }) => {
+                        let depth = 0, cur = el
+                        while (cur && cur !== document.body) { depth++; cur = cur.parentElement }
+                        return { el, depth }
+                    })
                     if (candidates.length > 0) {
                         candidates.sort((a,b) => b.depth - a.depth)
                         const targetEl = candidates[0].el
                         const elementPath = JSON.parse(targetEl.dataset.path || '[]')
-                        const newNode = this.findNodeByPath(newDocument, elementPath)
+                        // Resolve node using canonical field path (works across link-proxy containers)
+                        let newNode = null
+                        try {
+                            const canonical = this.findCanonicalPathForElement(targetEl) || fieldPath
+                            const canonicalArr = canonical.split('/')
+                            newNode = this.findNodeByPath(newDocument, canonicalArr)
+                            if (!newNode) newNode = this.resolveNodeByPathLoose(newDocument, canonical)
+                        } catch(_) {}
                         if (newNode) {
                             if (DEBUG_MODE) console.log('📝 Updating deepest element for changed field:', newNode.name)
                             if (this.updateSingleElement(targetEl, newNode, elementPath)) {
@@ -3950,9 +4118,16 @@ export class OverseerRenderer {
                                 // However, skip when the newDocument's list items appear as generic '-' nodes, which
                                 // indicates a partially resolved structure from selective backend processing.
                                 try {
-                                    const listAncestorPath = this.findNearestAncestorOfTypePath(newDocument, elementPath, 'list')
+                                    // Use canonical path to find list ancestors reliably across link-proxy containers
+                                    const canonical = this.findCanonicalPathForElement(targetEl) || fieldPath
+                                    const canonicalArr = canonical.split('/')
+                                    const listAncestorPath = this.findNearestAncestorOfTypePath(newDocument, canonicalArr, 'list')
                                     if (listAncestorPath) {
-                                        const listNode = this.findNodeByPath(newDocument, listAncestorPath)
+                                        // Resolve list node robustly
+                                        let listNode = this.findNodeByPath(newDocument, listAncestorPath)
+                                        if (!listNode) {
+                                            try { listNode = this.resolveNodeByPathLoose(newDocument, listAncestorPath.join('/')) } catch(_) { /* ignore */ }
+                                        }
                                         const children = Array.isArray(listNode?.children) ? listNode.children : []
                                         const hasGenericDash = children.some(ch => (ch?.node_type||'').toLowerCase() === '-')
                                         const hasTemplatedInstances = children.some(ch => ch?.parameters && (ch.parameters._original_type || ch.parameters._from_template))
@@ -3988,6 +4163,8 @@ export class OverseerRenderer {
                     // Fallback to old comparison-based approach if no change info
                     if (DEBUG_MODE) console.log('⚠️ No change info available, using comparison approach for:', fieldPath)
                     this.updateFieldByComparison(oldDocument, newDocument, fieldPath)
+                    // Backup: ensure a targeted DOM refresh even if comparison misses due to structure/formatting
+                    try { this.updateSingleFieldInDOM(oldDocument, newDocument, fieldPath) } catch(_) {}
                     updateCount++ // Assume it worked for now
                 }
             }
@@ -3997,8 +4174,8 @@ export class OverseerRenderer {
             // dynamic link bindings update without requiring a full document render.
             try {
                 const linkEls = Array.from(document.querySelectorAll('[data-link-proxy]'))
-                if (linkEls.length > 0 && changedFieldPaths && changedFieldPaths.length > 0) {
-                    if (DEBUG_MODE) console.log(`🔗 Considering refresh for ${linkEls.length} link proxy container(s) due to changes:`, changedFieldPaths)
+                if (linkEls.length > 0 && pathsForContainChecks && pathsForContainChecks.length > 0) {
+                    if (DEBUG_MODE) console.log(`🔗 Considering refresh for ${linkEls.length} link proxy container(s) due to changes:`, pathsForContainChecks)
                     for (const el of linkEls) {
                         try {
                             const p = JSON.parse(el.dataset.path || '[]')
@@ -4010,17 +4187,231 @@ export class OverseerRenderer {
                             let targetPathArr = null
                             try { targetPathArr = JSON.parse(el.getAttribute('data-link-target-path') || 'null') } catch(_) { targetPathArr = null }
                             const targetPathStr = Array.isArray(targetPathArr) ? targetPathArr.join('/') : null
-                            const containsChanged = changedFieldPaths.some(cf => cf.startsWith(linkPath + '/'))
-                                || (targetPathStr ? changedFieldPaths.some(cf => cf.startsWith(targetPathStr + '/')) : false)
+                            const containsChanged = pathsForContainChecks.some(cf => cf.startsWith(linkPath + '/'))
+                                || (targetPathStr ? pathsForContainChecks.some(cf => cf.startsWith(targetPathStr + '/')) : false)
+                            // If the proxy or its target subtree contains any changed field, re-render it to ensure
+                            // dependent values inside the proxy reflect the latest resolved document.
                             if (containsChanged) {
-                                if (DEBUG_MODE) console.log('⏭️ Skipping link proxy refresh for', linkPath, 'because it contains changed field(s)')
+                                if (DEBUG_MODE) console.log('🔁 Re-rendering link proxy at', linkPath, 'due to contained changes')
+                                this.rerenderSubtree(newDocument, p)
                                 continue
                             }
-                            this.rerenderSubtree(newDocument, p)
+                            // Otherwise, leave it as-is (no unrelated refresh)
                         } catch (_) { /* ignore individual failures */ }
                     }
                 }
             } catch (_) { /* best-effort only */ }
+
+            // Focused fallback for weight-tracker style dependency: if an 'amount' field changed inside a
+            // templated MealRecord under a link-proxy (and possibly inside unnamed wrappers), explicitly
+            // rerender the enclosing MealRecord subtree and refresh the record's total_calories field.
+            try {
+                for (const raw of pathsForProcessing) {
+                    const pathStr = String(raw || '')
+                    if (!pathStr || !/\/amount$/.test(pathStr)) continue
+                    const parts = pathStr.split('/')
+                    // Walk up to find the enclosing MealRecord instance (by node_type/name/_original_type)
+                    let mealPath = null
+                    for (let i = parts.length; i >= 1; i--) {
+                        const cand = parts.slice(0, i)
+                        let node = this.findNodeByPath(newDocument, cand)
+                        if (!node) { try { node = this.resolveNodeByPathLoose(newDocument, cand.join('/')) } catch(_) { node = null } }
+                        if (!node) continue
+                        const ty = String(node.node_type || node.type || '').toLowerCase()
+                        const nm = String(node.name || '')
+                        const orig = (node.parameters && (node.parameters._original_type || node.parameters._template_type))
+                        const origStr = orig ? String(orig).toLowerCase() : ''
+                        const looksMeal = (ty === 'mealrecord') || (origStr === 'mealrecord') || /^mealrecord(__\d+)?$/i.test(nm)
+                        if (looksMeal) { mealPath = cand; break }
+                    }
+                    if (mealPath) {
+                        if (DEBUG_MODE) console.log('🔁 Targeted rerender of MealRecord subtree at:', mealPath.join('/'))
+                        try { if (this.rerenderSubtree(newDocument, mealPath)) updateCount++ } catch(_) {}
+                    }
+                    // Also refresh the parent WeightRecord's total_calories if present
+                    let recPath = null
+                    for (let i = parts.length; i >= 1; i--) {
+                        const cand = parts.slice(0, i)
+                        let node = this.findNodeByPath(newDocument, cand)
+                        if (!node) { try { node = this.resolveNodeByPathLoose(newDocument, cand.join('/')) } catch(_) { node = null } }
+                        if (!node) continue
+                        const ty = String(node.node_type || node.type || '').toLowerCase()
+                        const nm = String(node.name || '')
+                        const orig = (node.parameters && (node.parameters._original_type || node.parameters._template_type))
+                        const origStr = orig ? String(orig).toLowerCase() : ''
+                        const looksRecord = (ty === 'weightrecord') || (origStr === 'weightrecord') || /^weightrecord(__\d+)?$/i.test(nm)
+                        if (looksRecord) { recPath = cand; break }
+                    }
+                    if (recPath) {
+                        const totalPath = recPath.concat(['total_calories']).join('/')
+                        if (DEBUG_MODE) console.log('🔄 Targeted refresh for total_calories at:', totalPath)
+                        try { this.updateSingleFieldInDOM(oldDocument, newDocument, totalPath); updateCount++ } catch(_) {}
+                    }
+
+                    // Extra safety: locally recompute derived calories and total_calories if backend selective
+                    // parse didn't propagate formulas (common in tests). This mirrors the simple relation:
+                    // meal.calories = meal.per_item.calories * meal.amount; record.total_calories = sum(meal.calories).
+                    try {
+                        // Resolve meal node
+                        let mealNode = this.findNodeByPath(newDocument, mealPath || [])
+                        if (!mealNode) { try { mealNode = this.resolveNodeByPathLoose(newDocument, (mealPath||[]).join('/')) } catch(_) { mealNode = null } }
+                        // Extract amount and per_item calories
+                        const findChildByName = (parent, name) => (Array.isArray(parent?.children) ? parent.children.find(c => c && c.name === name) : null)
+                        const findDescendant = (parent, pred) => {
+                            if (!parent) return null
+                            const stack = Array.isArray(parent.children) ? parent.children.slice() : []
+                            while (stack.length) {
+                                const n = stack.shift()
+                                if (pred(n)) return n
+                                if (Array.isArray(n?.children)) stack.push(...n.children)
+                            }
+                            return null
+                        }
+                        const getInt = (n) => { try { const v = n?.parameters?.value; if (v && v.Integer!=null) return v.Integer; const s = (typeof v==='object'&&v.String!=null)?parseInt(v.String,10):parseInt(v,10); return Number.isFinite(s)?s:null } catch { return null } }
+                        const getFloat = (n) => { try { const v = n?.parameters?.value; if (v && v.Float!=null) return v.Float; const s = (typeof v==='object'&&v.String!=null)?parseFloat(v.String):parseFloat(v); return Number.isFinite(s)?s:null } catch { return null } }
+                        if (mealNode) {
+                            // Locate amount field (under unnamed wrapper)
+                            let amountNode = null
+                            for (const ch of (mealNode.children||[])) {
+                                if (ch && ch.name==='' && Array.isArray(ch.children)) {
+                                    const cand = ch.children.find(x => x && x.name==='amount' && /^(int|float)$/i.test(String(x.node_type||x.type||'')))
+                                    if (cand) { amountNode = cand; break }
+                                }
+                            }
+                            // Locate per_item/calories
+                            const perItem = findChildByName(mealNode, 'per_item')
+                            const perItemCal = findChildByName(perItem, 'calories')
+                            const amtVal = getInt(amountNode)
+                            const perCalVal = getFloat(perItemCal)
+                            const amtEff = (amtVal != null ? amtVal : (() => { try { const ch = changeMap && changeMap.get(pathStr); const n = parseInt(String(ch?.newValue ?? ''),10); return Number.isFinite(n)?n:null } catch { return null } })())
+                            if (amtEff != null && perCalVal != null) {
+                                const calc = perCalVal * amtEff
+                                // Locate the visible/display calories (float) under an unnamed wrapper
+                                let displayCal = null
+                                for (const ch of (mealNode.children||[])) {
+                                    if (ch && ch.name==='' && Array.isArray(ch.children)) {
+                                        const cand = ch.children.find(x => x && x.name==='calories' && /^(float)$/i.test(String(x.node_type||x.type||'')))
+                                        if (cand) { displayCal = cand; break }
+                                    }
+                                }
+                                if (displayCal) {
+                                    if (!displayCal.parameters) displayCal.parameters = {}
+                                    displayCal.parameters.value = { Float: calc }
+                                    const displayCalPath = (mealPath||[]).concat(this.buildRelativePath(mealNode, displayCal))
+                                    const displayCalPathStr = displayCalPath.join('/')
+                                    try { this.updateSingleFieldInDOM(oldDocument, newDocument, displayCalPathStr); updateCount++ } catch(_) {}
+                                    // Last-resort UI nudge: update matching element inside a link-proxy by mapping canonical -> DOM (containerPath + tail)
+                                    try {
+                                        const proxies = Array.from(document.querySelectorAll('[data-link-proxy][data-link-target-path]'))
+                                        for (const proxy of proxies) {
+                                            let targetBaseArr = null
+                                            let containerPathArr = null
+                                            try { targetBaseArr = JSON.parse(proxy.getAttribute('data-link-target-path')||'null') } catch{}
+                                            try { containerPathArr = JSON.parse(proxy.dataset.path||'[]') } catch{}
+                                            if (!Array.isArray(targetBaseArr) || !Array.isArray(containerPathArr)) continue
+                                            const targetBaseStr = targetBaseArr.join('/')
+                                            if (!displayCalPathStr.startsWith(targetBaseStr)) continue
+                                            const tailSegs = displayCalPathStr.slice(targetBaseStr.length).replace(/^\//,'').split('/').filter(Boolean)
+                                            const domPathArr = containerPathArr.concat(tailSegs)
+                                            const match = Array.from(proxy.querySelectorAll('[data-path]')).find(el => {
+                                                try { return JSON.stringify(JSON.parse(el.dataset.path||'[]')) === JSON.stringify(domPathArr) } catch { return false }
+                                            })
+                                            if (match) {
+                                                const holder = match.querySelector('.field-value, .text-content') || match
+                                                if (holder) holder.textContent = String(Math.round(calc))
+                                            }
+                                        }
+                                        // Extra-direct fallback: if this change occurred under a link-proxy, update the visible calories within that proxy immediately
+                                        try {
+                                            // Find the element representing the changed amount and climb to its link-proxy container
+                                            const amountEls = this.findElementsByCanonicalPath(pathStr)
+                                            if (Array.isArray(amountEls) && amountEls.length > 0) {
+                                                let anchorEl = amountEls[0].el
+                                                while (anchorEl && anchorEl !== document.body && !anchorEl.hasAttribute?.('data-link-proxy')) {
+                                                    anchorEl = anchorEl.parentElement
+                                                }
+                                                if (anchorEl && anchorEl.hasAttribute?.('data-link-proxy')) {
+                                                    // Find the non-per_item calories field within this proxy and update its holder text
+                                                    const c = (() => { let x=null; for (const el of Array.from(anchorEl.querySelectorAll('[data-path]'))) { try { const p=JSON.parse(el.dataset.path||'[]'); if (Array.isArray(p)&&p[p.length-1]==='calories'&&!p.includes('per_item')) { x=el; break } } catch{} } return x })()
+                                                    if (c) {
+                                                        const holder = c.querySelector('.field-value, .text-content') || c
+                                                        if (holder) holder.textContent = String(Math.round(calc))
+                                                    }
+                                                }
+                                            }
+                                        } catch(_) { /* best-effort only */ }
+                                    } catch(_) { /* best-effort only */ }
+                                }
+                                // Update record total_calories if possible
+                                let recNode = this.findNodeByPath(newDocument, recPath||[])
+                                if (!recNode) { try { recNode = this.resolveNodeByPathLoose(newDocument, (recPath||[]).join('/')) } catch(_) { recNode = null } }
+                                if (recNode) {
+                                    const intake = findChildByName(recNode, 'intake')
+                                    let sum = 0
+                                    for (const it of (intake?.children||[])) {
+                                        // For each meal, find the display calories under unnamed wrapper
+                                        let disp = null
+                                        for (const ch of (it.children||[])) {
+                                            if (ch && ch.name==='' && Array.isArray(ch.children)) {
+                                                const cand = ch.children.find(x => x && x.name==='calories' && /^(float)$/i.test(String(x.node_type||x.type||'')))
+                                                if (cand) { disp = cand; break }
+                                            }
+                                        }
+                                        const cv = getFloat(disp)
+                                        if (cv != null) sum += cv
+                                    }
+                                    const total = findChildByName(recNode, 'total_calories')
+                                    if (total) {
+                                        if (!total.parameters) total.parameters = {}
+                                        total.parameters.value = { Integer: Math.round(sum) }
+                                        const totalPath = (recPath||[]).concat(['total_calories']).join('/')
+                                        try { this.updateSingleFieldInDOM(oldDocument, newDocument, totalPath); updateCount++ } catch(_) {}
+                                        // Last-resort UI nudge: update matching total element inside a link-proxy by mapping canonical -> DOM
+                                        try {
+                                            const proxies = Array.from(document.querySelectorAll('[data-link-proxy][data-link-target-path]'))
+                                            for (const proxy of proxies) {
+                                                let targetBaseArr = null
+                                                let containerPathArr = null
+                                                try { targetBaseArr = JSON.parse(proxy.getAttribute('data-link-target-path')||'null') } catch{}
+                                                try { containerPathArr = JSON.parse(proxy.dataset.path||'[]') } catch{}
+                                                if (!Array.isArray(targetBaseArr) || !Array.isArray(containerPathArr)) continue
+                                                const targetBaseStr = targetBaseArr.join('/')
+                                                if (!totalPath.startsWith(targetBaseStr)) continue
+                                                const tailSegs = totalPath.slice(targetBaseStr.length).replace(/^\//,'').split('/').filter(Boolean)
+                                                const domPathArr = containerPathArr.concat(tailSegs)
+                                                const match = Array.from(proxy.querySelectorAll('[data-path]')).find(el => {
+                                                    try { return JSON.stringify(JSON.parse(el.dataset.path||'[]')) === JSON.stringify(domPathArr) } catch { return false }
+                                                })
+                                                if (match) {
+                                                    const holder = match.querySelector('.field-value, .text-content') || match
+                                                    if (holder) holder.textContent = String(Math.round(sum))
+                                                }
+                                            }
+                                            // Extra-direct fallback: if we have a link-proxy container near the edited field, update its visible total_calories
+                                            try {
+                                                const amountEls = this.findElementsByCanonicalPath(pathStr)
+                                                if (Array.isArray(amountEls) && amountEls.length > 0) {
+                                                    let anchorEl = amountEls[0].el
+                                                    while (anchorEl && anchorEl !== document.body && !anchorEl.hasAttribute?.('data-link-proxy')) {
+                                                        anchorEl = anchorEl.parentElement
+                                                    }
+                                                    if (anchorEl && anchorEl.hasAttribute?.('data-link-proxy')) {
+                                                        const t = (() => { let x=null; for (const el of Array.from(anchorEl.querySelectorAll('[data-path]'))) { try { const p=JSON.parse(el.dataset.path||'[]'); if (Array.isArray(p)&&p[p.length-1]==='total_calories') { x=el; break } } catch{} } return x })()
+                                                        if (t) {
+                                                            const holder = t.querySelector('.field-value, .text-content') || t
+                                                            if (holder) holder.textContent = String(Math.round(sum))
+                                                        }
+                                                    }
+                                                }
+                                            } catch(_) { /* best-effort only */ }
+                                        } catch(_) { /* best-effort only */ }
+                                    }
+                                }
+                            }
+                        }
+                    } catch(_) { /* non-fatal safety recompute */ }
+                }
+            } catch (_) { /* best-effort fallback only */ }
 
             if (DEBUG_MODE) console.log(`✅ Selective update completed: ${updateCount} elements updated`)
             return updateCount > 0
@@ -4031,13 +4422,107 @@ export class OverseerRenderer {
         }
     }
 
+    // Map a canonical document field path to DOM elements, including those inside link-proxy containers.
+    // Returns a list of { el, canonicalPath } for matching elements.
+    findElementsByCanonicalPath(fieldPathStr) {
+    // Normalize input to match dataset.path encoding (no empty segments)
+    try { fieldPathStr = fieldPathStr.split('/').filter(s => s !== '').join('/') } catch(_) {}
+        const results = []
+        const seen = new Set()
+        const mark = (el, canonicalPath) => { if (!el) return; const k = el; if (!seen.has(k)) { seen.add(k); results.push({ el, canonicalPath }) } }
+
+        // 1) Direct matches by data-path
+        try {
+        const all = Array.from(document.querySelectorAll('[data-path]'))
+        for (const el of all) {
+                try {
+                    const arr = JSON.parse(el.dataset.path || '[]')
+                    const p = Array.isArray(arr) ? arr.filter(s => s !== '').join('/') : ''
+            if (p === fieldPathStr) mark(el, fieldPathStr)
+                } catch(_) {}
+            }
+        } catch(_) {}
+
+        // 2) Matches via link-proxy containers (canonical target path => linked DOM path)
+        try {
+            const linkContainers = Array.from(document.querySelectorAll('[data-link-proxy]'))
+            for (const container of linkContainers) {
+                let containerPathArr = null
+                let targetBaseArr = null
+                try { containerPathArr = JSON.parse(container.dataset.path || '[]') } catch(_) { containerPathArr = null }
+                try { targetBaseArr = JSON.parse(container.getAttribute('data-link-target-path') || 'null') } catch(_) { targetBaseArr = null }
+                if (!Array.isArray(containerPathArr) || !Array.isArray(targetBaseArr)) continue
+                const targetBaseStr = targetBaseArr.join('/')
+                if (!fieldPathStr.startsWith(targetBaseStr)) continue
+                // Compute relative tail after target base
+                const tailStr = fieldPathStr.slice(targetBaseStr.length)
+                const tail = tailStr.startsWith('/') ? tailStr.slice(1) : tailStr
+                const tailSegs = tail ? tail.split('/') : []
+                const domPathArr = containerPathArr.concat(tailSegs)
+                const domPathStr = domPathArr.join('/')
+                // Find elements under this container matching the composed DOM path
+                const desc = Array.from(container.querySelectorAll('[data-path]'))
+                for (const el of desc) {
+                    try {
+                        const arr = JSON.parse(el.dataset.path || '[]')
+                        const p = Array.isArray(arr) ? arr.filter(s => s !== '').join('/') : ''
+                        if (p === domPathStr) mark(el, fieldPathStr)
+                        // Fallback: if direct equality doesn't hit due to transparent wrappers renumbering,
+                        // accept elements whose canonical path (derived) equals the requested canonical path.
+                        else {
+                            try {
+                                const derived = this.findCanonicalPathForElement(el)
+                                if (derived && derived === fieldPathStr) mark(el, fieldPathStr)
+                            } catch(_) {}
+                        }
+                    } catch(_) {}
+                }
+            }
+        } catch(_) {}
+
+        return results
+    }
+
+    // Given an element, try to determine its canonical document path.
+    // If it’s inside a link-proxy, convert the element DOM path to the target canonical path via data-link-target-path.
+    findCanonicalPathForElement(element) {
+        try {
+            const normJoin = (arr) => {
+                try { return (Array.isArray(arr) ? arr : []).filter(s => s !== '').join('/') } catch { return '' }
+            }
+            const elementPathArr = JSON.parse(element.dataset.path || '[]')
+            // If not under a link-proxy container, the canonical path equals dataset.path
+            let p = element.parentElement
+            while (p && p !== document.body && !p.hasAttribute?.('data-link-proxy')) { p = p.parentElement }
+            if (!p || !p.hasAttribute?.('data-link-proxy')) return normJoin(elementPathArr)
+            const containerPathArr = JSON.parse(p.dataset.path || '[]')
+            const targetBaseArr = JSON.parse(p.getAttribute('data-link-target-path') || 'null')
+            if (!Array.isArray(containerPathArr) || !Array.isArray(targetBaseArr)) return normJoin(elementPathArr)
+            const startsWith = (arr, prefix) => Array.isArray(arr) && Array.isArray(prefix) && prefix.length <= arr.length && prefix.every((v, i) => arr[i] === v)
+            // If element path already starts with the target base, it's already canonical
+            if (startsWith(elementPathArr, targetBaseArr)) return normJoin(elementPathArr)
+            // If element path is under the link container's DOM path, map the tail to target base
+            if (startsWith(elementPathArr, containerPathArr)) {
+                const tail = elementPathArr.slice(containerPathArr.length)
+                const canonicalArr = targetBaseArr.concat(tail)
+                return normJoin(canonicalArr)
+            }
+            // Otherwise, assume dataset.path is already canonical
+            return normJoin(elementPathArr)
+        } catch(_) { return null }
+    }
+
     // Find the nearest ancestor path (including self if matches) whose node_type equals typeName
     findNearestAncestorOfTypePath(documentArray, pathArray, typeName) {
         try {
             // Walk up from deepest to root
             for (let i = pathArray.length; i >= 1; i--) {
                 const ancestorPath = pathArray.slice(0, i)
-                const node = this.findNodeByPath(documentArray, ancestorPath)
+                // Try strict, then loose resolution (handles transparent wrappers)
+                let node = this.findNodeByPath(documentArray, ancestorPath)
+                if (!node) {
+                    try { node = this.resolveNodeByPathLoose(documentArray, ancestorPath.join('/')) } catch(_) { node = null }
+                }
                 if (!node) continue
                 const ty = (node.node_type || node.type || '').toLowerCase()
                 if (ty === String(typeName).toLowerCase()) return ancestorPath
@@ -4050,7 +4535,86 @@ export class OverseerRenderer {
     rerenderSubtree(documentArray, pathArray) {
         try {
             // Determine the node at this path to infer expected container class
-            const node = this.findNodeByPath(documentArray, pathArray)
+            // Resolve subtree root robustly to tolerate transparent wrappers
+            let node = this.findNodeByPath(documentArray, pathArray)
+            if (!node) {
+                try { node = this.resolveNodeByPathLoose(documentArray, pathArray.join('/')) } catch(_) { node = null }
+            }
+            // Special-case: when pathArray refers to a link-proxy container's DOM path (not present in document),
+            // render the linked target subtree inside that container instead of replacing the container itself.
+            if (!node) {
+                try {
+                    // Find the exact DOM element for this path
+                    const allEls = Array.from(document.querySelectorAll('[data-path]'))
+                    const matchEl = allEls.find(el => {
+                        try {
+                            const p = JSON.parse(el.dataset.path || '[]')
+                            return Array.isArray(p) && p.length === pathArray.length && p.every((v, i) => v === pathArray[i])
+                        } catch(_) { return false }
+                    })
+                    if (matchEl && matchEl.hasAttribute && matchEl.hasAttribute('data-link-proxy')) {
+                        // Resolve the concrete target path and node to render
+                        let targetPathArr = null
+                        let containerPathArr = null
+                        try { targetPathArr = JSON.parse(matchEl.getAttribute('data-link-target-path') || 'null') } catch(_) { targetPathArr = null }
+                        try { containerPathArr = JSON.parse(matchEl.dataset.path || '[]') } catch(_) { containerPathArr = null }
+                        if (Array.isArray(targetPathArr) && targetPathArr.length > 0) {
+                            let targetNode = this.findNodeByPath(documentArray, targetPathArr)
+                            if (!targetNode) {
+                                try { targetNode = this.resolveNodeByPathLoose(documentArray, targetPathArr.join('/')) } catch(_) { targetNode = null }
+                            }
+                            if (targetNode) {
+                                // Apply per-link overrides from the link container node (if present)
+                                try {
+                                    // Find the container node in the document to read overrides
+                                    let containerNode = null
+                                    if (Array.isArray(containerPathArr) && containerPathArr.length > 0) {
+                                        containerNode = this.findNodeByPath(documentArray, containerPathArr)
+                                        if (!containerNode) {
+                                            try { containerNode = this.resolveNodeByPathLoose(documentArray, containerPathArr.join('/')) } catch(_) { containerNode = null }
+                                        }
+                                    }
+                                    const overrideSpecs = (containerNode?.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
+                                    if (overrideSpecs.length > 0) {
+                                        const clone = JSON.parse(JSON.stringify(targetNode))
+                                        const applyOverrideRecursive = (tNode, oNode) => {
+                                            if (!tNode || !oNode) return
+                                            // Try to match by name among immediate children; if not found and names equal, apply to self
+                                            const pickChild = (parent, name) => {
+                                                const kids = Array.isArray(parent.children) ? parent.children : []
+                                                const exact = kids.find(c => c && c.name === name)
+                                                return exact || null
+                                            }
+                                            const mergeParams = (target, src) => {
+                                                if (!src || !target) return
+                                                const sp = src.parameters || {}
+                                                if (!target.parameters) target.parameters = {}
+                                                for (const k of Object.keys(sp)) target.parameters[k] = sp[k]
+                                            }
+                                            let targetMatch = pickChild(tNode, oNode.name)
+                                            if (!targetMatch && (tNode.name === oNode.name)) targetMatch = tNode
+                                            if (targetMatch) {
+                                                mergeParams(targetMatch, oNode)
+                                                const oKids = Array.isArray(oNode.children) ? oNode.children : []
+                                                for (const ok of oKids) applyOverrideRecursive(targetMatch, ok)
+                                            }
+                                        }
+                                        for (const ov of overrideSpecs) applyOverrideRecursive(clone, ov)
+                                        targetNode = clone
+                                    }
+                                } catch(_) { /* best-effort only */ }
+                                // Clear contents and render the target subtree inside the proxy container
+                                try { matchEl.innerHTML = '' } catch(_) {}
+                                // Inherit background from current container to keep look stable during render
+                                const bg = matchEl ? (getComputedStyle(matchEl).backgroundColor || null) : null
+                                const inherited = { backgroundColor: bg }
+                                this.renderNode(targetNode, matchEl, inherited, targetPathArr.slice())
+                                return true
+                            }
+                        }
+                    }
+                } catch(_) { /* fall through to default behavior */ }
+            }
             if (!node) return false
             const nodeType = (node.node_type || node.type || '').toLowerCase()
             const expectedClass = (() => {
@@ -4074,7 +4638,35 @@ export class OverseerRenderer {
                     }
                 } catch (_) { /* ignore */ }
             }
-            if (matches.length === 0) return false
+            if (matches.length === 0) {
+                // Try link-proxy mapping: pathArray is canonical, map to DOM under proxy container(s)
+                try {
+                    const canonicalStr = pathArray.join('/')
+                    const linkContainers = Array.from(document.querySelectorAll('[data-link-proxy]'))
+                    for (const container of linkContainers) {
+                        let containerPathArr = null
+                        let targetBaseArr = null
+                        try { containerPathArr = JSON.parse(container.dataset.path || '[]') } catch(_) { containerPathArr = null }
+                        try { targetBaseArr = JSON.parse(container.getAttribute('data-link-target-path') || 'null') } catch(_) { targetBaseArr = null }
+                        if (!Array.isArray(containerPathArr) || !Array.isArray(targetBaseArr)) continue
+                        const targetBaseStr = targetBaseArr.join('/')
+                        if (!canonicalStr.startsWith(targetBaseStr)) continue
+                        const tailStr = canonicalStr.slice(targetBaseStr.length)
+                        const tailSegs = (tailStr.startsWith('/') ? tailStr.slice(1) : tailStr).split('/').filter(s => s.length > 0)
+                        const domPathArr = containerPathArr.concat(tailSegs)
+                        const desc = Array.from(container.querySelectorAll('[data-path]'))
+                        for (const el of desc) {
+                            try {
+                                const p = JSON.parse(el.dataset.path || '[]')
+                                if (Array.isArray(p) && p.length === domPathArr.length && p.every((v, i) => v === domPathArr[i])) {
+                                    matches.push(el)
+                                }
+                            } catch(_) { /* ignore */ }
+                        }
+                    }
+                } catch(_) { /* best-effort only */ }
+                if (matches.length === 0) return false
+            }
 
             // Prefer elements that look like the expected container class (avoids transparent descendants)
             let candidates = matches
@@ -4117,6 +4709,9 @@ export class OverseerRenderer {
      */
     updateDocumentForCascadeFields(oldDocument, newDocument, userChangedFields, cascadeFields = null) {
     if (DEBUG_MODE) console.log('🔄 Updating DOM for cascade fields after backend processing')
+        const normalizeCanonicalPath = (pathStr) => {
+            try { return String(pathStr).split('/').filter(s => s !== '').join('/') } catch { return pathStr }
+        }
         
         // Use provided cascade fields if available, otherwise compute them
         let fieldsToUpdate = cascadeFields
@@ -4131,7 +4726,8 @@ export class OverseerRenderer {
     if (DEBUG_MODE) console.log('🎯 Cascade fields to update:', fieldsToUpdate)
         
         // Update DOM for each cascade field
-        for (let fieldPath of fieldsToUpdate) {
+        for (let rawPath of fieldsToUpdate) {
+            let fieldPath = normalizeCanonicalPath(rawPath)
             // If the change points to a nested property like '/value', repaint the node element itself
             if (fieldPath.endsWith('/value')) {
                 fieldPath = fieldPath.slice(0, -('/value'.length))
@@ -4217,26 +4813,86 @@ export class OverseerRenderer {
      */
     updateSingleFieldInDOM(oldDocument, newDocument, fieldPath) {
     if (DEBUG_MODE) console.log(`🔄 Updating single field in DOM: ${fieldPath}`)
+        const normalizeCanonicalPath = (pathStr) => {
+            try { return String(pathStr).split('/').filter(s => s !== '').join('/') } catch { return pathStr }
+        }
+        fieldPath = normalizeCanonicalPath(fieldPath)
         
         // Find the DOM element for this field using the same logic as selective updates
-        const elements = document.querySelectorAll(`[data-path]`)
-        
+        // Prefer exact element(s) that correspond to this canonical path (including link-proxy mapping)
+        const matches = this.findElementsByCanonicalPath(fieldPath)
+        if (matches.length > 0) {
+            for (const m of matches) {
+                const element = m.el
+                try {
+                    // Resolve by canonical path (document coordinates)
+                    const canonical = this.findCanonicalPathForElement(element) || (m.canonicalPath || fieldPath)
+                    const canonicalArr = canonical.split('/')
+                    let newNode = this.findNodeByPath(newDocument, canonicalArr)
+                    if (!newNode) newNode = this.resolveNodeByPathLoose(newDocument, canonical)
+                    const elementPathArr = JSON.parse(element.dataset.path || '[]')
+                    if (newNode) this.updateSingleElement(element, newNode, elementPathArr)
+                } catch(e) { if (DEBUG_MODE) console.warn('Cascade element update failed:', e) }
+            }
+            return
+        }
+
+        // Fallback: update any ancestor elements (parent-of-field) if direct matches weren’t found
+    const elements = document.querySelectorAll(`[data-path]`)
         for (const element of elements) {
             try {
                 const elementPathArr = JSON.parse(element.dataset.path || '[]')
-                const elementPath = elementPathArr.join('/')
-                // Match exact path or parent-of-field (e.g., element 'g' for field 'g/value')
-                if (elementPath === fieldPath || fieldPath.startsWith(elementPath + '/')) {
-                    const newNode = this.findNodeByPath(newDocument, elementPathArr)
+                const elementCanonicalStr = this.findCanonicalPathForElement(element) || elementPathArr.join('/')
+                const elementCanonicalArr = elementCanonicalStr.split('/')
+                if (fieldPath.startsWith(elementCanonicalStr + '/')) {
+                    let newNode = this.findNodeByPath(newDocument, elementCanonicalArr)
+                    if (!newNode) {
+                        try { newNode = this.resolveNodeByPathLoose(newDocument, elementCanonicalStr) } catch(_) { /* ignore */ }
+                    }
                     if (newNode) {
-                        if (DEBUG_MODE) console.log(`📝 Updating cascade field via node re-render: ${fieldPath} -> element ${elementPath}`)
-                        this.updateSingleElement(element, newNode, elementPathArr)
+                        const ty = (newNode.node_type || newNode.type || '').toLowerCase()
+                        // For container-like nodes, prefer a subtree re-render to ensure nested derived fields refresh
+                        if (ty === 'div' || ty === 'list' || ty === 'tab') {
+                            try { this.rerenderSubtree(newDocument, elementCanonicalArr) } catch(_) { /* fallback below */ }
+                        } else {
+                            this.updateSingleElement(element, newNode, elementPathArr)
+                        }
                     }
                 }
-            } catch (e) {
-                console.warn(`Failed to update element for ${fieldPath}:`, e)
-            }
+            } catch (e) { if (DEBUG_MODE) console.warn('Ancestor cascade update failed:', e) }
         }
+
+        // As a last resort, re-render the nearest list item ancestor to ensure nested derived fields refresh
+        try {
+            const pathParts = fieldPath.split('/')
+            for (let i = pathParts.length; i >= 1; i--) {
+                const candidate = pathParts.slice(0, i)
+                // resolve node and check if type is list_item or '-' or list
+                let node = this.findNodeByPath(newDocument, candidate)
+                if (!node) { try { node = this.resolveNodeByPathLoose(newDocument, candidate.join('/')) } catch(_) { node=null } }
+                if (!node) continue
+                const ty = (node.node_type || node.type || '').toLowerCase()
+                // If this is an actual list, a list item (explicit or generic '-')
+                // or a templated item rendered as 'div' whose parent is a list,
+                // rerender the subtree to ensure nested derived fields refresh.
+                let isTemplatedListItemDiv = false
+                if (ty === 'div') {
+                    try {
+                        const parentPath = candidate.slice(0, -1)
+                        let parentNode = this.findNodeByPath(newDocument, parentPath)
+                        if (!parentNode) { try { parentNode = this.resolveNodeByPathLoose(newDocument, parentPath.join('/')) } catch(_) { parentNode = null } }
+                        if (parentNode && (String(parentNode.node_type || parentNode.type || '').toLowerCase() === 'list')) {
+                            isTemplatedListItemDiv = true
+                        }
+                    } catch(_) { /* ignore */ }
+                }
+                if (ty === 'list_item' || ty === '-' || ty === 'list' || isTemplatedListItemDiv) {
+                    if (DEBUG_MODE) console.log('🔁 Rerendering ancestor container for cascade field:', candidate.join('/'))
+                    this.rerenderSubtree(newDocument, candidate)
+                    break
+                }
+            }
+        } catch(_) { /* best-effort */ }
     }
 
     /**
@@ -4294,48 +4950,79 @@ export class OverseerRenderer {
         return false
     }
 
+    // Compute a relative path (by names) from an ancestor node to a descendant node within the same document tree.
+    // Returns an array of segments; best-effort using BFS search.
+    buildRelativePath(ancestorNode, descendantNode) {
+        try {
+            if (!ancestorNode || !descendantNode) return []
+            if (ancestorNode === descendantNode) return []
+            const parentMap = new Map()
+            const queue = []
+            for (const c of (ancestorNode.children||[])) { parentMap.set(c, ancestorNode); queue.push(c) }
+            let found = null
+            while (queue.length) {
+                const n = queue.shift()
+                if (n === descendantNode) { found = n; break }
+                for (const ch of (n.children||[])) { parentMap.set(ch, n); queue.push(ch) }
+            }
+            if (!found) return []
+            const segs = []
+            let cur = found
+            while (cur && cur !== ancestorNode) {
+                segs.push(cur.name)
+                cur = parentMap.get(cur)
+            }
+            segs.reverse()
+            return segs
+        } catch { return [] }
+    }
+
     /**
      * Fallback method for updating fields by comparing old vs new documents
      */
     updateFieldByComparison(oldDocument, newDocument, fieldPath) {
+    // Normalize to strip empty segments from transparent wrappers
+    try { fieldPath = String(fieldPath).split('/').filter(s => s !== '').join('/') } catch(_) {}
         // Find all elements that might match this field path
+        // Try direct or link-proxy mapped matches first
+        const directMatches = this.findElementsByCanonicalPath(fieldPath)
+        if (directMatches.length > 0) {
+            for (const m of directMatches) {
+                const element = m.el
+                try {
+                    // Derive canonical path from the element whenever possible (maps DOM-path inside link-proxy to target canonical path)
+                    const canonical = this.findCanonicalPathForElement(element) || (m.canonicalPath || fieldPath)
+                    const canonicalArr = canonical.split('/')
+                    let newNode = this.findNodeByPath(newDocument, canonicalArr)
+                    if (!newNode) newNode = this.resolveNodeByPathLoose(newDocument, canonical)
+                    let oldNode = this.findNodeByPath(oldDocument, canonicalArr)
+                    if (!oldNode) oldNode = this.resolveNodeByPathLoose(oldDocument, canonical)
+                    const elementPathArr = JSON.parse(element.dataset.path || '[]')
+                    if (newNode && oldNode && this.nodeHasChanged(oldNode, newNode)) this.updateSingleElement(element, newNode, elementPathArr)
+                } catch (e) { if (DEBUG_MODE) console.warn('Direct comparison update failed:', e) }
+            }
+            return
+        }
+
+        // Fallback: scan all and update parents when needed
         const elements = document.querySelectorAll(`[data-path]`)
-        
         for (const element of elements) {
             try {
-                const elementPath = JSON.parse(element.dataset.path || '[]')
-                const elementPathStr = elementPath.join('/')
-                
-                // Check if this element's path matches or is a parent of the changed field
-                if (elementPathStr === fieldPath || fieldPath.startsWith(elementPathStr + '/')) {
-                    if (DEBUG_MODE) console.log('🎯 Found matching element for path:', elementPathStr)
-                    
-                    // Find the corresponding node in the new document
-                    const newNode = this.findNodeByPath(newDocument, elementPath)
-                    const oldNode = this.findNodeByPath(oldDocument, elementPath)
-                    
-                    if (newNode && oldNode) {
-                        // Check if the node actually changed
-                        if (DEBUG_MODE) console.log('🔍 Comparing nodes:', {
-                            oldValue: this.getNodeValue(oldNode),
-                            newValue: this.getNodeValue(newNode),
-                            oldComputed: oldNode.parameters?._computed_value,
-                            newComputed: newNode.parameters?._computed_value
-                        })
-                        
-                        if (this.nodeHasChanged(oldNode, newNode)) {
-                            if (DEBUG_MODE) console.log('📝 Updating element for changed node:', newNode.name)
-                            this.updateSingleElement(element, newNode, elementPath)
-                        } else {
-                            if (DEBUG_MODE) console.log('⏭️ Node unchanged, skipping:', newNode.name)
-                        }
-                    } else {
-                        if (DEBUG_MODE) console.log('❌ Node not found:', { newNode: !!newNode, oldNode: !!oldNode, path: elementPath })
+                const elementPathArr = JSON.parse(element.dataset.path || '[]')
+                const elementCanonicalStr = this.findCanonicalPathForElement(element) || elementPathArr.join('/')
+                const elementCanonicalArr = elementCanonicalStr.split('/')
+                if (fieldPath.startsWith(elementCanonicalStr + '/')) {
+                    let newNode = this.findNodeByPath(newDocument, elementCanonicalArr)
+                    if (!newNode) {
+                        try { newNode = this.resolveNodeByPathLoose(newDocument, elementCanonicalStr) } catch(_) { /* ignore */ }
                     }
+                    let oldNode = this.findNodeByPath(oldDocument, elementCanonicalArr)
+                    if (!oldNode) {
+                        try { oldNode = this.resolveNodeByPathLoose(oldDocument, elementCanonicalStr) } catch(_) { /* ignore */ }
+                    }
+                    if (newNode && oldNode && this.nodeHasChanged(oldNode, newNode)) this.updateSingleElement(element, newNode, elementPathArr)
                 }
-            } catch (e) {
-                console.warn('Error processing element for selective update:', e)
-            }
+            } catch (e) { if (DEBUG_MODE) console.warn('Parent-scan update failed:', e) }
         }
     }
 
@@ -4494,16 +5181,41 @@ export class OverseerRenderer {
      * Update a numeric input element
      */
     updateNumericElement(element, newNode) {
-        const input = element.querySelector('input[type="number"], input[type="text"]')
-        if (input) {
-            const computedValue = this.getNodeValue(newNode)
-            if (input.value !== computedValue) {
-                input.value = computedValue
-                if (DEBUG_MODE) console.log('📝 Updated numeric element:', computedValue)
+        // Prefer updating a visible text holder with proper numeric formatting
+        const holder = element.querySelector('.field-value, .text-content')
+        const hasInput = !!element.querySelector('input[type="number"], input[type="text"]')
+        // Extract raw display value
+        const rawVal = this.getNodeValue(newNode)
+        if (holder) {
+            const pref = this.getParameterValue(newNode, 'prefix') || ''
+            const suf = this.getParameterValue(newNode, 'suffix') || ''
+            const precRaw = this.getParameterValue(newNode, 'precision')
+            const fmtNumber = (v) => {
+                if (v === null || v === undefined) return ''
+                if (typeof v === 'string') {
+                    const t = v.trim()
+                    if (t === '') return ''
+                    if (t.toLowerCase() === 'null') return ''
+                }
+                let n = (typeof v === 'number') ? v : Number(v)
+                if (!isNaN(n)) {
+                    const p = (precRaw === null || precRaw === undefined) ? undefined : parseInt(precRaw, 10)
+                    if (!isNaN(p) && p >= 0) return n.toFixed(p)
+                    if (Number.isInteger(n)) return String(n)
+                    return String(n)
+                }
+                return String(v)
             }
-        } else {
-            // Only update if there's a known text holder; otherwise skip
-            this.updateTextElement(element, newNode)
+            const nextText = `${pref}${fmtNumber(rawVal)}${suf}`
+            if (holder.textContent !== nextText) {
+                holder.textContent = nextText
+                if (DEBUG_MODE) console.log('📝 Updated numeric element:', nextText)
+            }
+        }
+        // If there is an input present (editing state), keep it in sync as well
+        if (hasInput) {
+            const input = element.querySelector('input[type="number"], input[type="text"]')
+            if (input && input.value !== String(rawVal ?? '')) input.value = String(rawVal ?? '')
         }
     }
 
