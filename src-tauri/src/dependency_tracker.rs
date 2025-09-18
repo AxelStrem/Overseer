@@ -367,10 +367,23 @@ impl DependencyGraph {
             debug_dep!("🔍     Relative path resolved to: '{}'", resolved);
             resolved
         } else {
-            // Simple relative reference: append to current context
-            let resolved = if context_path.is_empty() { path_ref.to_string() } else { format!("{}/{}", context_path, path_ref) };
-            debug_dep!("🔍     Sibling field resolved to: '{}'", resolved);
-            resolved
+            // Simple relative reference (bare identifier): resolve in parent/sibling scope
+            // e.g., for context "a/b/c" and ref "x" -> "a/b/x" (NOT "a/b/c/x")
+            if context_path.is_empty() {
+                let resolved = path_ref.to_string();
+                debug_dep!("🔍     Bare identifier at root resolved to: '{}'", resolved);
+                return resolved;
+            }
+            if let Some((parent, _last)) = context_path.rsplit_once('/') {
+                let resolved = format!("{}/{}", parent, path_ref);
+                debug_dep!("🔍     Bare identifier resolved to sibling path: '{}'", resolved);
+                resolved
+            } else {
+                // Single-segment context (top-level node): sibling is another top-level
+                let resolved = path_ref.to_string();
+                debug_dep!("🔍     Bare identifier under top-level resolved to: '{}'", resolved);
+                resolved
+            }
         }
     }
 }
@@ -409,8 +422,8 @@ mod tests {
         // Test relative path up
         assert_eq!(graph.resolve_path_reference("../sibling", "context/path"), "context/sibling");
         
-        // Test relative path down
-        assert_eq!(graph.resolve_path_reference("child", "context/path"), "context/path/child");
+        // Test bare identifier resolves to sibling scope (parent of context)
+        assert_eq!(graph.resolve_path_reference("child", "context/path"), "context/child");
     }
 
     #[test]

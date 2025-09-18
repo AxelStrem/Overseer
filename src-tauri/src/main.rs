@@ -217,7 +217,11 @@ async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
 }
 
 #[command]
-async fn parse_overseer_content_selective(content: String, changed_fields: Vec<String>) -> Result<Vec<OverseerNode>> {
+async fn parse_overseer_content_selective(
+    content: String,
+    changed_fields: Vec<String>,
+    changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
+) -> Result<Vec<OverseerNode>> {
     #[cfg(feature = "debug-resolver")]
     println!("🔄 Selective update called with {} changed fields: {:?}", changed_fields.len(), changed_fields);
     
@@ -229,6 +233,46 @@ async fn parse_overseer_content_selective(content: String, changed_fields: Vec<S
                 println!("📋 No specific fields changed, performing full resolution");
                 resolver::resolve_document(&mut nodes);
             } else {
+                // Ensure templates/inheritance are materialized before dependency-based selective updates.
+                // Also preserve user changes before resolution clobbers them.
+                let mut preserved_values = std::collections::HashMap::new();
+                for changed_field in &changed_fields {
+                    if let Some(value) = get_field_value_by_path(&nodes, changed_field) {
+                        preserved_values.insert(changed_field.clone(), value.clone());
+                        #[cfg(feature = "debug-resolver")]
+                        println!("💾 Preserving field '{}' with value: {:?}", changed_field, value);
+                    }
+                }
+
+                // Hydrate template instances and inheritance so dependent fields exist under list items
+                resolver::resolve_document(&mut nodes);
+
+                // Restore preserved values (user edits) obtained from pre-resolve tree (when present)
+                for (field_path, value) in preserved_values.into_iter() {
+                    if let Err(_e) = set_field_value_by_path(&mut nodes, &field_path, value) {
+                        #[cfg(feature = "debug-resolver")]
+                        println!("⚠️  Failed to restore field '{}': {:?}", field_path, e);
+                    } else {
+                        #[cfg(feature = "debug-resolver")]
+                        println!("✅ Restored field '{}'", field_path);
+                    }
+                }
+
+                // Additionally, apply explicit changed field values provided by the frontend.
+                // This covers edits to fields inherited from templates (which may not exist pre-resolve),
+                // ensuring recomputation uses the latest user input values.
+                if let Some(map) = changed_field_values {
+                    for (field_path, value) in map.into_iter() {
+                        if let Err(_e) = set_field_value_by_path(&mut nodes, &field_path, value.clone()) {
+                            #[cfg(feature = "debug-resolver")]
+                            println!("⚠️  Failed to apply changed field value for '{}': {:?}", field_path, e);
+                        } else {
+                            #[cfg(feature = "debug-resolver")]
+                            println!("✅ Applied changed field value for '{}'", field_path);
+                        }
+                    }
+                }
+
                 // Build dependency graph and do selective updates
                 let mut dep_graph = DependencyGraph::new();
                 if let Err(_e) = dep_graph.build_from_document(&nodes) {

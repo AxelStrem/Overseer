@@ -183,12 +183,12 @@ impl DependencyGraph {
 - Interactive editing with field-level validation
 - Tab management and navigation
 - Parameter inheritance visualization
-- **NEW**: Surgical DOM updates for individual fields
-- **NEW**: Cascade field detection and management
-- **NEW**: Chart.js 4.0.0 integration with full chart support
-- **NEW**: Intelligent chart refresh prevention
+- Surgical DOM updates for individual fields
+- Cascade field detection and management
+- Chart.js 4.0.0 integration with full chart support
+- Intelligent chart refresh prevention
 
-### 9. Chart Integration System - **NEW**
+### 9. Chart Integration System
 **Purpose**: Complete Chart.js 4.0.0 integration with performance optimization
 
 **Key Features**:
@@ -218,9 +218,9 @@ impl DependencyGraph {
 8. Renderer generates HTML with advanced styling and Chart.js integration
 9. Interactive UI displayed to user with full chart support
 
-### Enhanced Formula Evaluation Workflow - **UPDATED**
+### Enhanced Formula Evaluation Workflow
 1. Parser identifies $() formulas during parsing
-2. **NEW**: Dependency tracker extracts field references and builds dependency graph
+2. Dependency tracker extracts field references and builds dependency graph
 3. Resolver prepares formula context and dependencies
 4. Evaluator resolves references and executes calculations
 5. Built-in functions executed with current context
@@ -233,7 +233,7 @@ impl DependencyGraph {
 8. UI updated with calculated values (surgical DOM updates)
 9. Charts updated only when their data dependencies change
 
-### Selective Update Process - **NEW**
+### Selective Update Process
 1. User modifies field in UI
 2. Frontend detects field change and determines update strategy
 3. For simple changes: DOM-only update preserves scroll position

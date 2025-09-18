@@ -707,7 +707,25 @@ tab Main {
             const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
             if (DEBUG_MODE) console.log('📤 Serialized content being sent to backend:', content.substring(0, 500))
             // Parse + resolve + evaluate on backend with selective updates
-            const resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths })
+            // Build a map of changed field values (as OverseerValue-shaped objects) to send to backend
+            const changedValuesMap = (() => {
+                const map = {}
+                try {
+                    for (const ch of fieldChanges || []) {
+                        if (!ch || !ch.path) continue
+                        // Find node to know its type, then coerce value
+                        let n = this.getNodeByPath(this.currentDocument, ch.path)
+                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                            try { n = this.renderer.resolveNodeByPathLoose(this.currentDocument, ch.path) } catch(_) { n = null }
+                        }
+                        if (n) {
+                            map[ch.path] = this.coerceToOverseerValue(n, ch.newValue)
+                        }
+                    }
+                } catch(_) {}
+                return map
+            })()
+            const resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
 
             // Helper: merge recent user edits into a resolved document (TTL ~2s)
             const mergeRecentUserEdits = (doc) => {

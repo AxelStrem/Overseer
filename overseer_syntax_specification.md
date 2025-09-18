@@ -24,7 +24,7 @@ type NodeName (param=value, param=value) {
 ```
 
 - **type**: Node type (e.g., `div`, `string`, `list`, `tab`, `int`, `float`) or `-` for automatically inferred type
-- **NodeName**: Optional identifier for the node
+- **NodeName**: Optional identifier for the node; Nodes with no name are transparent for the hierarchy, their children can be accessed as if they are immediate children of the parent node.
 - **parameters**: Optional configuration in parentheses
 - **content**: Nested nodes or values within braces
 
