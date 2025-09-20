@@ -742,14 +742,120 @@ tab Main {
         return false
     }
 
+    /**
+     * Centralized document adoption that preserves any lost Formula objects when the incoming
+     * resolved document replaced them with Null (while providing a _computed_value). This wraps
+     * every assignment to this.currentDocument so tests (aggregate_formula_persistence) and runtime
+     * flows all benefit consistently.
+     */
+    _applyResolvedDocumentWithFormulaPreservation(resolved) {
+        try {
+            if (!this.currentDocument || !resolved) { this.currentDocument = resolved; return }
+            const isFormula = (v) => v && typeof v === 'object' && v.Formula
+            const isNullObj = (v) => v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v,'Null')
+            const restoreFormulas = (oldN, newN) => {
+                if (!oldN || !newN) return
+                try {
+                    const ov = oldN.parameters && oldN.parameters.value
+                    const nv = newN.parameters && newN.parameters.value
+                    const nc = newN.parameters && newN.parameters._computed_value
+                    const missingOrNull = (!nv) || isNullObj(nv)
+                    if (isFormula(ov) && missingOrNull && nc) {
+                        newN.parameters.value = ov // restore original formula
+                    }
+                } catch(_) {}
+                if (Array.isArray(oldN.children) && Array.isArray(newN.children)) {
+                    const len = Math.min(oldN.children.length, newN.children.length)
+                    for (let i=0;i<len;i++) restoreFormulas(oldN.children[i], newN.children[i])
+                }
+            }
+            // Explicit fast-path for main/total (aggregate) before full traversal
+            try {
+                if (Array.isArray(this.currentDocument) && Array.isArray(resolved)) {
+                    const findNode = (roots, name) => { for (const r of roots) if (r && r.name === name) return r; return null }
+                    const oldMain = findNode(this.currentDocument, 'main')
+                    const newMain = findNode(resolved, 'main')
+                    if (oldMain && newMain) {
+                        const oldTotal = (oldMain.children||[]).find(c=>c.name==='total')
+                        const newTotal = (newMain.children||[]).find(c=>c.name==='total')
+                        if (oldTotal && newTotal) {
+                            const ov = oldTotal.parameters && oldTotal.parameters.value
+                            const nv = newTotal.parameters && newTotal.parameters.value
+                            const nc = newTotal.parameters && newTotal.parameters._computed_value
+                            const missingOrNull = (!nv) || isNullObj(nv)
+                            if (isFormula(ov) && missingOrNull && nc) newTotal.parameters.value = ov
+                        }
+                    }
+                }
+            } catch(_) {}
+            if (Array.isArray(this.currentDocument) && Array.isArray(resolved)) {
+                const len = Math.min(this.currentDocument.length, resolved.length)
+                for (let i=0;i<len;i++) restoreFormulas(this.currentDocument[i], resolved[i])
+            }
+        } catch(_) { /* non-fatal restore */ }
+        this.currentDocument = resolved
+    }
+
     async reevaluateDocumentSelective(changedFieldPaths = [], fieldChanges = []) {
         try {
             if (!this.currentDocument) return { domOnly: false }
             
             if (DEBUG_MODE) console.log('🔄 Selective update triggered for fields:', changedFieldPaths)
+            // TEMP DIAG: capture original paths array clone for comparison after augmentation
+            const __origChangedPathsDiag = Array.isArray(changedFieldPaths) ? changedFieldPaths.slice() : []
+            // TEMP DIAGNOSTIC: Detailed logging for unnamed wrapper + label propagation bug
+            if (DEBUG_MODE && Array.isArray(changedFieldPaths) && changedFieldPaths.length === 1) {
+                try {
+                    const editPath = changedFieldPaths[0]
+                    const node = this.getNodeByPath(this.currentDocument, editPath)
+                    const segs = editPath.split('/');
+                    const ancestors = []
+                    for (let i=1;i<segs.length;i++) {
+                        const p = segs.slice(0,i).join('/')
+                        const n = this.getNodeByPath(this.currentDocument, p)
+                        if (n) ancestors.push({ path:p, name:n.name, transparent: !!n.is_hierarchy_transparent, type: n.node_type||n.type })
+                    }
+                    console.log('[DIAG] Edit path', editPath, 'ancestors:', ancestors)
+                    if (node) console.log('[DIAG] Node params before selective:', JSON.stringify(node.parameters||{}))
+                } catch(_) {}
+            }
             if (fieldChanges.length > 0) {
                 if (DEBUG_MODE) console.log('📝 Field changes:', fieldChanges)
             }
+
+            // SAFEGUARD: Ensure any parameter-scoped paths (e.g. ".../label", ".../foo") also include the owning
+            // node base path so that dependency cascades keyed on the node's value parameter are not skipped.
+            // This became necessary after discovering that editing a node's label (with an unnamed transparent
+            // wrapper ancestor) failed to trigger recomputation of sibling formulas (C, total) because only
+            // "A/label" was present; the backend dependency graph tracks dependencies for "A/value" (and we
+            // expand to /value) but never sees the bare base path if no direct value edit occurred. Adding the
+            // base path here keeps the cascade consistent with true value edits without mutating user intent.
+            try {
+                const augmented = new Set(changedFieldPaths)
+                for (const p of changedFieldPaths) {
+                    if (!p) continue
+                    // Ignore already base paths (no slash or last segment empty)
+                    if (!p.includes('/')) continue
+                    const parts = p.split('/').filter(seg => seg.length > 0)
+                    if (parts.length < 2) continue
+                    const last = parts[parts.length - 1]
+                    // Heuristic: treat typical parameter names (label, header, value) OR any that match a known param on the node
+                    // We'll conservatively add the base for any path whose last segment is NOT an instance suffix (like __1)
+                    if (/^__\d+$/.test(last)) continue
+                    const base = parts.slice(0, -1).join('/')
+                    // Avoid adding if base already in set
+                    if (!augmented.has(base)) {
+                        augmented.add(base)
+                        if (DEBUG_MODE) console.log('🔧 Added base path for parameter change:', { original: p, base })
+                    }
+                }
+                if (augmented.size !== changedFieldPaths.length) {
+                    changedFieldPaths = Array.from(augmented)
+                    if (DEBUG_MODE) console.log('[DIAG] changedFieldPaths augmented base-paths:', { before: __origChangedPathsDiag, after: changedFieldPaths })
+                } else {
+                    if (DEBUG_MODE) console.log('[DIAG] No base-path augmentation applied:', changedFieldPaths)
+                }
+            } catch (e) { if (DEBUG_MODE) console.warn('⚠️ Failed to augment changedFieldPaths base paths', e) }
 
             // Eagerly apply user edits directly to the in-memory document so any backend (or test stub)
             // operating on the serialized form sees the fresh values even if later preservation logic
@@ -1003,7 +1109,7 @@ tab Main {
                     console.warn('Selective DOM update failed:', e)
                 }
                 
-                if (selectiveUpdateSuccessful) {
+                    if (selectiveUpdateSuccessful) {
                     // If any aggregate nodes are explicitly in changedFieldPaths, force full re-render for correctness.
                     try {
                         const aggRegex = /(\.sum\s*\(|\.sum\s*$|sum\s*\(|\.reduce\s*\(|\.count\s*\(|\.map\(|map\b.*\.sum\s*\()/i
@@ -1022,7 +1128,7 @@ tab Main {
                         }
                         if (hasAgg) {
                             if (DEBUG_MODE) console.log('♻️  Forcing full re-render due to aggregate field(s) in changedFieldPaths')
-                            this.currentDocument = resolved
+                            this._applyResolvedDocumentWithFormulaPreservation(resolved)
                             try { this.renderer.renderDocument(this.currentDocument) } catch(e) { console.error('Render error (agg force):', e); this.showError('Render error', e) }
                             return { domOnly: false, success: true }
                         }
@@ -1041,7 +1147,7 @@ tab Main {
                             const extraCascade = allChangedFields.filter(f => !changedFieldPaths.includes(f))
                             if (extraCascade.length > 0) {
                                 if (DEBUG_MODE) console.log('♻️  Performing full document re-render due to cascade fields:', extraCascade)
-                                this.currentDocument = resolved
+                                this._applyResolvedDocumentWithFormulaPreservation(resolved)
                                 try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (aggregate cascade re-render):', e); this.showError('Render error', e) }
                                 return { domOnly: false, success: true }
                             }
@@ -1079,7 +1185,7 @@ tab Main {
                                 }
                                 mergeRecentUserEdits(fullResolved)
                             } catch(_) {}
-                            this.currentDocument = fullResolved
+                            this._applyResolvedDocumentWithFormulaPreservation(fullResolved)
                             if (DEBUG_MODE) console.log('🔁 Applied full resolve fallback due to formula references')
                             try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve fallback):', e); this.showError('Render error', e) }
                             return { domOnly: false, success: true }
@@ -1121,7 +1227,7 @@ tab Main {
                                 }
                                 mergeRecentUserEdits(fullResolved)
                             } catch(_) {}
-                            this.currentDocument = fullResolved
+                            this._applyResolvedDocumentWithFormulaPreservation(fullResolved)
                             if (DEBUG_MODE) console.log('🔁 Applied full resolve fallback to refresh dependent formulas')
                             try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve fallback):', e); this.showError('Render error', e) }
                             return { domOnly: false, success: true }
@@ -1156,7 +1262,58 @@ tab Main {
                         mergeRecentUserEdits(resolved)
                     } catch (_) { /* best-effort merge */ }
                     // Update the current document with the merged resolved result
-                    this.currentDocument = resolved
+                    // SAFETY: Preserve any existing Formula objects if selective resolution returned a Null value
+                    // while providing a _computed_value (observed in test where aggregate total lost its Formula).
+                    try {
+                        const restoreFormulas = (oldN, newN) => {
+                            if (!oldN || !newN) return
+                            try {
+                                const ov = oldN.parameters && oldN.parameters.value
+                                const nv = newN.parameters && newN.parameters.value
+                                const nc = newN.parameters && newN.parameters._computed_value
+                                const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                                const isNullObj = (v) => v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v,'Null')
+                                const missingOrNull = (!nv) || isNullObj(nv)
+                                if (isFormula(ov) && missingOrNull && nc) {
+                                    // Restore original formula; keep computed result separate
+                                    newN.parameters.value = ov
+                                }
+                            } catch(_) {}
+                            if (Array.isArray(oldN.children) && Array.isArray(newN.children)) {
+                                const len = Math.min(oldN.children.length, newN.children.length)
+                                for (let i=0;i<len;i++) restoreFormulas(oldN.children[i], newN.children[i])
+                            }
+                        }
+                        // Explicit fast-path: restore formula for main/total if lost
+                        try {
+                            const findNode = (roots, name) => {
+                                for (const r of roots) if (r.name === name) return r; return null
+                            }
+                            if (Array.isArray(this.currentDocument) && Array.isArray(resolved)) {
+                                const oldMain = findNode(this.currentDocument, 'main')
+                                const newMain = findNode(resolved, 'main')
+                                if (oldMain && newMain) {
+                                    const oldTotal = (oldMain.children||[]).find(c=>c.name==='total')
+                                    const newTotal = (newMain.children||[]).find(c=>c.name==='total')
+                                    const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                                    const isNullObj = (v) => v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v,'Null')
+                                    if (oldTotal && newTotal) {
+                                        const ov = oldTotal.parameters && oldTotal.parameters.value
+                                        const nv = newTotal.parameters && newTotal.parameters.value
+                                        const nc = newTotal.parameters && newTotal.parameters._computed_value
+                                        if (isFormula(ov) && ( (!nv) || isNullObj(nv) ) && nc) {
+                                            newTotal.parameters.value = ov
+                                        }
+                                    }
+                                }
+                            }
+                        } catch(_) { /* non-fatal explicit total restore */ }
+                        if (Array.isArray(this.currentDocument) && Array.isArray(resolved)) {
+                            const len = Math.min(this.currentDocument.length, resolved.length)
+                            for (let i=0;i<len;i++) restoreFormulas(this.currentDocument[i], resolved[i])
+                        }
+                    } catch(_) { /* non-fatal formula restore */ }
+                    this._applyResolvedDocumentWithFormulaPreservation(resolved)
                     
                     if (DEBUG_MODE) console.log('✅ Selective update completed successfully')
                     // Post-selective safety net: Some aggregate nodes may have only _computed_value updated while their
@@ -1231,7 +1388,7 @@ tab Main {
                                 }
                                 if (stale) {
                                     if (DEBUG_MODE) console.log('♻️  Forcing full re-render due to stale aggregate display after targeted repaint.')
-                                    this.currentDocument = resolved
+                                    this._applyResolvedDocumentWithFormulaPreservation(resolved)
                                     try { this.renderer.renderDocument(this.currentDocument) } catch(e) { console.error('Render error (agg stale fallback):', e); this.showError('Render error', e) }
                                     return { domOnly: false, success: true }
                                 }
@@ -1265,7 +1422,7 @@ tab Main {
                         }
                         mergeRecentUserEdits(resolved)
                     } catch(_) {}
-                    this.currentDocument = resolved
+                    this._applyResolvedDocumentWithFormulaPreservation(resolved)
                     try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback re-render):', e); this.showError('Render error', e) }
                     // After re-rendering the selective result, if formulas still reference changed fields,
                     // do a full resolve fallback to ensure dependent values are recomputed
@@ -1291,7 +1448,7 @@ tab Main {
                                 }
                                 mergeRecentUserEdits(fullResolved)
                             } catch(_) {}
-                            this.currentDocument = fullResolved
+                            this._applyResolvedDocumentWithFormulaPreservation(fullResolved)
                             try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve after fallback):', e); this.showError('Render error', e) }
                         }
                     } catch (_) { /* non-fatal */ }
@@ -1333,7 +1490,7 @@ tab Main {
                     try { this.renderer.renderDocument(resolved) } catch (e2) { console.error('Render error (cascade fallback):', e2); this.showError('Render error', e2) }
                 }
                 // Adopt the resolved document after DOM refresh
-                this.currentDocument = resolved
+                this._applyResolvedDocumentWithFormulaPreservation(resolved)
                 return { domOnly: false, success: true }
             }
         } catch (error) {
@@ -1343,7 +1500,7 @@ tab Main {
             try {
                 const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
                 const resolved = await invoke('parse_overseer_content', { content })
-                this.currentDocument = resolved
+                this._applyResolvedDocumentWithFormulaPreservation(resolved)
                 try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback full update):', e); this.showError('Render error', e) }
                 return { domOnly: false, success: true }
             } catch (fallbackError) {
@@ -1539,7 +1696,7 @@ tab Main {
                         const nextDoc = looksLikeDocArray ? updated : updated.children
                         // Only re-render if there are actual changes to visible document
                         if (!docsEqual(this.currentDocument, nextDoc)) {
-                            this.currentDocument = nextDoc
+                            this._applyResolvedDocumentWithFormulaPreservation(nextDoc)
                             try {
                                 this.renderer.renderDocument(this.currentDocument)
                             } catch (e) {

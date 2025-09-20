@@ -79,8 +79,8 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     // After layout resolution, resolve parameter inheritance
     resolve_parameter_inheritance(nodes, &HashMap::new());
     
-    // After parameter inheritance, evaluate formulas
-    evaluate_formulas_in_document(nodes);
+    // After parameter inheritance, evaluate formulas (multi-pass so aggregates whose inputs appear later update)
+    evaluate_formulas_in_document_multi_pass(nodes);
 
     // After formulas, compute chart series for charts/plots (MVP)
     compute_chart_series(nodes);
@@ -1008,18 +1008,61 @@ fn mark_template_child_recursive(node: &mut OverseerNode) {
 /// It creates an immutable snapshot of the document for safe lookups
 /// and then starts the recursive evaluation process.
 fn evaluate_formulas_in_document(nodes: &mut Vec<OverseerNode>) {
-    debug_resolver!("[RESOLVER] Starting formula evaluation");
-    let document_root_snapshot = nodes.clone();
-
-    // Walk using raw pointers so we can pass parent immutable reference alongside child mutable
+    debug_resolver!("[RESOLVER] Starting formula evaluation (single pass)");
+    let snapshot = nodes.clone();
     let len = nodes.len();
     for i in 0..len {
         let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
         let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-        unsafe { recursively_evaluate_node_formulas(node_ptr, std::ptr::null(), &mut current_path, &document_root_snapshot); }
+        unsafe { recursively_evaluate_node_formulas(node_ptr, std::ptr::null(), &mut current_path, &snapshot); }
     }
+    debug_resolver!("[RESOLVER] Formula evaluation single pass completed");
+}
 
-    debug_resolver!("[RESOLVER] Formula evaluation completed");
+fn collect_all_node_paths(nodes: &[OverseerNode], prefix: &mut Vec<String>, acc: &mut std::collections::HashSet<String>) {
+    for (idx, n) in nodes.iter().enumerate() {
+        let name = n.name.clone();
+        // Disambiguate duplicate siblings with ordinal like main#1
+        let k = nodes.iter().take(idx).filter(|c| c.name == name).count();
+        let seg = if k > 0 { format!("{}#{}", name, k) } else { name };
+        prefix.push(seg);
+        acc.insert(prefix.join("/"));
+        if !n.children.is_empty() { collect_all_node_paths(&n.children, prefix, acc); }
+        prefix.pop();
+    }
+}
+
+fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
+    debug_resolver!("[RESOLVER] Starting multi-pass formula evaluation");
+    // Build a path set of all node paths so selective evaluator effectively treats entire tree as target
+    let mut all_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut pref: Vec<String> = Vec::new();
+    collect_all_node_paths(nodes, &mut pref, &mut all_paths);
+    // Re-run up to MAX_PASSES (logic borrowed from selective path) until stable
+    const MAX_PASSES: usize = 4;
+    let mut pass = 0usize;
+    let mut progress = true;
+    while pass < MAX_PASSES && progress {
+        pass += 1;
+        progress = false;
+        let snapshot = nodes.clone();
+        let len = nodes.len();
+        for i in 0..len {
+            let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+            let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
+            unsafe {
+                if recursively_evaluate_node_formulas_selective(
+                    node_ptr,
+                    std::ptr::null(),
+                    &mut current_path,
+                    &snapshot,
+                    &all_paths
+                ) { progress = true; }
+            }
+        }
+        debug_resolver!("[RESOLVER] Multi-pass formula evaluation pass {} progress={} ({} total paths)", pass, progress, all_paths.len());
+    }
+    debug_resolver!("[RESOLVER] Multi-pass formula evaluation completed in {} pass(es)", pass);
 }
 
 /// Selective formula evaluation that only processes specific field paths

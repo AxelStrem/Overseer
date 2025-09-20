@@ -28,7 +28,7 @@ beforeEach(() => {
 function buildDoc(){
   return [
     { name:'main', node_type:'tab', parameters:{}, is_hierarchy_transparent:true, children:[
-      { name:'total', node_type:'int', parameters:{ value:{ Formula:'L.map(|x| x/C).sum()' } }, children:[], is_hierarchy_transparent:false },
+      { name:'total', node_type:'int', parameters:{ value:{ Formula:'L.map(|x| x/C).sum()' }, _computed_value:{ Integer:6 } }, children:[], is_hierarchy_transparent:false },
       { name:'L', node_type:'list', parameters:{ entry:{ Template:'T' } }, children:[
         { name:'T__1', node_type:'div', parameters:{ _from_template:true, _original_type:'T' }, is_hierarchy_transparent:false, children:[
           { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
@@ -55,9 +55,41 @@ describe('Aggregate formula persistence', () => {
     let currentDoc = buildDoc()
     // Backend mocks: serialize, selective parse returns same doc (resolver would compute _computed_value only)
     invoke.mockImplementation((cmd, args) => {
+      const deepClone = (o) => JSON.parse(JSON.stringify(o))
       if (cmd === 'serialize_overseer_nodes') return Promise.resolve('DOC')
-      if (cmd === 'parse_overseer_content_selective') return Promise.resolve(JSON.parse(JSON.stringify(currentDoc)))
-      if (cmd === 'parse_overseer_content') return Promise.resolve(JSON.parse(JSON.stringify(currentDoc)))
+      if (cmd === 'parse_overseer_content_selective' || cmd === 'parse_overseer_content') {
+        // Simulate backend computing C and aggregate total but REGRESSIVELY DROPPING the formula (value -> Null)
+        const clone = deepClone(currentDoc)
+        const list = clone[0].children.find(n=>n.name==='L')
+        let sum = 0
+        if (list){
+          for (const item of list.children){
+            const wrap = item.children.find(c=>c.name==='')
+            const A = wrap?.children.find(c=>c.name==='A')
+            const B = item.children.find(c=>c.name==='B')
+            const C = item.children.find(c=>c.name==='C')
+            const aval = A?.parameters?.value?.Integer
+            const bval = B?.parameters?.value?.Integer
+            if (typeof aval==='number' && typeof bval==='number' && C){
+              const prod = aval * bval
+              // C is a formula; backend would not overwrite its value.Formula, only set _computed_value
+              if (C.parameters.value && C.parameters.value.Formula){
+                C.parameters._computed_value = { Integer: prod }
+              } else {
+                // fallback just in case
+                C.parameters.value = { Integer: prod }
+              }
+              sum += prod
+            }
+          }
+        }
+        const total = clone[0].children.find(n=>n.name==='total')
+        if (total){
+          total.parameters.value = { Null: null } // regression: formula lost
+          total.parameters._computed_value = { Integer: sum }
+        }
+        return Promise.resolve(clone)
+      }
       if (cmd === 'save_overseer_file') return Promise.resolve()
       return Promise.reject(new Error('Unhandled '+cmd))
     })
@@ -67,18 +99,18 @@ describe('Aggregate formula persistence', () => {
     app.currentDocument = currentDoc
     // Initial formula present
     let total = app.currentDocument[0].children.find(n=>n.name==='total')
-    expect(total.parameters.value.Formula).toBe('L.map(|x| x/C).sum()')
-    // Edit A inside list item (simulate user change) to 5
-    const listItem = app.currentDocument[0].children.find(n=>n.name==='L').children[0]
-    const wrap = listItem.children.find(c=>c.name==='')
-    const aNode = wrap.children.find(c=>c.name==='A')
-    aNode.parameters.value = { Integer:5 }
+  expect(total.parameters.value && total.parameters.value.Formula).toBe('L.map(|x| x/C).sum()')
+    // Edit A inside list item (simulate user change) to 5 via selective pathway only (avoid direct structure mutation)
   await app.reevaluateDocumentSelective(['main/L/T__1/A'], [{ path:'main/L/T__1/A', oldValue:'2', newValue:'5' }])
     total = app.currentDocument[0].children.find(n=>n.name==='total')
-    // Formula should still be formula (not replaced by integer)
-    expect(total.parameters.value.Formula).toBe('L.map(|x| x/C).sum()')
+    // Formula should still be formula (not replaced by integer); capture debug snapshot if missing
+    if (!(total.parameters.value && total.parameters.value.Formula)) {
+      // eslint-disable-next-line no-console
+      console.error('DEBUG total parameters after selective:', JSON.stringify(total.parameters))
+    }
+  expect(total.parameters.value && total.parameters.value.Formula).toBe('L.map(|x| x/C).sum()')
     // Simulate save serialization path (should retain formula)
     // (Frontend would call serialize then parse_overseer_content again; we already ensure value not clobbered.)
-    expect(total.parameters.value.Formula).toBe('L.map(|x| x/C).sum()')
+  expect(total.parameters.value && total.parameters.value.Formula).toBe('L.map(|x| x/C).sum()')
   })
 })
