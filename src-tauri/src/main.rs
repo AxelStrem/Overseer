@@ -233,6 +233,35 @@ async fn parse_overseer_content_selective(
                 println!("📋 No specific fields changed, performing full resolution");
                 resolver::resolve_document(&mut nodes);
             } else {
+                // NORMALIZATION + EXPANSION: produce a working set that includes:
+                // 1) Original provided paths
+                // 2) Normalized variants with empty segments removed (handles unnamed transparent wrappers)
+                // 3) '/value' suffixed forms for nodes that own a value parameter
+                let mut expanded_changed: std::collections::HashSet<String> = std::collections::HashSet::new();
+                for raw in &changed_fields {
+                    expanded_changed.insert(raw.clone());
+                    // Normalized variant (strip empty segments)
+                    let norm: String = raw.split('/')
+                        .filter(|seg| !seg.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    if !norm.is_empty() { expanded_changed.insert(norm.clone()); }
+                }
+                // Add /value expansion for any path (raw or normalized) that points to a node with a value param
+                let snapshot_paths: Vec<String> = expanded_changed.clone().into_iter().collect();
+                for p in snapshot_paths {
+                    if p.ends_with("/value") { continue; }
+                    let parts: Vec<&str> = p.split('/').filter(|seg| !seg.is_empty()).collect();
+                    if parts.is_empty() { continue; }
+                    if let Some(node) = find_node_by_path(&nodes, &parts) {
+                        if node.parameters.contains_key("value") {
+                            expanded_changed.insert(format!("{}/value", p));
+                        }
+                    }
+                }
+                let changed_fields: Vec<String> = expanded_changed.into_iter().collect();
+                #[cfg(feature = "debug-resolver")]
+                println!("🧭 Normalized+expanded changed fields: {:?}", changed_fields);
                 // Ensure templates/inheritance are materialized before dependency-based selective updates.
                 // Also preserve user changes before resolution clobbers them.
                 let mut preserved_values = std::collections::HashMap::new();

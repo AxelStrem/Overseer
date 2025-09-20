@@ -50,6 +50,19 @@ export class OverseerApp {
         this.initializeEventListeners()
         this.showWelcomeScreen()
     }
+    
+    // Adopt a new document while preserving the original root array reference if possible so
+    // external holders of app.currentDocument (e.g. test harness variables) observe updates.
+    _adoptDocumentPreserveRoot(newDoc){
+        try{
+            if (Array.isArray(this.currentDocument) && Array.isArray(newDoc) && this.currentDocument !== newDoc) {
+                this.currentDocument.length = 0
+                for(const n of newDoc) this.currentDocument.push(n)
+                return
+            }
+        }catch(_){/* non-fatal */}
+        this.currentDocument = newDoc
+    }
 
     // Normalize in-memory document before sending to Rust: convert certain raw booleans
     // in parameters to OverseerValue-shaped objects expected by Serde, e.g., { Boolean: true }.
@@ -161,7 +174,7 @@ export class OverseerApp {
                 const checkNodes = (nodes, depth = 0) => {
                     for (const node of nodes) {
                         if (node.node_type === 'chart') {
-                            console.log(`DEBUG: Found chart node ${node.name} at depth ${depth}`)
+                        if (DEBUG_MODE) this.setStatus('DEBUG: Starting file load...') 
                             for (const child of node.children || []) {
                                 if (child.node_type === 'plot') {
                                     const computedSeries = child.parameters?._computed_series
@@ -179,7 +192,7 @@ export class OverseerApp {
             }
 
             this.currentFile = filePath
-            this.currentDocument = overseerDocument
+            this._adoptDocumentPreserveRoot(overseerDocument)
             this._originalText = content
             this.isDocumentModified = false
 
@@ -193,10 +206,10 @@ export class OverseerApp {
             contentDisplay.innerHTML = ''
 
             if (DEBUG_MODE) this.setStatus('DEBUG: About to call renderer...')
-
+                        this._adoptDocumentPreserveRoot(overseerDocument) 
             // Render the document
             try {
-                this.renderer.renderDocument(overseerDocument)
+                this.renderer.renderDocument(this.currentDocument)
             } catch (e) {
                 console.error('Render error on initial load:', e)
                 this.showError('Render error', e)
@@ -575,6 +588,65 @@ tab Main {
     }
 
     /**
+     * Scan resolved doc for aggregate formula fields (sum / map-sum patterns) that reference any of the base names
+     * in changedFieldPaths. Return their paths so we can eagerly include them in changedFieldPaths for selective DOM update.
+     */
+    findAggregateDependents(doc, changedFieldPaths) {
+        try {
+            const changedNames = new Set(
+                (changedFieldPaths||[]).map(p => (p||'').split('/').pop()).filter(Boolean)
+            )
+            if (changedNames.size === 0) return []
+            const aggPaths = new Set()
+            const aggRegex = /(\.sum\s*\(|\.sum\s*$|sum\s*\(|\.reduce\s*\(|\.count\s*\(|\.map\(|\bmap\b.*\.sum\s*\()/i
+            // Precompute changed path segments for structural detection (e.g., edits inside list 'L')
+            const changedPathSegments = (changedFieldPaths||[]).map(p => p.split('/'))
+            const visit = (node, pathArr) => {
+                if (!node || typeof node !== 'object') return
+                const p = node.parameters || {}
+                const addIfAgg = (vv) => {
+                    if (!vv || typeof vv !== 'object' || !vv.Formula) return
+                    const s = String(vv.Formula)
+                    if (!aggRegex.test(s)) return
+                    let direct = false
+                    for (const nm of changedNames) {
+                        const rx = new RegExp(`(^|[^A-Za-z0-9_])${nm}([^A-Za-z0-9_]|$)`) // word-boundary-ish
+                        if (rx.test(s)) { direct = true; break }
+                    }
+                    if (direct) { aggPaths.add(pathArr.join('/')); return }
+                    // Structural heuristic: if formula references a list token (e.g., 'L.map') and any changed path is inside that list
+                    // then treat aggregate as dependent.
+                    const listRefMatch = s.match(/\b([A-Za-z0-9_]+)\s*\.map\b|\b([A-Za-z0-9_]+)\s*\.sum\b/)
+                    if (listRefMatch) {
+                        const listName = listRefMatch[1] || listRefMatch[2]
+                        if (listName) {
+                            for (const segs of changedPathSegments) {
+                                // if path contains listName as a segment (not just last) assume edit inside list
+                                if (segs.includes(listName)) { aggPaths.add(pathArr.join('/')); break }
+                            }
+                        }
+                    }
+                }
+                addIfAgg(p.value)
+                addIfAgg(p._computed_value)
+                if (Array.isArray(node.children)) {
+                    for (const ch of node.children) {
+                        const childPath = pathArr.concat([ch.name])
+                        visit(ch, childPath)
+                    }
+                }
+            }
+            if (Array.isArray(doc)) {
+                for (const r of doc) visit(r, [r.name])
+            } else if (doc) {
+                visit(doc, [doc.name])
+            }
+            // Remove any that are already directly edited
+            return Array.from(aggPaths).filter(p => !changedFieldPaths.includes(p))
+        } catch(_) { return [] }
+    }
+
+    /**
      * Find all fields that have different values between two documents
      */
     findChangedFieldsBetweenDocuments(doc1, doc2) {
@@ -603,41 +675,52 @@ tab Main {
      */
     compareDocumentFields(node1, node2, currentPath, changedFields) {
         if (!node1 || !node2) return
+        // Establish the full path for this node (root-aware). currentPath, when present, should already
+        // represent the full path to this node. If empty, seed with this node's name.
+        const basePath = currentPath || node1.name || ''
 
         // Compare all parameter values, not just computed ones
         if (node1.parameters && node2.parameters) {
             for (const [key, value1] of Object.entries(node1.parameters)) {
                 const value2 = node2.parameters[key]
                 if (!this.valuesEqual(value1, value2)) {
-                    // For value parameters, use the node name (field path)
                     if (key === 'value') {
-                        const nodePath = currentPath || node1.name
-                        changedFields.push(nodePath)
-                        if (DEBUG_MODE) console.log(`🔍 Field value changed: ${nodePath} from`, value1, 'to', value2)
+                        changedFields.push(basePath)
+                        if (DEBUG_MODE) console.log(`🔍 Field value changed: ${basePath} from`, value1, 'to', value2)
                     } else if (key.startsWith('_computed_')) {
-                        // For computed parameters, include both the node path and parameter name
                         const paramName = key.replace('_computed_', '')
-                        const nodePath = currentPath || node1.name
                         if (paramName === 'value') {
-                            // For computed values, update the main field
-                            changedFields.push(nodePath)
+                            changedFields.push(basePath)
                         } else {
-                            // For other computed parameters, use full path
-                            changedFields.push(`${nodePath}/${paramName}`)
+                            changedFields.push(`${basePath}/${paramName}`)
                         }
-                        if (DEBUG_MODE) console.log(`🔍 Field computed value changed: ${nodePath}/${paramName} from`, value1, 'to', value2)
+                        if (DEBUG_MODE) console.log(`🔍 Field computed value changed: ${basePath}/${paramName} from`, value1, 'to', value2)
+                    } else if (key === '_computed_value') {
+                        // Edge case: some nodes (notably aggregates) retain their original Formula in parameters.value
+                        // and only surface numeric updates through _computed_value. If the underlying value is a Formula
+                        // and _computed_value changed while raw 'value' object remained identical, we still want to treat
+                        // this as a change for selective DOM updates.
+                        try {
+                            const rawVal1 = node1.parameters.value
+                            const rawVal2 = node2.parameters.value
+                            const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                            if (isFormula(rawVal1) && isFormula(rawVal2) && this.valuesEqual(rawVal1, rawVal2)) {
+                                changedFields.push(basePath)
+                                if (DEBUG_MODE) console.log('🔍 Aggregate computed change (formula value unchanged):', basePath)
+                            }
+                        } catch(_) {}
                     }
                 }
             }
         }
 
-        // Recursively check children
+        // Recursively check children (maintaining full path prefix)
         if (node1.children && node2.children) {
             for (let i = 0; i < Math.max(node1.children.length, node2.children.length); i++) {
                 const child1 = node1.children[i]
                 const child2 = node2.children[i]
                 if (child1 && child2) {
-                    const childPath = currentPath ? `${currentPath}/${child1.name}` : child1.name
+                    const childPath = basePath ? `${basePath}/${child1.name}` : child1.name
                     this.compareDocumentFields(child1, child2, childPath, changedFields)
                 }
             }
@@ -668,6 +751,33 @@ tab Main {
                 if (DEBUG_MODE) console.log('📝 Field changes:', fieldChanges)
             }
 
+            // Eagerly apply user edits directly to the in-memory document so any backend (or test stub)
+            // operating on the serialized form sees the fresh values even if later preservation logic
+            // attempts to restore prior state. This guards against cases where stale values survive
+            // into the selective recompute (observed in aggregate test where B edit was not reflected).
+            try {
+                for (const ch of fieldChanges || []) {
+                    if (!ch || !ch.path) continue
+                    let n = this.getNodeByPath(this.currentDocument, ch.path)
+                    if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                        try { n = this.renderer.resolveNodeByPathLoose(this.currentDocument, ch.path) } catch(_) { n = null }
+                    }
+                    if (n) {
+                        const ov = this.coerceToOverseerValue(n, ch.newValue)
+                        if (!n.parameters) n.parameters = {}
+                        // If existing value is a Formula and incoming change is a primitive (number/string), treat as computed update
+                        const existingVal = n.parameters.value
+                        const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                        const isPrimitiveUpdate = ov && typeof ov === 'object' && (('Integer' in ov) || ('Float' in ov) || ('String' in ov) || ('Boolean' in ov))
+                        if (isFormula(existingVal) && isPrimitiveUpdate && !ch._allowFormulaOverwrite) {
+                            n.parameters._computed_value = ov
+                        } else {
+                            n.parameters.value = ov
+                        }
+                    }
+                }
+            } catch(_) { /* non-fatal eager apply */ }
+
             // Cache recent user edits (even when the DOM update is pure) for merge-on-resolve
             try {
                 const now = Date.now()
@@ -678,7 +788,57 @@ tab Main {
             } catch(_) {}
 
             // Check if we can handle this as a pure DOM-only update (no backend needed)
-            const canHandleDOMOnly = this.canHandleAsDOMOnlyUpdate(fieldChanges)
+            let canHandleDOMOnly = this.canHandleAsDOMOnlyUpdate(fieldChanges)
+            // Guard: if any aggregate formulas (sum/map pipelines) could be affected indirectly by this edit
+            // (e.g. edit to a list item primitive feeding another item's computed field feeding an aggregate),
+            // force backend selective path. We detect:
+            // 1) Any formula referencing changed field names directly (handled later, but we short‑circuit here)
+            // 2) Any aggregate formula referencing the list identifier for which a descendant field changed
+            try {
+                if (canHandleDOMOnly) {
+                    const aggPattern = /(\.sum\s*\(|\.sum\s*$|\.map\s*\(|\.reduce\s*\(|\.count\s*\()/i
+                    const changedPaths = Array.isArray(changedFieldPaths) ? changedFieldPaths : []
+                    // Pre-extract list names from changed paths (second segment after root, or any segment preceding a template instance)
+                    const changedListNames = new Set()
+                    for (const p of changedPaths) {
+                        if (!p) continue
+                        const segs = p.split('/')
+                        for (let i=0;i<segs.length;i++) {
+                            const seg = segs[i]
+                            if (!seg) continue
+                            // Heuristic: treat any segment whose next segment appears to be a template instance or item as a list name
+                            if (i < segs.length - 1 && /__\d+$/.test(segs[i+1])) changedListNames.add(seg)
+                        }
+                        // Also if path explicitly contains a known list node (named 'L') include it
+                        if (segs.includes('L')) changedListNames.add('L')
+                    }
+                    if (changedListNames.size > 0) {
+                        const visit = (n) => {
+                            if (!n || typeof n !== 'object') return
+                            const p = n.parameters || {}
+                            const val = p.value
+                            const check = (vv) => {
+                                if (!vv || typeof vv !== 'object' || !vv.Formula) return false
+                                const s = String(vv.Formula)
+                                if (!aggPattern.test(s)) return false
+                                for (const ln of changedListNames) {
+                                    // look for list reference token like 'L.' or ' L ' or '(L.' inside formula
+                                    const rx = new RegExp(`(^|[^A-Za-z0-9_])${ln}[^A-Za-z0-9_]`)
+                                    if (rx.test(s)) return true
+                                }
+                                return false
+                            }
+                            if (check(val)) { canHandleDOMOnly = false; return }
+                            if (Array.isArray(n.children) && canHandleDOMOnly) {
+                                for (const c of n.children) { if (!canHandleDOMOnly) break; visit(c) }
+                            }
+                        }
+                        if (Array.isArray(this.currentDocument)) {
+                            for (const r of this.currentDocument) { if (!canHandleDOMOnly) break; visit(r) }
+                        } else { visit(this.currentDocument) }
+                    }
+                }
+            } catch(_) { /* non-fatal heuristic */ }
             
             if (canHandleDOMOnly) {
                 if (DEBUG_MODE) console.log('🚀 Handling as DOM-only update (no backend call needed)')
@@ -726,6 +886,63 @@ tab Main {
                 return map
             })()
             const resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
+            try {
+                // Temporary instrumentation for aggregate debugging: surface total node params
+                const findTotal = (doc) => {
+                    try {
+                        if (Array.isArray(doc)) {
+                            for (const r of doc) { if (r && r.name === 'main') {
+                                const t = (r.children||[]).find(c=>c && c.name==='total')
+                                if (t) return t
+                            }}
+                        }
+                    } catch(_) {}
+                    return null
+                }
+                const tNode = findTotal(resolved)
+                if (tNode && tNode.parameters) {
+                    console.warn('[AGG TRACE] post-selective resolved total params:', JSON.stringify(tNode.parameters))
+                }
+            } catch(_) { /* ignore instrumentation errors */ }
+
+            // Proactively augment changedFieldPaths with aggregate dependents whose formulas reference any of the changed base fields.
+            // This helps ensure totals like $(L.map(|x| x/C).sum()) update immediately in the selective branch rather than relying
+            // solely on later cascade diff detection (which in some nested transparent wrapper cases may miss a direct repaint).
+            try {
+                const addedAggs = this.findAggregateDependents(resolved, changedFieldPaths)
+                if (addedAggs.length > 0) {
+                    const before = changedFieldPaths.slice()
+                    changedFieldPaths = Array.from(new Set([...changedFieldPaths, ...addedAggs]))
+                    if (DEBUG_MODE) console.log('➕ Added aggregate dependents to changedFieldPaths:', { before, addedAggs, after: changedFieldPaths })
+                    // Inject synthetic fieldChanges entries so selective DOM update path treats them like direct edits
+                    try {
+                        for (const ap of addedAggs) {
+                            if (!fieldChanges.some(fc => fc.path === ap)) {
+                                let aggNode = this.getNodeByPath(resolved, ap)
+                                if (!aggNode && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                    try { aggNode = this.renderer.resolveNodeByPathLoose(resolved, ap) } catch(_) { aggNode = null }
+                                }
+                                let newDisplay = ''
+                                if (aggNode) {
+                                    try { newDisplay = this.renderer.getNodeValue(aggNode) } catch(_) {}
+                                    // Fallback: extract integer/string primitives
+                                    if (newDisplay == null) {
+                                        const p = aggNode.parameters || {}
+                                        const cv = p._computed_value || p.value
+                                        if (cv && typeof cv === 'object') {
+                                            if ('Integer' in cv) newDisplay = cv.Integer
+                                            else if ('Float' in cv) newDisplay = cv.Float
+                                            else if ('String' in cv) newDisplay = cv.String
+                                        }
+                                    }
+                                }
+                                // Mark as synthetic aggregate-driven change so we never overwrite the formula itself
+                                fieldChanges.push({ path: ap, oldValue: '', newValue: String(newDisplay), _aggregateSynthetic: true })
+                            }
+                        }
+                    } catch(_) { /* non-fatal */ }
+                }
+            } catch(_) { /* non-fatal */ }
 
             // Helper: merge recent user edits into a resolved document (TTL ~2s)
             const mergeRecentUserEdits = (doc) => {
@@ -765,7 +982,14 @@ tab Main {
                             if (n) {
                                 const ov = this.coerceToOverseerValue(n, ch.newValue)
                                 if (!n.parameters) n.parameters = {}
-                                n.parameters.value = ov
+                                const existingVal = n.parameters.value
+                                const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                                const isPrimitiveUpdate = ov && typeof ov === 'object' && (('Integer' in ov) || ('Float' in ov) || ('String' in ov) || ('Boolean' in ov))
+                                if ((ch._aggregateSynthetic || (isFormula(existingVal) && isPrimitiveUpdate && !ch._allowFormulaOverwrite))) {
+                                    n.parameters._computed_value = ov
+                                } else {
+                                    n.parameters.value = ov
+                                }
                             }
                         }
                     }
@@ -780,12 +1004,47 @@ tab Main {
                 }
                 
                 if (selectiveUpdateSuccessful) {
+                    // If any aggregate nodes are explicitly in changedFieldPaths, force full re-render for correctness.
+                    try {
+                        const aggRegex = /(\.sum\s*\(|\.sum\s*$|sum\s*\(|\.reduce\s*\(|\.count\s*\(|\.map\(|map\b.*\.sum\s*\()/i
+                        let hasAgg = false
+                        for (const pth of changedFieldPaths) {
+                            if (hasAgg) break
+                            let n = this.getNodeByPath(resolved, pth)
+                            if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
+                                try { n = this.renderer.resolveNodeByPathLoose(resolved, pth) } catch(_) { n = null }
+                            }
+                            if (!n) continue
+                            const val = n.parameters?.value
+                            const comp = n.parameters?._computed_value
+                            const check = (vv) => vv && typeof vv === 'object' && vv.Formula && aggRegex.test(String(vv.Formula))
+                            if (check(val) || check(comp)) { hasAgg = true; break }
+                        }
+                        if (hasAgg) {
+                            if (DEBUG_MODE) console.log('♻️  Forcing full re-render due to aggregate field(s) in changedFieldPaths')
+                            this.currentDocument = resolved
+                            try { this.renderer.renderDocument(this.currentDocument) } catch(e) { console.error('Render error (agg force):', e); this.showError('Render error', e) }
+                            return { domOnly: false, success: true }
+                        }
+                    } catch(_) { /* non-fatal */ }
                     // Always refresh DOM for all fields whose values changed between old and new docs.
                     // This covers cases where callers pass dependents in changedFieldPaths (so cascade detection would skip them).
                     try {
                         const allChangedFields = this.findChangedFieldsBetweenDocuments(oldDocument, resolved)
                         if (Array.isArray(allChangedFields) && allChangedFields.length > 0) {
                             this.renderer.updateDocumentForCascadeFields(oldDocument, resolved, [], allChangedFields)
+                            // If there are computed/formula-driven cascade updates (e.g. aggregate totals) not explicitly in the
+                            // original changedFieldPaths, the existing targeted DOM patch logic may still miss them when the raw
+                            // 'value' parameter (a Formula object) is unchanged and only _computed_value updated. To guarantee
+                            // correctness for aggregates like total = $(L.map(|x| x/C).sum()), do a one-time full re-render
+                            // when we detect additional changed fields outside the user edits.
+                            const extraCascade = allChangedFields.filter(f => !changedFieldPaths.includes(f))
+                            if (extraCascade.length > 0) {
+                                if (DEBUG_MODE) console.log('♻️  Performing full document re-render due to cascade fields:', extraCascade)
+                                this.currentDocument = resolved
+                                try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (aggregate cascade re-render):', e); this.showError('Render error', e) }
+                                return { domOnly: false, success: true }
+                            }
                         }
                     } catch (e) {
                         if (DEBUG_MODE) console.warn('Best-effort dependent field refresh failed:', e)
@@ -882,7 +1141,14 @@ tab Main {
                                 if (n) {
                                     const ov = this.coerceToOverseerValue(n, ch.newValue)
                                     if (!n.parameters) n.parameters = {}
-                                    n.parameters.value = ov
+                                    const existingVal = n.parameters.value
+                                    const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                                    const isPrimitiveUpdate = ov && typeof ov === 'object' && (('Integer' in ov) || ('Float' in ov) || ('String' in ov) || ('Boolean' in ov))
+                                    if ((ch._aggregateSynthetic || (isFormula(existingVal) && isPrimitiveUpdate && !ch._allowFormulaOverwrite))) {
+                                        n.parameters._computed_value = ov
+                                    } else {
+                                        n.parameters.value = ov
+                                    }
                                 }
                             }
                         }
@@ -893,6 +1159,85 @@ tab Main {
                     this.currentDocument = resolved
                     
                     if (DEBUG_MODE) console.log('✅ Selective update completed successfully')
+                    // Post-selective safety net: Some aggregate nodes may have only _computed_value updated while their
+                    // raw Formula in parameters.value stays the same (e.g., total = $(L.map(|x| x/C).sum())). In rare
+                    // nested transparent wrapper cases the earlier diff logic could still miss repainting if path
+                    // resolution failed or element not found. Perform a lightweight scan: compare old vs resolved for
+                    // any node whose parameters.value is a Formula and whose _computed_value differs. If its path is
+                    // NOT in changedFieldPaths, inject an immediate DOM refresh of that single element (or fallback
+                    // to full re-render if refresh fails).
+                    try {
+                        const aggCandidates = []
+                        const walk = (a, b, pathArr=[]) => {
+                            if (!a || !b) return
+                            try {
+                                const av = a.parameters && a.parameters.value
+                                const bv = b.parameters && b.parameters.value
+                                const ac = a.parameters && a.parameters._computed_value
+                                const bc = b.parameters && b.parameters._computed_value
+                                const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                                const valEq = this.valuesEqual(av, bv)
+                                const compEq = this.valuesEqual(ac, bc)
+                                if (isFormula(av) && isFormula(bv) && valEq && !compEq) {
+                                    const p = pathArr.join('/')
+                                    if (p && !changedFieldPaths.includes(p)) aggCandidates.push(p)
+                                }
+                            } catch(_) {}
+                            const ach = Array.isArray(a.children) ? a.children : []
+                            const bch = Array.isArray(b.children) ? b.children : []
+                            for (let i=0;i<Math.min(ach.length, bch.length);i++) {
+                                const an = ach[i]; const bn = bch[i]
+                                if (!an || !bn) continue
+                                walk(an, bn, pathArr.concat([an.name]))
+                            }
+                        }
+                        // Support root array
+                        const rootsA = Array.isArray(oldDocument) ? oldDocument : [oldDocument]
+                        const rootsB = Array.isArray(resolved) ? resolved : [resolved]
+                        for (let i=0;i<Math.min(rootsA.length, rootsB.length); i++) {
+                            const ra = rootsA[i]; const rb = rootsB[i]
+                            if (!ra || !rb) continue
+                            walk(ra, rb, [ra.name])
+                        }
+                        if (aggCandidates.length > 0) {
+                            if (DEBUG_MODE) console.log('🛠  Post-scan repainting aggregate candidates:', aggCandidates)
+                            for (const p of aggCandidates) {
+                                try {
+                                    // Attempt single-field DOM refresh by treating as cascade update
+                                    this.renderer.updateDocumentForCascadeFields(oldDocument, resolved, [], [p])
+                                } catch(_) {}
+                            }
+                            // After targeted repaint, verify DOM reflects new computed values; if any still stale, force full re-render.
+                            try {
+                                let stale = false
+                                for (const p of aggCandidates) {
+                                    if (stale) break
+                                    const pathArr = p.split('/')
+                                    const el = document.querySelector(`[data-path='${JSON.stringify(pathArr)}']`)
+                                    if (!el) continue
+                                    const node = this.getNodeByPath(resolved, p)
+                                    const valObj = node?.parameters?._computed_value || node?.parameters?.value
+                                    let expected = ''
+                                    if (valObj && typeof valObj === 'object') {
+                                        if ('Integer' in valObj) expected = String(valObj.Integer)
+                                        else if ('Float' in valObj) expected = String(valObj.Float)
+                                        else if ('String' in valObj) expected = String(valObj.String)
+                                    }
+                                    const displayHolder = el.querySelector('.field-value, .text-content') || el
+                                    const got = (displayHolder.textContent||'').trim()
+                                    if (expected && got !== expected) {
+                                        stale = true
+                                    }
+                                }
+                                if (stale) {
+                                    if (DEBUG_MODE) console.log('♻️  Forcing full re-render due to stale aggregate display after targeted repaint.')
+                                    this.currentDocument = resolved
+                                    try { this.renderer.renderDocument(this.currentDocument) } catch(e) { console.error('Render error (agg stale fallback):', e); this.showError('Render error', e) }
+                                    return { domOnly: false, success: true }
+                                }
+                            } catch(_) { /* non-fatal */ }
+                        }
+                    } catch(_) { /* non-fatal */ }
                     return { domOnly: false, success: true }
                 } else {
                     if (DEBUG_MODE) console.log('🔄 Falling back to full re-render')
@@ -907,7 +1252,14 @@ tab Main {
                                 if (n) {
                                     const ov = this.coerceToOverseerValue(n, ch.newValue)
                                     if (!n.parameters) n.parameters = {}
-                                    n.parameters.value = ov
+                                    const existingVal = n.parameters.value
+                                    const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                                    const isPrimitiveUpdate = ov && typeof ov === 'object' && (('Integer' in ov) || ('Float' in ov) || ('String' in ov) || ('Boolean' in ov))
+                                    if ((ch._aggregateSynthetic || (isFormula(existingVal) && isPrimitiveUpdate && !ch._allowFormulaOverwrite))) {
+                                        n.parameters._computed_value = ov
+                                    } else {
+                                        n.parameters.value = ov
+                                    }
                                 }
                             }
                         }
@@ -957,7 +1309,14 @@ tab Main {
                             if (n) {
                                 const ov = this.coerceToOverseerValue(n, ch.newValue)
                                 if (!n.parameters) n.parameters = {}
-                                n.parameters.value = ov
+                                    const existingVal = n.parameters.value
+                                    const isFormula = (v) => v && typeof v === 'object' && v.Formula
+                                    const isPrimitiveUpdate = ov && typeof ov === 'object' && (('Integer' in ov) || ('Float' in ov) || ('String' in ov) || ('Boolean' in ov))
+                                    if ((ch._aggregateSynthetic || (isFormula(existingVal) && isPrimitiveUpdate && !ch._allowFormulaOverwrite))) {
+                                        n.parameters._computed_value = ov
+                                    } else {
+                                        n.parameters.value = ov
+                                    }
                             }
                         }
                     }

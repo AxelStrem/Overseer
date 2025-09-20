@@ -4172,6 +4172,8 @@ export class OverseerRenderer {
      */
     collectChangedFields(node1, node2, currentPath, changedFields) {
         if (!node1 || !node2) return
+        // Normalize base path so it always includes the full chain from the root.
+        const basePath = currentPath || node1.name || ''
 
         // Check computed parameters for changes
         if (node1.parameters && node2.parameters) {
@@ -4180,7 +4182,7 @@ export class OverseerRenderer {
                     const value2 = node2.parameters[key]
                     if (!this.valuesEqual(value1, value2)) {
                         const fieldName = key.replace('_computed_', '')
-                        const fieldPath = currentPath ? `${currentPath}/${fieldName}` : fieldName
+                        const fieldPath = fieldName === 'value' ? basePath : `${basePath}/${fieldName}`
                         changedFields.push(fieldPath)
                         if (DEBUG_MODE) console.log(`📝 Detected cascade change: ${fieldPath}`)
                     }
@@ -4192,20 +4194,19 @@ export class OverseerRenderer {
                 const v2 = node2.parameters.value
                 const eq = (a,b) => JSON.stringify(a) === JSON.stringify(b)
                 if (!eq(v1, v2)) {
-                    const fp = currentPath ? `${currentPath}/value` : 'value'
-                    changedFields.push(fp)
-                    if (DEBUG_MODE) console.log(`📝 Detected raw value change: ${fp}`)
+                    changedFields.push(basePath)
+                    if (DEBUG_MODE) console.log(`📝 Detected raw value change: ${basePath}`)
                 }
             } catch(_) {}
         }
 
-        // Recursively check children
+        // Recursively check children (propagating full path prefix)
         if (node1.children && node2.children) {
             for (let i = 0; i < Math.min(node1.children.length, node2.children.length); i++) {
                 const child1 = node1.children[i]
                 const child2 = node2.children[i]
                 if (child1 && child2 && child1.name === child2.name) {
-                    const childPath = currentPath ? `${currentPath}/${child1.name}` : child1.name
+                    const childPath = basePath ? `${basePath}/${child1.name}` : child1.name
                     this.collectChangedFields(child1, child2, childPath, changedFields)
                 }
             }
@@ -4450,7 +4451,18 @@ export class OverseerRenderer {
                 case 'checkbox':
                     this.updateCheckboxElement(element, newNode)
                     break
-                    
+                case 'div':
+                    // Treat generic div as a structural container. We can't trivially patch inner values
+                    // because children may have changed (new computed values). Re-render just this subtree.
+                    try {
+                        if (DEBUG_MODE) console.log('🔁 Re-rendering div container subtree for selective update:', pathArray.join('/'))
+                        this.rerenderSubtree([...(Array.isArray(newNode)?newNode:[newNode])], pathArray)
+                        return true
+                    } catch(e) {
+                        if (DEBUG_MODE) console.warn('Div selective subtree re-render failed, falling back:', e)
+                        return false
+                    }
+                    break
                 default:
                     console.warn('Selective update not implemented for node type:', nodeType)
                     return false

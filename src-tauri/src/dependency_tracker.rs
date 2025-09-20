@@ -76,6 +76,66 @@ impl DependencyGraph {
         for node in nodes {
             self.analyze_node(node, &mut Vec::new())?;
         }
+
+        // SECOND PASS: Expand synthetic aggregate markers produced by extract_formula_dependencies
+        // Pattern: synthetic key "__agg__:<context>/<list_path>/<field_ident>"
+        // We map this to dependencies on each current list item field's value parameter.
+        // Approach: collect all (dependent -> synthetic_dep) pairs, then for each synthetic
+        // generate real dependencies.
+        let mut aggregate_links: Vec<(String, String)> = Vec::new(); // (dependent, synthetic)
+        for (dependency, dependents) in self.dependencies.clone().into_iter() {
+            if dependency.starts_with("__agg__:") {
+                for d in dependents { aggregate_links.push((d.clone(), dependency.clone())); }
+            }
+        }
+        if !aggregate_links.is_empty() {
+            // Helper closure to find node by name path (transparent unaware; relies on actual stored names)
+            fn find_node_mut<'a>(roots: &'a [OverseerNode], path: &str) -> Option<&'a OverseerNode> {
+                let mut cur_slice: &[OverseerNode] = roots;
+                let mut found: Option<&OverseerNode> = None;
+                for seg in path.split('/') {
+                    found = cur_slice.iter().find(|n| n.name == seg);
+                    if let Some(f) = found { cur_slice = &f.children; } else { return None; }
+                }
+                found
+            }
+            for (dependent, synthetic) in aggregate_links {
+                // synthetic format: __agg__:<context>/<list_path>/<field_ident>
+                if let Some(rest) = synthetic.strip_prefix("__agg__:") {
+                    // Split rest into context + list path + field ident by walking from right
+                    let parts: Vec<&str> = rest.split('/').collect();
+                    if parts.len() >= 2 {
+                        let field_ident = parts.last().unwrap().to_string();
+                        // list path may include context segments; we attempt to find the list node directly
+                        let list_path = parts[..parts.len()-1].join("/");
+                        if let Some(list_node) = find_node_mut(nodes, &list_path) {
+                            // For each item child of list, locate target field (traverse transparency) and add dependency
+                            for item in &list_node.children {
+                                // BFS to find field_ident underneath item (respect transparency via is_hierarchy_transparent)
+                                let mut queue: Vec<&OverseerNode> = Vec::new();
+                                queue.extend(&item.children);
+                                while let Some(ch) = queue.pop() {
+                                    if ch.name == field_ident {
+                                        let field_value_path = format!("{}/value", {
+                                            // Reconstruct path: list_path + item + (trail down to field)
+                                            let mut p = Vec::new();
+                                            p.extend(list_path.split('/').map(|s| s.to_string()));
+                                            p.push(item.name.clone());
+                                            p.push(ch.name.clone());
+                                            p.join("/")
+                                        });
+                                        self.add_dependency(dependent.clone(), field_value_path);
+                                        break; // found for this item
+                                    }
+                                    if ch.is_hierarchy_transparent { queue.extend(&ch.children); }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Remove synthetic mapping (optional: skip for now - leaving it won't hurt but might cause redundant lookups)
+            }
+        }
         
     debug_dep!("🔍 Dependency graph built. Dependencies: {:?}", self.dependencies);
     debug_dep!("🔍 Dependents: {:?}", self.dependents);
@@ -256,7 +316,30 @@ impl DependencyGraph {
             dependencies.push(resolved_path);
         }
 
-        // Cache the result
+        // SPECIAL CASES: Detect aggregate patterns so we can later expand them into item-field dependencies.
+        // 1) Simple pattern: <listIdent>.sum(<fieldIdent>)  e.g. L.sum(C)
+        if let Some(agg_caps) = regex::Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\.sum\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$").unwrap().captures(formula) {
+            let list_ident = agg_caps.get(1).unwrap().as_str();
+            let field_ident = agg_caps.get(2).unwrap().as_str();
+            let list_path = self.resolve_path_reference(list_ident, context_path);
+            // Synthetic marker format (no duplicated context): __agg__:<list_path>/<field_ident>
+            let synthetic = format!("__agg__:{}/{}", list_path, field_ident);
+            dependencies.push(synthetic);
+        }
+        // 2) map-sum pattern: <listIdent>.map(|x| x/<fieldIdent>).sum() (very narrow detection)
+        if let Some(map_caps) = regex::Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\.map\(\s*\|([A-Za-z_][A-Za-z0-9_]*)\|\s*([A-Za-z_][A-Za-z0-9_]*)/([A-Za-z_][A-Za-z0-9_]*)\s*\)\.sum\(\s*\)\s*$").unwrap().captures(formula) {
+            let list_ident = map_caps.get(1).unwrap().as_str();
+            let var_decl = map_caps.get(2).unwrap().as_str();
+            let var_use = map_caps.get(3).unwrap().as_str();
+            let field_ident = map_caps.get(4).unwrap().as_str();
+            if var_decl == var_use { // ensure x reused consistently
+                let list_path = self.resolve_path_reference(list_ident, context_path);
+                let synthetic = format!("__agg__:{}/{}", list_path, field_ident);
+                dependencies.push(synthetic);
+            }
+        }
+
+        // Cache the result (including any synthetic additions)
         self.formula_cache.insert(cache_key, dependencies.clone());
         
         Ok(dependencies)
@@ -323,8 +406,10 @@ impl DependencyGraph {
     /// Check if a token is a formula keyword that should be ignored
     fn is_formula_keyword(&self, token: &str) -> bool {
         match token {
-            // Mathematical functions
+            // Mathematical / aggregation functions
             "sin" | "cos" | "tan" | "sqrt" | "abs" | "max" | "min" | "floor" | "ceil" | "round" |
+            // Collection / list pipeline helpers (treated as keywords so they don't become dependencies)
+            "sum" | "map" | "filter" | "reduce" | "count" |
             // Logical keywords  
             "true" | "false" | "and" | "or" | "not" |
             // Control flow
@@ -391,6 +476,7 @@ impl DependencyGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{OverseerNode, OverseerValue};
 
     #[test]
     fn test_dependency_tracking() {
@@ -436,5 +522,79 @@ mod tests {
         assert!(paths.iter().any(|p| p.contains("field_a")));
         assert!(paths.iter().any(|p| p.contains("/root/field_b")));
         assert!(paths.iter().any(|p| p.contains("../sibling")));
+    }
+
+    #[test]
+    fn test_dependencies_with_transparent_wrapper_in_list_item() {
+        // Build a minimal tree with transparent wrapper around A inside a list item
+        let mut root = OverseerNode::new_with_type("tab".to_string(), Some("Root".to_string()));
+        let mut list = OverseerNode::new_with_type("list".to_string(), Some("L".to_string()));
+        let mut item = OverseerNode::new_with_type("T".to_string(), Some("T__1".to_string()));
+        let mut wrap = OverseerNode::new_with_type("div".to_string(), None); // unnamed transparent div
+        let mut a = OverseerNode::new_with_type("int".to_string(), Some("A".to_string()));
+        a.parameters.insert("value".to_string(), OverseerValue::Integer(1));
+        let mut b = OverseerNode::new_with_type("int".to_string(), Some("B".to_string()));
+        b.parameters.insert("value".to_string(), OverseerValue::Integer(2));
+        let mut c = OverseerNode::new_with_type("int".to_string(), Some("C".to_string()));
+        c.parameters.insert("value".to_string(), OverseerValue::Formula("A*B".to_string()));
+
+        wrap.children.push(a);
+        item.children.push(wrap);
+        item.children.push(b);
+        item.children.push(c);
+        list.children.push(item);
+        root.children.push(list);
+        let nodes = vec![root];
+
+        let mut graph = DependencyGraph::new();
+        graph.build_from_document(&nodes).expect("build graph");
+
+        // Expect that C/value depends on sibling-scope A and B (not C/A)
+        let dep_a = "Root/L/T__1/A";
+        let dep_b = "Root/L/T__1/B";
+        let dependent = "Root/L/T__1/C/value";
+        let dependents_of_a = graph.get_dependents(dep_a);
+        let dependents_of_b = graph.get_dependents(dep_b);
+        assert!(dependents_of_a.contains(&dependent.to_string()), "C/value should depend on A");
+        assert!(dependents_of_b.contains(&dependent.to_string()), "C/value should depend on B");
+    }
+
+    #[test]
+    fn test_aggregate_map_sum_expansion_dependencies() {
+        // Document structure replicating examples/basic/unnamed_divs.os simplified
+        // tab Root {
+        //   int total = $(L.map(|x| x/C).sum())
+        //   list L { - { int A=1 int B=2 int C=$(A*B) } }
+        // }
+        let mut root = OverseerNode::new_with_type("tab".to_string(), Some("Root".to_string()));
+        let mut total = OverseerNode::new_with_type("int".to_string(), Some("total".to_string()));
+        total.parameters.insert("value".to_string(), OverseerValue::Formula("L.map(|x| x/C).sum()".to_string()));
+
+        let mut list = OverseerNode::new_with_type("list".to_string(), Some("L".to_string()));
+        // single item
+        let mut item = OverseerNode::new_with_type("T".to_string(), Some("T__1".to_string()));
+        let mut a = OverseerNode::new_with_type("int".to_string(), Some("A".to_string()));
+        a.parameters.insert("value".to_string(), OverseerValue::Integer(1));
+        let mut b = OverseerNode::new_with_type("int".to_string(), Some("B".to_string()));
+        b.parameters.insert("value".to_string(), OverseerValue::Integer(2));
+        let mut c = OverseerNode::new_with_type("int".to_string(), Some("C".to_string()));
+        c.parameters.insert("value".to_string(), OverseerValue::Formula("A*B".to_string()));
+        item.children.push(a);
+        item.children.push(b);
+        item.children.push(c);
+        list.children.push(item);
+
+        root.children.push(total);
+        root.children.push(list);
+        let nodes = vec![root];
+
+        let mut graph = DependencyGraph::new();
+        graph.build_from_document(&nodes).expect("graph build");
+
+        // We expect total/value to depend on Root/L/T__1/C/value via synthetic aggregate expansion
+        let c_value = "Root/L/T__1/C/value";
+        let total_value = "Root/total/value";
+        let dependents_of_c = graph.get_dependents(c_value);
+        assert!(dependents_of_c.contains(&total_value.to_string()), "total/value should depend on C/value via aggregate expansion");
     }
 }
