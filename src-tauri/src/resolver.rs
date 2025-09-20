@@ -1615,6 +1615,14 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         for _ in 0..2 {
             let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
             let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
+            // Compute fallback first (parity with full evaluator) so dependents can read _computed_fallback immediately
+            if let Some(fb) = node.parameters.get("fallback").cloned() {
+                let fb_val = match fb {
+                    OverseerValue::Formula(f) => FormulaEvaluator::evaluate_formula(f.as_str(), &context).unwrap_or(OverseerValue::Null),
+                    other => other,
+                };
+                computed_params.push(("_computed_fallback".to_string(), fb_val));
+            }
             for (key, formula_src) in &formula_pairs {
                 debug_resolver!("[RESOLVER] Selectively evaluating formula in {}.{}: {}", node.name, key, formula_src);
                 let shadow_key = if key == "value" { "_computed_value".to_string() } else { format!("_computed_{}", key) };

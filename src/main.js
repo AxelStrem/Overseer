@@ -1006,9 +1006,7 @@ tab Main {
                     return null
                 }
                 const tNode = findTotal(resolved)
-                if (tNode && tNode.parameters) {
-                    console.warn('[AGG TRACE] post-selective resolved total params:', JSON.stringify(tNode.parameters))
-                }
+                // (Removed AGG TRACE instrumentation)
             } catch(_) { /* ignore instrumentation errors */ }
 
             // Proactively augment changedFieldPaths with aggregate dependents whose formulas reference any of the changed base fields.

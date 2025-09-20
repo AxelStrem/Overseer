@@ -283,8 +283,7 @@ async fn parse_overseer_content_selective(
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<Vec<OverseerNode>> {
     // TEMP DIAG: Surface raw changed_fields received from frontend (will be removed after bug fix)
-    #[cfg(debug_assertions)]
-    println!("[SELECTIVE DIAG] Raw changed_fields inbound: {:?}", changed_fields);
+    // Removed temporary verbose selective diagnostics (Raw changed_fields)
     #[cfg(feature = "debug-resolver")]
     println!("🔄 Selective update called with {} changed fields: {:?}", changed_fields.len(), changed_fields);
     
@@ -310,8 +309,7 @@ async fn parse_overseer_content_selective(
                         .join("/");
                     if !norm.is_empty() { expanded_changed.insert(norm.clone()); }
                 }
-                #[cfg(debug_assertions)]
-                println!("[SELECTIVE DIAG] Post-normalization (pre-/value expand): {:?}", expanded_changed);
+                // Removed temporary verbose selective diagnostics (post-normalization)
                 // Add /value expansion for any path (raw or normalized) that points to a node with a value param
                 let snapshot_paths: Vec<String> = expanded_changed.clone().into_iter().collect();
                 for p in snapshot_paths {
@@ -405,8 +403,7 @@ async fn parse_overseer_content_selective(
                         }
                     }
                 }
-                #[cfg(debug_assertions)]
-                println!("[SELECTIVE DIAG] After /value expansion: {:?}", expanded_changed);
+                // Removed temporary verbose selective diagnostics (after /value expansion)
                 let changed_fields: Vec<String> = expanded_changed.into_iter().collect();
                 #[cfg(feature = "debug-resolver")]
                 println!("🧭 Normalized+expanded changed fields: {:?}", changed_fields);
@@ -456,8 +453,7 @@ async fn parse_overseer_content_selective(
                 // transparency-aware end-to-end, this block can be removed.
                 let has_template_instance_edit = changed_fields.iter().any(|p| p.split('/').any(|seg| seg.contains("__")));
                 if has_template_instance_edit {
-                    #[cfg(debug_assertions)]
-                    println!("[SELECTIVE DIAG] Full resolve fallback (template instance edit detected)");
+                    // Full resolve fallback for template instance edits (quiet)
                     resolver::resolve_document(&mut nodes);
                     return Ok(nodes);
                 }
@@ -526,10 +522,7 @@ async fn parse_overseer_content_selective(
                             }
                         }
                     }
-                    #[cfg(debug_assertions)]
-                    if !heuristic_added.is_empty() {
-                        println!("[SELECTIVE DIAG] Heuristic-added cascade fields: {:?}", heuristic_added);
-                    }
+                    // Heuristic-added cascade fields (diagnostic removed)
 
                     // Formula rehydration: ensure list item instance fields derived from template formulas are present
                     // so that selective resolution has something to evaluate. This mitigates earlier formula loss cases.
@@ -682,8 +675,7 @@ async fn parse_overseer_content_selective(
                         let original_set: std::collections::HashSet<String> = changed_fields.iter().cloned().collect();
                         let expanded_only_new = all_fields_to_update.iter().filter(|f| !original_set.contains(*f)).count();
                         if expanded_only_new == 0 {
-                            #[cfg(debug_assertions)]
-                            println!("[SELECTIVE DIAG] Fallback to full resolution (no dependent fields added) - changed_fields={}, cascade_size={}", original_set.len(), all_fields_to_update.len());
+                            // Fallback to full resolution (no dependent fields added)
                             resolver::resolve_document(&mut nodes);
                         } else {
                             // Do selective resolution only for the cascade fields
