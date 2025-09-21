@@ -479,8 +479,13 @@ export class OverseerRenderer {
             }
             cleanupNode(this.contentDisplay)
         } catch(_) {}
-        this.contentDisplay.innerHTML = ''
-        this.tabContainer.innerHTML = ''
+        // Defensive guards: in headless test environments elements can be null
+        if (this.contentDisplay) {
+            try { this.contentDisplay.innerHTML = '' } catch(_) {}
+        }
+        if (this.tabContainer) {
+            try { this.tabContainer.innerHTML = '' } catch(_) {}
+        }
 
         // Optional lightweight debug info (avoid dumping full document JSON)
         if (DEBUG_MODE) {
@@ -488,12 +493,12 @@ export class OverseerRenderer {
             debugInfo.style.cssText = 'background: #f0f0f0; padding: 6px 10px; margin: 8px; border: 1px solid #ccc; font-family: monospace; color: #000;'
             const rootCount = Array.isArray(overseerDocument) ? overseerDocument.length : 1
             debugInfo.textContent = `DEBUG: roots=${rootCount} type=${typeof overseerDocument}`
-            this.contentDisplay.appendChild(debugInfo)
+            if (this.contentDisplay) this.contentDisplay.appendChild(debugInfo)
         }
 
         if (!overseerDocument) {
             console.error('Document is null or undefined')
-            this.contentDisplay.innerHTML += '<p>No document provided</p>'
+            if (this.contentDisplay) this.contentDisplay.innerHTML += '<p>No document provided</p>'
             return
         }
 
@@ -501,7 +506,7 @@ export class OverseerRenderer {
             if (DEBUG_MODE) console.log('Processing array document with', overseerDocument.length, 'nodes')
 
             if (overseerDocument.length === 0) {
-                this.contentDisplay.innerHTML += '<p>Document is empty (no nodes parsed)</p>'
+                if (this.contentDisplay) this.contentDisplay.innerHTML += '<p>Document is empty (no nodes parsed)</p>'
                 return
             }
 
@@ -1255,6 +1260,14 @@ export class OverseerRenderer {
     }
 
     createTabElement(node) {
+        // In headless / test environments tabContainer may be null; bail out gracefully
+        if (!this.tabContainer) {
+            if (DEBUG_MODE) console.warn('Skipping tab creation: tabContainer is null')
+            const placeholder = document.createElement('div')
+            placeholder.className = 'tab-content'
+            placeholder.style.display = 'none'
+            return placeholder
+        }
         const tabButton = document.createElement('button')
         tabButton.className = 'tab-button'
     // Bug 8: Tabs should use a 'label' parameter instead of exposing node name

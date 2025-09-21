@@ -98,50 +98,65 @@ describe('backend integration: unnamed wrapper aggregate recomputes', () => {
     // We embed raw overseer text generation minimal: only needed for backend parse; assume serializer not required.
     const serializeDoc = (nodes) => JSON.stringify(nodes) // backend parser expects .os normally; we bypass by echoing pre-parsed nodes in tests.
 
-    invoke.mockImplementation((cmd, args) => {
+  invoke.mockImplementation((cmd, args) => {
       if (cmd === 'get_next_timer_due_ms') return Promise.resolve(null)
       if (cmd === 'scheduler_tick') return Promise.resolve(null)
       if (cmd === 'serialize_overseer_nodes') return Promise.resolve('DOC')
       if (cmd === 'save_overseer_file' || cmd==='save_overseer_file_with_original') return Promise.resolve(null)
       if (cmd === 'load_overseer_file') return Promise.resolve('')
-      if (cmd === 'parse_overseer_content_selective') {
-        // Simulate backend by cloning doc and manually applying changed field values then performing formula evaluation
-        // NOTE: To keep this unit-level (no Rust call), replicate minimal parts: recompute C (A*B) and total aggregate.
+      if (cmd === 'parse_overseer_content_selective' || cmd === 'parse_overseer_content') {
+        // Simulated backend: apply changed field value patches (camelCase args from frontend)
+        const changedVals = (args && (args.changedFieldValues || args.changed_field_values)) || {}
+        const applyPath = (rootDoc, path, ov) => {
+          if (!path) return;
+            const segs = path.split('/').filter(Boolean)
+            // Expect either .../A/value or .../B/value
+            // Navigate ignoring missing transparent wrappers (empty name segments)
+            let node = rootDoc[0]
+            for (let i=0;i<segs.length;i++) {
+              const s = segs[i]
+              if (i === 0 && s === node.name) continue
+              if (i === segs.length-1 && (s === 'value' || s === 'label')) {
+                // Set value primitive
+                if (ov && typeof ov === 'object') {
+                  node.parameters = node.parameters || {}
+                  node.parameters.value = ov
+                }
+                return
+              }
+              // descend: look for direct child by name OR allow skipping unnamed wrapper level
+              const children = node.children || []
+              let next = children.find(c=>c.name===s)
+              if (!next) {
+                // try fuzzy path ignoring a single transparent unnamed wrapper
+                for (const c of children) {
+                  if (c.name === '') {
+                    const cc = (c.children||[]).find(gc=>gc.name===s)
+                    if (cc) { next = cc; break }
+                  }
+                }
+              }
+              if (!next) return
+              node = next
+            }
+        }
         const cloned = JSON.parse(JSON.stringify(doc))
-        const changed = args.changed_fields || []
-        // Apply explicit value edits already mutated in doc; just recompute formulas
+        // Apply incoming changed value patches
+        Object.entries(changedVals).forEach(([p,v])=>applyPath(cloned, p, v))
+        // Recompute C and total using current Integer values
         const list = cloned[0].children.find(n=>n.name==='L')
         const item = list.children[0]
         const aWrap = item.children.find(ch=>ch.name==='')
         const aNode = aWrap.children.find(c=>c.name==='A')
         const bNode = item.children.find(c=>c.name==='B')
         const cNode = item.children.find(c=>c.name==='C')
-        const aval = aNode.parameters.value?.Integer
-        const bval = bNode.parameters.value?.Integer
+        const aval = aNode.parameters.value?.Integer ?? aNode.parameters._computed_value?.Integer
+        const bval = bNode.parameters.value?.Integer ?? bNode.parameters._computed_value?.Integer
         if (typeof aval==='number' && typeof bval==='number') {
           cNode.parameters._computed_value = { Integer: aval * bval }
+          const total = cloned[0].children.find(n=>n.name==='total')
+          total.parameters._computed_value = { Integer: (aval * bval) }
         }
-        const total = cloned[0].children.find(n=>n.name==='total')
-        total.parameters._computed_value = { Integer: (aval * bval) }
-        doc = cloned
-        return Promise.resolve(cloned)
-      }
-      if (cmd === 'parse_overseer_content') {
-        // Full parse path: same recompute
-        const cloned = JSON.parse(JSON.stringify(doc))
-        const list = cloned[0].children.find(n=>n.name==='L')
-        const item = list.children[0]
-        const aWrap = item.children.find(ch=>ch.name==='')
-        const aNode = aWrap.children.find(c=>c.name==='A')
-        const bNode = item.children.find(c=>c.name==='B')
-        const cNode = item.children.find(c=>c.name==='C')
-        const aval = aNode.parameters.value?.Integer
-        const bval = bNode.parameters.value?.Integer
-        if (typeof aval==='number' && typeof bval==='number') {
-          cNode.parameters._computed_value = { Integer: aval * bval }
-        }
-        const total = cloned[0].children.find(n=>n.name==='total')
-        total.parameters._computed_value = { Integer: (aval * bval) }
         doc = cloned
         return Promise.resolve(cloned)
       }
@@ -152,16 +167,19 @@ describe('backend integration: unnamed wrapper aggregate recomputes', () => {
     app.currentDocument = JSON.parse(JSON.stringify(doc))
     app.renderer.renderDocument(app.currentDocument)
 
-    // Edit A -> 5
-    await editPrimitive(app, ['main','L','T__1','A'], 5)
-    app.renderer.renderDocument(app.currentDocument)
-    expect(getFieldText(['main','L','T__1','C'])).toBe('10')
-    expect(getFieldText(['main','total'])).toBe('10')
+  // Edit A -> 5 (simulate user edit, then invoke selective backend flow)
+  await editPrimitive(app, ['main','L','T__1','A'], 5)
+  await app.reevaluateDocumentSelective(['main/L/T__1/A'], [{ path: 'main/L/T__1/A', newValue: 5 }])
+  // Allow microtask flush for selective DOM patch
+  await new Promise(r=>setTimeout(r,0))
+  expect(getFieldText(['main','L','T__1','C'])).toBe('10')
+  expect(getFieldText(['main','total'])).toBe('10')
 
-    // Edit B -> 3 => C=15 total=15
-    await editPrimitive(app, ['main','L','T__1','B'], 3)
-    app.renderer.renderDocument(app.currentDocument)
-    expect(getFieldText(['main','L','T__1','C'])).toBe('15')
-    expect(getFieldText(['main','total'])).toBe('15')
+  // Edit B -> 3 => expect C=15 total=15
+  await editPrimitive(app, ['main','L','T__1','B'], 3)
+  await app.reevaluateDocumentSelective(['main/L/T__1/B'], [{ path: 'main/L/T__1/B', newValue: 3 }])
+  await new Promise(r=>setTimeout(r,0))
+  expect(getFieldText(['main','L','T__1','C'])).toBe('15')
+  expect(getFieldText(['main','total'])).toBe('15')
   })
 })

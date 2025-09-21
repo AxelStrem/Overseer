@@ -1004,20 +1004,6 @@ fn mark_template_child_recursive(node: &mut OverseerNode) {
     }
 }
 
-/// Entry point for formula evaluation.
-/// It creates an immutable snapshot of the document for safe lookups
-/// and then starts the recursive evaluation process.
-fn evaluate_formulas_in_document(nodes: &mut Vec<OverseerNode>) {
-    debug_resolver!("[RESOLVER] Starting formula evaluation (single pass)");
-    let snapshot = nodes.clone();
-    let len = nodes.len();
-    for i in 0..len {
-        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-        unsafe { recursively_evaluate_node_formulas(node_ptr, std::ptr::null(), &mut current_path, &snapshot); }
-    }
-    debug_resolver!("[RESOLVER] Formula evaluation single pass completed");
-}
 
 fn collect_all_node_paths(nodes: &[OverseerNode], prefix: &mut Vec<String>, acc: &mut std::collections::HashSet<String>) {
     for (idx, n) in nodes.iter().enumerate() {
