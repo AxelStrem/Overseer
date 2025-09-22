@@ -557,6 +557,11 @@ export class OverseerRenderer {
                 }
             } catch (_) { /* no-op */ }
 
+            // Guard against null/undefined container (can occur during selective patch attempts when DOM node not found)
+            if (!container) {
+                if (DEBUG_MODE) console.warn('renderNode: null container for path', path, 'node', node)
+                return
+            }
             container.appendChild(element)
             if (DEBUG_MODE) console.log('Appended element to container')
 
@@ -700,58 +705,106 @@ export class OverseerRenderer {
                             }
                             this._linkDepth -= 1
                         } else if (targetNode && targetPath && Array.isArray(targetPath)) {
-                            // Guard against runaway recursion in case of cycles
+                            // Flattened link rendering: make this proxy element act as the target root visually.
                             this._linkDepth = (this._linkDepth || 0) + 1
                             if (this._linkDepth <= 6) {
-                                // Clear any stale phantom flag when binding to a real target
                                 try { element.removeAttribute('data-link-phantom') } catch(_) {}
-                                // Even when acting as a link proxy, expose any event controls (e.g., on click -> button)
                                 try { this.renderEventControls(node, element) } catch(_) {}
-                                // Mark this container as a link proxy to enable event bubbling on edit
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
-                                // Record the concrete target path this proxy is rendering, to aid selective updates
                                 try { element.setAttribute('data-link-target-path', JSON.stringify(targetPath)) } catch(_) {}
-                                // Apply per-link child overrides by cloning the target and merging override params
-                                let toRender = targetNode
+                                // Merge target root parameters into proxy (without overwriting explicit overrides)
                                 try {
+                                    const tgtParams = targetNode.parameters || {}
+                                    const proxyParams = node.parameters = node.parameters || {}
+                                    const proxyHasBgOverride = proxyParams['background-color'] !== undefined && proxyParams['background-color'] !== null
+                                    for (const k of Object.keys(tgtParams)) {
+                                        // Skip copying target's computed background shadow if proxy overrides bg
+                                        if (proxyHasBgOverride && (k === '_computed_background-color' || k === 'background-color')) continue
+                                        if (proxyParams[k] !== undefined) continue
+                                        proxyParams[k] = tgtParams[k]
+                                    }
+                                    // If proxy overrides background-color, remove any lingering computed bg so style block uses override
+                                    if (proxyHasBgOverride && proxyParams['_computed_background-color'] !== undefined) {
+                                        try { delete proxyParams['_computed_background-color'] } catch(_) {}
+                                    }
+                                } catch(_) { /* ignore */ }
+                                // Prepare cloned children with overrides applied
+                                let mergedChildren = []
+                                try {
+                                    const baseChildren = Array.isArray(targetNode.children) ? JSON.parse(JSON.stringify(targetNode.children)) : []
                                     const overrideSpecs = (node.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
                                     if (overrideSpecs.length > 0) {
-                                        const clone = JSON.parse(JSON.stringify(targetNode))
-                                        const applyOverrideRecursive = (tNode, oNode) => {
-                                            if (!tNode || !oNode) return
-                                            // Try to match by name among immediate children; if not found and names equal, apply to self
-                                            const pickChild = (parent, name) => {
-                                                const kids = Array.isArray(parent.children) ? parent.children : []
-                                                const exact = kids.find(c => c && c.name === name)
-                                                return exact || null
-                                            }
-                                            // Merge parameters from override node into target match
+                                        const applyOverrideRecursive = (kids, oNode) => {
+                                            if (!kids) return
+                                            const exact = kids.find(c => c && c.name === oNode.name)
                                             const mergeParams = (target, src) => {
-                                                if (!src || !target) return
+                                                if (!target || !src) return
                                                 const sp = src.parameters || {}
                                                 if (!target.parameters) target.parameters = {}
-                                                for (const k of Object.keys(sp)) {
-                                                    // Copy all params; rely on author to avoid conflicting link overrides
-                                                    target.parameters[k] = sp[k]
-                                                }
+                                                for (const k of Object.keys(sp)) target.parameters[k] = sp[k]
                                             }
-                                            // Find target child by override name
-                                            let targetMatch = pickChild(tNode, oNode.name)
-                                            if (!targetMatch && (tNode.name === oNode.name)) targetMatch = tNode
-                                            if (targetMatch) {
-                                                mergeParams(targetMatch, oNode)
-                                                // Recurse for nested overrides
+                                            if (exact) {
+                                                mergeParams(exact, oNode)
                                                 const oKids = Array.isArray(oNode.children) ? oNode.children : []
-                                                for (const ok of oKids) applyOverrideRecursive(targetMatch, ok)
+                                                for (const ok of oKids) applyOverrideRecursive(exact.children, ok)
                                             }
                                         }
-                                        for (const ov of overrideSpecs) applyOverrideRecursive(clone, ov)
-                                        toRender = clone
+                                        for (const ov of overrideSpecs) applyOverrideRecursive(baseChildren, ov)
                                     }
-                                } catch(_) { /* best-effort only */ }
-                                // Render the (possibly overridden) target subtree inside this container
-                                this.renderNode(toRender, element, nextInherited, targetPath.slice())
-                                // Do not render this node's own children for a link-proxy container
+                                    mergedChildren = baseChildren
+                                } catch(_) { mergedChildren = Array.isArray(targetNode.children) ? targetNode.children : [] }
+                                // If proxy sets explicit background-color, strip descendant computed background colors so they inherit.
+                                try {
+                                    const parentHasBgOverride = (() => { try { const raw = this.getParameterValue(node, 'background-color'); return raw !== null && raw !== undefined } catch(_) { return false } })()
+                                    if (parentHasBgOverride) {
+                                        // Capture original target root bg (computed or literal) to identify inherited duplicates.
+                                        let originalRootBg = null
+                                        try {
+                                            const tp = targetNode.parameters || {}
+                                            if (tp['_computed_background-color'] !== undefined) originalRootBg = tp['_computed_background-color']
+                                            else if (tp['background-color'] !== undefined) originalRootBg = tp['background-color']
+                                        } catch(_) { /* ignore */ }
+                                        const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
+                                        const normalize = (v) => (v == null ? null : String(v).trim().toLowerCase())
+                                        const normOriginal = normalize(originalRootBg)
+                                        const normProxy = normalize(proxyBg)
+                                        const stripInheritedBg = (n) => {
+                                            if (!n || !n.parameters) return
+                                            const p = n.parameters
+                                            const hasFormula = this.parameterHasFormula(n, 'background-color')
+                                            if (!hasFormula) {
+                                                const explicit = p['background-color']
+                                                const comp = p['_computed_background-color']
+                                                const normExplicit = normalize(explicit)
+                                                const normComp = normalize(comp)
+                                                // Remove computed shadow always so it can inherit proxy override
+                                                if (comp !== undefined) { try { delete p['_computed_background-color'] } catch(_) {} }
+                                                // Remove explicit literal if:
+                                                //  a) it matches original root bg we're overriding OR
+                                                //  b) it matches proxy bg (duplicate not needed) OR
+                                                //  c) we cannot determine origin but want inheritance (treat as inherited) AND it is not an explicitly overridden child.
+                                                // Heuristic (c): if explicit exists but this node name not present in overrideSpecs list (captured earlier) and normProxy is non-null.
+                                                const isExplicitlyOverridden = false // we don't track per-child override mark; future improvement could tag
+                                                if (explicit !== undefined) {
+                                                    if ((normExplicit === normOriginal && normOriginal !== normProxy) ||
+                                                        (normExplicit === normProxy) ||
+                                                        (!isExplicitlyOverridden && normProxy)) {
+                                                        try { delete p['background-color'] } catch(_) {}
+                                                    }
+                                                }
+                                            }
+                                            const kids = Array.isArray(n.children) ? n.children : []
+                                            for (const k of kids) stripInheritedBg(k)
+                                        }
+                                        for (const ch of mergedChildren) stripInheritedBg(ch)
+                                    }
+                                } catch(_) { /* ignore */ }
+                                const basePath = targetPath.slice()
+                                for (const ch of mergedChildren) {
+                                    const segBase = (ch.name || ch.node_type || ch.type || 'child')
+                                    const chPath = basePath.concat([segBase])
+                                    this.renderNode(ch, element, nextInherited, chPath)
+                                }
                                 this._linkDepth -= 1
                                 return
                             } else {
