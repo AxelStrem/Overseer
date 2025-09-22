@@ -3898,8 +3898,31 @@ export class OverseerRenderer {
 
     renderMarkdown(text) {
         try {
-            // Use marked library for proper markdown rendering
-            return marked.parse(text);
+            // Preprocess custom inline color syntax before passing to markdown parser.
+            // Syntax: <color=#FF0000 | This text is red>
+            // Allowed color value formats: #RRGGBB, #RGB, named CSS color (alphabetic), rgb(a)(), hsl(a)().
+            // We sanitize by whitelisting acceptable patterns and discarding anything else (leaving raw text).
+            const preprocessColorTags = (input) => {
+                if (!input || typeof input !== 'string' || input.indexOf('<color=') === -1) return input
+                return input.replace(/<color=([^|>]+)\|(.*?)>/gms, (match, rawColor, inner) => {
+                    const color = String(rawColor).trim()
+                    const content = String(inner).trim()
+                    // Basic safe patterns
+                    const isHex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)
+                    const isNamed = /^[a-zA-Z]+$/.test(color)
+                    const isRgb = /^rgb(a)?\(\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
+                    const isHsl = /^hsl(a)?\(\s*[-+]?\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
+                    if (!(isHex || isNamed || isRgb || isHsl)) {
+                        return content // Unsafe or unsupported color format; strip tag but keep text
+                    }
+                    // Escape angle brackets in content minimally (marked will further sanitize if configured)
+                    const esc = content.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    return `<span class=\"md-inline-color\" style=\"color:${color}\">${esc}</span>`
+                })
+            }
+            const preprocessed = preprocessColorTags(text)
+            // Use marked library for proper markdown rendering on preprocessed text
+            return marked.parse(preprocessed);
         } catch (error) {
             console.warn('Markdown parsing error:', error);
             // Fallback to basic markdown rendering
