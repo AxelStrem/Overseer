@@ -82,8 +82,40 @@ export class OverseerApp {
                 fix('_explicit_child_override')
                 // Flags introduced by renderer for UI/rerender hints
                 fix('_from_template')
+                // Strip parameters that were injected during link flattening so they don't persist to disk.
+                // These are copied from the real target into the proxy for UI but should not serialize as overrides.
+                try {
+                    if (Array.isArray(p._injected_link_params)) {
+                        for (const key of p._injected_link_params) {
+                            if (!key) continue
+                            // Never remove the original 'link' parameter itself
+                            if (key === 'link') continue
+                            if (Object.prototype.hasOwnProperty.call(p, key)) {
+                                delete p[key]
+                            }
+                        }
+                        delete p._injected_link_params
+                    }
+                } catch(_) { /* non-fatal */ }
+                // Remove any shadow/computed link param produced client-side
+                if (p && p._computed_link !== undefined) delete p._computed_link
             }
-            if (Array.isArray(node.children)) node.children.forEach(visit)
+            if (Array.isArray(node.children)) {
+                // For link proxy roots, ensure child overrides are tagged so serializer retains them.
+                try {
+                    const isLinkProxy = p && (p.link !== undefined || p._computed_link !== undefined)
+                    if (isLinkProxy) {
+                        for (const ch of node.children) {
+                            if (!ch || typeof ch !== 'object') continue
+                            const cp = ch.parameters
+                            if (!cp || typeof cp !== 'object') continue
+                            if (!cp._explicit_child_override) cp._explicit_child_override = { Boolean: true }
+                            if (!cp._override_present) cp._override_present = { Boolean: true }
+                        }
+                    }
+                } catch(_) { /* ignore */ }
+                node.children.forEach(visit)
+            }
         }
         if (Array.isArray(doc)) doc.forEach(visit)
         else visit(doc)

@@ -811,6 +811,57 @@ impl OverseerFileHandler {
             if !out.ends_with('\n') { out.push('\n'); }
             for l in &trailing_block { out.push_str(l); out.push('\n'); }
         }
+        // Salvage pass: ensure interior comment blocks that didn't find anchors are preserved.
+        // Strategy: collect all standalone comment blocks in original along with the anchor key of the
+        // first subsequent code line. If none of a block's lines appear in merged output, attempt to
+        // insert the block before the first occurrence of that anchor line; otherwise, prepend at top.
+        {
+            // Build a quick lookup of merged lines for containment checks
+            let merged_snapshot = out.clone();
+            let merged_lines: std::collections::HashSet<&str> = merged_snapshot.lines().collect();
+            // Collect blocks
+            #[derive(Debug)]
+            struct Block { lines: Vec<String>, anchor: Option<String> }
+            let mut blocks: Vec<Block> = Vec::new();
+            let mut pending: Vec<String> = Vec::new();
+            for line in original.lines() {
+                let trimmed = line.trim_start();
+                let is_comment = trimmed.starts_with("//") || trimmed.is_empty();
+                if is_comment {
+                    pending.push(line.to_string());
+                } else {
+                    if !pending.is_empty() { blocks.push(Block { lines: std::mem::take(&mut pending), anchor: Some(anchor_key(line)) }); }
+                }
+            }
+            if !pending.is_empty() { blocks.push(Block { lines: std::mem::take(&mut pending), anchor: None }); }
+            // For each block, if none of its lines exist verbatim in merged, attempt insertion
+            for blk in blocks.into_iter() {
+                let present = blk.lines.iter().any(|l| merged_lines.contains(l.as_str()));
+                if present { continue; }
+                // Find insertion point
+                if let Some(anchor) = &blk.anchor { 
+                    // Find line with matching anchor key in merged output
+                    let mut rebuilt = String::new();
+                    let mut inserted_here = false;
+                    for line in out.lines() {
+                        if !inserted_here {
+                            let key = anchor_key(line);
+                            if !key.is_empty() && key == *anchor {
+                                for l in &blk.lines { rebuilt.push_str(l); rebuilt.push('\n'); }
+                                inserted_here = true;
+                            }
+                        }
+                        rebuilt.push_str(line); rebuilt.push('\n');
+                    }
+                    if inserted_here { out = rebuilt; continue; }
+                }
+                // Fallback: prepend (after leading block if any already inserted)
+                let mut rebuilt = String::new();
+                for l in &blk.lines { rebuilt.push_str(l); rebuilt.push('\n'); }
+                rebuilt.push_str(&out);
+                out = rebuilt;
+            }
+        }
         out
     }
 }

@@ -669,9 +669,12 @@ export class OverseerRenderer {
                                 try {
                                     const tgtParams = phantomPreviewNode.parameters || {}
                                     const proxyParams = node.parameters = node.parameters || {}
+                                    // Initialize tracking list for injected params if not present
+                                    if (!Array.isArray(proxyParams._injected_link_params)) proxyParams._injected_link_params = []
                                     for (const k of Object.keys(tgtParams)) {
                                         if (proxyParams[k] !== undefined) continue
                                         proxyParams[k] = tgtParams[k]
+                                        try { if (!proxyParams._injected_link_params.includes(k)) proxyParams._injected_link_params.push(k) } catch(_) {}
                                     }
                                 } catch(_) { /* ignore */ }
                                 // Apply overrides recursively to a clone of children
@@ -756,12 +759,14 @@ export class OverseerRenderer {
                                 try {
                                     const tgtParams = targetNode.parameters || {}
                                     const proxyParams = node.parameters = node.parameters || {}
+                                    if (!Array.isArray(proxyParams._injected_link_params)) proxyParams._injected_link_params = []
                                     const proxyHasBgOverride = proxyParams['background-color'] !== undefined && proxyParams['background-color'] !== null
                                     for (const k of Object.keys(tgtParams)) {
                                         // Skip copying target's computed background shadow if proxy overrides bg
                                         if (proxyHasBgOverride && (k === '_computed_background-color' || k === 'background-color')) continue
                                         if (proxyParams[k] !== undefined) continue
                                         proxyParams[k] = tgtParams[k]
+                                        try { if (!proxyParams._injected_link_params.includes(k)) proxyParams._injected_link_params.push(k) } catch(_) {}
                                     }
                                     // If proxy overrides background-color, remove any lingering computed bg so style block uses override
                                     if (proxyHasBgOverride && proxyParams['_computed_background-color'] !== undefined) {
@@ -3878,13 +3883,27 @@ export class OverseerRenderer {
         } catch(errNorm) { try { console.warn('[Overseer] boolean normalization failed', errNorm) } catch(_) {} }
         let updated = null
         try {
+            // Sanitize nodes: deep clone shallowly to strip any live references / accidental arrays in fields
+            const sanitizeNode = (n) => {
+                if (!n || typeof n !== 'object') return null
+                const copy = { name: n.name, node_type: n.node_type || n.type, parameters: {}, children: [], is_hierarchy_transparent: !!n.is_hierarchy_transparent }
+                if (n.parameters && typeof n.parameters === 'object') {
+                    for (const [k,v] of Object.entries(n.parameters)) {
+                        // Skip transient client-only helpers
+                        if (k === '_injected_link_params') continue
+                        copy.parameters[k] = v
+                    }
+                }
+                if (Array.isArray(n.children)) copy.children = n.children.map(ch => sanitizeNode(ch)).filter(Boolean)
+                return copy
+            }
+            const sanitized = Array.isArray(nodesArg) ? nodesArg.map(n=>sanitizeNode(n)).filter(Boolean) : []
             updated = await invoke('execute_overseer_event', {
-                nodes: nodesArg,
-                // Provide both snake_case and camelCase for compatibility
+                nodes: sanitized,
                 node_path: path,
-                nodePath: path,
+                nodePath: path, // provide camelCase variant for environments expecting it
                 event_name: eventName,
-                eventName
+                eventName // camelCase variant
             })
         } catch(err) {
             // Attach additional context for debugging invalid args issues
