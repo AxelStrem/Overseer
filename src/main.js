@@ -101,7 +101,9 @@ export class OverseerApp {
                 if (p && p._computed_link !== undefined) delete p._computed_link
             }
             if (Array.isArray(node.children)) {
-                // For link proxy roots, ensure child overrides are tagged so serializer retains them.
+                // For link proxy roots, tag ONLY the explicit override specs (the children actually present in source).
+                // We deliberately do NOT blanket-tag every rendered descendant of the link target (which are not
+                // materialized into node.children anyway) to avoid unintended serialization of inherited template fields.
                 try {
                     const isLinkProxy = p && (p.link !== undefined || p._computed_link !== undefined)
                     if (isLinkProxy) {
@@ -109,8 +111,18 @@ export class OverseerApp {
                             if (!ch || typeof ch !== 'object') continue
                             const cp = ch.parameters
                             if (!cp || typeof cp !== 'object') continue
-                            if (!cp._explicit_child_override) cp._explicit_child_override = { Boolean: true }
-                            if (!cp._override_present) cp._override_present = { Boolean: true }
+                            // Heuristic: treat as explicit override only if it already had a non-internal parameter OR a value override.
+                            const hasUserParam = Object.keys(cp).some(k => {
+                                if (k === 'value') return true
+                                if (k.startsWith('_')) return false
+                                // Ignore template shadow markers copied into overrides
+                                if (cp['_' + 'template_' + k] !== undefined || cp['_template_' + k] !== undefined) return false
+                                return true
+                            })
+                            if (hasUserParam) {
+                                if (!cp._explicit_child_override) cp._explicit_child_override = { Boolean: true }
+                                if (!cp._override_present) cp._override_present = { Boolean: true }
+                            }
                         }
                     }
                 } catch(_) { /* ignore */ }

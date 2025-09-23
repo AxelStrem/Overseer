@@ -884,17 +884,29 @@ export class OverseerRenderer {
                                 try {
                                     const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
                                     if (proxyBg !== null && proxyBg !== undefined) {
+                                        // Establish a stable CSS variable for proxy background so descendants consistently inherit it
+                                        try {
+                                            const conv = this.convertColorValue(proxyBg) || proxyBg
+                                            element.style.setProperty('--overseer-link-proxy-bg', conv)
+                                            element.setAttribute('data-proxy-bg','1')
+                                        } catch(_) {}
                                         const descendants = element.querySelectorAll(':scope *')
                                         for (const d of descendants) {
-                                            // Skip if element itself has inline background explicitly set by a formula/override earlier in this render pass.
-                                            const styleBg = d.style && d.style.backgroundColor
-                                            if (!styleBg || styleBg === '' || styleBg === 'inherit') {
-                                                // Ensure it inherits from proxy
-                                                try { d.style.backgroundColor = 'inherit' } catch(_) {}
-                                            } else {
-                                                // If it matches old root color we might want to clear it. Heuristic: if color differs from proxy and dataset.path exists referencing target subtree
-                                                // but color equals previously captured originalRootBg (computed earlier) we can't access here easily; optional future improvement.
-                                            }
+                                            try {
+                                                // If descendant has a hard-coded inline background (not a gradient or transparent), but its dataset path derives from the link target subtree, normalize it.
+                                                const styleBg = d.style && d.style.backgroundColor
+                                                const hasExplicit = !!styleBg && styleBg !== '' && styleBg !== 'inherit'
+                                                if (hasExplicit) {
+                                                    // Whitelist: if element carries data-bg-explicit we respect it
+                                                    if (!d.hasAttribute('data-bg-explicit')) {
+                                                        d.style.removeProperty('background-color')
+                                                    }
+                                                }
+                                                // Always set variable-based background if no explicit override marker.
+                                                if (!d.hasAttribute('data-bg-explicit')) {
+                                                    d.style.backgroundColor = 'var(--overseer-link-proxy-bg)'
+                                                }
+                                            } catch(_) {}
                                         }
                                     }
                                 } catch(_) { /* best-effort */ }

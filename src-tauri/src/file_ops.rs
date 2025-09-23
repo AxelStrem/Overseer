@@ -125,6 +125,67 @@ impl FileOperations {
         in_list_body: bool,
     ) -> Result<()> {
         let indent = "    ".repeat(indent_level); // Use 4 spaces for indentation
+
+        // Global early handling for template-derived simple leaf nodes at ANY depth:
+        // If a node is template-derived and has only a value override (or matches template and is not explicit),
+        // either emit the concise "- name = value" form (if changed/explicit) or skip entirely (if pure template).
+        // This prevents materializing typed field lines like "float weight = 300" where the original source had
+        // a concise override line inside nested blocks (e.g., per_item { - weight = 300 }).
+        let is_template_child_flag = matches!(
+            node.parameters.get("_template_node"),
+            Some(OverseerValue::Boolean(true))
+        );
+        let has_template_param_markers = node
+            .parameters
+            .keys()
+            .any(|k| k.starts_with("_template_"));
+        let is_template_child_any_depth = is_template_child_flag || has_template_param_markers;
+        if is_template_child_any_depth && !in_list_body {
+            let has_value = node.parameters.contains_key("value");
+            if has_value {
+                let non_internal_non_value_params = node
+                    .parameters
+                    .iter()
+                    .filter(|(k, _)| {
+                        let ks = k.as_str();
+                        if ks.starts_with('_') || ks == "value" { return false; }
+                        // Ignore params that are template-derived (paired marker exists)
+                        let marker = format!("_template_{}", ks);
+                        !node.parameters.contains_key(&marker)
+                    })
+                    .count();
+                let only_value_override = non_internal_non_value_params == 0 && node.children.is_empty();
+                if only_value_override {
+                    let explicit = matches!(
+                        node.parameters.get("_explicit_child_override"),
+                        Some(OverseerValue::Boolean(true))
+                    ) || matches!(
+                        node.parameters.get("_override_present"),
+                        Some(OverseerValue::Boolean(true))
+                    );
+                    let value = node.parameters.get("value").unwrap();
+                    let template_value_opt = node.parameters.get("_template_value");
+                    let differs_from_template = match template_value_opt {
+                        Some(tv) => tv != value,
+                        None => true, // no marker => treat as meaningful
+                    };
+                    if !explicit && !differs_from_template {
+                        // Pure template leaf untouched: skip emission entirely
+                        return Ok(());
+                    }
+                    // Emit concise override form
+                    output.push_str(&indent);
+                    output.push_str("- ");
+                    output.push_str(&node.name);
+                    output.push_str(" = ");
+                    output.push_str(&Self::serialize_value_with_node(node, value));
+                    output.push('\n');
+                    return Ok(());
+                }
+            }
+        }
+
+        // Default path continues with normal emission; write indent now.
         output.push_str(&indent);
 
         // Handle list-style items which start with '-'
@@ -250,7 +311,25 @@ impl FileOperations {
                     }
                     // Skip template-derived children that are not explicitly overridden
                     if suppress_template_children && is_template_child && (!has_explicit_override) {
-                        continue;
+                        // Additional guard: if entire subtree is untouched template (no differing value overrides), skip it
+                        fn pure_template_subtree(n: &OverseerNode) -> bool {
+                            // Explicit override flags make it non-pure
+                            let explicit = matches!(
+                                n.parameters.get("_explicit_child_override"),
+                                Some(OverseerValue::Boolean(true))
+                            ) || matches!(
+                                n.parameters.get("_override_present"),
+                                Some(OverseerValue::Boolean(true))
+                            );
+                            if explicit { return false; }
+                            // If it has a value differing from template_value marker, it's not pure
+                            if let Some(v) = n.parameters.get("value") {
+                                if let Some(tv) = n.parameters.get("_template_value") { if tv != v { return false; } }
+                            }
+                            for c in &n.children { if !pure_template_subtree(c) { return false; } }
+                            true
+                        }
+                        if pure_template_subtree(child) { continue; }
                     }
                     if suppress_template_children {
                         let has_value = child.parameters.contains_key("value");
@@ -1004,5 +1083,323 @@ list L(entry=<A>) {
         let field_b = children.into_iter().find(|c| c.name == "field_b").expect("field_b not accessible in entry after roundtrip");
         let val = field_b.parameters.get("value").cloned().expect("field_b has no value after roundtrip");
         assert_eq!(val, OverseerValue::Integer(20), "field_b value mismatch: {:?}", val);
+    }
+}
+
+#[cfg(test)]
+mod tests_weight_tracker_round_trip_fidelity {
+    use super::*;
+
+    #[test]
+    fn weight_tracker_new_parse_resolve_serialize_is_idempotent() {
+        let original = r##"tab weight_minimal {
+
+    // Minimal focus: a selected date (day precision) and Prev/Next navigation
+    div (hidden=true) {
+
+        div MealRecord (layout="vertical") {
+            div {
+                string description = ""
+                int amount (label="Amount") = 1
+                text Score (font-size=100px, margin=0px) = $((NutriScore/S <= 0.0)?
+                    "# <color= #329c17 | A>":((NutriScore/S <= 2.0)?
+                    "# <color= #78cd11 | B>":((NutriScore/S <= 10.0)?
+                    "# <color= #cdca26 | C>":((NutriScore/S <= 18.0)?
+                    "# <color= #f58412 | D>":
+                    "# <color= #cc2512 | E>"))))
+            }
+            div {
+                float calories (label="Calories") = $(amount*per_item/calories)
+                float weight (label="Weight", suffix=" g") = $(amount*per_item/weight)
+                float protein (label="Protein") = $(amount*per_item/protein)
+                float fat (label="Fat") = $(amount*per_item/fat)
+                float saturated_fat (label="Saturated Fat") = $(amount*per_item/saturated_fat)
+                float carbs (label="Carbs") = $(amount*per_item/carbs)
+                float sugar (label="Sugar") = $(amount*per_item/sugar)
+                float fibre (label="Fibre") = $(amount*per_item/fibre)
+                float salt (label="Salt") = $(amount*per_item/salt)
+
+                div NutriScore (hidden=true) {
+                    float A = $(per_100g/calories*0.0125)
+                    float B = $(per_100g/sugar*0.22222)
+                    float C = $(per_100g/saturated_fat)
+                    float D = $(per_100g/salt*11.11)
+                    float F = $(per_100g/fibre*1.43)
+                    float G = $(per_100g/protein*0.625)
+
+                    float S = $(A + B + C + D - F - G)
+                }
+            }
+
+            div per_item {
+                float calories = $(weight*per_100g/calories*0.01)
+                float weight (suffix=" g") = 100
+                float protein = $(weight*per_100g/protein*0.01)
+                float fat = $(weight*per_100g/fat*0.01)
+                float saturated_fat = $(weight*per_100g/saturated_fat*0.01)
+                float carbs = $(weight*per_100g/carbs*0.01)
+                float sugar = $(weight*per_100g/sugar*0.01)
+                float fibre = $(weight*per_100g/fibre*0.01)
+                float salt = $(weight*per_100g/salt*0.01)
+            }
+
+            div per_100g {
+                float calories = 100
+                float protein = 5
+                float fat = 5
+                float saturated_fat = 1
+                float carbs = 5
+                float sugar = 1
+                float fibre = 10
+                float salt = 1
+            }
+        }
+
+        div WeightRecord (background-color=$((total_calories < 1000) ?"#195700ff":"#3f0803ff")) { // Daily data entry
+            timestamp date (precision="day") = $(today())
+            string test_data = "test"
+            float weight (fallback=$(
+                /weight_minimal/History
+                    .filter(|x| x/date == /weight_minimal/History.filter(|x| x/date < ../date).map(|x| x/date).max())
+                    .map(|x| x/weight)
+                    .first(80.0)
+            ), precision=1, suffix=" kg") = null
+
+            int total_calories (label="Total Calories") = $(intake.sum(calories))
+            int total_protein (label="Total Protein") = $(intake.sum(protein))
+
+            list intake (entry=<MealRecord>, hidden=true, layout="vertical")
+        }
+    }
+
+    // Selected panel with only the selected date
+    div Selected (layout="vertical") {
+        //div 
+            // Dynamic linking handles load and create-on-edit; no manual population needed
+        button Prev (label="< Prev Day") {
+            on click {
+                set (path="/weight_minimal/Selected/selected_date") = $(date_add_days(../selected_date, -1))
+            }
+        }
+        timestamp selected_date (precision="day") = $(today())
+
+        button Next (label="> Next Day") {
+            on click {
+                set (path="/weight_minimal/Selected/selected_date") = $(date_add_days(../selected_date, 1))
+            }
+        }
+        // 
+            
+        // Override the linked WeightRecord's intake visibility locally
+        // Prepend the new record on first edit if it's missing
+        div SelectedWeightRecord (link="/weight_minimal/History[key=$(../selected_date)]", phantom-materialize="prepend-on-edit", background-color="#000000") {
+            list intake (hidden=false)
+        }
+    }
+
+    // History uses date as key and day precision for equivalence
+    list History (entry=<WeightRecord>, key="date", keyPrecision="day") {
+        - {
+            - date = "2025-09-23"
+            - weight = 109.3
+        }
+        - {
+            - date = "2025-09-22"
+            - test_data = "test"
+            - weight = 108.8
+            - total_calories = $(intake.sum(calories))
+            - intake {
+                - {
+                    - description = "Chicken Wrap"
+                    - amount = 1
+                    div per_item {
+                        - weight = 300
+                        - calories = 410
+                        - fat = 23
+                        - saturated_fat = 3
+                        - salt = 0.340
+                        - carbs = 19
+                        - sugar = 4
+                        - fibre = 5
+                        - protein = 27
+                    }
+                }
+                - {
+                    - description = "Coffee"
+                    - amount = 1
+                    div per_item {
+                        - weight = 250
+                    }
+                    div per_100g {
+                        - calories = 80
+                        - protein = 0
+                        - fat = 10
+                        - saturated_fat = 2
+                        - carbs = 20
+                        - sugar = 5
+                        - fibre = 0
+                        - salt = 0
+                    }
+                }
+            }
+        }
+        - {
+            - date = "2025-09-21"
+            - test_data = "test"
+            - weight = 109
+            - total_calories = $(intake.sum(calories))
+            list intake {
+                - {
+                    - description = "Pizza Slice"
+                    - amount = 5
+                    div per_100g {
+                        float calories = 340
+                        float protein = 3
+                        float fat = 12
+                        float saturated_fat = 4
+                        float carbs = 62
+                        float sugar = 3
+                        float fibre = 3
+                        float salt = 1
+                    }
+                }
+                - {
+                    - description = "Potato Salad"
+                    - amount = 1
+                    div per_item {
+                        float calories = $(weight*per_100g/calories*0.01)
+                        float weight = 200
+                        float protein = $(weight*per_100g/protein*0.01)
+                        float fat = $(weight*per_100g/fat*0.01)
+                        float saturated_fat = $(weight*per_100g/saturated_fat*0.01)
+                        float carbs = $(weight*per_100g/carbs*0.01)
+                        float sugar = $(weight*per_100g/sugar*0.01)
+                        float fibre = $(weight*per_100g/fibre*0.01)
+                        float salt = $(weight*per_100g/salt*0.01)
+                    }
+                    div per_100g {
+                        float calories = 150
+                        float protein = 5
+                        float fat = 5
+                        float saturated_fat = 1
+                        float carbs = 5
+                        float sugar = 1
+                        float fibre = 10
+                        float salt = 1
+                    }
+                }
+            }
+        }
+        - {
+            - date = "2025-09-20"
+        }
+        - {
+            - date = "2025-09-19"
+            - test_data = "test"
+            - weight = 108.4
+            - total_calories = $(intake.sum(calories))
+        }
+        - {
+            - date = "2025-09-18"
+            - test_data = "test"
+            - weight = 108.5
+            - total_calories = $(intake.sum(calories))
+        }
+        - {
+            - date = "2025-09-17"
+            - test_data = "test"
+            - weight = 108.7
+            - total_calories = $(intake.sum(calories))
+        }
+        - {
+            - date = "2025-09-16"
+            - test_data = "test"
+            - weight = 108.4
+            - total_calories = $(intake.sum(calories))
+        }
+        - {
+            - date = "2025-09-13"
+            - test_data = "test"
+            - weight = 107.8
+            - total_calories = $(intake.sum(calories))
+        }
+        - {
+            - date = "2025-09-12"
+            - test_data = "test"
+            - weight = 109.2
+            - total_calories = $(intake.sum(calories))
+        }
+        - {
+            - date = "2025-09-11"
+            - weight = 109.3
+            - total_calories = 2000
+        }
+        - {
+            - date = "2025-09-09"
+            - test_data = "Tuesday"
+            - weight = 108.8
+            list intake {
+                - {
+                    - description = "Apple"
+                    div per_item {
+                        float calories = 60
+                        float weight = 200
+                        float protein = 5
+                        float fat = 5
+                        float saturated_fat = $(weight*per_100g/saturated_fat*0.01)
+                        float carbs = 5
+                        float sugar = $(weight*per_100g/sugar*0.01)
+                        float fibre = $(weight*per_100g/fibre*0.01)
+                        float salt = $(weight*per_100g/salt*0.01)
+                    }
+                }
+            }
+        }
+        - {
+            - date = "2025-09-07"
+            - test_data = "W"
+            - weight = 79.8
+        }
+        - {
+            - date = "2025.08.27"
+            - test_data = "Wednesday"
+            - weight = 79.5
+            list intake {
+                - {
+                    - calories = 100
+                }
+                - {
+                    - calories = 150
+                }
+            }
+        }
+        - {
+            - date = "2025.08.26"
+            - test_data = "Wednesday"
+            - weight = 80.1
+        }
+        - {
+            - date = "2025.08.25"
+            - test_data = "Tuesday"
+            - weight = 80
+        }
+        - {
+            - date = "2025.08.24"
+            - test_data = "Monday"
+            - weight = 108.8
+        }
+    }
+}
+"##;
+
+        let (_rem, mut nodes) = crate::parser::parse_document(original).expect("parse weight_tracker_new");
+        crate::resolver::resolve_document(&mut nodes);
+        let serialized = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+
+        fn canon(s: &str) -> String { s.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n") }
+        let orig_c = canon(original);
+        let ser_c = canon(&serialized);
+
+        assert_eq!(ser_c, orig_c, "Round-trip serialization for weight_tracker_new is not idempotent. Differs after resolve.\n--- ORIGINAL ---\n{}\n--- SERIALIZED ---\n{}", orig_c, ser_c);
     }
 }
