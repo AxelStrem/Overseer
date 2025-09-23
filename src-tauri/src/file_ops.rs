@@ -772,24 +772,57 @@ impl OverseerFileHandler {
             trailing_block = std::mem::take(&mut pending_block);
         }
 
+        // Augment maps with relaxed/root keys so formatting / param order changes still match
+        // Root key heuristic: take existing anchor key up to first '(' or '{' or '='.
+        let mut extra_block_entries: Vec<(String, Vec<String>)> = Vec::new();
+        let mut extra_inline_entries: Vec<(String, String)> = Vec::new();
+        for (k, v) in map_block.iter() {
+            let root = k.split(|c| c == '(' || c == '{' || c == '=').next().unwrap_or("").to_string();
+            if !root.is_empty() && root != *k && !map_block.contains_key(&root) {
+                extra_block_entries.push((root, v.clone()));
+            }
+        }
+        for (k, v) in map_inline.iter() {
+            let root = k.split(|c| c == '(' || c == '{' || c == '=').next().unwrap_or("").to_string();
+            if !root.is_empty() && root != *k && !map_inline.contains_key(&root) {
+                extra_inline_entries.push((root, v.clone()));
+            }
+        }
+        for (k,v) in extra_block_entries { map_block.insert(k, v); }
+        for (k,v) in extra_inline_entries { map_inline.insert(k, v); }
+
         // Build merged output by walking regenerated
         let mut out = String::new();
         let mut inserted_leading = false;
         let mut used_blocks: HashSet<String> = HashSet::new();
+        // Precompute relaxed anchor variants for regenerated lines to better match nodes whose definition line formatting changed
+        // Relaxation strategy: drop anything after first '(' or '{' or 'link=' style param to stabilize anchor across param injection/stripping.
+        fn relaxed_anchor(base: &str) -> String { 
+            let mut s = base.to_string();
+            for sep in ["(", "{", "link="] { if let Some(idx) = s.find(sep) { s = s[..idx].to_string(); break; } }
+            s
+        }
         for (i, line) in regenerated.lines().enumerate() {
             if i == 0 && !inserted_leading && !leading_block.is_empty() {
                 for l in &leading_block { out.push_str(l); out.push('\n'); }
                 inserted_leading = true;
             }
             let key = anchor_key(line);
+            let relaxed_key = relaxed_anchor(&key);
             if !key.is_empty() {
-                if let Some(block) = map_block.get(&key) {
+                // Try exact key
+                let mut block_opt = map_block.get(&key);
+                // Fallback: try relaxed key if different
+                if block_opt.is_none() && relaxed_key != key { block_opt = map_block.get(&relaxed_key); }
+                if let Some(block) = block_opt {
                     if !used_blocks.contains(&key) {
                         for l in block { out.push_str(l); out.push('\n'); }
                         used_blocks.insert(key.clone());
                     }
                 }
-                if let Some(inl) = map_inline.get(&key) {
+                let mut inline_opt = map_inline.get(&key);
+                if inline_opt.is_none() && relaxed_key != key { inline_opt = map_inline.get(&relaxed_key); }
+                if let Some(inl) = inline_opt {
                     if line.contains("//") {
                         out.push_str(line);
                         out.push('\n');
@@ -811,57 +844,7 @@ impl OverseerFileHandler {
             if !out.ends_with('\n') { out.push('\n'); }
             for l in &trailing_block { out.push_str(l); out.push('\n'); }
         }
-        // Salvage pass: ensure interior comment blocks that didn't find anchors are preserved.
-        // Strategy: collect all standalone comment blocks in original along with the anchor key of the
-        // first subsequent code line. If none of a block's lines appear in merged output, attempt to
-        // insert the block before the first occurrence of that anchor line; otherwise, prepend at top.
-        {
-            // Build a quick lookup of merged lines for containment checks
-            let merged_snapshot = out.clone();
-            let merged_lines: std::collections::HashSet<&str> = merged_snapshot.lines().collect();
-            // Collect blocks
-            #[derive(Debug)]
-            struct Block { lines: Vec<String>, anchor: Option<String> }
-            let mut blocks: Vec<Block> = Vec::new();
-            let mut pending: Vec<String> = Vec::new();
-            for line in original.lines() {
-                let trimmed = line.trim_start();
-                let is_comment = trimmed.starts_with("//") || trimmed.is_empty();
-                if is_comment {
-                    pending.push(line.to_string());
-                } else {
-                    if !pending.is_empty() { blocks.push(Block { lines: std::mem::take(&mut pending), anchor: Some(anchor_key(line)) }); }
-                }
-            }
-            if !pending.is_empty() { blocks.push(Block { lines: std::mem::take(&mut pending), anchor: None }); }
-            // For each block, if none of its lines exist verbatim in merged, attempt insertion
-            for blk in blocks.into_iter() {
-                let present = blk.lines.iter().any(|l| merged_lines.contains(l.as_str()));
-                if present { continue; }
-                // Find insertion point
-                if let Some(anchor) = &blk.anchor { 
-                    // Find line with matching anchor key in merged output
-                    let mut rebuilt = String::new();
-                    let mut inserted_here = false;
-                    for line in out.lines() {
-                        if !inserted_here {
-                            let key = anchor_key(line);
-                            if !key.is_empty() && key == *anchor {
-                                for l in &blk.lines { rebuilt.push_str(l); rebuilt.push('\n'); }
-                                inserted_here = true;
-                            }
-                        }
-                        rebuilt.push_str(line); rebuilt.push('\n');
-                    }
-                    if inserted_here { out = rebuilt; continue; }
-                }
-                // Fallback: prepend (after leading block if any already inserted)
-                let mut rebuilt = String::new();
-                for l in &blk.lines { rebuilt.push_str(l); rebuilt.push('\n'); }
-                rebuilt.push_str(&out);
-                out = rebuilt;
-            }
-        }
+        // Salvage pass disabled (previous version caused duplicated top-of-file comment blocks when anchors changed repeatedly).
         out
     }
 }
