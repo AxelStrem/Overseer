@@ -638,21 +638,19 @@ export class OverseerRenderer {
                             if (computedLink !== undefined) node.parameters._computed_link = { String: String(computedLink) }
                         } catch(_) {}
                         if (phantomPreviewNode && phantomMeta) {
-                            // Missing-key phantom: render a preview and tag the container
+                            // Flattened phantom rendering: behave like future materialized node root.
                             this._linkDepth = (this._linkDepth || 0) + 1
                             if (this._linkDepth <= 6) {
                                 try { this.renderEventControls(node, element) } catch(_) {}
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
-                                // Clear any previous target-path; phantom does not have a concrete target yet
-                                try { element.removeAttribute('data-link-target-path') } catch(_) {}
                                 try { element.setAttribute('data-link-phantom', JSON.stringify(phantomMeta)) } catch(_) {}
-                                // Policy: create on access if requested
+                                try { element.removeAttribute('data-link-target-path') } catch(_) {}
+                                // Policy: auto materialize on-access if configured
                                 try {
                                     const policyRaw = this.getParameterValue(node, 'phantom-materialize')
                                     const policy = (policyRaw ? String(policyRaw) : 'none').toLowerCase()
                                     if (policy.endsWith('on-access')) {
                                         const isPrepend = policy.startsWith('prepend')
-                                        // Kick off materialization without blocking render
                                         this._materializePhantomAndComputePath(Object.assign({}, phantomMeta), { position: isPrepend ? 'prepend' : 'append' })
                                             .then((realPath) => {
                                                 if (!realPath) return
@@ -660,44 +658,86 @@ export class OverseerRenderer {
                                                 const pathArr = String(realPath).split('/')
                                                 const nodeReal = this.findNodeByPath(window.app.currentDocument, pathArr)
                                                 if (nodeReal) {
-                                                    // Replace contents with the real node subtree
                                                     try { element.innerHTML = '' } catch(_) {}
                                                     this.renderNode(nodeReal, element, nextInherited, pathArr)
                                                 }
                                             })
                                             .catch(() => {/* ignore */})
                                     }
-                                } catch(_) { /* ignore policy errors; fall back to preview */ }
-                                // Apply per-link overrides to phantom preview as well
-                                let phantomToRender = phantomPreviewNode
+                                } catch(_) { /* ignore */ }
+                                // Merge phantom root params into proxy without clobbering explicit overrides
                                 try {
+                                    const tgtParams = phantomPreviewNode.parameters || {}
+                                    const proxyParams = node.parameters = node.parameters || {}
+                                    for (const k of Object.keys(tgtParams)) {
+                                        if (proxyParams[k] !== undefined) continue
+                                        proxyParams[k] = tgtParams[k]
+                                    }
+                                } catch(_) { /* ignore */ }
+                                // Apply overrides recursively to a clone of children
+                                let mergedChildren = []
+                                try {
+                                    const baseChildren = Array.isArray(phantomPreviewNode.children) ? JSON.parse(JSON.stringify(phantomPreviewNode.children)) : []
                                     const overrideSpecs = (node.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
                                     if (overrideSpecs.length > 0) {
-                                        const clone = JSON.parse(JSON.stringify(phantomPreviewNode))
-                                        const applyOverrideRecursive = (tNode, oNode) => {
-                                            if (!tNode || !oNode) return
-                                            const kids = Array.isArray(tNode.children) ? tNode.children : []
+                                        const applyOverrideRecursive = (kids, oNode) => {
+                                            if (!kids) return
                                             const exact = kids.find(c => c && c.name === oNode.name)
-                                            let targetMatch = exact || (tNode.name === oNode.name ? tNode : null)
                                             const mergeParams = (target, src) => {
-                                                if (!src || !target) return
+                                                if (!target || !src) return
                                                 const sp = src.parameters || {}
                                                 if (!target.parameters) target.parameters = {}
                                                 for (const k of Object.keys(sp)) target.parameters[k] = sp[k]
                                             }
-                                            if (targetMatch) {
-                                                mergeParams(targetMatch, oNode)
+                                            if (exact) {
+                                                mergeParams(exact, oNode)
                                                 const oKids = Array.isArray(oNode.children) ? oNode.children : []
-                                                for (const ok of oKids) applyOverrideRecursive(targetMatch, ok)
+                                                for (const ok of oKids) applyOverrideRecursive(exact.children, ok)
                                             }
                                         }
-                                        for (const ov of overrideSpecs) applyOverrideRecursive(clone, ov)
-                                        phantomToRender = clone
+                                        for (const ov of overrideSpecs) applyOverrideRecursive(baseChildren, ov)
                                     }
-                                } catch(_) { /* best-effort only */ }
-                                // Render preview under a synthetic path; edits will be intercepted
+                                    mergedChildren = baseChildren
+                                } catch(_) { mergedChildren = Array.isArray(phantomPreviewNode.children) ? phantomPreviewNode.children : [] }
+                                // Sanitize child backgrounds (same as real target flatten path) so inheritance from proxy works on first paint
+                                try {
+                                    const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
+                                    if (proxyBg !== null && proxyBg !== undefined) {
+                                        const scrubNode = (n) => {
+                                            if (!n || !n.parameters) return
+                                            const hasFormula = this.parameterHasFormula(n, 'background-color')
+                                            if (!hasFormula) {
+                                                if (n.parameters['_computed_background-color'] !== undefined) { try { delete n.parameters['_computed_background-color'] } catch(_) {} }
+                                                if (n.parameters['background-color'] !== undefined) { try { delete n.parameters['background-color'] } catch(_) {} }
+                                            }
+                                            const kids = Array.isArray(n.children) ? n.children : []
+                                            for (const k of kids) scrubNode(k)
+                                        }
+                                        mergedChildren = JSON.parse(JSON.stringify(mergedChildren))
+                                        for (const c of mergedChildren) scrubNode(c)
+                                    }
+                                } catch(_) { /* ignore */ }
+                                // Leaf target fallback: if link points directly at a field (string/number/etc.) there will be no children to render.
+                                // In that case render the target node itself (as if it were a single child) so the field UI appears for editing.
+                                try {
+                                    if ((!mergedChildren || mergedChildren.length === 0) && phantomPreviewNode && (
+                                        !Array.isArray(phantomPreviewNode.children) || phantomPreviewNode.children.length === 0
+                                    )) {
+                                        // Avoid mutating original preview node; clone shallow.
+                                        const leafClone = JSON.parse(JSON.stringify(phantomPreviewNode))
+                                        // Ensure it does not accidentally carry a link that would recurse; leaf nodes in tests do not, but guard anyway.
+                                        if (leafClone.parameters && leafClone.parameters.link) {
+                                            try { delete leafClone.parameters.link } catch(_) {}
+                                        }
+                                        mergedChildren = [leafClone]
+                                    }
+                                } catch(_) { /* best-effort leaf fallback */ }
                                 const syntheticPath = path.concat(['<phantom>'])
-                                this.renderNode(phantomToRender, element, nextInherited, syntheticPath)
+                                for (const ch of mergedChildren) {
+                                    const segBase = (ch.name || ch.node_type || ch.type || 'child')
+                                    const chPath = syntheticPath.concat([segBase])
+                                    this.renderNode(ch, element, nextInherited, chPath)
+                                }
                                 this._linkDepth -= 1
                                 return
                             } else {
@@ -765,7 +805,18 @@ export class OverseerRenderer {
                                             else if (tp['background-color'] !== undefined) originalRootBg = tp['background-color']
                                         } catch(_) { /* ignore */ }
                                         const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
-                                        const normalize = (v) => (v == null ? null : String(v).trim().toLowerCase())
+                                        const normalize = (v) => {
+                                            if (v == null) return null
+                                            let s = String(v).trim().toLowerCase()
+                                            // Collapse 8-digit hex with full alpha to 6-digit for comparison (#rrggbbff -> #rrggbb)
+                                            if (/^#([0-9a-f]{8})$/.test(s)) {
+                                                const core = s.slice(1)
+                                                const rgb = core.slice(0,6)
+                                                const alpha = core.slice(6)
+                                                if (alpha === 'ff') s = '#'+rgb
+                                            }
+                                            return s
+                                        }
                                         const normOriginal = normalize(originalRootBg)
                                         const normProxy = normalize(proxyBg)
                                         const stripInheritedBg = (n) => {
@@ -800,11 +851,48 @@ export class OverseerRenderer {
                                     }
                                 } catch(_) { /* ignore */ }
                                 const basePath = targetPath.slice()
-                                for (const ch of mergedChildren) {
+                                // Build sanitized clones so descendants without explicit override inherit proxy bg deterministically.
+                                let childrenToRender = mergedChildren
+                                try {
+                                    const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
+                                    if (proxyBg !== null && proxyBg !== undefined) {
+                                        const scrubNode = (n) => {
+                                            if (!n || !n.parameters) return
+                                            const hasFormula = this.parameterHasFormula(n, 'background-color')
+                                            if (!hasFormula) {
+                                                if (n.parameters['_computed_background-color'] !== undefined) { try { delete n.parameters['_computed_background-color'] } catch(_) {} }
+                                                if (n.parameters['background-color'] !== undefined) { try { delete n.parameters['background-color'] } catch(_) {} }
+                                            }
+                                            const kids = Array.isArray(n.children) ? n.children : []
+                                            for (const k of kids) scrubNode(k)
+                                        }
+                                        childrenToRender = JSON.parse(JSON.stringify(mergedChildren))
+                                        for (const c of childrenToRender) scrubNode(c)
+                                    }
+                                } catch(_) { /* best-effort */ }
+                                for (const ch of childrenToRender) {
                                     const segBase = (ch.name || ch.node_type || ch.type || 'child')
                                     const chPath = basePath.concat([segBase])
                                     this.renderNode(ch, element, nextInherited, chPath)
                                 }
+                                // Post-pass: enforce inheritance visually for descendants without explicit override.
+                                try {
+                                    const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
+                                    if (proxyBg !== null && proxyBg !== undefined) {
+                                        const descendants = element.querySelectorAll(':scope *')
+                                        for (const d of descendants) {
+                                            // Skip if element itself has inline background explicitly set by a formula/override earlier in this render pass.
+                                            const styleBg = d.style && d.style.backgroundColor
+                                            if (!styleBg || styleBg === '' || styleBg === 'inherit') {
+                                                // Ensure it inherits from proxy
+                                                try { d.style.backgroundColor = 'inherit' } catch(_) {}
+                                            } else {
+                                                // If it matches old root color we might want to clear it. Heuristic: if color differs from proxy and dataset.path exists referencing target subtree
+                                                // but color equals previously captured originalRootBg (computed earlier) we can't access here easily; optional future improvement.
+                                            }
+                                        }
+                                    }
+                                } catch(_) { /* best-effort */ }
                                 this._linkDepth -= 1
                                 return
                             } else {
@@ -3737,11 +3825,72 @@ export class OverseerRenderer {
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
     try { if (DEBUG_MODE) console.debug('[Overseer] emitEvent', eventName, 'path=', path) } catch(_) {}
-        const updated = await invoke('execute_overseer_event', {
-            nodes: window.app.currentDocument,
-            nodePath: path,
-            eventName
-        })
+        // Guard: ensure nodes is an array (backend expects Vec<OverseerNode> root or serialized map)
+        let nodesArg = window.app.currentDocument
+        if (nodesArg && !Array.isArray(nodesArg)) {
+            // Some earlier logic might have wrapped the document; attempt to unwrap
+            if (nodesArg.children && Array.isArray(nodesArg.children)) {
+                nodesArg = nodesArg.children
+            } else {
+                // Fallback: wrap single root into array
+                nodesArg = [nodesArg]
+            }
+        }
+        // Defensive: ensure no stray primitive sneaks into root document array
+        if (Array.isArray(nodesArg)) {
+            const invalids = []
+            for (let i = 0; i < nodesArg.length; i++) {
+                const n = nodesArg[i]
+                if (!n || typeof n !== 'object' || Array.isArray(n)) invalids.push({ index: i, type: typeof n, value: n })
+            }
+            if (invalids.length > 0) {
+                try { console.warn('[Overseer] Filtering invalid root nodes before event invoke', invalids) } catch(_) {}
+                nodesArg = nodesArg.filter(n => n && typeof n === 'object' && !Array.isArray(n))
+            }
+        }
+        // Additional diagnostics: detect any boolean-valued parameters at root that might be mistaken for nodes
+        try {
+            const rootTypes = Array.isArray(nodesArg) ? nodesArg.map((r,i)=>({i, name:r?.name, type:typeof r, hasChildren:Array.isArray(r?.children), paramKeys: r && r.parameters? Object.keys(r.parameters).slice(0,8):[] })) : []
+            if (DEBUG_MODE) console.debug('[Overseer] emitEvent root snapshot', rootTypes)
+            // Hard failure path: if nodesArg itself is a boolean (unexpected)
+            if (typeof nodesArg === 'boolean') {
+                console.error('[Overseer] FATAL: nodesArg is boolean before invoke, aborting event dispatch')
+                return
+            }
+        } catch(_) {}
+        // Normalize raw boolean parameter values into OverseerValue objects to satisfy serde expectations
+        try {
+            const wrapBooleanParams = (node) => {
+                if (!node || typeof node !== 'object') return
+                const p = node.parameters
+                if (p && typeof p === 'object') {
+                    for (const k of Object.keys(p)) {
+                        if (p[k] === true) p[k] = { Boolean: true }
+                        else if (p[k] === false) p[k] = { Boolean: false }
+                        else if (k === 'value' && typeof p[k] === 'object' && p[k] !== null) {
+                            // leave structured OverseerValue as-is
+                        }
+                    }
+                }
+                if (Array.isArray(node.children)) node.children.forEach(wrapBooleanParams)
+            }
+            if (Array.isArray(nodesArg)) nodesArg.forEach(wrapBooleanParams)
+        } catch(errNorm) { try { console.warn('[Overseer] boolean normalization failed', errNorm) } catch(_) {} }
+        let updated = null
+        try {
+            updated = await invoke('execute_overseer_event', {
+                nodes: nodesArg,
+                // Provide both snake_case and camelCase for compatibility
+                node_path: path,
+                nodePath: path,
+                event_name: eventName,
+                eventName
+            })
+        } catch(err) {
+            // Attach additional context for debugging invalid args issues
+            try { console.warn('[Overseer] execute_overseer_event failed', err, { eventName, path, nodesType: typeof nodesArg, sampleNode: nodesArg && nodesArg[0] && nodesArg[0].name }) } catch(_) {}
+            throw err
+        }
         // Only replace the document when the backend actually returned a document structure.
         const looksLikeDocArray = Array.isArray(updated) && updated.every(n => n && typeof n === 'object')
         const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)
@@ -4093,19 +4242,30 @@ export class OverseerRenderer {
                             const p = JSON.parse(el.dataset.path || '[]')
                             if (!Array.isArray(p) || p.length === 0) continue
                             const linkPath = p.join('/')
-                            // Skip re-rendering a proxy if the changed field is inside that proxy's subtree.
-                            // This prevents overwriting the just-updated DOM with a stale render.
-                            // Also skip if the changed field is inside the proxy's target subtree.
                             let targetPathArr = null
                             try { targetPathArr = JSON.parse(el.getAttribute('data-link-target-path') || 'null') } catch(_) { targetPathArr = null }
                             const targetPathStr = Array.isArray(targetPathArr) ? targetPathArr.join('/') : null
-                            const containsChanged = changedFieldPaths.some(cf => cf.startsWith(linkPath + '/'))
-                                || (targetPathStr ? changedFieldPaths.some(cf => cf.startsWith(targetPathStr + '/')) : false)
-                            if (containsChanged) {
-                                if (DEBUG_MODE) console.log('⏭️ Skipping link proxy refresh for', linkPath, 'because it contains changed field(s)')
+                            // If selected_date (or any interpolated field) changed and affects this link (heuristic: link has $( ) pattern in its raw param), force refresh.
+                            let forceDueToInterpolation = false
+                            try {
+                                const node = this.findNodeByPath(newDocument, p)
+                                const rawLink = node && node.parameters && (node.parameters.link?.String || node.parameters.link)
+                                if (rawLink && /\$\([^)]*\)/.test(String(rawLink))) {
+                                    // If any changed field path shares the same ancestor (parent of proxy) assume interpolation may differ
+                                    const parentPath = p.slice(0, -1).join('/')
+                                    forceDueToInterpolation = changedFieldPaths.some(cf => cf.startsWith(parentPath + '/'))
+                                }
+                            } catch(_) {}
+                            // Skip only if the change occurred inside the proxy's own subtree (avoid overwriting live edit) AND not forced
+                            const changedInsideProxy = changedFieldPaths.some(cf => cf.startsWith(linkPath + '/'))
+                            if (changedInsideProxy && !forceDueToInterpolation) {
+                                if (DEBUG_MODE) console.log('⏭️ Skipping link proxy refresh (internal change) for', linkPath)
                                 continue
                             }
-                            this.rerenderSubtree(newDocument, p)
+                            if (forceDueToInterpolation || !changedInsideProxy) {
+                                if (DEBUG_MODE) console.log('🔁 Refreshing link proxy', linkPath, 'forceDueToInterpolation=', forceDueToInterpolation)
+                                this.rerenderSubtree(newDocument, p)
+                            }
                         } catch (_) { /* ignore individual failures */ }
                     }
                 }
