@@ -489,9 +489,14 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         },
                                         children: template_node.children.clone(),
                                         is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                        param_order: Vec::new(),
+                                        raw_value_literal: None,
+                                        authored_dash: false,
+                                        child_original_index: None,
+                                        leading_blank_lines: 0,
                                     };
                                     // Mark all cloned children as template-derived so serializer can omit them unless overridden
-                                    for child in resolved_item.children.iter_mut() {
+                                    for (c_idx, child) in resolved_item.children.iter_mut().enumerate() {
                                         mark_template_child_recursive(child);
                                         // Ensure override markers are clean on fresh clones; only true overrides will set these later
                                         if child.parameters.remove("_explicit_child_override").is_some() {
@@ -500,6 +505,8 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         if child.parameters.remove("_override_present").is_some() {
                                             debug_resolver!("[RESOLVER] cleaned _override_present on clone child '{}')", child.name);
                                         }
+                                        // Assign ordering index after authored children (authored indices assigned at parse time). Since these are cloned now, just use sequence.
+                                        child.child_original_index = Some(c_idx);
                                     }
                                     let overrides: HashMap<String, &OverseerNode> = list_item
                                         .children
@@ -508,6 +515,39 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         .collect();
                                     debug_resolver!("[RESOLVER]     Override fields: {:?}", overrides.keys().collect::<Vec<_>>());
                                     merge_node(&mut resolved_item, &overrides);
+                                    // After merging, recursively propagate authored_dash, explicit markers, and ordering from override tree
+                                    fn propagate_override_metadata(src: &OverseerNode, dst: &mut OverseerNode) {
+                                        // Only act if names match (root call ensures this for children)
+                                        if src.name == dst.name || src.name.is_empty() { /* proceed */ }
+                                        // If source was dash-authored and has a simple value override, mark destination
+                                        if src.authored_dash && src.parameters.contains_key("value") {
+                                            dst.authored_dash = true;
+                                        }
+                                        // If source provides an explicit value override (has 'value' param and no non-internal extra params) mark explicit flags
+                                        if src.parameters.contains_key("value") {
+                                            // Remove template value marker so serializer treats it as explicit
+                                            dst.parameters.remove("_template_value");
+                                            dst.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
+                                            dst.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                                        }
+                                        // Preserve authored ordering index if present and destination not yet set or we want override precedence
+                                        if let Some(idx) = src.child_original_index {
+                                            dst.child_original_index = Some(idx);
+                                        }
+                                        // Recurse for children: build map by name for dst
+                                        if !src.children.is_empty() {
+                                            for child_src in &src.children {
+                                                if let Some(child_dst) = dst.children.iter_mut().find(|c| c.name == child_src.name) {
+                                                    propagate_override_metadata(child_src, child_dst);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    for ov in list_item.children.iter() {
+                                        if let Some(dst_child) = resolved_item.children.iter_mut().find(|c| c.name == ov.name) {
+                                            propagate_override_metadata(ov, dst_child);
+                                        }
+                                    }
                                     
                                     // Mark template-derived styling parameters for all field children
                                     for child in resolved_item.children.iter_mut() {
@@ -546,6 +586,11 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         },
                                         children: Vec::new(),
                                         is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                        param_order: Vec::new(),
+                                        raw_value_literal: None,
+                                        authored_dash: false,
+                                        child_original_index: None,
+                                        leading_blank_lines: 0,
                                     };
                                     resolved_children.push(resolved_item);
                                 } else {
@@ -571,6 +616,11 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                             },
                                             children: template_node.children.clone(),
                                             is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                            param_order: Vec::new(),
+                                            raw_value_literal: None,
+                                            authored_dash: false,
+                                            child_original_index: None,
+                                            leading_blank_lines: 0,
                                         };
                                         for child in resolved_item.children.iter_mut() {
                                             mark_template_child_recursive(child);
@@ -620,6 +670,11 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                 parameters: HashMap::new(),
                                 children: Vec::new(),
                                 is_hierarchy_transparent: false,
+                                param_order: Vec::new(),
+                                raw_value_literal: None,
+                                authored_dash: false,
+                                child_original_index: None,
+                                leading_blank_lines: 0,
                             };
                             resolved_item.parameters.insert("value".to_string(), val.clone());
                             resolved_children.push(resolved_item);
@@ -732,7 +787,7 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
 fn infer_dash_types_from_template(instance: &mut OverseerNode, template: &OverseerNode) {
     // For each child in instance, find matching template child by name
     for child in instance.children.iter_mut() {
-        if let Some(t_child) = template.children.iter().find(|t| t.name == child.name) {
+    if let Some(t_child) = template.children.iter().find(|t| t.name == child.name) {
             if child.node_type == "-" {
                 debug_resolver!(
                     "[RESOLVER]     Resolving '-' type for {}: {} -> {}",
@@ -919,6 +974,10 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 template_field
                     .parameters
                     .insert("value".to_string(), val.clone());
+                // Preserve original raw numeric/text literal formatting if present on override
+                if override_field.raw_value_literal.is_some() {
+                    template_field.raw_value_literal = override_field.raw_value_literal.clone();
+                }
                 // Treat presence in source as an explicit override even if equal to template default
                 template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                 template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
@@ -926,6 +985,12 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 // Remove template marker for value if present so serializers won't treat it as inherited
                 if template_field.parameters.contains_key("_template_value") {
                     template_field.parameters.remove("_template_value");
+                }
+                // Propagate authored dash provenance so serializer can retain concise form
+                if override_field.authored_dash { template_field.authored_dash = true; }
+                // Preserve original sibling ordering if override carried an index (use existing if already set)
+                if template_field.child_original_index.is_none() && override_field.child_original_index.is_some() {
+                    template_field.child_original_index = override_field.child_original_index;
                 }
             }
 
@@ -951,14 +1016,18 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                     template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
                     debug_resolver!("[RESOLVER] set explicit override (list children) on '{}'", template_field.name);
                 }
+                // Preserve dash-authored style from the override for list containers too,
+                // so the serializer can emit "- name { ... }" instead of "list name { ... }" when authored that way.
+                if override_field.authored_dash {
+                    template_field.authored_dash = true;
+                }
             } else if !override_field.children.is_empty() {
                 // For non-list container nodes, deep-merge override children by name
                 // rather than replacing the entire children array. This preserves defaults
                 // for siblings that are not explicitly overridden.
+                let override_order: Vec<String> = override_field.children.iter().map(|c| c.name.clone()).collect();
                 let mut child_overrides: HashMap<String, &OverseerNode> = HashMap::new();
-                for ch in &override_field.children {
-                    child_overrides.insert(ch.name.clone(), ch);
-                }
+                for ch in &override_field.children { child_overrides.insert(ch.name.clone(), ch); }
                 if !child_overrides.is_empty() {
                     // Mark the container as having explicit child overrides
                     template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
@@ -966,6 +1035,29 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                     debug_resolver!("[RESOLVER] deep-merging {} child override(s) into container '{}'", child_overrides.len(), template_field.name);
                     // Recursively merge into this container field
                     merge_node(template_field, &child_overrides);
+                    // If the override container itself was dash-authored, propagate to template_field
+                    if override_field.authored_dash { template_field.authored_dash = true; }
+                    if template_field.child_original_index.is_none() && override_field.child_original_index.is_some() {
+                        template_field.child_original_index = override_field.child_original_index;
+                    }
+                    // Apply ordering & dash provenance to overridden children
+                    if !override_order.is_empty() {
+                        for (seq, name) in override_order.iter().enumerate() {
+                            if let Some(ch) = template_field.children.iter_mut().find(|c| c.name == *name) {
+                                if child_overrides.get(name).map(|o| o.authored_dash).unwrap_or(false) {
+                                    ch.authored_dash = true;
+                                }
+                                ch.child_original_index = Some(seq);
+                            }
+                        }
+                        // Push non-overridden children after overridden ones, preserving existing order among them
+                        let mut next_idx = override_order.len();
+                        for ch in template_field.children.iter_mut() {
+                            if override_order.iter().any(|n| n == &ch.name) { continue; }
+                            if ch.child_original_index.is_none() { ch.child_original_index = Some(next_idx); next_idx += 1; }
+                            else { ch.child_original_index = Some(ch.child_original_index.unwrap() + override_order.len()); }
+                        }
+                    }
                 } else {
                     debug_resolver!("[RESOLVER]     No child overrides to merge for '{}'", template_field.name);
                 }

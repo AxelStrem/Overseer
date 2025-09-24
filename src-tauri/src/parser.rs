@@ -20,10 +20,90 @@ use std::collections::HashMap;
 
 /// Parse the entire document (top-level nodes)
 pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
-    preceded(
-        skip_comments_and_whitespace,
-        many0(preceded(skip_comments_and_whitespace, parse_node)),
-    )(input)
+    // Loop similar to previous many0(parse_node) but augmented to capture the count of
+    // contiguous blank (whitespace-only) lines immediately preceding each parsed node.
+    // We continue to ignore comment lines for blank-line counting so that stylistic
+    // vertical spacing authored purely with empty lines is preserved while comments
+    // remain handled by merge_comments using the original source text.
+    let mut nodes: Vec<OverseerNode> = Vec::new();
+    let mut cur = input;
+    loop {
+        // Skip EOF / pure whitespace remainder
+        if cur.trim().is_empty() { break; }
+
+        // Count leading blank lines (whitespace-only) BEFORE skipping comments.
+        let mut scan = cur;
+        let mut blank_count: u8 = 0;
+        loop {
+            // Examine next line
+            if let Some(pos) = scan.find('\n') {
+                let (line, rest) = scan.split_at(pos);
+                if line.trim().is_empty() {
+                    blank_count = blank_count.saturating_add(1);
+                    scan = &rest[1..];
+                    continue;
+                }
+            }
+            break;
+        }
+        // Skip comments/whitespace after the blank lines (do not increment blank count for comments)
+        let (after_comments, _) = match skip_comments_and_whitespace(scan) { Ok(t) => t, Err(_) => (scan, ()) };
+        // Attempt parse at after_comments
+        match parse_node(after_comments) {
+            Ok((rest, mut node)) => {
+                node.leading_blank_lines = blank_count;
+                nodes.push(node);
+                cur = rest;
+            }
+            Err(_) => {
+                // Failed to parse a node; consume one physical line from original cursor to avoid infinite loop
+                if let Some(pos) = cur.find('\n') { cur = &cur[pos+1..]; } else { break; }
+            }
+        }
+    }
+    // Post-parse enhancement: heuristic pass to improve authored_dash detection for nested dash override lines.
+    // Rationale: The original source may contain blocks like:
+    //   div per_item {\n        - calories = 410\n        - weight = 300\n   }
+    // Parser already marks nodes whose explicit type token was '-' (list items / anonymous blocks) as authored_dash.
+    // However, value override lines inside template/list instance override sections that were authored with dash syntax
+    // but later resolved/serialized differently (e.g., due to template inference) might lose dash provenance if their
+    // node_type was inferred rather than a raw '-'. To preserve round-trip textual fidelity we attempt to detect
+    // additional candidates: nodes that (a) have only a 'value' parameter (plus internal markers), (b) no children,
+    // (c) siblings in the same block include at least one already dash-authored node, and (d) the parent itself is
+    // not a plain list body (where '-' would denote list items instead). We then mark them authored_dash=true so the
+    // serializer can consider concise emission when other gates pass.
+    fn enhance_authored_dash(nodes: &mut [OverseerNode]) {
+        for n in nodes.iter_mut() {
+            // Recurse first so child context is available
+            if !n.children.is_empty() { enhance_authored_dash(&mut n.children); }
+            // Nothing special at this node level beyond recursion; heuristic operates at each block among siblings
+            if n.children.len() > 0 { continue; }
+        }
+        // Second pass per sibling group: we need sibling context, so operate on the slice passed in.
+        let mut any_dash = false;
+        for c in nodes.iter() { if c.authored_dash { any_dash = true; break; } }
+        if any_dash {
+            for c in nodes.iter_mut() {
+                if c.authored_dash { continue; }
+                if !c.children.is_empty() { continue; }
+                // Count non-internal, non-value params
+                let mut extra_params = 0usize;
+                for (k, _v) in c.parameters.iter() {
+                    let ks = k.as_str();
+                    if ks == "value" { continue; }
+                    if ks.starts_with('_') { continue; }
+                    extra_params += 1;
+                    if extra_params > 0 { break; }
+                }
+                if extra_params == 0 && c.parameters.contains_key("value") {
+                    // Candidate simple value override lacking explicit dash token; mark it to allow concise emission later
+                    c.authored_dash = true;
+                }
+            }
+        }
+    }
+    enhance_authored_dash(&mut nodes);
+    Ok((cur, nodes))
 }
 
 /// Skip comments and whitespace
@@ -87,15 +167,15 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     let (input, node_name) = opt(parse_identifier)(input)?;
     let (input, _) = multispace0(input)?;
     debug_parser!("[PARSER] Before parsing parameters, input: {}", input.chars().take(50).collect::<String>());
-    let (input, parameters) = opt(parse_parameters)(input)?;
+    let (input, parameters_with_order) = opt(parse_parameters)(input)?;
     debug_parser!("[PARSER] After parsing parameters, input: {}", input.chars().take(50).collect::<String>());
     let (input, _) = multispace0(input)?;
 
     // Then parse body, which can be a block, a value assignment, or nothing
     debug_parser!("[PARSER] Before parsing body, input: {}", input.chars().take(50).collect::<String>());
     let (input, body) = match opt(alt((
-        map(parse_value_assignment, |val| (Some(val), Vec::new())),
-        map(parse_direct_value, |val| (Some(val), Vec::new())),
+        map(parse_value_assignment_with_raw, |(val, raw)| (Some((val, raw)), Vec::new())),
+        map(parse_direct_value, |val| (Some((val, None)), Vec::new())),
         map(parse_block, |children| (None, children)),
     )))(input) {
         Ok(res) => res,
@@ -106,7 +186,7 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     };
     debug_parser!("[PARSER] After parsing body, input: {}", input.chars().take(50).collect::<String>());
 
-    let (value, children) = body.unwrap_or((None, Vec::new()));
+    let (value_wrapped, children) = body.unwrap_or((None, Vec::new()));
 
     // Determine the template path string, if it exists
     let template_path = if let Some(OverseerValue::Template(t)) = &template_val {
@@ -126,14 +206,26 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
         "".to_string() 
     };
     // NOTE: For 'mount' nodes, parameters like source/lazy/placeholder will be validated later in resolver.
-    let mut node = OverseerNode::new_with_type(final_node_type, node_name.map(|s| s.to_string()));
+    let mut node = OverseerNode::new_with_type(final_node_type.clone(), node_name.map(|s| s.to_string()));
 
     node.template = template_path;
-    node.parameters = parameters.unwrap_or_default();
+    if let Some((param_map, order)) = parameters_with_order {
+        node.param_order = order;
+        node.parameters = param_map;
+    }
     node.children = children;
 
-    if let Some(val) = value {
-        node.parameters.insert("value".to_string(), val);
+    // Capture authored dash style: if the original type token was '-' OR if this node will serialize later
+    // as a dash override (value-only with no explicit type). We only have the first heuristic here.
+    if final_node_type == "-" {
+        node.authored_dash = true;
+    }
+
+    if let Some(v) = value_wrapped {
+        match v {
+            (val, Some(raw)) => { node.parameters.insert("value".to_string(), val); node.raw_value_literal = Some(raw); },
+            (val, None) => { node.parameters.insert("value".to_string(), val); }
+        }
     }
 
     debug_parser!("[PARSER] Parsed node: type='{}', name='{}'", node.node_type, node.name);
@@ -154,8 +246,8 @@ fn parse_template_value(input: &str) -> IResult<&str, OverseerValue> {
     map(delimited(char('<'), take_until(">"), char('>')), |s: &str| OverseerValue::Template(s.to_string()))(input)
 }
 
-/// Parse node parameters like (param=value, param2=value2)
-fn parse_parameters(input: &str) -> IResult<&str, HashMap<String, OverseerValue>> {
+/// Parse node parameters like (param=value, param2=value2) returning (map, order)
+fn parse_parameters(input: &str) -> IResult<&str, (HashMap<String, OverseerValue>, Vec<String>)> {
     map(
         delimited(
             char('('),
@@ -165,7 +257,12 @@ fn parse_parameters(input: &str) -> IResult<&str, HashMap<String, OverseerValue>
             ),
             preceded(multispace0, char(')')),
         ),
-        |params| params.into_iter().collect(),
+        |params: Vec<(String, OverseerValue)>| {
+            let mut map = HashMap::new();
+            let mut order = Vec::new();
+            for (k,v) in params { order.push(k.clone()); map.insert(k,v); }
+            (map, order)
+        },
     )(input)
 }
 
@@ -181,8 +278,32 @@ fn parse_parameter(input: &str) -> IResult<&str, (String, OverseerValue)> {
 }
 
 /// Parse value assignment (= value)
-fn parse_value_assignment(input: &str) -> IResult<&str, OverseerValue> {
-    preceded(pair(multispace0, char('=')), preceded(multispace0, parse_value))(input)
+fn parse_value_assignment_with_raw(input: &str) -> IResult<&str, (OverseerValue, Option<String>)> {
+    let (remaining, _) = pair(multispace0, char('='))(input)?;
+    let (remaining, _) = multispace0(remaining)?;
+    // Attempt to parse a number to capture raw literal first
+    if let Ok((after_num, ov)) = parse_number_value_with_raw(remaining) {
+        return Ok((after_num, ov));
+    }
+    // Fallback to normal value parsing (no raw capture)
+    let (after, val) = parse_value(remaining)?;
+    Ok((after, (val, None)))
+}
+
+fn parse_number_value_with_raw(input: &str) -> IResult<&str, (OverseerValue, Option<String>)> {
+    let start_len = input.len();
+    let (remaining, val) = parse_number_value(input)?; // reuse existing logic
+    let consumed = &input[..start_len - remaining.len()];
+    // Only keep raw if float with trailing zeros preserved in source but lost by f64 to_string
+    let raw = match &val {
+        OverseerValue::Float(_f) => {
+            if consumed.contains('.') && consumed.ends_with('0') {
+                Some(consumed.to_string())
+            } else { None }
+        },
+        _ => None,
+    };
+    Ok((remaining, (val, raw)))
 }
 
 /// Parse a value directly (without =) - only for quoted strings, numbers, booleans, etc.
@@ -202,24 +323,47 @@ fn parse_block(input: &str) -> IResult<&str, Vec<OverseerNode>> {
     let mut children = Vec::new();
 
     loop {
-        let (next_input, _) = skip_comments_and_whitespace(input)?;
-        // Check for end of block
-        if let Ok((after, _)) = preceded(multispace0::<&str, ()>, char('}'))(next_input) {
-            input = after;
+        // Fast path: skip pure whitespace then check for close brace
+    let cursor = input; // cursor retained for clarity; not mutable
+        // Count contiguous blank (whitespace-only) lines BEFORE comments for the next child.
+        // Special case: if the very first char is a newline (i.e., the previous node ended right before this),
+        // do NOT count it as a blank line. This avoids every normal line being treated as preceded by a blank line.
+        let mut scan = cursor;
+        if scan.starts_with('\n') { scan = &scan[1..]; }
+        let mut blank_count: u8 = 0;
+        loop {
+            if let Some(pos) = scan.find('\n') {
+                let (line, rest) = scan.split_at(pos);
+                if line.trim().is_empty() {
+                    blank_count = blank_count.saturating_add(1);
+                    scan = &rest[1..];
+                    continue;
+                }
+            }
             break;
         }
-        match parse_node(next_input) {
-            Ok((after, node)) => {
-                // Always add the parsed node to children
+        // After counting blank lines, skip comments/whitespace (without incrementing blank_count for comments)
+        let (after_comments, _) = match skip_comments_and_whitespace(scan) { Ok(t) => t, Err(_) => (scan, ()) };
+        // If next significant token is '}' end block (do not attach trailing blank lines to phantom child)
+        if let Some(rest) = after_comments.strip_prefix('}') {
+            input = rest; // consume '}'
+            break;
+        }
+        // Attempt to parse a node at after_comments
+        match parse_node(after_comments) {
+            Ok((rest, mut node)) => {
+                node.leading_blank_lines = blank_count; // record intra-block blank spacing
                 children.push(node);
-                input = after;
+                input = rest;
             }
             Err(_) => {
-                // Could not parse, skip one character and continue (to avoid infinite loop)
-                input = &next_input[1..];
+                // Failed parse: advance by one char from original input (not after_comments) to avoid infinite loop
+                if !input.is_empty() { input = &input[1..]; } else { break; }
             }
         }
     }
+    // Assign original child ordering indices for fidelity in serializer
+    for (idx, ch) in children.iter_mut().enumerate() { ch.child_original_index = Some(idx); }
     Ok((input, children))
 }
 

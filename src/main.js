@@ -477,10 +477,14 @@ tab Main {
             }
             const findMatches = (nodes, wantBase, wantOrd) => {
                 const baseNorm = normalizeName(wantBase)
+                const hasInstanceSuffix = /__\d+$/.test(String(wantBase))
                 // 1) Exact name match first
                 const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
                 if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
                 if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
+                // If an explicit instance suffix was provided but no exact match, do not degrade to
+                // normalized or type-based matching. This avoids accidentally targeting another item.
+                if (hasInstanceSuffix) return null
                 // 2) Name normalized match (handles '#k' and '__N')
                 const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
                 if (normMatches.length > 0) return normMatches[wantOrd] || normMatches[0] || null

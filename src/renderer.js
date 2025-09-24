@@ -132,6 +132,8 @@ export class OverseerRenderer {
             // so the preview displays the selected key immediately (even if template had $today()).
             keyChild.parameters.value = coerced
             try { keyChild.parameters._computed_value = coerced } catch(_) {}
+            // Mark as explicit so when materialized later, the key is persisted
+            try { keyChild.parameters._override_present = { Boolean: true } } catch(_) {}
             // Reflect that this is a template-derived instance for styling/layout if needed
             preview.parameters = Object.assign({}, preview.parameters || {}, { _from_template: true })
 
@@ -334,6 +336,8 @@ export class OverseerRenderer {
             // Assign the key and mirror it in _computed_value to avoid template-computed fallbacks overriding display
             keyChild.parameters.value = kvTyped
             try { keyChild.parameters._computed_value = kvTyped } catch(_) {}
+            // Ensure the key field persists on serialization as an explicit override
+            try { keyChild.parameters._override_present = { Boolean: true } } catch(_) {}
             // Insert into list honoring requested position
             const pos = (options && typeof options.position === 'string') ? options.position.toLowerCase() : 'append'
             if (pos === 'prepend') {
@@ -347,11 +351,12 @@ export class OverseerRenderer {
             // Return a real field path if the edit targeted a child in tailSegments; otherwise the item path
             // Use the actual item name (with instance suffix) for correct path resolution
             const siblings = listNode.children
-            // Find the actual index of the newly inserted item (works for both append and prepend)
+            // Use the exact instance name (which already contains __N) to avoid ambiguity; still include
+            // an ordinal when multiple siblings coincidentally share the same exact name (rare but safe).
             const idxNew = siblings.indexOf(newItem)
-            const itemBaseName = newItem.name
-            const itemOrd = siblings.slice(0, idxNew).filter(c => c && c.name === itemBaseName).length
-            const itemSeg = itemOrd > 0 ? `${itemBaseName}#${itemOrd}` : itemBaseName
+            const itemExactName = newItem.name // e.g., WeightRecord__5
+            const itemOrd = siblings.slice(0, idxNew).filter(c => c && c.name === itemExactName).length
+            const itemSeg = itemOrd > 0 ? `${itemExactName}#${itemOrd}` : itemExactName
             let realPathArr = listPathArr.concat([itemSeg])
             // Traverse tail segments directly on the newly created item, creating missing fields on demand,
             // and construct canonical path segments using the actual picked names and true ordinal among siblings.
@@ -386,7 +391,17 @@ export class OverseerRenderer {
                 realPathArr = realPathArr.concat([segName])
                 curRef = pick
             }
-            return realPathArr.join('/')
+            const __finalPath = realPathArr.join('/')
+            if (DEBUG_MODE) console.debug('[Overseer] _materializePhantomAndComputePath summary', {
+                list: listPathArr.join('/'),
+                template: tmplName,
+                newItemName: newItem && newItem.name,
+                keyField,
+                keyValue: kvTyped,
+                position: pos,
+                finalPath: __finalPath
+            })
+            return __finalPath
         } catch(_) { return null }
     }
 
@@ -669,12 +684,56 @@ export class OverseerRenderer {
                                 try {
                                     const tgtParams = phantomPreviewNode.parameters || {}
                                     const proxyParams = node.parameters = node.parameters || {}
+                                    const proxyHasBgOverride = proxyParams['background-color'] !== undefined && proxyParams['background-color'] !== null
                                     // Initialize tracking list for injected params if not present
                                     if (!Array.isArray(proxyParams._injected_link_params)) proxyParams._injected_link_params = []
                                     for (const k of Object.keys(tgtParams)) {
+                                        // Skip copying target's computed bg and raw bg if proxy explicitly overrides bg
+                                        if (proxyHasBgOverride && (k === '_computed_background-color' || k === 'background-color')) continue
                                         if (proxyParams[k] !== undefined) continue
                                         proxyParams[k] = tgtParams[k]
                                         try { if (!proxyParams._injected_link_params.includes(k)) proxyParams._injected_link_params.push(k) } catch(_) {}
+                                    }
+                                    // Remove any lingering computed bg on proxy if it overrides bg
+                                    if (proxyHasBgOverride && proxyParams['_computed_background-color'] !== undefined) {
+                                        try { delete proxyParams['_computed_background-color'] } catch(_) {}
+                                    }
+                                } catch(_) { /* ignore */ }
+                                // Determine which background should drive inheritance for the phantom subtree:
+                                // 1) Explicit proxy override if present
+                                // 2) Otherwise, a literal or computed background on the phantom preview root
+                                let phantomEffectiveBg = null
+                                try {
+                                    // Prefer computed if available on preview (rare), else a literal non-formula value
+                                    const p = (phantomPreviewNode && phantomPreviewNode.parameters) ? phantomPreviewNode.parameters : {}
+                                    const previewHasComputed = p && p['_computed_background-color'] !== undefined
+                                    const previewRaw = p ? p['background-color'] : null
+                                    const previewHasFormula = this.parameterHasFormula(phantomPreviewNode, 'background-color')
+                                    if (previewHasComputed) {
+                                        phantomEffectiveBg = this.convertColorValue(p['_computed_background-color'])
+                                    } else if (!previewHasFormula && previewRaw !== null && previewRaw !== undefined) {
+                                        phantomEffectiveBg = this.convertColorValue(previewRaw)
+                                    }
+                                } catch(_) { /* ignore */ }
+                                let proxyExplicitBg = null
+                                let proxyHasBgOverride = false
+                                try {
+                                    const p = node.parameters || {}
+                                    if (p['background-color'] !== undefined && p['background-color'] !== null) {
+                                        proxyHasBgOverride = true
+                                        proxyExplicitBg = this.convertColorValue(p['background-color']) || p['background-color']
+                                    }
+                                } catch(_) { /* ignore */ }
+                                // Decide selected background and propagate to current element and children
+                                const selectedInheritedBg = (proxyExplicitBg !== null && proxyExplicitBg !== undefined)
+                                    ? proxyExplicitBg
+                                    : ((phantomEffectiveBg !== null && phantomEffectiveBg !== undefined) ? phantomEffectiveBg : null)
+                                // Override element background and update inherited styles for children
+                                let inheritedForChildren = nextInherited
+                                try {
+                                    if (selectedInheritedBg !== null && selectedInheritedBg !== undefined) {
+                                        element.style.backgroundColor = selectedInheritedBg
+                                        inheritedForChildren = Object.assign({}, nextInherited, { backgroundColor: selectedInheritedBg })
                                     }
                                 } catch(_) { /* ignore */ }
                                 // Apply overrides recursively to a clone of children
@@ -702,17 +761,18 @@ export class OverseerRenderer {
                                     }
                                     mergedChildren = baseChildren
                                 } catch(_) { mergedChildren = Array.isArray(phantomPreviewNode.children) ? phantomPreviewNode.children : [] }
-                                // Sanitize child backgrounds (same as real target flatten path) so inheritance from proxy works on first paint
+                                // Sanitize child backgrounds (same as real target flatten path) so inheritance from proxy/phantom works on first paint
                                 try {
-                                    const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
-                                    if (proxyBg !== null && proxyBg !== undefined) {
+                                    const proxyBgRaw = (() => { try { const p = node.parameters||{}; return (p['background-color'] !== undefined && p['background-color'] !== null) ? p['background-color'] : null } catch(_) { return null } })()
+                                    const useBg = (proxyBgRaw !== null && proxyBgRaw !== undefined) ? proxyBgRaw : selectedInheritedBg
+                                    if (useBg !== null && useBg !== undefined) {
                                         const scrubNode = (n) => {
                                             if (!n || !n.parameters) return
+                                            // Always remove computed background so proxy override can take effect, even if there is a formula
+                                            if (n.parameters['_computed_background-color'] !== undefined) { try { delete n.parameters['_computed_background-color'] } catch(_) {} }
+                                            // Remove explicit literal background only when it's not a formula
                                             const hasFormula = this.parameterHasFormula(n, 'background-color')
-                                            if (!hasFormula) {
-                                                if (n.parameters['_computed_background-color'] !== undefined) { try { delete n.parameters['_computed_background-color'] } catch(_) {} }
-                                                if (n.parameters['background-color'] !== undefined) { try { delete n.parameters['background-color'] } catch(_) {} }
-                                            }
+                                            if (!hasFormula && n.parameters['background-color'] !== undefined) { try { delete n.parameters['background-color'] } catch(_) {} }
                                             const kids = Array.isArray(n.children) ? n.children : []
                                             for (const k of kids) scrubNode(k)
                                         }
@@ -739,8 +799,33 @@ export class OverseerRenderer {
                                 for (const ch of mergedChildren) {
                                     const segBase = (ch.name || ch.node_type || ch.type || 'child')
                                     const chPath = syntheticPath.concat([segBase])
-                                    this.renderNode(ch, element, nextInherited, chPath)
+                                    this.renderNode(ch, element, inheritedForChildren, chPath)
                                 }
+                                // Post-pass: enforce inheritance visually for descendants without explicit override using CSS variable
+                                try {
+                                    if (selectedInheritedBg !== null && selectedInheritedBg !== undefined) {
+                                        try {
+                                            const conv = selectedInheritedBg
+                                            element.style.setProperty('--overseer-link-proxy-bg', conv)
+                                            element.setAttribute('data-proxy-bg','1')
+                                        } catch(_) {}
+                                        const descendants = element.querySelectorAll(':scope *')
+                                        for (const d of descendants) {
+                                            try {
+                                                const styleBg = d.style && d.style.backgroundColor
+                                                const hasExplicit = !!styleBg && styleBg !== '' && styleBg !== 'inherit'
+                                                if (hasExplicit) {
+                                                    if (!d.hasAttribute('data-bg-explicit')) {
+                                                        d.style.removeProperty('background-color')
+                                                    }
+                                                }
+                                                if (!d.hasAttribute('data-bg-explicit')) {
+                                                    d.style.backgroundColor = 'var(--overseer-link-proxy-bg)'
+                                                }
+                                            } catch(_) {}
+                                        }
+                                    }
+                                } catch(_) { /* best-effort */ }
                                 this._linkDepth -= 1
                                 return
                             } else {
@@ -3507,8 +3592,17 @@ export class OverseerRenderer {
                         }
                     } catch(_) { /* default to append */ }
                     const realPath = await this._materializePhantomAndComputePath(metaWithTail, { position })
+                    if (DEBUG_MODE) console.debug('[Overseer] Phantom materialized on edit. Computed realPath:', realPath)
                     if (realPath) { fieldPath = realPath }
-                    try { p.removeAttribute('data-link-phantom') } catch(_) {}
+                    // After materialization, switch the proxy container from phantom preview to the real target
+                    try {
+                        p.removeAttribute('data-link-phantom')
+                        const containerPathArr = JSON.parse(p.dataset.path || '[]')
+                        if (Array.isArray(containerPathArr) && containerPathArr.length > 0) {
+                            if (DEBUG_MODE) console.debug('[Overseer] Re-rendering link proxy container after materialization at path:', containerPathArr.join('/'))
+                            this.rerenderSubtree(window.app.currentDocument, containerPathArr)
+                        }
+                    } catch(_) { /* best-effort */ }
                 }
             } catch(_) {}
 
@@ -3650,10 +3744,15 @@ export class OverseerRenderer {
             }
             const findMatches = (nodes, wantBase, wantOrd) => {
                 const baseNorm = normalizeName(wantBase)
+                const hasInstanceSuffix = /__\d+$/.test(String(wantBase))
                 // 1) Exact name match first
                 const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
                 if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
                 if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
+                // If the caller specified an explicit instance suffix (e.g., WeightRecord__5) but we didn't
+                // find an exact match, do NOT fall back to normalized or type-based matching — that could
+                // resolve to the wrong sibling. Force a miss so upstream logic can re-materialize or error.
+                if (hasInstanceSuffix) return null
                 // 2) Name normalized match (handles '#k' and '__N')
                 const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
                 if (normMatches.length > 0) return normMatches[wantOrd] || normMatches[0] || null
@@ -3963,10 +4062,14 @@ export class OverseerRenderer {
             }
             const findMatches = (nodes, wantBase, wantOrd) => {
                 const baseNorm = normalizeName(wantBase)
+                const hasInstanceSuffix = /__\d+$/.test(String(wantBase))
                 // 1) Exact name match first
                 const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
                 if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
                 if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
+                // If an explicit instance suffix was provided but no exact match, do not degrade to
+                // normalized or type-based matching. This avoids accidentally targeting another item.
+                if (hasInstanceSuffix) return null
                 // 2) Name normalized match (handles '#k' and '__N')
                 const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
                 if (normMatches.length > 0) return normMatches[wantOrd] || normMatches[0] || null
@@ -4743,8 +4846,45 @@ export class OverseerRenderer {
                         return false
                     }
                     break
+                case 'list':
+                case 'tab':
+                    // Re-render container subtree for lists and tabs
+                    try {
+                        if (DEBUG_MODE) console.log(`🔁 Re-rendering ${nodeType} container subtree for selective update:`, pathArray.join('/'))
+                        // Render directly with provided node to avoid path resolution mismatches
+                        const parent = element.parentElement
+                        if (!parent) return false
+                        const idx = Array.prototype.indexOf.call(parent.children, element)
+                        const wrapper = document.createElement('div')
+                        const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null
+                        this.renderNode(newNode, wrapper, { backgroundColor: bg }, pathArray)
+                        const fresh = wrapper.firstElementChild
+                        if (fresh) {
+                            parent.replaceChild(fresh, parent.children[idx])
+                            return true
+                        }
+                    } catch (e) {
+                        if (DEBUG_MODE) console.warn(`${nodeType} selective subtree re-render failed, falling back:`, e)
+                    }
+                    return false
                 default:
-                    console.warn('Selective update not implemented for node type:', nodeType)
+                    // Unknown/custom component (e.g., WeightRecord). Re-render subtree like a container.
+                    try {
+                        if (DEBUG_MODE) console.log('🔁 Re-rendering custom container subtree for selective update:', pathArray.join('/'), 'type=', nodeType)
+                        const parent = element.parentElement
+                        if (!parent) return false
+                        const idx = Array.prototype.indexOf.call(parent.children, element)
+                        const wrapper = document.createElement('div')
+                        const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null
+                        this.renderNode(newNode, wrapper, { backgroundColor: bg }, pathArray)
+                        const fresh = wrapper.firstElementChild
+                        if (fresh) {
+                            parent.replaceChild(fresh, parent.children[idx])
+                            return true
+                        }
+                    } catch (e) {
+                        if (DEBUG_MODE) console.warn('Custom container selective subtree re-render failed, falling back:', e)
+                    }
                     return false
             }
             

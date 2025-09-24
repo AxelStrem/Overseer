@@ -1,0 +1,1 @@
+Please keep in mind that the best way to save time is to do everything carefully and thoroughly, thus preventing the need to redo anything in the future. Therefore don't mind spending more time on tasks if necessary as it will surely save a lot of time in the long run.

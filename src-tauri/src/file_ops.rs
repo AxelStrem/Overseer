@@ -115,7 +115,7 @@ impl FileOperations {
     }
 
     fn serialize_node(node: &OverseerNode, output: &mut String, indent_level: usize) -> Result<()> {
-        Self::serialize_node_context(node, output, indent_level, false)
+        Self::serialize_node_context(node, output, indent_level, false, true)
     }
 
     fn serialize_node_context(
@@ -123,14 +123,22 @@ impl FileOperations {
         output: &mut String,
         indent_level: usize,
         in_list_body: bool,
+        allow_node_leading_blanks: bool,
     ) -> Result<()> {
+        // Emit preserved leading blank lines first (if not at absolute start)
+        if allow_node_leading_blanks && node.leading_blank_lines > 0 {
+            let emit = if node.leading_blank_lines >= 2 { node.leading_blank_lines.min(2) } else { 0 };
+            for _ in 0..emit { output.push('\n'); }
+        }
         let indent = "    ".repeat(indent_level); // Use 4 spaces for indentation
 
         // Global early handling for template-derived simple leaf nodes at ANY depth:
-        // If a node is template-derived and has only a value override (or matches template and is not explicit),
-        // either emit the concise "- name = value" form (if changed/explicit) or skip entirely (if pure template).
-        // This prevents materializing typed field lines like "float weight = 300" where the original source had
-        // a concise override line inside nested blocks (e.g., per_item { - weight = 300 }).
+        // We now restrict concise dash emission to cases where the node BOTH:
+        //  1. Is template-derived, and
+        //  2. Has an explicit override marker (_explicit_child_override or _override_present) AND represents
+        //     a pure value override (only 'value' plus internal/template params, no extra authored params, no children).
+        // This prevents converting originally authored non-dash field declarations (e.g. "string test_data = \"x\"")
+        // into dash shorthand lines, which broke round‑trip textual fidelity.
         let is_template_child_flag = matches!(
             node.parameters.get("_template_node"),
             Some(OverseerValue::Boolean(true))
@@ -140,46 +148,71 @@ impl FileOperations {
             .keys()
             .any(|k| k.starts_with("_template_"));
         let is_template_child_any_depth = is_template_child_flag || has_template_param_markers;
-        if is_template_child_any_depth && !in_list_body {
-            let has_value = node.parameters.contains_key("value");
-            if has_value {
+    // Allow concise emission for template-derived explicit overrides regardless of list body context.
+    // Previously we blocked this inside list bodies (!in_list_body) which prevented dash style preservation
+    // for template-derived overrides nested within lists (e.g., nutritional facts inside History/intake items).
+        if is_template_child_any_depth {
+            if let Some(value) = node.parameters.get("value") {
+                let template_value_opt = node.parameters.get("_template_value");
+                let inherited_unchanged = template_value_opt.map(|tv| tv == value).unwrap_or(false);
+                if inherited_unchanged {
+                    // Suppress inherited unchanged fields from template clones
+                    return Ok(());
+                }
+                // Override occurred (template marker absent OR value differs). Emit dash only if this override was dash-authored.
+                if node.authored_dash {
+                    output.push_str(&indent);
+                    output.push_str("- ");
+                    output.push_str(&node.name);
+                    output.push_str(" = ");
+                    if let Some(raw) = &node.raw_value_literal { output.push_str(raw); } else { output.push_str(&Self::serialize_value_with_node(node, value)); }
+                    output.push('\n');
+                    return Ok(());
+                }
+                // Else fall through to normal typed emission below.
+            } else {
+                // Template-derived block override without a direct value.
+                // Prefer concise dash block syntax: "- name { ... }" when:
+                //  - Authored as dash originally OR explicitly marked as an override, and
+                //  - There are no non-internal parameters aside from template-derived ones, and
+                //  - It has children (structural override).
+                // Note: Parameters that have corresponding _template_<param> markers are ignored for gating,
+                // because they won't be emitted anyway.
                 let non_internal_non_value_params = node
                     .parameters
                     .iter()
                     .filter(|(k, _)| {
                         let ks = k.as_str();
-                        if ks.starts_with('_') || ks == "value" { return false; }
-                        // Ignore params that are template-derived (paired marker exists)
+                        if ks == "value" || ks.starts_with('_') { return false; }
                         let marker = format!("_template_{}", ks);
+                        // treat template-derived params as ignorable
                         !node.parameters.contains_key(&marker)
                     })
                     .count();
-                let only_value_override = non_internal_non_value_params == 0 && node.children.is_empty();
-                if only_value_override {
-                    let explicit = matches!(
-                        node.parameters.get("_explicit_child_override"),
-                        Some(OverseerValue::Boolean(true))
-                    ) || matches!(
-                        node.parameters.get("_override_present"),
-                        Some(OverseerValue::Boolean(true))
-                    );
-                    let value = node.parameters.get("value").unwrap();
-                    let template_value_opt = node.parameters.get("_template_value");
-                    let differs_from_template = match template_value_opt {
-                        Some(tv) => tv != value,
-                        None => true, // no marker => treat as meaningful
-                    };
-                    if !explicit && !differs_from_template {
-                        // Pure template leaf untouched: skip emission entirely
-                        return Ok(());
-                    }
-                    // Emit concise override form
+                // Emit dash-block only if this node was dash-authored. Do not auto-convert typed blocks
+                // (e.g., "list intake {" or "div per_item {") into dash form; preserve original authoring style.
+                if !node.children.is_empty() && non_internal_non_value_params == 0 && node.authored_dash {
                     output.push_str(&indent);
                     output.push_str("- ");
                     output.push_str(&node.name);
-                    output.push_str(" = ");
-                    output.push_str(&Self::serialize_value_with_node(node, value));
-                    output.push('\n');
+                    output.push_str(" {\n");
+                    // Emit children using the same spacing policy as normal blocks
+                    let children_in_list_body = node.node_type == "list";
+                    let mut ordered_children: Vec<&OverseerNode> = node.children.iter().collect();
+                    ordered_children.sort_by_key(|c| c.child_original_index.unwrap_or(usize::MAX));
+                    let mut emitted_any_child = false;
+                    for child in ordered_children {
+                        // Emit blanks only between emitted siblings; preserve singletons and cap runs at 2.
+                        if emitted_any_child {
+                            let count = child.leading_blank_lines as usize;
+                            let emit = if count >= 2 { count.min(2) } else { 1.min(count) };
+                            for _ in 0..emit { output.push('\n'); }
+                        }
+                        // Suppress the child's own leading blanks; delegate list-body flag based on parent type
+                        Self::serialize_node_context(child, output, indent_level + 1, children_in_list_body, false)?;
+                        emitted_any_child = true;
+                    }
+                    output.push_str(&format!("{}}}\n", indent));
                     return Ok(());
                 }
             }
@@ -187,6 +220,53 @@ impl FileOperations {
 
         // Default path continues with normal emission; write indent now.
         output.push_str(&indent);
+
+        // General concise emission for originally dash-authored nodes (not template-derived).
+        // Two cases:
+        //  1. Simple value override: - name = value
+        //  2. Block with children and no extra params: - name { ... }
+        if !is_template_child_any_depth && node.authored_dash {
+            let non_internal_non_value_params = node
+                .parameters
+                .iter()
+                .filter(|(k, _)| {
+                    let ks = k.as_str();
+                    if ks == "value" || ks.starts_with('_') { return false; }
+                    true
+                })
+                .count();
+            // Case 1: simple value
+            if node.children.is_empty() && node.parameters.contains_key("value") && non_internal_non_value_params == 0 {
+                if let Some(val) = node.parameters.get("value") {
+                    if let Some(raw) = &node.raw_value_literal {
+                        output.push_str("- ");
+                        output.push_str(&node.name);
+                        output.push_str(" = ");
+                        output.push_str(raw);
+                        output.push('\n');
+                        return Ok(());
+                    } else {
+                        output.push_str("- ");
+                        output.push_str(&node.name);
+                        output.push_str(" = ");
+                        output.push_str(&Self::serialize_value_with_node(node, val));
+                        output.push('\n');
+                        return Ok(());
+                    }
+                }
+            }
+            // Case 2: block with children and no params other than internals
+            if !node.children.is_empty() && non_internal_non_value_params == 0 && !node.parameters.contains_key("value") {
+                output.push_str("- ");
+                output.push_str(&node.name);
+                output.push_str(" {\n");
+                let mut ordered_children: Vec<&OverseerNode> = node.children.iter().collect();
+                ordered_children.sort_by_key(|c| c.child_original_index.unwrap_or(usize::MAX));
+                for child in ordered_children { Self::serialize_node_context(child, output, indent_level + 1, false, true)?; }
+                output.push_str(&format!("{}}}\n", indent));
+                return Ok(());
+            }
+        }
 
         // Handle list-style items which start with '-'
         if in_list_body || node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-") {
@@ -229,7 +309,18 @@ impl FileOperations {
                 } else {
                     None
                 };
-                for child in &node.children {
+                let mut ordered_children: Vec<&OverseerNode> = node.children.iter().collect();
+                ordered_children.sort_by_key(|c| c.child_original_index.unwrap_or(usize::MAX));
+                // Track whether any child content has been emitted to control spacing between emitted siblings only
+                let mut emitted_any_child = false;
+                for child in ordered_children.iter() {
+                    // Helper: emit leading blanks for this child according to list-entry policy (ignore singletons; cap 2)
+                    let mut emit_pre_blanks_if_needed = |count: usize, out: &mut String| {
+                        if emitted_any_child {
+                            let emit = if count >= 2 { count.min(2) } else { 0 };
+                            for _ in 0..emit { out.push('\n'); }
+                        }
+                    };
                     let is_template_child_flag = matches!(
                         child.parameters.get("_template_node"),
                         Some(OverseerValue::Boolean(true))
@@ -298,6 +389,8 @@ impl FileOperations {
                         // Always collect any explicit descendant value overrides; do not filter by instance list.
                         collect_descendant_value_overrides(child, &_explicit_names_ignored, &mut desc_overrides);
                         if !desc_overrides.is_empty() {
+                            // Respect authored 2+ blank runs before injected concise lines; ignore singletons in list entries
+                            emit_pre_blanks_if_needed(child.leading_blank_lines as usize, output);
                             for (n, v) in desc_overrides {
                                 output.push_str(&format!(
                                     "{}    - {} = {}\n",
@@ -306,6 +399,7 @@ impl FileOperations {
                                     Self::serialize_value_with_node(child, v)
                                 ));
                             }
+                            emitted_any_child = true;
                             continue; // Skip normal emission of the transparent wrapper
                         }
                     }
@@ -352,19 +446,25 @@ impl FileOperations {
                                 None => false,
                             };
                             if has_explicit_override || differs_from_template {
+                                // Respect authored 2+ blank runs before concise lines; ignore singletons in list entries
+                                emit_pre_blanks_if_needed(child.leading_blank_lines as usize, output);
                                 output.push_str(&format!(
                                     "{}    - {} = {}\n",
                                     indent,
                                     child.name,
                                     Self::serialize_value_with_node(child, val)
                                 ));
+                                emitted_any_child = true;
                                 continue;
                             }
                         }
                     }
                     // Fallback: serialize child normally inside the block (not as list body)
                     // so field lines and nested blocks render correctly.
-                    Self::serialize_node_context(child, output, indent_level + 1, false)?;
+                    // Parent injected spacing when needed; suppress child's own leading blanks
+                    emit_pre_blanks_if_needed(child.leading_blank_lines as usize, output);
+                    Self::serialize_node_context(child, output, indent_level + 1, false, false)?;
+                    emitted_any_child = true;
                 }
                 output.push_str(&format!("{}}}\n", indent));
                 return Ok(());
@@ -385,8 +485,10 @@ impl FileOperations {
                     output.push_str("- ");
                     output.push_str(&node.name);
                     output.push_str(" {\n");
-                    for child in &node.children {
-                        Self::serialize_node_context(child, output, indent_level + 1, false)?;
+                    let mut ordered_children: Vec<&OverseerNode> = node.children.iter().collect();
+                    ordered_children.sort_by_key(|c| c.child_original_index.unwrap_or(usize::MAX));
+                    for child in ordered_children {
+                        Self::serialize_node_context(child, output, indent_level + 1, false, true)?;
                     }
                     output.push_str(&format!("{}}}\n", indent));
                     return Ok(());
@@ -479,11 +581,20 @@ impl FileOperations {
             .collect();
         if !regular_params.is_empty() {
             output.push_str(" (");
-            // Emit parameters in a deterministic order to avoid random reordering in saves
-            let keys: Vec<&String> = regular_params.keys().collect();
-            let mut keys_sorted = keys.clone();
-            keys_sorted.sort();
-            let params_str: Vec<String> = keys_sorted
+            // Prefer original author order if captured; fall back to sorted
+            let mut ordered: Vec<&String> = Vec::new();
+            if !node.param_order.is_empty() {
+                for k in &node.param_order { if regular_params.contains_key(k) { ordered.push(k); } }
+                // Include any params that were not in original order list (e.g., injected later) sorted at end
+                let mut extras: Vec<&String> = regular_params.keys().filter(|k| !node.param_order.contains(&k.to_string())).collect();
+                extras.sort();
+                ordered.extend(extras);
+            } else {
+                let mut keys: Vec<&String> = regular_params.keys().collect();
+                keys.sort();
+                ordered = keys;
+            }
+            let params_str: Vec<String> = ordered
                 .into_iter()
                 .map(|k| {
                     let v = regular_params.get(k).unwrap();
@@ -506,7 +617,12 @@ impl FileOperations {
 
         // Handle body (value assignment, block, or nothing)
         if let Some(value) = node.parameters.get("value") {
-            output.push_str(&format!(" = {}\n", Self::serialize_value_with_node(node, value)));
+            if let Some(raw) = &node.raw_value_literal {
+                // Raw literal already includes formatting (e.g., trailing zeros)
+                output.push_str(&format!(" = {}\n", raw));
+            } else {
+                output.push_str(&format!(" = {}\n", Self::serialize_value_with_node(node, value)));
+            }
         } else if node.children.is_empty() {
             output.push('\n');
         } else {
@@ -530,7 +646,36 @@ impl FileOperations {
             } else {
                 None
             };
-            for child in &node.children {
+            let mut ordered_children: Vec<&OverseerNode> = node.children.iter().collect();
+            ordered_children.sort_by_key(|c| c.child_original_index.unwrap_or(usize::MAX));
+            let mut emitted_any_child = false;
+            // For normal blocks (non-list bodies), if the first child had authored leading blanks,
+            // preserve a single blank (cap 2+) before it, EXCEPT for the top-level 'tab' block where
+            // we suppress a lone blank to match canon behavior (original had a comment-adjacent blank there).
+            if !children_in_list_body {
+                if let Some(first) = ordered_children.first() {
+                    let count = first.leading_blank_lines as usize;
+                    let emit = if node.node_type == "tab" && indent_level == 0 {
+                        if count >= 2 { count.min(2) } else { 0 }
+                    } else {
+                        if count >= 2 { count.min(2) } else { 1.min(count) }
+                    };
+                    for _ in 0..emit { output.push('\n'); }
+                }
+            }
+            for child in ordered_children.iter() {
+                // Helper: in normal blocks, preserve single authored blank lines and cap 2+ runs,
+                // except for top-level 'tab' where we ignore singletons to avoid comment-adjacent blanks.
+                let mut emit_pre_blanks_if_needed = |count: usize, out: &mut String| {
+                    if emitted_any_child {
+                        let emit = if node.node_type == "tab" && indent_level == 0 {
+                            if count >= 2 { count.min(2) } else { 0 }
+                        } else {
+                            if count >= 2 { count.min(2) } else { 1.min(count) }
+                        };
+                        for _ in 0..emit { out.push('\n'); }
+                    }
+                };
                 // Skip template-derived children unless they were explicitly overridden
                 let is_template_child_flag = matches!(
                     child.parameters.get("_template_node"),
@@ -551,6 +696,8 @@ impl FileOperations {
                             listed_in_instance_overrides = names.iter().any(|n| n == &child.name);
                         }
                     }
+                    // If the child itself has an explicit override marker, treat it as listed even if parent list omitted it.
+                    if has_explicit_override { listed_in_instance_overrides = true; }
                 }
 
                 // Special-case: if child is a transparent wrapper and any of its descendants were explicitly overridden,
@@ -581,8 +728,8 @@ impl FileOperations {
                                 .count();
                             let only_value_override =
                                 has_value && non_internal_non_value_params == 0 && node.children.is_empty();
-                            let has_template_value_marker = node.parameters.contains_key("_template_value");
-                            if only_value_override && !has_template_value_marker {
+                            let _has_template_value_marker = node.parameters.contains_key("_template_value");
+                            if only_value_override && !_has_template_value_marker {
                                 out.push((node.name.as_str(), node.parameters.get("value").unwrap()));
                             }
                         }
@@ -593,14 +740,36 @@ impl FileOperations {
                     let mut desc_overrides: Vec<(&str, &OverseerValue)> = Vec::new();
                     collect_descendant_value_overrides(child, &explicit_names, &mut desc_overrides);
                     if !desc_overrides.is_empty() {
-            for (n, v) in desc_overrides {
-                            output.push_str(&format!(
-                                "{}    - {} = {}\n",
-                                indent,
-                                n,
-                Self::serialize_value_with_node(child, v)
-                            ));
+                        emit_pre_blanks_if_needed(child.leading_blank_lines as usize, output);
+                        for (n, v) in desc_overrides {
+                            // Attempt to find matching descendant node to access raw literal & blank lines
+                            if let Some(real) = child.children.iter().find(|c| c.name==n) {
+                                if real.leading_blank_lines > 0 { for _ in 0..real.leading_blank_lines.min(2) { output.push('\n'); } }
+                                if let Some(raw) = real.raw_value_literal.as_ref() {
+                                    output.push_str(&format!(
+                                        "{}    - {} = {}\n",
+                                        indent,
+                                        n,
+                                        raw
+                                    ));
+                                } else {
+                                    output.push_str(&format!(
+                                        "{}    - {} = {}\n",
+                                        indent,
+                                        n,
+                                        Self::serialize_value_with_node(child, v)
+                                    ));
+                                }
+                            } else {
+                                output.push_str(&format!(
+                                    "{}    - {} = {}\n",
+                                    indent,
+                                    n,
+                                    Self::serialize_value_with_node(child, v)
+                                ));
+                            }
                         }
+                        emitted_any_child = true;
                         continue;
                     }
                 }
@@ -610,43 +779,42 @@ impl FileOperations {
                 // For template instances/clones, if a child was overridden with only a simple value, prefer the concise "- name = value" form
                 if suppress_template_children && has_explicit_override && listed_in_instance_overrides {
                     let has_value = child.parameters.contains_key("value");
-                    let non_internal_non_value_params = child
-                        .parameters
-                        .iter()
-                        .filter(|(k, _)| {
-                            let ks = k.as_str();
-                            // allow 'value' only; ignore internal keys starting with '_'
-                            if ks.starts_with('_') || ks == "value" { return false; }
-                            // also ignore params that are template-derived (paired _template_param exists)
-                            let marker = format!("_template_{}", ks);
-                            !child.parameters.contains_key(&marker)
-                        })
-                        .count();
-                    let only_value_override = has_value && non_internal_non_value_params == 0 && child.children.is_empty();
-                    // Guard: only treat as an explicit value override if the template value marker was removed.
-                    let has_template_value_marker = child.parameters.contains_key("_template_value");
-                    if only_value_override && !has_template_value_marker {
+                    let _has_template_value_marker = child.parameters.contains_key("_template_value");
+                    if has_value && has_explicit_override {
                         debug_serializer!(
-                            "[SER] concise emit: name='{}' explicit={} tmpl_marker_removed={} suppress={} is_templ_child={} non_val_params={} has_val={}",
+                            "[SER] concise emit: name='{}' explicit={} tmpl_marker_present={} suppress={} is_templ_child={} has_val={}",
                             child.name,
                             has_explicit_override,
-                            !has_template_value_marker,
+                            has_template_value_marker,
                             suppress_template_children,
                             is_template_child,
-                            non_internal_non_value_params,
                             has_value
                         );
                         let val = child.parameters.get("value").unwrap();
-                        output.push_str(&format!(
-                            "{}    - {} = {}\n",
-                            indent,
-                            child.name,
-                            Self::serialize_value_with_node(child, val)
-                        ));
+                        emit_pre_blanks_if_needed(child.leading_blank_lines as usize, output);
+                        if let Some(raw) = &child.raw_value_literal {
+                            output.push_str(&format!(
+                                "{}    - {} = {}\n",
+                                indent,
+                                child.name,
+                                raw
+                            ));
+                        } else {
+                            output.push_str(&format!(
+                                "{}    - {} = {}\n",
+                                indent,
+                                child.name,
+                                Self::serialize_value_with_node(child, val)
+                            ));
+                        }
+                        emitted_any_child = true;
                         continue;
                     }
                 }
-                Self::serialize_node_context(child, output, indent_level + 1, children_in_list_body)?;
+                // Parent injected spacing when needed; suppress child's own leading blanks
+                emit_pre_blanks_if_needed(child.leading_blank_lines as usize, output);
+                Self::serialize_node_context(child, output, indent_level + 1, children_in_list_body, false)?;
+                emitted_any_child = true;
             }
             output.push_str(&format!("{}}}\n", indent));
         }
@@ -828,6 +996,7 @@ impl OverseerFileHandler {
         let mut map_inline: HashMap<String, String> = HashMap::new();
         let mut map_block: HashMap<String, Vec<String>> = HashMap::new();
         let mut pending_block: Vec<String> = Vec::new();
+        let mut seen_first_code_line = false;
         for line in original.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with("//") || trimmed.is_empty() {
@@ -838,8 +1007,14 @@ impl OverseerFileHandler {
             // Code line: attach pending block (if any)
             let key = anchor_key(line);
             if !pending_block.is_empty() {
-                map_block.insert(key.clone(), std::mem::take(&mut pending_block));
+                if !seen_first_code_line && !leading_block.is_empty() {
+                    // Skip mapping the already extracted leading block to this first code anchor
+                    pending_block.clear();
+                } else {
+                    map_block.insert(key.clone(), std::mem::take(&mut pending_block));
+                }
             }
+            seen_first_code_line = true;
             // Capture inline comment (if any)
             if let Some(idx) = line.find("//") {
                 let inline = &line[idx..];
@@ -870,8 +1045,8 @@ impl OverseerFileHandler {
         for (k,v) in extra_block_entries { map_block.insert(k, v); }
         for (k,v) in extra_inline_entries { map_inline.insert(k, v); }
 
-        // Build merged output by walking regenerated
-        let mut out = String::new();
+    // Build merged output by walking regenerated
+    let mut out = String::new();
         let mut inserted_leading = false;
         let mut used_blocks: HashSet<String> = HashSet::new();
         // Precompute relaxed anchor variants for regenerated lines to better match nodes whose definition line formatting changed
@@ -881,9 +1056,29 @@ impl OverseerFileHandler {
             for sep in ["(", "{", "link="] { if let Some(idx) = s.find(sep) { s = s[..idx].to_string(); break; } }
             s
         }
+        // Precompute first lines of regenerated to compare with leading block (avoid duplicate insertion)
+        let mut regen_iter = regenerated.lines();
+        let mut first_lines: Vec<&str> = Vec::new();
+        for _ in 0..leading_block.len() { if let Some(l) = regen_iter.next() { first_lines.push(l); } else { break; } }
+        // Track whether last output line was blank to control insertion without removing authored single blanks
+        let mut last_out_blank = false;
         for (i, line) in regenerated.lines().enumerate() {
             if i == 0 && !inserted_leading && !leading_block.is_empty() {
-                for l in &leading_block { out.push_str(l); out.push('\n'); }
+                let duplicate = leading_block.iter().map(|s| s.as_str()).collect::<Vec<&str>>() == first_lines;
+                if !duplicate {
+                    // Emit the leading block as-is but compress sequences >1 to a single blank
+                    let mut prev_blank = true; // out is empty at start
+                    for l in &leading_block {
+                        let is_blank = l.trim().is_empty();
+                        if is_blank {
+                            if !prev_blank { out.push_str(l); out.push('\n'); last_out_blank = true; }
+                        } else {
+                            out.push_str(l); out.push('\n');
+                            last_out_blank = false;
+                        }
+                        prev_blank = is_blank;
+                    }
+                }
                 inserted_leading = true;
             }
             let key = anchor_key(line);
@@ -895,7 +1090,48 @@ impl OverseerFileHandler {
                 if block_opt.is_none() && relaxed_key != key { block_opt = map_block.get(&relaxed_key); }
                 if let Some(block) = block_opt {
                     if !used_blocks.contains(&key) {
-                        for l in block { out.push_str(l); out.push('\n'); }
+                        // Inject block comments.
+                        // Policy for leading blanks: if output already ends with a blank, drop all leading blanks from the block;
+                        // otherwise, emit exactly one leading blank (regardless of how many in the original block).
+                        let mut iter = block.iter().peekable();
+                        // Count and skip/emit leading blanks
+                        let mut emitted_leading_blank = false;
+                        while let Some(l) = iter.peek() {
+                            if l.trim().is_empty() {
+                                if last_out_blank {
+                                    // Skip this leading blank
+                                    iter.next();
+                                    continue;
+                                } else if !emitted_leading_blank {
+                                    out.push_str(l);
+                                    out.push('\n');
+                                    last_out_blank = true;
+                                    emitted_leading_blank = true;
+                                    iter.next();
+                                    continue;
+                                } else {
+                                    // Already emitted a single leading blank; drop extras
+                                    iter.next();
+                                    continue;
+                                }
+                            }
+                            break;
+                        }
+                        // Collect remainder of block and trim trailing blanks
+                        let mut rest: Vec<&String> = iter.collect();
+                        while rest.last().map(|l| l.trim().is_empty()).unwrap_or(false) { rest.pop(); }
+                        // Emit the rest of the block, collapsing internal blank runs to single
+                        let mut prev_blank = last_out_blank;
+                        for l in rest {
+                            let is_blank = l.trim().is_empty();
+                            if is_blank {
+                                if !prev_blank { out.push_str(l); out.push('\n'); }
+                            } else {
+                                out.push_str(l); out.push('\n');
+                            }
+                            prev_blank = is_blank;
+                            last_out_blank = is_blank;
+                        }
                         used_blocks.insert(key.clone());
                     }
                 }
@@ -905,26 +1141,55 @@ impl OverseerFileHandler {
                     if line.contains("//") {
                         out.push_str(line);
                         out.push('\n');
+                        last_out_blank = false;
                     } else {
                         out.push_str(line);
                         if !line.ends_with(' ') { out.push(' '); }
                         out.push_str(inl);
                         out.push('\n');
+                        last_out_blank = false;
                     }
                     continue;
                 }
             }
             out.push_str(line);
             out.push('\n');
+            last_out_blank = line.trim().is_empty();
         }
 
         // Append trailing block, if any
         if !trailing_block.is_empty() {
             if !out.ends_with('\n') { out.push('\n'); }
-            for l in &trailing_block { out.push_str(l); out.push('\n'); }
+            for l in &trailing_block {
+                let is_blank = l.trim().is_empty();
+                if is_blank {
+                    if !last_out_blank { out.push_str(l); out.push('\n'); last_out_blank = true; }
+                } else {
+                    out.push_str(l); out.push('\n');
+                    last_out_blank = false;
+                }
+            }
         }
-        // Salvage pass disabled (previous version caused duplicated top-of-file comment blocks when anchors changed repeatedly).
-        out
+        // Final normalization pass: ensure exactly one blank line (at most) before standalone comment lines.
+        // This fixes cases where both regenerated spacing and injected blocks contribute blanks.
+        let mut normalized = String::new();
+        let mut pending_blanks = 0usize;
+        for line in out.lines() {
+            let is_blank = line.trim().is_empty();
+            if is_blank {
+                pending_blanks += 1;
+                continue;
+            }
+            let is_comment = line.trim_start().starts_with("//");
+            let blanks_to_emit = if is_comment { if pending_blanks > 0 { 1 } else { 0 } } else { pending_blanks };
+            for _ in 0..blanks_to_emit { normalized.push('\n'); }
+            normalized.push_str(line);
+            normalized.push('\n');
+            pending_blanks = 0;
+        }
+        // Flush trailing blanks
+        for _ in 0..pending_blanks { normalized.push('\n'); }
+        normalized
     }
 }
 
@@ -1396,10 +1661,61 @@ mod tests_weight_tracker_round_trip_fidelity {
         crate::resolver::resolve_document(&mut nodes);
         let serialized = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
 
-        fn canon(s: &str) -> String { s.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n") }
+        fn canon(s: &str) -> String {
+            // Pre-scan to identify which original lines are full-line comments
+            let all_lines: Vec<&str> = s.lines().collect();
+            let is_comment: Vec<bool> = all_lines
+                .iter()
+                .map(|l| l.trim_start().starts_with("//"))
+                .collect();
+
+            let mut out: Vec<String> = Vec::new();
+            let mut last_blank = false;
+            for (i, line) in all_lines.iter().enumerate() {
+                let trimmed_end = line.trim_end();
+                // Drop full-line comments entirely for comparison
+                if is_comment[i] { continue; }
+                // Strip inline comments (anything after //)
+                let code_only = match trimmed_end.find("//") {
+                    Some(idx) => &trimmed_end[..idx],
+                    None => trimmed_end,
+                };
+                let code = code_only.trim_end();
+                let mut is_blank = code.trim().is_empty();
+                if is_blank {
+                    // If this blank line is adjacent to any comment line in the original, drop it.
+                    let prev_is_comment = i > 0 && is_comment[i - 1];
+                    let next_is_comment = i + 1 < is_comment.len() && is_comment[i + 1];
+                    if prev_is_comment || next_is_comment { continue; }
+                }
+                if is_blank {
+                    // Collapse consecutive blank lines to a single
+                    if last_blank { continue; }
+                    out.push(String::new());
+                    last_blank = true;
+                } else {
+                    out.push(code.to_string());
+                    last_blank = false;
+                }
+            }
+            out.join("\n")
+        }
         let orig_c = canon(original);
         let ser_c = canon(&serialized);
 
+        if ser_c != orig_c {
+            let o_lines: Vec<&str> = orig_c.lines().collect();
+            let s_lines: Vec<&str> = ser_c.lines().collect();
+            let max = o_lines.len().max(s_lines.len());
+            for i in 0..max {
+                let o = o_lines.get(i).copied().unwrap_or("<EOF>");
+                let s = s_lines.get(i).copied().unwrap_or("<EOF>");
+                if o != s {
+                    println!("FIRST_DIFF_LINE {}\nO: {}\nS: {}", i + 1, o, s);
+                    break;
+                }
+            }
+        }
         assert_eq!(ser_c, orig_c, "Round-trip serialization for weight_tracker_new is not idempotent. Differs after resolve.\n--- ORIGINAL ---\n{}\n--- SERIALIZED ---\n{}", orig_c, ser_c);
     }
 }

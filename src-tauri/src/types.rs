@@ -12,6 +12,21 @@ pub struct OverseerNode {
     pub parameters: HashMap<String, OverseerValue>,
     pub children: Vec<OverseerNode>,
     pub is_hierarchy_transparent: bool, // If true, children are accessible as if they belong to parent
+    // Parameter insertion order as authored (list of keys) - used to preserve ordering fidelity
+    #[serde(default)]
+    pub param_order: Vec<String>,
+    // Raw literal for this node's value (if it was an explicitly authored numeric with formatting such as trailing zeros)
+    #[serde(default)]
+    pub raw_value_literal: Option<String>,
+    // Whether this node's value line was authored using dash shorthand (- name = value)
+    #[serde(default)]
+    pub authored_dash: bool,
+    // Original child order index relative to its siblings as parsed (used for stable round-trip ordering)
+    #[serde(default)]
+    pub child_original_index: Option<usize>,
+    // Number of blank (empty) lines that preceded this node in the source
+    #[serde(default)]
+    pub leading_blank_lines: u8,
 }
 
 impl OverseerNode {
@@ -23,6 +38,11 @@ impl OverseerNode {
             parameters: HashMap::new(),
             children: Vec::new(),
             is_hierarchy_transparent: false,
+            param_order: Vec::new(),
+            raw_value_literal: None,
+            authored_dash: false,
+            child_original_index: None,
+            leading_blank_lines: 0,
         }
     }
     
@@ -59,6 +79,11 @@ impl OverseerNode {
             parameters: HashMap::new(),
             children: Vec::new(),
             is_hierarchy_transparent: is_transparent,
+            param_order: Vec::new(),
+            raw_value_literal: None,
+            authored_dash: false,
+            child_original_index: None,
+            leading_blank_lines: 0,
         }
     }
     
