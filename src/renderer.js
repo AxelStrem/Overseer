@@ -41,6 +41,8 @@ export class OverseerRenderer {
         this.tabContainer = document.getElementById('tab-container')
         // Track live intervals so we can clear them on each full re-render
         this._liveIntervals = new Set()
+        // Track newly materialized targets so updates apply to the exact node, not a loosely-resolved path
+        this._materializedTargets = new Map()
     }
 
     // Build a non-persistent preview item based on list's entry template, with key preset.
@@ -286,13 +288,42 @@ export class OverseerRenderer {
             }
             const tmpl = tmplName ? findByNameDeep(roots, tmplName) : null
             let newItem = tmpl ? JSON.parse(JSON.stringify(tmpl)) : { name: tmplName || 'Item', node_type: 'div', parameters: {}, children: [] }
+            // Assign a stable UID to the new item (used for DOM mapping independent of name/position)
+            try {
+                const uid = `uid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+                if (!newItem.parameters) newItem.parameters = {}
+                // Store in parameters to persist through rerenders (not serialized if we prefix underscore)
+                newItem.parameters._uid = { String: uid }
+                newItem.__uid = uid
+                if (!this._uidToNode) this._uidToNode = new Map()
+                this._uidToNode.set(uid, newItem)
+                if (DEBUG_MODE) console.debug('[Overseer] uid assign (materialize)', uid, newItem.name)
+            } catch(_) { /* best-effort */ }
             // Ensure required schema fields exist on the new item
             if (newItem.is_hierarchy_transparent === undefined) newItem.is_hierarchy_transparent = (tmpl && typeof tmpl.is_hierarchy_transparent === 'boolean') ? tmpl.is_hierarchy_transparent : false
             // Mark as originating from a template to help selective UI rerenders detect templated instances
             try { newItem.parameters = Object.assign({}, newItem.parameters || {}, { _from_template: true }) } catch (_) {}
-            // Assign a unique instance name similar to backend logic (T__N)
-            const ordinal = listNode.children.length + 1
-            newItem.name = `${tmplName || newItem.name}__${ordinal}`
+            // Assign a unique instance name similar to backend logic (T__N), avoiding collisions by scanning siblings
+            const baseNameRaw = (tmplName || newItem.name || 'Item')
+            const baseName = String(baseNameRaw).replace(/__\d+$/, '')
+            const usedSuffixes = new Set()
+            for (const sib of (Array.isArray(listNode.children) ? listNode.children : [])) {
+                const nm = sib && sib.name ? String(sib.name) : ''
+                if (nm === baseName) { usedSuffixes.add(1); continue }
+                const m = nm.startsWith(baseName + '__') ? nm.slice(baseName.length + 2).match(/^(\d+)$/) : null
+                if (m) {
+                    const n = parseInt(m[1], 10)
+                    if (!isNaN(n)) usedSuffixes.add(n)
+                }
+            }
+            let nextN = 1
+            if (usedSuffixes.size > 0) {
+                let max = 0
+                for (const n of usedSuffixes) if (n > max) max = n
+                nextN = max + 1
+            }
+            newItem.name = `${baseName}__${nextN}`
+            try { console.info('[Overseer] Materialize naming:', { baseName, used: Array.from(usedSuffixes).sort((a,b)=>a-b), chosen: nextN, finalName: newItem.name }) } catch(_) {}
             // Set key field value
             if (!newItem.children) newItem.children = []
             let keyChild = newItem.children.find(c => c && c.name === keyField)
@@ -341,6 +372,33 @@ export class OverseerRenderer {
             // Insert into list honoring requested position
             const pos = (options && typeof options.position === 'string') ? options.position.toLowerCase() : 'append'
             if (pos === 'prepend') {
+                // Prior to inserting at the front, freeze existing sibling weight values so reevaluation does not shift them.
+                try {
+                    let frozenCount = 0
+                    for (const sib of (Array.isArray(listNode.children) ? listNode.children : [])) {
+                        if (!sib || !Array.isArray(sib.children)) continue
+                        const weightChild = sib.children.find(c => c && c.name === 'weight')
+                        if (!weightChild) continue
+                        if (!weightChild.parameters) weightChild.parameters = {}
+                        const hasExplicit = weightChild.parameters.value !== undefined
+                        if (hasExplicit) continue // already explicit, skip
+                        // Prefer an existing computed value; fall back to fallback; else skip
+                        const cv = weightChild.parameters._computed_value || weightChild.parameters._computed_fallback || null
+                        if (!cv || typeof cv !== 'object') continue
+                        // Mirror value structure exactly (Float/Integer/String/etc.)
+                        try {
+                            weightChild.parameters.value = JSON.parse(JSON.stringify(cv))
+                            // Mark override so serializer persists it
+                            weightChild.parameters._override_present = { Boolean: true }
+                            frozenCount++
+                        } catch(_) { /* ignore */ }
+                    }
+                    if (frozenCount > 0) {
+                        try { console.info('[Overseer] freeze existing weights before prepend', { count: frozenCount }) } catch(_) {}
+                    } else {
+                        try { console.info('[Overseer] freeze existing weights before prepend: none needed') } catch(_) {}
+                    }
+                } catch(_) { /* best-effort */ }
                 listNode.children.unshift(newItem)
             } else {
                 listNode.children.push(newItem)
@@ -352,9 +410,9 @@ export class OverseerRenderer {
             // Use the actual item name (with instance suffix) for correct path resolution
             const siblings = listNode.children
             // Use the exact instance name (which already contains __N) to avoid ambiguity; still include
-            // an ordinal when multiple siblings coincidentally share the same exact name (rare but safe).
+            // an ordinal when multiple siblings coincidentally share the same exact name (extremely rare given unique suffix selection above).
             const idxNew = siblings.indexOf(newItem)
-            const itemExactName = newItem.name // e.g., WeightRecord__5
+            const itemExactName = newItem.name // e.g., WeightRecord__19
             const itemOrd = siblings.slice(0, idxNew).filter(c => c && c.name === itemExactName).length
             const itemSeg = itemOrd > 0 ? `${itemExactName}#${itemOrd}` : itemExactName
             let realPathArr = listPathArr.concat([itemSeg])
@@ -392,6 +450,34 @@ export class OverseerRenderer {
                 curRef = pick
             }
             const __finalPath = realPathArr.join('/')
+            // Record a direct reference to the newly created leaf target so later edits update exactly this node
+            try {
+                // Attach diagnostic markers for identity tracking
+                const materializeId = `mat_${Date.now()}_${Math.random().toString(36).slice(2)}`
+                try { newItem.__materialize_id = materializeId } catch(_) {}
+                try { curRef.__materialize_id = materializeId + '_leaf' } catch(_) {}
+                // If this appears to be a WeightRecord template with a 'weight' child, ensure it has an explicit starting value so backend reevaluation doesn't cascade-shift others.
+                try {
+                    const isWeightRecord = /weightrecord/i.test(newItem.name || '')
+                    if (isWeightRecord) {
+                        const wLeaf = (newItem.children||[]).find(c => c && c.name === 'weight')
+                        if (wLeaf) {
+                            if (!wLeaf.parameters) wLeaf.parameters = {}
+                            const existingExplicit = wLeaf.parameters.value
+                            if (existingExplicit === undefined) {
+                                const baseVal = wLeaf.parameters._computed_value || wLeaf.parameters._computed_fallback
+                                if (baseVal && typeof baseVal === 'object') {
+                                    try { wLeaf.parameters.value = JSON.parse(JSON.stringify(baseVal)) } catch(_) {}
+                                    wLeaf.parameters._override_present = { Boolean: true }
+                                    console.info('[Overseer] pre-set explicit starting weight value on new item to prevent cascade')
+                                }
+                            }
+                        }
+                    }
+                } catch(_) { /* best-effort */ }
+                this._materializedTargets.set(__finalPath, { itemNode: newItem, leafNode: curRef, ts: Date.now(), materializeId, position: pos })
+                try { console.info('[Overseer] materialize record stored', { path: __finalPath, materializeId, itemName: newItem.name, leafName: curRef?.name }) } catch(_) {}
+            } catch(_) { /* best-effort */ }
             if (DEBUG_MODE) console.debug('[Overseer] _materializePhantomAndComputePath summary', {
                 list: listPathArr.join('/'),
                 template: tmplName,
@@ -401,6 +487,10 @@ export class OverseerRenderer {
                 position: pos,
                 finalPath: __finalPath
             })
+            try {
+                const ordering = (listNode.children||[]).map((c,i)=>({ idx:i, name:c && c.name }))
+                console.info('[Overseer] post-insert list ordering', { list: listPathArr.join('/'), ordering })
+            } catch(_) {}
             return __finalPath
         } catch(_) { return null }
     }
@@ -561,6 +651,29 @@ export class OverseerRenderer {
             }
         } catch (_) { /* no-op */ }
 
+        // Ensure node has a stable uid (for list items and any node we need to target precisely)
+        try {
+            if (!node.__uid) {
+                const existingUid = (() => {
+                    try { const u = node.parameters?._uid; if (u && typeof u === 'object' && u.String !== undefined) return String(u.String) } catch(_) {}
+                    return null
+                })()
+                if (existingUid) {
+                    node.__uid = existingUid
+                } else {
+                    const gen = `uid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+                    if (!node.parameters) node.parameters = {}
+                    node.parameters._uid = { String: gen }
+                    node.__uid = gen
+                }
+                if (!this._uidToNode) this._uidToNode = new Map()
+                this._uidToNode.set(node.__uid, node)
+            } else {
+                if (!this._uidToNode) this._uidToNode = new Map()
+                if (!this._uidToNode.has(node.__uid)) this._uidToNode.set(node.__uid, node)
+            }
+        } catch(_) { /* best-effort */ }
+
         const element = this.createNodeElement(node)
     if (DEBUG_MODE) console.log('Created element:', element)
 
@@ -569,6 +682,7 @@ export class OverseerRenderer {
             try {
                 if (element.dataset) {
                     element.dataset.path = JSON.stringify(Array.isArray(path) ? path : [])
+                    if (node.__uid) element.dataset.uid = node.__uid
                 }
             } catch (_) { /* no-op */ }
 
@@ -3541,12 +3655,20 @@ export class OverseerRenderer {
             } catch (e) {
                 console.warn('Failed to build field path before editing:', e)
             }
-            
+            // Detect if this edit is occurring under a phantom link preview (before we touch DOM text)
+            let isUnderPhantom = false
+            try {
+                let scan = element
+                while (scan && scan !== document.body && !scan.hasAttribute?.('data-link-phantom')) { scan = scan.parentElement }
+                if (scan && scan.hasAttribute && scan.hasAttribute('data-link-phantom')) {
+                    isUnderPhantom = true
+                }
+            } catch(_) {}
+
             const newValue = input.value
-            // Keep showing the previous computed value if a formula was entered/edited
+            // Keep current display as-is; DOM will be updated after materialization/selective update.
             const prevDisplay = element.textContent
             const isFormulaInput = typeof newValue === 'string' && /\$\([\s\S]*\)/.test(newValue.trim())
-            element.textContent = isFormulaInput ? prevDisplay : newValue
             element.style.display = 'inline'
             
             // Safely remove input element
@@ -3557,11 +3679,15 @@ export class OverseerRenderer {
             }
             
             // If this edit is under a phantom link preview, materialize the item first and recompute a real path
+            let materializedRealPath = null
+            // Will hold the link container path (the proxy that hosted the phantom) for targeted refresh after materialization.
+            let linkContainerPathArr = null
             try {
                 let p = element
                 while (p && p !== document.body && !p.hasAttribute?.('data-link-phantom')) { p = p.parentElement }
                 if (p && p.hasAttribute && p.hasAttribute('data-link-phantom')) {
                     const meta = JSON.parse(p.getAttribute('data-link-phantom') || '{}')
+                    try { linkContainerPathArr = JSON.parse(p.dataset.path || '[]') } catch(_) {}
                     // Derive tail segments from the edited element's synthetic path relative to the link container
                     let metaWithTail = meta
                     try {
@@ -3592,8 +3718,9 @@ export class OverseerRenderer {
                         }
                     } catch(_) { /* default to append */ }
                     const realPath = await this._materializePhantomAndComputePath(metaWithTail, { position })
+                    try { console.info('[Overseer] phantom materialized, realPath=', realPath) } catch(_) {}
                     if (DEBUG_MODE) console.debug('[Overseer] Phantom materialized on edit. Computed realPath:', realPath)
-                    if (realPath) { fieldPath = realPath }
+                    if (realPath) { fieldPath = realPath; materializedRealPath = realPath }
                     // After materialization, switch the proxy container from phantom preview to the real target
                     try {
                         p.removeAttribute('data-link-phantom')
@@ -3603,15 +3730,280 @@ export class OverseerRenderer {
                             this.rerenderSubtree(window.app.currentDocument, containerPathArr)
                         }
                     } catch(_) { /* best-effort */ }
+                    // Additionally, re-render the owning list subtree to ensure DOM paths align with the new instance
+                    try {
+                        const listPathArr = Array.isArray(metaWithTail.listPath) ? metaWithTail.listPath : []
+                        if (listPathArr.length > 0) {
+                            try { console.info('[Overseer] refreshing list subtree after materialization at path=', listPathArr.join('/')) } catch(_) {}
+                            this.rerenderSubtree(window.app.currentDocument, listPathArr)
+                        }
+                    } catch(_) { /* best-effort */ }
                 }
             } catch(_) {}
 
             // Update the node value in the document structure (using real path if computed)
             // Instead of using the local node reference, find and update the node in the main document
             let skipElementEvent = false
+            // Optimization/guard: if we just materialized and the target field already equals the edited value,
+            // skip issuing an update to avoid redundant UI churn.
+            try {
+                if (materializedRealPath) {
+                    // Strong guarantee: Prefer a direct update of the newly materialized node immediately
+                    try {
+                        if (this._materializedTargets && this._materializedTargets.has(materializedRealPath)) {
+                            const t = this._materializedTargets.get(materializedRealPath)
+                            if (t && t.leafNode) {
+                                // Capture previous value for change record
+                                let prevVal = null
+                                try { prevVal = this.getNodeValue(t.leafNode) } catch(_) {}
+                                // Verify that the stored leaf belongs to the expected freshly inserted item
+                                try {
+                                    const targetPathArr = materializedRealPath.split('/')
+                                    const listPathArr = targetPathArr.slice(0, -2)
+                                    const itemName = targetPathArr[targetPathArr.length - 2]
+                                    const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
+                                    if (listNode && Array.isArray(listNode.children)) {
+                                        const liveItem = listNode.children.find(ch => ch && ch.name === itemName)
+                                        if (liveItem) {
+                                            const liveLeaf = (liveItem.children||[]).find(ch => ch && ch.name === 'weight') || null
+                                            if (liveLeaf && liveLeaf !== t.leafNode) {
+                                                console.warn('[Overseer] materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
+                                                t.leafNode = liveLeaf
+                                            }
+                                        } else {
+                                            console.warn('[Overseer] could not find live item for materialized path', materializedRealPath)
+                                        }
+                                    }
+                                } catch(_) { /* diagnostics best-effort */ }
+                                this.updateNodeValue(t.leafNode, newValue)
+                                try { console.info('[Overseer] direct update (pre-equality) of materialized target at', materializedRealPath) } catch(_) {}
+                                // Immediately refresh computed values/DOM via selective reevaluation
+                                try {
+                                    const metaTarget = this._materializedTargets.get(materializedRealPath)
+                                    if (metaTarget && metaTarget.position === 'prepend') {
+                                        console.info('[Overseer] skipping selective reevaluation for prepend insertion to prevent cascade')
+                                        // Direct DOM paint via UID (new item should be at dataset.uid = newItem.__uid)
+                                        try {
+                                            const uid = metaTarget.itemNode && metaTarget.itemNode.__uid
+                                            if (uid) {
+                                                const el = document.querySelector(`[data-uid='${uid}']`)
+                                                if (el) {
+                                                    // Find weight field element inside this item
+                                                    let valueHolder = el.querySelector(`[data-path*='${materializedRealPath.split('/').slice(-2).join('/')}'] .field-value`)
+                                                    if (!valueHolder) {
+                                                        // fallback: any descendant with class field-value
+                                                        valueHolder = el.querySelector('.field-value')
+                                                    }
+                                                    if (valueHolder) {
+                                                        valueHolder.textContent = String(newValue)
+                                                        console.info('[Overseer] uid-based paint applied', { uid })
+                                                    }
+                                                }
+                                            }
+                                        } catch(_) { /* best-effort */ }
+                                        // Targeted update: we still need the link container (e.g., SelectedWeightRecord) to reflect new selection.
+                                        // Strategy: pin existing sibling weights (explicit value) then reevaluate only the link container path if available.
+                                        try {
+                                            const targetPathArr = materializedRealPath.split('/')
+                                            const listPathArr = targetPathArr.slice(0, -2)
+                                            const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
+                                            if (listNode && Array.isArray(listNode.children)) {
+                                                for (const sib of listNode.children) {
+                                                    if (!sib || !Array.isArray(sib.children)) continue
+                                                    const wLeaf = sib.children.find(c => c && c.name === 'weight')
+                                                    if (!wLeaf) continue
+                                                    if (!wLeaf.parameters) wLeaf.parameters = {}
+                                                    if (wLeaf.parameters.value === undefined) {
+                                                        const curVal = wLeaf.parameters._computed_value || wLeaf.parameters._computed_fallback
+                                                        if (curVal && typeof curVal === 'object') {
+                                                            try { wLeaf.parameters.value = JSON.parse(JSON.stringify(curVal)) } catch(_) {}
+                                                            wLeaf.parameters._override_present = { Boolean: true }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } catch(_) { /* best-effort pin */ }
+                                        if (linkContainerPathArr) {
+                                            try {
+                                                this.rerenderSubtree(window.app.currentDocument, linkContainerPathArr)
+                                                console.info('[Overseer] link container subtree rerendered (no reevaluation) after prepend materialization')
+                                            } catch(e) { console.warn('[Overseer] link container rerender failed', e) }
+                                        }
+                                    } else if (window.app && typeof window.app.reevaluateDocumentSelective === 'function') {
+                                        await window.app.reevaluateDocumentSelective([materializedRealPath], [{ path: materializedRealPath, oldValue: prevVal, newValue }])
+                                    }
+                                } catch(_) { /* best-effort */ }
+                                // Ensure the owning list subtree is in sync in case DOM nodes were not yet present
+                                try {
+                                    const listPathArr = materializedRealPath.split('/').slice(0, -2)
+                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
+                                } catch(_) { /* ignore */ }
+                                skipElementEvent = true
+                                try { this._materializedTargets.delete(materializedRealPath) } catch(_) {}
+                            }
+                        }
+                    } catch(_) { /* fall through to gates below if direct route not available */ }
+                    try { console.info('[Overseer] materialized equality gate for', materializedRealPath) } catch(_) {}
+                    // First, compare against what the user actually saw (prevDisplay). If equal, skip.
+                    const prevStr = String(prevDisplay ?? '')
+                    const newStrDirect = String(newValue ?? '')
+                    const eqNum = (() => {
+                        // Use parseFloat to tolerate suffixes like ` kg` in display
+                        const a = parseFloat(prevStr)
+                        const b = parseFloat(newStrDirect)
+                        return !isNaN(a) && !isNaN(b) && Math.abs(a - b) < 1e-9
+                    })()
+                    try { console.info('[Overseer] phantom equality check: prev=', prevStr, 'input=', newStrDirect, 'eqNum=', eqNum) } catch(_) {}
+                    if (prevStr === newStrDirect || eqNum) {
+                        try { console.info('[Overseer] skip update: display already shows value at', materializedRealPath, 'value=', newStrDirect) } catch(_) {}
+                        try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
+                        return
+                    }
+                    const arr = materializedRealPath.split('/')
+                    const nodeAtTarget = this.findNodeByPath(window.app.currentDocument, arr)
+                    if (nodeAtTarget) {
+                        const currentStr = String(this.getNodeValue(nodeAtTarget) ?? '')
+                        const newStr = String(newValue ?? '')
+                        const eqNum2 = (() => { const a=parseFloat(currentStr), b=parseFloat(newStr); return !isNaN(a)&&!isNaN(b)&&Math.abs(a-b)<1e-9 })()
+                        try { console.info('[Overseer] phantom doc-value equality check: current=', currentStr, 'input=', newStr, 'eqNum=', eqNum2) } catch(_) {}
+                        if (currentStr === newStr || eqNum2) {
+                            try { console.info('[Overseer] skip update: value unchanged at', materializedRealPath, 'value=', newStr) } catch(_) {}
+                            // Paint the DOM immediately so the user sees the updated value on the new instance
+                            try {
+                                const targetPathArr = materializedRealPath.split('/')
+                                const selector = `[data-path='${JSON.stringify(targetPathArr)}']`
+                                let targetEl = null
+                                // Scope to owning list to avoid touching stale duplicates
+                                try {
+                                    const listPathArr = targetPathArr.slice(0, -2)
+                                    const listSelector = `[data-path='${JSON.stringify(listPathArr)}']`
+                                    const listEl = document.querySelector(listSelector)
+                                    if (listEl) targetEl = listEl.querySelector(selector)
+                                } catch(_) {}
+                                if (!targetEl) targetEl = document.querySelector(selector)
+                                if (targetEl) {
+                                    const holder = targetEl.querySelector('.field-value, .text-content, .overseer-list-value') || targetEl
+                                    // Try to respect numeric formatting (precision, prefix, suffix)
+                                    let display = String(newStr)
+                                    try {
+                                        const nodeAt = this.findNodeByPath(window.app.currentDocument, targetPathArr)
+                                        const pref = String(this.getParameterValue(nodeAt, 'prefix') ?? '')
+                                        const suf = String(this.getParameterValue(nodeAt, 'suffix') ?? '')
+                                        const precRaw = this.getParameterValue(nodeAt, 'precision')
+                                        let body = newStr
+                                        const asNum = parseFloat(newStr)
+                                        if (!isNaN(asNum)) {
+                                            const p = (precRaw === null || precRaw === undefined) ? undefined : parseInt(precRaw, 10)
+                                            if (!isNaN(p) && p >= 0) body = asNum.toFixed(p)
+                                            else body = String(asNum)
+                                        }
+                                        display = `${pref}${body}${suf}`
+                                    } catch(_) { /* fallback to raw newStr */ }
+                                    holder.textContent = display
+                                } else {
+                                    // As a fallback, re-render the owning list subtree
+                                    try {
+                                        const listPathArr = materializedRealPath.split('/').slice(0, -2)
+                                        this.rerenderSubtree(window.app.currentDocument, listPathArr)
+                                    } catch(_) {}
+                                }
+                            } catch(_) { /* best-effort paint */ }
+                            // We still want to mark the document modified minimally so save picks up the new instance.
+                            try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
+                            return
+                        }
+                    }
+                }
+            } catch(_) {}
             if (fieldPath && window.app && window.app.currentDocument) {
                 if (DEBUG_MODE) console.log('🔧 Updating node in main document at path:', fieldPath, 'with value:', newValue)
-                const success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
+                // If we have a materialized path, check the rendered element first; if it already shows the same value, skip
+                try {
+                    if (materializedRealPath && typeof newValue === 'string') {
+                        const targetPathArr = materializedRealPath.split('/')
+                        const sel = `[data-path='${JSON.stringify(targetPathArr)}']`
+                        const el = document.querySelector(sel)
+                        if (el) {
+                            const holder = el.querySelector('.field-value, .text-content, .overseer-list-value') || el
+                            const shownRaw = holder ? String(holder.textContent ?? '') : ''
+                            // Try to account for numeric fields that render with prefix/suffix (e.g., kg)
+                            let prefix = '', suffix = ''
+                            try {
+                                const n = this.findNodeByPath(window.app.currentDocument, targetPathArr)
+                                prefix = String(this.getParameterValue(n, 'prefix') ?? '')
+                                suffix = String(this.getParameterValue(n, 'suffix') ?? '')
+                            } catch(_) {}
+                            const stripAffixes = (s) => {
+                                let out = String(s || '')
+                                if (prefix && out.startsWith(prefix)) out = out.slice(prefix.length)
+                                if (suffix && out.endsWith(suffix)) out = out.slice(0, -suffix.length)
+                                return out.trim()
+                            }
+                            const shown = stripAffixes(shownRaw)
+                            const want = String(newValue ?? '')
+                            const a = parseFloat(shown)
+                            const b = parseFloat(want)
+                            const eqNum3 = (!isNaN(a) && !isNaN(b) && Math.abs(a - b) < 1e-9)
+                            try { console.info('[Overseer] phantom DOM equality check:', { shown: shownRaw, shownStripped: shown, input: want, eqNum: eqNum3 }) } catch(_) {}
+                            if (shown === want || eqNum3) {
+                                try { console.info('[Overseer] skip update: DOM already shows intended value at', materializedRealPath, 'value=', want) } catch(_) {}
+                                try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
+                                return
+                            }
+                        }
+                    }
+                } catch(_) {}
+                // Prefer a direct update of the newly materialized target (exact node reference) to avoid any mis-targeting
+                let success = false
+                let usedDirectMaterializedUpdate = false
+                try {
+                    if (materializedRealPath && this._materializedTargets && this._materializedTargets.has(materializedRealPath)) {
+                        const t = this._materializedTargets.get(materializedRealPath)
+                        if (t && t.leafNode) {
+                            try {
+                                let prevVal = null
+                                try { prevVal = this.getNodeValue(t.leafNode) } catch(_) {}
+                                // Re-verify pointer integrity before second-stage direct update
+                                try {
+                                    const targetPathArr = materializedRealPath.split('/')
+                                    const listPathArr = targetPathArr.slice(0, -2)
+                                    const itemName = targetPathArr[targetPathArr.length - 2]
+                                    const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
+                                    if (listNode && Array.isArray(listNode.children)) {
+                                        const liveItem = listNode.children.find(ch => ch && ch.name === itemName)
+                                        if (liveItem) {
+                                            const liveLeaf = (liveItem.children||[]).find(ch => ch && ch.name === 'weight') || null
+                                            if (liveLeaf && liveLeaf !== t.leafNode) {
+                                                console.warn('[Overseer] late materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
+                                                t.leafNode = liveLeaf
+                                            }
+                                        }
+                                    }
+                                } catch(_) { /* best-effort */ }
+                                this.updateNodeValue(t.leafNode, newValue)
+                                success = true
+                                usedDirectMaterializedUpdate = true
+                                try { console.info('[Overseer] direct update of materialized target at', materializedRealPath) } catch(_) {}
+                                // Refresh computed values/DOM
+                                try {
+                                    if (window.app && typeof window.app.reevaluateDocumentSelective === 'function') {
+                                        await window.app.reevaluateDocumentSelective([materializedRealPath], [{ path: materializedRealPath, oldValue: prevVal, newValue }])
+                                    }
+                                } catch(_) { /* best-effort */ }
+                                try {
+                                    const listPathArr = materializedRealPath.split('/').slice(0, -2)
+                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
+                                } catch(_) { /* ignore */ }
+                            } catch(_) {}
+                        }
+                        // Clean up the entry after use
+                        try { this._materializedTargets.delete(materializedRealPath) } catch(_) {}
+                    }
+                } catch(_) { /* fall back to path-based below */ }
+                if (!success) {
+                    try { console.info('[Overseer] update path:', fieldPath, 'newValue=', newValue) } catch(_) {}
+                    success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
+                }
                 if (!success) {
                     console.warn('⚠️ Failed to update node by path, attempting loose path resolution')
                     try {
@@ -3683,6 +4075,52 @@ export class OverseerRenderer {
                         } else {
                             if (DEBUG_MODE) console.log('🎯 Skipping element event for successful selective backend update (prevents chart refresh)')
                         }
+                        skipElementEvent = true
+                    }
+                    // If we just materialized a phantom, ensure the correct instance element reflects the new value immediately
+                    try {
+                        if (materializedRealPath) {
+                            const targetPathArr = materializedRealPath.split('/')
+                            const selector = `[data-path='${JSON.stringify(targetPathArr)}']`
+                            // Try to scope the search within the owning list container to avoid stale duplicates
+                            let targetEl = null
+                            try {
+                                const listPathArr = targetPathArr.slice(0, -2)
+                                const listSelector = `[data-path='${JSON.stringify(listPathArr)}']`
+                                const listEl = document.querySelector(listSelector)
+                                if (listEl) {
+                                    // Remove any stray duplicates for the same path outside this list container
+                                    const allMatches = Array.from(document.querySelectorAll(selector))
+                                    for (const m of allMatches) {
+                                        if (!listEl.contains(m)) {
+                                            try { m.remove() } catch(_) {}
+                                        }
+                                    }
+                                    targetEl = listEl.querySelector(selector)
+                                }
+                            } catch(_) { /* ignore; fall back to global */ }
+                            if (!targetEl) targetEl = document.querySelector(selector)
+                            if (targetEl) {
+                                const holder = targetEl.querySelector('.field-value, .text-content, .overseer-list-value') || targetEl
+                                const nv = (newValue == null) ? '' : String(newValue)
+                                if (holder.classList && holder.classList.contains('text-content') && holder.classList.contains('markdown-enabled')) {
+                                    holder.textContent = nv
+                                } else {
+                                    holder.textContent = nv
+                                }
+                                if (DEBUG_MODE) console.debug('[Overseer] Painted materialized field at', materializedRealPath)
+                            } else {
+                                if (DEBUG_MODE) console.debug('[Overseer] No DOM element yet for', materializedRealPath, '— refreshing list subtree again')
+                                // Last resort: refresh owning list subtree again
+                                try {
+                                    const listPathArr = materializedRealPath.split('/').slice(0, -2) // .../WeightRecord__N/field -> take list path
+                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
+                                } catch(_) {}
+                            }
+                        }
+                    } catch(_) {}
+                    // If we used a direct update for a materialized target, suppress subsequent event emission to avoid unintended side-effects
+                    if (usedDirectMaterializedUpdate) {
                         skipElementEvent = true
                     }
                 } else {
@@ -3964,16 +4402,6 @@ export class OverseerRenderer {
                 nodesArg = nodesArg.filter(n => n && typeof n === 'object' && !Array.isArray(n))
             }
         }
-        // Additional diagnostics: detect any boolean-valued parameters at root that might be mistaken for nodes
-        try {
-            const rootTypes = Array.isArray(nodesArg) ? nodesArg.map((r,i)=>({i, name:r?.name, type:typeof r, hasChildren:Array.isArray(r?.children), paramKeys: r && r.parameters? Object.keys(r.parameters).slice(0,8):[] })) : []
-            if (DEBUG_MODE) console.debug('[Overseer] emitEvent root snapshot', rootTypes)
-            // Hard failure path: if nodesArg itself is a boolean (unexpected)
-            if (typeof nodesArg === 'boolean') {
-                console.error('[Overseer] FATAL: nodesArg is boolean before invoke, aborting event dispatch')
-                return
-            }
-        } catch(_) {}
         // Normalize raw boolean parameter values into OverseerValue objects to satisfy serde expectations
         try {
             const wrapBooleanParams = (node) => {
@@ -4499,20 +4927,16 @@ export class OverseerRenderer {
      * Update DOM for cascade fields that were changed by backend processing
      */
     updateDocumentForCascadeFields(oldDocument, newDocument, userChangedFields, cascadeFields = null) {
-    if (DEBUG_MODE) console.log('🔄 Updating DOM for cascade fields after backend processing')
-        
+        if (DEBUG_MODE) console.log('🔄 Updating DOM for cascade fields after backend processing')
         // Use provided cascade fields if available, otherwise compute them
         let fieldsToUpdate = cascadeFields
         if (!fieldsToUpdate) {
             // Find all fields that changed between old and new documents
             const allChangedFields = this.findAllChangedFields(oldDocument, newDocument, '')
-            
             // Filter out user-changed fields to get only cascade fields
             fieldsToUpdate = allChangedFields.filter(field => !userChangedFields.includes(field))
         }
-        
-    if (DEBUG_MODE) console.log('🎯 Cascade fields to update:', fieldsToUpdate)
-        
+        if (DEBUG_MODE) console.log('🎯 Cascade fields to update:', fieldsToUpdate)
         // Update DOM for each cascade field
         for (let fieldPath of fieldsToUpdate) {
             // If the change points to a nested property like '/value', repaint the node element itself
@@ -4525,29 +4949,6 @@ export class OverseerRenderer {
                 console.warn(`Failed to update cascade field ${fieldPath}:`, e)
             }
         }
-    }
-
-    /**
-     * Find all fields that have different computed values between two documents
-     */
-    findAllChangedFields(node1, node2, currentPath) {
-        const changedFields = []
-        // Support both node objects and top-level document arrays
-        const isArr1 = Array.isArray(node1)
-        const isArr2 = Array.isArray(node2)
-        if (isArr1 && isArr2) {
-            const len = Math.min(node1.length || 0, node2.length || 0)
-            for (let i = 0; i < len; i++) {
-                const a = node1[i]
-                const b = node2[i]
-                if (!a || !b) continue
-                const childPath = currentPath ? `${currentPath}/${a.name}` : (a.name || '')
-                this.collectChangedFields(a, b, childPath, changedFields)
-            }
-        } else {
-            this.collectChangedFields(node1, node2, currentPath, changedFields)
-        }
-        return changedFields
     }
 
     /**
