@@ -323,7 +323,7 @@ export class OverseerRenderer {
                 nextN = max + 1
             }
             newItem.name = `${baseName}__${nextN}`
-            try { console.info('[Overseer] Materialize naming:', { baseName, used: Array.from(usedSuffixes).sort((a,b)=>a-b), chosen: nextN, finalName: newItem.name }) } catch(_) {}
+            
             // Set key field value
             if (!newItem.children) newItem.children = []
             let keyChild = newItem.children.find(c => c && c.name === keyField)
@@ -394,9 +394,9 @@ export class OverseerRenderer {
                         } catch(_) { /* ignore */ }
                     }
                     if (frozenCount > 0) {
-                        try { console.info('[Overseer] freeze existing weights before prepend', { count: frozenCount }) } catch(_) {}
+                        
                     } else {
-                        try { console.info('[Overseer] freeze existing weights before prepend: none needed') } catch(_) {}
+                        
                     }
                 } catch(_) { /* best-effort */ }
                 listNode.children.unshift(newItem)
@@ -469,14 +469,14 @@ export class OverseerRenderer {
                                 if (baseVal && typeof baseVal === 'object') {
                                     try { wLeaf.parameters.value = JSON.parse(JSON.stringify(baseVal)) } catch(_) {}
                                     wLeaf.parameters._override_present = { Boolean: true }
-                                    console.info('[Overseer] pre-set explicit starting weight value on new item to prevent cascade')
+                                    
                                 }
                             }
                         }
                     }
                 } catch(_) { /* best-effort */ }
                 this._materializedTargets.set(__finalPath, { itemNode: newItem, leafNode: curRef, ts: Date.now(), materializeId, position: pos })
-                try { console.info('[Overseer] materialize record stored', { path: __finalPath, materializeId, itemName: newItem.name, leafName: curRef?.name }) } catch(_) {}
+                
             } catch(_) { /* best-effort */ }
             if (DEBUG_MODE) console.debug('[Overseer] _materializePhantomAndComputePath summary', {
                 list: listPathArr.join('/'),
@@ -489,7 +489,7 @@ export class OverseerRenderer {
             })
             try {
                 const ordering = (listNode.children||[]).map((c,i)=>({ idx:i, name:c && c.name }))
-                console.info('[Overseer] post-insert list ordering', { list: listPathArr.join('/'), ordering })
+                
             } catch(_) {}
             return __finalPath
         } catch(_) { return null }
@@ -554,10 +554,12 @@ export class OverseerRenderer {
 
     renderDocument(overseerDocument) {
         if (DEBUG_MODE) {
-            console.log('Rendering document:', overseerDocument)
-            console.log('Document type:', typeof overseerDocument)
-            console.log('Document is array:', Array.isArray(overseerDocument))
-            console.log('Document length:', overseerDocument?.length)
+            try {
+                console.log('Rendering document:', overseerDocument)
+                console.log('Document type:', typeof overseerDocument)
+                console.log('Document is array:', Array.isArray(overseerDocument))
+                console.log('Document length:', overseerDocument?.length)
+            } catch(_) {}
         }
 
         // Clear previous content
@@ -625,7 +627,7 @@ export class OverseerRenderer {
             // Single root node
             this.renderNode(overseerDocument, this.contentDisplay, {}, [overseerDocument.name || overseerDocument.node_type || overseerDocument.type || 'root'])
         } else {
-            console.warn('Unexpected document format:', overseerDocument)
+            if (DEBUG_MODE) console.warn('Unexpected document format:', overseerDocument)
             this.contentDisplay.innerHTML += '<p>Unexpected document format</p>'
         }
 
@@ -636,7 +638,7 @@ export class OverseerRenderer {
     if (DEBUG_MODE) console.log('renderNode called with:', node, 'container:', container)
 
         if (!node || typeof node !== 'object') {
-            console.warn('Invalid node:', node)
+            if (DEBUG_MODE) console.warn('Invalid node:', node)
             return
         }
 
@@ -687,10 +689,7 @@ export class OverseerRenderer {
             } catch (_) { /* no-op */ }
 
             // Guard against null/undefined container (can occur during selective patch attempts when DOM node not found)
-            if (!container) {
-                if (DEBUG_MODE) console.warn('renderNode: null container for path', path, 'node', node)
-                return
-            }
+            if (!container) { if (DEBUG_MODE) console.warn('renderNode: null container for path', path, 'node', node); return }
             container.appendChild(element)
             if (DEBUG_MODE) console.log('Appended element to container')
 
@@ -1203,9 +1202,9 @@ export class OverseerRenderer {
         let nodeType = node.node_type || node.type || node.name || 'div'
 
         if (DEBUG_MODE) {
-            console.log('[DEBUG] createNodeElement:', { nodeType, node });
+            if (DEBUG_MODE) console.log('[DEBUG] createNodeElement:', { nodeType, node });
             if (node.children && Array.isArray(node.children)) {
-                console.log(`[DEBUG] Node ${nodeType} has ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
+                if (DEBUG_MODE) console.log(`[DEBUG] Node ${nodeType} has ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
             }
         }
 
@@ -2249,7 +2248,7 @@ export class OverseerRenderer {
                     const fieldPath = this.buildNodePath(container).join('/')
                     window.app.reevaluateDocumentSelective([fieldPath])
                 } catch (e) {
-                    console.warn('Failed to build field path, falling back to full update:', e)
+                    if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
                     window.app.reevaluateDocumentSelective([])
                 }
             }
@@ -2348,7 +2347,7 @@ export class OverseerRenderer {
                     const fieldPath = this.buildNodePath(container).join('/')
                     window.app.reevaluateDocumentSelective([fieldPath])
                 } catch (e) {
-                    console.warn('Failed to build field path, falling back to full update:', e)
+                    if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
                     window.app.reevaluateDocumentSelective([])
                 }
             }
@@ -3653,7 +3652,7 @@ export class OverseerRenderer {
             try {
                 fieldPath = this.buildNodePath(element).join('/')
             } catch (e) {
-                console.warn('Failed to build field path before editing:', e)
+                if (DEBUG_MODE) console.warn('Failed to build field path before editing:', e)
             }
             // Detect if this edit is occurring under a phantom link preview (before we touch DOM text)
             let isUnderPhantom = false
@@ -3675,7 +3674,7 @@ export class OverseerRenderer {
             try {
                 input.remove()
             } catch (e) {
-                console.warn('Input element already removed:', e)
+                if (DEBUG_MODE) console.warn('Input element already removed:', e)
             }
             
             // If this edit is under a phantom link preview, materialize the item first and recompute a real path
@@ -3718,7 +3717,7 @@ export class OverseerRenderer {
                         }
                     } catch(_) { /* default to append */ }
                     const realPath = await this._materializePhantomAndComputePath(metaWithTail, { position })
-                    try { console.info('[Overseer] phantom materialized, realPath=', realPath) } catch(_) {}
+                    
                     if (DEBUG_MODE) console.debug('[Overseer] Phantom materialized on edit. Computed realPath:', realPath)
                     if (realPath) { fieldPath = realPath; materializedRealPath = realPath }
                     // After materialization, switch the proxy container from phantom preview to the real target
@@ -3734,7 +3733,7 @@ export class OverseerRenderer {
                     try {
                         const listPathArr = Array.isArray(metaWithTail.listPath) ? metaWithTail.listPath : []
                         if (listPathArr.length > 0) {
-                            try { console.info('[Overseer] refreshing list subtree after materialization at path=', listPathArr.join('/')) } catch(_) {}
+                            
                             this.rerenderSubtree(window.app.currentDocument, listPathArr)
                         }
                     } catch(_) { /* best-effort */ }
@@ -3767,21 +3766,21 @@ export class OverseerRenderer {
                                         if (liveItem) {
                                             const liveLeaf = (liveItem.children||[]).find(ch => ch && ch.name === 'weight') || null
                                             if (liveLeaf && liveLeaf !== t.leafNode) {
-                                                console.warn('[Overseer] materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
+                                                if (DEBUG_MODE) console.warn('[Overseer] materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
                                                 t.leafNode = liveLeaf
                                             }
                                         } else {
-                                            console.warn('[Overseer] could not find live item for materialized path', materializedRealPath)
+                                            if (DEBUG_MODE) console.warn('[Overseer] could not find live item for materialized path', materializedRealPath)
                                         }
                                     }
                                 } catch(_) { /* diagnostics best-effort */ }
                                 this.updateNodeValue(t.leafNode, newValue)
-                                try { console.info('[Overseer] direct update (pre-equality) of materialized target at', materializedRealPath) } catch(_) {}
+                                
                                 // Immediately refresh computed values/DOM via selective reevaluation
                                 try {
                                     const metaTarget = this._materializedTargets.get(materializedRealPath)
                                     if (metaTarget && metaTarget.position === 'prepend') {
-                                        console.info('[Overseer] skipping selective reevaluation for prepend insertion to prevent cascade')
+                                        
                                         // Direct DOM paint via UID (new item should be at dataset.uid = newItem.__uid)
                                         try {
                                             const uid = metaTarget.itemNode && metaTarget.itemNode.__uid
@@ -3796,7 +3795,7 @@ export class OverseerRenderer {
                                                     }
                                                     if (valueHolder) {
                                                         valueHolder.textContent = String(newValue)
-                                                        console.info('[Overseer] uid-based paint applied', { uid })
+                                                        
                                                     }
                                                 }
                                             }
@@ -3826,7 +3825,7 @@ export class OverseerRenderer {
                                         if (linkContainerPathArr) {
                                             try {
                                                 this.rerenderSubtree(window.app.currentDocument, linkContainerPathArr)
-                                                console.info('[Overseer] link container subtree rerendered (no reevaluation) after prepend materialization')
+                                                
                                             } catch(e) { console.warn('[Overseer] link container rerender failed', e) }
                                         }
                                     } else if (window.app && typeof window.app.reevaluateDocumentSelective === 'function') {
@@ -3843,7 +3842,7 @@ export class OverseerRenderer {
                             }
                         }
                     } catch(_) { /* fall through to gates below if direct route not available */ }
-                    try { console.info('[Overseer] materialized equality gate for', materializedRealPath) } catch(_) {}
+                    
                     // First, compare against what the user actually saw (prevDisplay). If equal, skip.
                     const prevStr = String(prevDisplay ?? '')
                     const newStrDirect = String(newValue ?? '')
@@ -3853,9 +3852,9 @@ export class OverseerRenderer {
                         const b = parseFloat(newStrDirect)
                         return !isNaN(a) && !isNaN(b) && Math.abs(a - b) < 1e-9
                     })()
-                    try { console.info('[Overseer] phantom equality check: prev=', prevStr, 'input=', newStrDirect, 'eqNum=', eqNum) } catch(_) {}
+                    
                     if (prevStr === newStrDirect || eqNum) {
-                        try { console.info('[Overseer] skip update: display already shows value at', materializedRealPath, 'value=', newStrDirect) } catch(_) {}
+                        
                         try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
                         return
                     }
@@ -3865,9 +3864,9 @@ export class OverseerRenderer {
                         const currentStr = String(this.getNodeValue(nodeAtTarget) ?? '')
                         const newStr = String(newValue ?? '')
                         const eqNum2 = (() => { const a=parseFloat(currentStr), b=parseFloat(newStr); return !isNaN(a)&&!isNaN(b)&&Math.abs(a-b)<1e-9 })()
-                        try { console.info('[Overseer] phantom doc-value equality check: current=', currentStr, 'input=', newStr, 'eqNum=', eqNum2) } catch(_) {}
+                        
                         if (currentStr === newStr || eqNum2) {
-                            try { console.info('[Overseer] skip update: value unchanged at', materializedRealPath, 'value=', newStr) } catch(_) {}
+                            
                             // Paint the DOM immediately so the user sees the updated value on the new instance
                             try {
                                 const targetPathArr = materializedRealPath.split('/')
@@ -3944,9 +3943,9 @@ export class OverseerRenderer {
                             const a = parseFloat(shown)
                             const b = parseFloat(want)
                             const eqNum3 = (!isNaN(a) && !isNaN(b) && Math.abs(a - b) < 1e-9)
-                            try { console.info('[Overseer] phantom DOM equality check:', { shown: shownRaw, shownStripped: shown, input: want, eqNum: eqNum3 }) } catch(_) {}
+                            
                             if (shown === want || eqNum3) {
-                                try { console.info('[Overseer] skip update: DOM already shows intended value at', materializedRealPath, 'value=', want) } catch(_) {}
+                                
                                 try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
                                 return
                             }
@@ -3974,7 +3973,7 @@ export class OverseerRenderer {
                                         if (liveItem) {
                                             const liveLeaf = (liveItem.children||[]).find(ch => ch && ch.name === 'weight') || null
                                             if (liveLeaf && liveLeaf !== t.leafNode) {
-                                                console.warn('[Overseer] late materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
+                                                if (DEBUG_MODE) console.warn('[Overseer] late materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
                                                 t.leafNode = liveLeaf
                                             }
                                         }
@@ -3983,7 +3982,7 @@ export class OverseerRenderer {
                                 this.updateNodeValue(t.leafNode, newValue)
                                 success = true
                                 usedDirectMaterializedUpdate = true
-                                try { console.info('[Overseer] direct update of materialized target at', materializedRealPath) } catch(_) {}
+                                
                                 // Refresh computed values/DOM
                                 try {
                                     if (window.app && typeof window.app.reevaluateDocumentSelective === 'function') {
@@ -4001,11 +4000,11 @@ export class OverseerRenderer {
                     }
                 } catch(_) { /* fall back to path-based below */ }
                 if (!success) {
-                    try { console.info('[Overseer] update path:', fieldPath, 'newValue=', newValue) } catch(_) {}
+                    
                     success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
                 }
                 if (!success) {
-                    console.warn('⚠️ Failed to update node by path, attempting loose path resolution')
+                    if (DEBUG_MODE) console.warn('⚠️ Failed to update node by path, attempting loose path resolution')
                     try {
                         const targetNode = this.resolveNodeByPathLoose(window.app.currentDocument, fieldPath)
                         if (targetNode) {
@@ -4019,7 +4018,7 @@ export class OverseerRenderer {
                                 if (alt) {
                                     this.updateNodeValue(alt, newValue)
                                 } else {
-                                    console.warn('⚠️ Could not resolve target node via any resolver; falling back to local node update')
+                                    if (DEBUG_MODE) console.warn('⚠️ Could not resolve target node via any resolver; falling back to local node update')
                                     this.updateNodeValue(node, newValue)
                                 }
                             } catch (_) {
@@ -4124,7 +4123,7 @@ export class OverseerRenderer {
                         skipElementEvent = true
                     }
                 } else {
-                    console.warn('No field path available, falling back to full update')
+                    if (DEBUG_MODE) console.warn('No field path available, falling back to full update')
                     await window.app.reevaluateDocumentSelective([])
                 }
             }
@@ -4151,7 +4150,7 @@ export class OverseerRenderer {
                 try {
                     input.remove()
                 } catch (e) {
-                    console.warn('Input element already removed:', e)
+                    if (DEBUG_MODE) console.warn('Input element already removed:', e)
                 }
             }
         })
@@ -4335,7 +4334,7 @@ export class OverseerRenderer {
                         const fieldPath = this.buildNodePath(element).join('/')
                         window.app.reevaluateDocumentSelective([fieldPath])
                     } catch (e) {
-                        console.warn('Failed to build field path, falling back to full update:', e)
+                        if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
                         window.app.reevaluateDocumentSelective([])
                     }
                 }
@@ -4398,7 +4397,7 @@ export class OverseerRenderer {
                 if (!n || typeof n !== 'object' || Array.isArray(n)) invalids.push({ index: i, type: typeof n, value: n })
             }
             if (invalids.length > 0) {
-                try { console.warn('[Overseer] Filtering invalid root nodes before event invoke', invalids) } catch(_) {}
+                try { if (DEBUG_MODE) console.warn('[Overseer] Filtering invalid root nodes before event invoke', invalids) } catch(_) {}
                 nodesArg = nodesArg.filter(n => n && typeof n === 'object' && !Array.isArray(n))
             }
         }
@@ -4546,7 +4545,7 @@ export class OverseerRenderer {
                 }
 
                 if (!nextNode) {
-                    console.warn('❌ Could not find node at path:', fieldPath, 'missing:', part)
+                    if (DEBUG_MODE) console.warn('❌ Could not find node at path:', fieldPath, 'missing:', part)
                     return false
                 }
 
@@ -4563,11 +4562,11 @@ export class OverseerRenderer {
                 this.updateNodeValue(targetNode, newValue)
                 return true
             } else {
-                console.warn('❌ Target node not found at path:', fieldPath)
+                if (DEBUG_MODE) console.warn('❌ Target node not found at path:', fieldPath)
                 return false
             }
         } catch (e) {
-            console.warn('❌ Error updating node by path:', e)
+                console.warn('❌ Error updating node by path:', e)
             return false
         }
     }
@@ -4936,7 +4935,7 @@ export class OverseerRenderer {
             // Filter out user-changed fields to get only cascade fields
             fieldsToUpdate = allChangedFields.filter(field => !userChangedFields.includes(field))
         }
-        if (DEBUG_MODE) console.log('🎯 Cascade fields to update:', fieldsToUpdate)
+    if (DEBUG_MODE) console.log('🎯 Cascade fields to update:', fieldsToUpdate)
         // Update DOM for each cascade field
         for (let fieldPath of fieldsToUpdate) {
             // If the change points to a nested property like '/value', repaint the node element itself
@@ -4946,7 +4945,7 @@ export class OverseerRenderer {
             try {
                 this.updateSingleFieldInDOM(oldDocument, newDocument, fieldPath)
             } catch (e) {
-                console.warn(`Failed to update cascade field ${fieldPath}:`, e)
+                if (DEBUG_MODE) console.warn(`Failed to update cascade field ${fieldPath}:`, e)
             }
         }
     }
@@ -5019,7 +5018,7 @@ export class OverseerRenderer {
                     }
                 }
             } catch (e) {
-                console.warn(`Failed to update element for ${fieldPath}:`, e)
+                if (DEBUG_MODE) console.warn(`Failed to update element for ${fieldPath}:`, e)
             }
         }
     }
@@ -5119,7 +5118,7 @@ export class OverseerRenderer {
                     }
                 }
             } catch (e) {
-                console.warn('Error processing element for selective update:', e)
+                if (DEBUG_MODE) console.warn('Error processing element for selective update:', e)
             }
         }
     }
@@ -5291,7 +5290,7 @@ export class OverseerRenderer {
             
             return true
         } catch (error) {
-            console.warn('Failed to update single element:', error)
+            if (DEBUG_MODE) console.warn('Failed to update single element:', error)
             return false
         }
     }

@@ -222,7 +222,7 @@ export class OverseerApp {
                             for (const child of node.children || []) {
                                 if (child.node_type === 'plot') {
                                     const computedSeries = child.parameters?._computed_series
-                                    console.log(`DEBUG: Plot ${child.name} _computed_series:`, 
+                                    if (DEBUG_MODE) console.log(`DEBUG: Plot ${child.name} _computed_series:`, 
                                         computedSeries ? (typeof computedSeries === 'string' ? computedSeries.substring(0, 100) + '...' : computedSeries) : 'null')
                                 }
                             }
@@ -863,8 +863,8 @@ tab Main {
                         const n = this.getNodeByPath(this.currentDocument, p)
                         if (n) ancestors.push({ path:p, name:n.name, transparent: !!n.is_hierarchy_transparent, type: n.node_type||n.type })
                     }
-                    console.log('[DIAG] Edit path', editPath, 'ancestors:', ancestors)
-                    if (node) console.log('[DIAG] Node params before selective:', JSON.stringify(node.parameters||{}))
+                    if (DEBUG_MODE) console.log('[DIAG] Edit path', editPath, 'ancestors:', ancestors)
+                    if (DEBUG_MODE && node) console.log('[DIAG] Node params before selective:', JSON.stringify(node.parameters||{}))
                 } catch(_) {}
             }
             if (fieldChanges.length > 0) {
