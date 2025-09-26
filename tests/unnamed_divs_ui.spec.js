@@ -78,7 +78,7 @@ function buildDoc_withUnnamedWrapperAndLabel(){
     { name:'Root', node_type:'div', parameters:{}, children:[
       { name:'T', node_type:'div', parameters:{ hidden:{ Boolean:true } }, children:[
         { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
-          { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 } }, children:[], is_hierarchy_transparent:false },
+          { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
         ]},
         { name:'B', node_type:'int', parameters:{ value:{ Integer:2 } }, children:[], is_hierarchy_transparent:false },
         { name:'C', node_type:'int', parameters:{ value:{ Formula:'A*B' } }, children:[], is_hierarchy_transparent:false },
@@ -86,9 +86,9 @@ function buildDoc_withUnnamedWrapperAndLabel(){
       { name:'L', node_type:'list', parameters:{ entry:{ Template:'T' } }, children:[
         { name:'T__1', node_type:'T', parameters:{ _from_template:true }, children:[
           { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
-            { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 } }, children:[], is_hierarchy_transparent:false },
+            { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
           ]},
-          { name:'B', node_type:'int', parameters:{ value:{ Integer:2 } }, children:[], is_hierarchy_transparent:false },
+          { name:'B', node_type:'int', parameters:{ value:{ Integer:2 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
           { name:'C', node_type:'int', parameters:{ value:{ Formula:'A*B' } }, children:[], is_hierarchy_transparent:false },
         ], is_hierarchy_transparent:false },
       ], is_hierarchy_transparent:false }
@@ -106,8 +106,8 @@ function buildDoc_withoutUnnamedWrapper(){
       ], is_hierarchy_transparent:false },
       { name:'L', node_type:'list', parameters:{ entry:{ Template:'T' } }, children:[
         { name:'T__1', node_type:'T', parameters:{ _from_template:true }, children:[
-          { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 } }, children:[], is_hierarchy_transparent:false },
-          { name:'B', node_type:'int', parameters:{ value:{ Integer:2 } }, children:[], is_hierarchy_transparent:false },
+          { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
+          { name:'B', node_type:'int', parameters:{ value:{ Integer:2 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
           { name:'C', node_type:'int', parameters:{ value:{ Formula:'A*B' } }, children:[], is_hierarchy_transparent:false },
         ], is_hierarchy_transparent:false },
       ], is_hierarchy_transparent:false }
@@ -120,7 +120,7 @@ function buildDoc_withoutLabel(){
     { name:'Root', node_type:'div', parameters:{}, children:[
       { name:'T', node_type:'div', parameters:{ hidden:{ Boolean:true } }, children:[
         { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
-          { name:'A', node_type:'int', parameters:{ value:{ Integer:1 } }, children:[], is_hierarchy_transparent:false },
+          { name:'A', node_type:'int', parameters:{ value:{ Integer:1 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
         ]},
         { name:'B', node_type:'int', parameters:{ value:{ Integer:2 } }, children:[], is_hierarchy_transparent:false },
         { name:'C', node_type:'int', parameters:{ value:{ Formula:'A*B' } }, children:[], is_hierarchy_transparent:false },
@@ -128,9 +128,9 @@ function buildDoc_withoutLabel(){
       { name:'L', node_type:'list', parameters:{ entry:{ Template:'T' } }, children:[
         { name:'T__1', node_type:'T', parameters:{ _from_template:true }, children:[
           { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
-            { name:'A', node_type:'int', parameters:{ value:{ Integer:1 } }, children:[], is_hierarchy_transparent:false },
+            { name:'A', node_type:'int', parameters:{ value:{ Integer:1 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
           ]},
-          { name:'B', node_type:'int', parameters:{ value:{ Integer:2 } }, children:[], is_hierarchy_transparent:false },
+          { name:'B', node_type:'int', parameters:{ value:{ Integer:2 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
           { name:'C', node_type:'int', parameters:{ value:{ Formula:'A*B' } }, children:[], is_hierarchy_transparent:false },
         ], is_hierarchy_transparent:false },
       ], is_hierarchy_transparent:false }

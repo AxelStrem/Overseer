@@ -47,7 +47,7 @@ describe('fallback_formulas.os HTML output', () => {
         node_type: 'div',
         parameters: {},
         children: [
-          { name: 'v', node_type: 'int', parameters: { value: { Null: null }, fallback: { Integer: 10 } }, children: [] }
+          { name: 'v', node_type: 'int', parameters: { value: { Null: null }, fallback: { Integer: 10 }, mutable: { Boolean: true } }, children: [] }
         ]
       }
     ]
@@ -73,7 +73,7 @@ describe('fallback_formulas.os HTML output', () => {
         node_type: 'div',
         parameters: {},
         children: [
-          { name: 'v', node_type: 'int', parameters: { value: { Null: null }, fallback: { Integer: 10 } }, children: [] }
+          { name: 'v', node_type: 'int', parameters: { value: { Null: null }, fallback: { Integer: 10 }, mutable: { Boolean: true } }, children: [] }
         ]
       }
     ]
@@ -82,8 +82,8 @@ describe('fallback_formulas.os HTML output', () => {
 
     const valueEl = document.querySelector('.number-field .field-value')
     expect(valueEl.textContent.trim()).toBe('10')
-    // Enter edit mode
-    valueEl.dispatchEvent(new Event('dblclick'))
+  // Enter edit mode (use MouseEvent with bubbles for jsdom)
+  valueEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
     const input = valueEl.parentElement.querySelector('input.field-editor')
     expect(input).toBeTruthy()
     expect(input.value).toBe('')

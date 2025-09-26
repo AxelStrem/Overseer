@@ -62,7 +62,7 @@ function buildWeightTrackerDoc(){
       { name:'History', node_type:'list', parameters:{ entry:{ Template:'WeightRecord' }, key:{ String:'date' }, keyPrecision:{ String:'day' } }, is_hierarchy_transparent:false, children:[
         { name:'WeightRecord__1', node_type:'div', parameters:{ _from_template:true, _original_type:'WeightRecord' }, is_hierarchy_transparent:false, children:[
           { name:'date', node_type:'timestamp', parameters:{ value:{ String:'2025.09.09' } }, children:[], is_hierarchy_transparent:false },
-          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Tuesday' } }, children:[], is_hierarchy_transparent:false },
+          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Tuesday' }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
           { name:'weight', node_type:'float', parameters:{ suffix:{ String:' kg' }, precision:{ Integer:1 }, value:{ Float:108.8 } }, children:[], is_hierarchy_transparent:false },
           // Intake list with a MealRecord instance whose 'amount' is inside an unnamed wrapper div
           { name:'intake', node_type:'list', parameters:{ entry:{ Template:'MealRecord' }, hidden:{ Boolean:true }, layout:{ String:'vertical' } }, is_hierarchy_transparent:false, children:[
@@ -70,7 +70,7 @@ function buildWeightTrackerDoc(){
               // Unnamed wrapper (transparent)
               { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
                 { name:'description', node_type:'string', parameters:{ value:{ String:'Apple' } }, children:[], is_hierarchy_transparent:false },
-                { name:'amount', node_type:'int', parameters:{ label:{ String:'Amount' }, value:{ Integer:1 } }, children:[], is_hierarchy_transparent:false },
+                { name:'amount', node_type:'int', parameters:{ label:{ String:'Amount' }, value:{ Integer:1 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
               ]},
               // Additional unnamed wrapper for computed fields (content not needed for this repro)
               { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[

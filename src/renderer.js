@@ -43,6 +43,172 @@ export class OverseerRenderer {
         this._liveIntervals = new Set()
         // Track newly materialized targets so updates apply to the exact node, not a loosely-resolved path
         this._materializedTargets = new Map()
+    // Default top-level mutability: disabled by default (can be enabled per-node via mutable=true or inherited)
+    this._defaultTopLevelMutable = false
+    }
+
+    // Compute effective mutability mode at a specific path within a provided document tree.
+    // Returns one of: 'true' | 'false' | 'guarded'. Falls back to top-level default when unspecified.
+    _computeEffectiveMutableAtPath(doc, pathArr) {
+        const parseMode = (v) => {
+            if (v === null || v === undefined) return 'inherited'
+            if (typeof v === 'boolean') return v ? 'true' : 'false'
+            const s = String(v).toLowerCase().trim()
+            if (s === 'true') return 'true'
+            if (s === 'false') return 'false'
+            if (s === 'guarded') return 'guarded'
+            if (s === 'inherit' || s === 'inherited') return 'inherited'
+            return 'inherited'
+        }
+        const readMutableParam = (n) => {
+            try {
+                const comp = this.getParameterValue(n, '_computed_mutable')
+                if (comp !== null && comp !== undefined) return comp
+            } catch(_) {}
+            try { return this.getParameterValue(n, 'mutable') } catch(_) { return null }
+        }
+        try {
+            if (!doc || !Array.isArray(pathArr) || pathArr.length === 0) {
+                return this._defaultTopLevelMutable ? 'true' : 'false'
+            }
+            // Build ancestor chain from deepest to root
+            const ancestors = []
+            for (let i = pathArr.length; i >= 1; i--) {
+                const sub = pathArr.slice(0, i)
+                const n = this.findNodeByPath(doc, sub)
+                if (n) ancestors.push(n)
+            }
+            for (const anc of ancestors) {
+                const raw = readMutableParam(anc)
+                const mode = parseMode(raw)
+                if (mode !== 'inherited') return mode
+            }
+            return this._defaultTopLevelMutable ? 'true' : 'false'
+        } catch(_) {
+            return this._defaultTopLevelMutable ? 'true' : 'false'
+        }
+    }
+
+    // Tag value changes that came from backend actions for nodes that are mutable=guarded so they won’t persist on save.
+    // This function walks the new document and compares against the old document by canonical path (name + ordinal).
+    _tagGuardedChangesAfterBackendUpdate(oldDoc, newDoc) {
+        try {
+            if (!oldDoc || !newDoc) return
+            const deepClone = (obj) => {
+                try { if (typeof structuredClone === 'function') return structuredClone(obj) } catch(_) {}
+                try { return JSON.parse(JSON.stringify(obj)) } catch(_) { return obj }
+            }
+            const valuesEqual = (a, b) => {
+                try { return window?.app?.valuesEqual ? window.app.valuesEqual(a, b) : JSON.stringify(a) === JSON.stringify(b) } catch(_) { return false }
+            }
+            const walk = (node, parent, pathArr) => {
+                if (!node || typeof node !== 'object') return
+                const p = node.parameters || {}
+                const oldNode = this.findNodeByPath(oldDoc, pathArr)
+                const oldVal = oldNode && oldNode.parameters ? oldNode.parameters.value : undefined
+                const newVal = p ? p.value : undefined
+                // Determine effective mutability at this path using the NEW doc
+                const mode = this._computeEffectiveMutableAtPath(newDoc, pathArr)
+                if (mode === 'guarded') {
+                    const changed = !valuesEqual(oldVal, newVal)
+                    if (!oldNode) {
+                        // Newly created node (e.g., new override) under guarded scope
+                        if (!node.parameters) node.parameters = {}
+                        node.parameters._guarded_edit = { Boolean: true }
+                        node.parameters._guarded_was_new_override = { Boolean: true }
+                    } else if (changed) {
+                        if (!node.parameters) node.parameters = {}
+                        node.parameters._guarded_edit = { Boolean: true }
+                        if (oldVal === undefined) {
+                            node.parameters._guarded_was_new_override = { Boolean: true }
+                        } else {
+                            try { node.parameters._guarded_original_value = deepClone(oldVal) } catch(_) { node.parameters._guarded_original_value = oldVal }
+                        }
+                    }
+                }
+                // Recurse children with canonical ordinal-aware path segments
+                if (Array.isArray(node.children)) {
+                    for (let i = 0; i < node.children.length; i++) {
+                        const ch = node.children[i]
+                        if (!ch || typeof ch !== 'object') continue
+                        const base = ch.name || ch.node_type || ch.type || 'child'
+                        const ord = node.children.slice(0, i).filter(c => c && (c.name || c.node_type || c.type) === base).length
+                        const seg = ord > 0 ? `${base}#${ord}` : base
+                        walk(ch, node, pathArr.concat([seg]))
+                    }
+                }
+            }
+            // Root(s)
+            const rootsNew = Array.isArray(newDoc) ? newDoc : [newDoc]
+            for (let i = 0; i < rootsNew.length; i++) {
+                const r = rootsNew[i]
+                if (!r) continue
+                walk(r, null, [r.name || r.node_type || r.type || 'root'])
+            }
+        } catch(_) { /* best-effort tagging */ }
+    }
+
+    // Resolve effective mutability mode for a node: 'true' | 'false' | 'guarded'
+    // Parameter forms supported: boolean true/false, string 'true'|'false'|'inherited'|'guarded'
+    // Inheritance walks up parent chain using node.__overseer_path or nearest DOM data-path.
+    getEffectiveMutableMode(node, elementHint = null) {
+        const parseMode = (v) => {
+            if (v === null || v === undefined) return 'inherited'
+            if (typeof v === 'boolean') return v ? 'true' : 'false'
+            const s = String(v).toLowerCase().trim()
+            if (s === 'true') return 'true'
+            if (s === 'false') return 'false'
+            if (s === 'guarded') return 'guarded'
+            if (s === 'inherit' || s === 'inherited') return 'inherited'
+            return 'inherited'
+        }
+        const readMutableParam = (n) => {
+            try {
+                // Prefer computed if available, else raw
+                const comp = this.getParameterValue(n, '_computed_mutable')
+                if (comp !== null && comp !== undefined) return comp
+            } catch(_) { /* ignore */ }
+            try { return this.getParameterValue(n, 'mutable') } catch(_) { return null }
+        }
+        // 1) If the node itself declares an explicit mode, honor it immediately (works for phantom previews as well)
+        try {
+            const selfRaw = readMutableParam(node)
+            const selfMode = parseMode(selfRaw)
+            if (selfMode !== 'inherited') return selfMode
+        } catch(_) { /* ignore */ }
+        // Resolve the path to walk ancestors
+        let pathArr = []
+        try {
+            if (node && Array.isArray(node.__overseer_path)) pathArr = node.__overseer_path.slice()
+        } catch(_) {}
+        if ((!pathArr || pathArr.length === 0) && elementHint && elementHint.dataset && elementHint.dataset.path) {
+            try { pathArr = JSON.parse(elementHint.dataset.path) } catch(_) { pathArr = [] }
+        }
+        // Walk from node up to root looking for explicit mode
+        try {
+            const doc = window?.app?.currentDocument
+            if (!Array.isArray(pathArr) || pathArr.length === 0 || !doc) {
+                // Fallback to default
+                return this._defaultTopLevelMutable ? 'true' : 'false'
+            }
+            // Build ancestor chain of nodes (from deepest to root)
+            const ancestors = []
+            for (let i = pathArr.length; i >= 1; i--) {
+                const sub = pathArr.slice(0, i)
+                const n = this.findNodeByPath(doc, sub)
+                if (n) ancestors.push(n)
+            }
+            // First explicit non-inherited wins (closest ancestor first)
+            for (const anc of ancestors) {
+                const raw = readMutableParam(anc)
+                const mode = parseMode(raw)
+                if (mode !== 'inherited') return mode
+            }
+            // No explicit setting found: default at top-level
+            return this._defaultTopLevelMutable ? 'true' : 'false'
+        } catch(_) {
+            return this._defaultTopLevelMutable ? 'true' : 'false'
+        }
     }
 
     // Build a non-persistent preview item based on list's entry template, with key preset.
@@ -1638,14 +1804,9 @@ export class OverseerRenderer {
         
         // Tab click handler
         tabButton.addEventListener('click', () => {
-            // Hide all tab contents
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.style.display = 'none'
-            })
-            document.querySelectorAll('.tab-button').forEach(btn => {
-                btn.classList.remove('active')
-            })
-            
+            // Hide all tab contents and deactivate buttons
+            document.querySelectorAll('.tab-content').forEach(content => { content.style.display = 'none' })
+            document.querySelectorAll('.tab-button').forEach(btn => { btn.classList.remove('active') })
             // Show this tab's content
             tabContent.style.display = 'block'
             tabButton.classList.add('active')
@@ -1838,8 +1999,11 @@ export class OverseerRenderer {
     value.className = 'field-value'
         value.textContent = this.getNodeValue(node) || ''
         
-        // Make it editable on double-click
+        // Make it editable on double-click (respect mutable)
         value.addEventListener('dblclick', () => {
+            const mode = this.getEffectiveMutableMode(node, value)
+            if (mode === 'false') return
+            if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.makeFieldEditable(value, node)
         })
         
@@ -1883,8 +2047,11 @@ export class OverseerRenderer {
             value.style.whiteSpace = 'pre-wrap'
         }
         
-        // Make it editable on double-click
+        // Make it editable on double-click (respect mutable)
         value.addEventListener('dblclick', () => {
+            const mode = this.getEffectiveMutableMode(node, value)
+            if (mode === 'false') return
+            if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             const hasFormula = node?.parameters && typeof node.parameters.value === 'object' && node.parameters.value?.Formula !== undefined
             if (hasFormula) {
                 // Always use formula editor when a formula exists
@@ -1951,8 +2118,11 @@ export class OverseerRenderer {
         }
         value.textContent = `${pref}${fmtNumber(rawVal)}${suf}`
         
-        // Make it editable on double-click
+        // Make it editable on double-click (respect mutable)
         value.addEventListener('dblclick', () => {
+            const mode = this.getEffectiveMutableMode(node, value)
+            if (mode === 'false') return
+            if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.makeFieldEditable(value, node)
         })
         
@@ -2236,8 +2406,16 @@ export class OverseerRenderer {
 
         container.appendChild(checkbox)
 
-        // Handle changes
+        // Handle changes (respect mutability)
         checkbox.addEventListener('change', () => {
+            const mode = this.getEffectiveMutableMode(node, checkbox)
+            if (mode === 'false') {
+                // Revert UI toggle to the current node value
+                const current = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
+                if (checkbox.checked !== current) checkbox.checked = current
+                return
+            }
+            if (mode === 'guarded') { try { checkbox.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.updateNodeValue(node, checkbox.checked)
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
@@ -2252,6 +2430,18 @@ export class OverseerRenderer {
                     window.app.reevaluateDocumentSelective([])
                 }
             }
+            // Mark guarded flag on target if applicable so serializer may skip it
+            try {
+                if (mode === 'guarded') {
+                    const fieldPath = this.buildNodePath(container).join('/')
+                    const target = this.findNodeByPath(window.app.currentDocument, fieldPath.split('/'))
+                    if (target) {
+                        if (!target.parameters) target.parameters = {}
+                        target.parameters._guarded_edit = { Boolean: true }
+                    }
+                    try { checkbox.removeAttribute('data-guarded-edit') } catch(_) {}
+                }
+            } catch(_) { /* best-effort */ }
         })
         
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
@@ -2331,8 +2521,16 @@ export class OverseerRenderer {
             container.appendChild(checkbox)
         }
 
-        // Handle checkbox changes with default events: toggle, check, uncheck
+        // Handle checkbox changes with default events: toggle, check, uncheck (respect mutability)
         checkbox.addEventListener('change', async () => {
+            const mode = this.getEffectiveMutableMode(node, checkbox)
+            if (mode === 'false') {
+                // Revert UI toggle to the current node value
+                const current = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
+                if (checkbox.checked !== current) checkbox.checked = current
+                return
+            }
+            if (mode === 'guarded') { try { checkbox.setAttribute('data-guarded-edit','1') } catch(_) {} }
             if (DEBUG_MODE) console.log('Checkbox changed:', node.name, checkbox.checked)
             this.updateNodeValue(node, checkbox.checked)
 
@@ -2365,6 +2563,18 @@ export class OverseerRenderer {
             if (hasHandler('change')) {
                 try { await this.emitEvent(node, checkbox, 'change') } catch(_) {}
             }
+            // Mark guarded flag on target if applicable so serializer may skip it
+            try {
+                if (mode === 'guarded') {
+                    const fieldPath = this.buildNodePath(container).join('/')
+                    const target = this.findNodeByPath(window.app.currentDocument, fieldPath.split('/'))
+                    if (target) {
+                        if (!target.parameters) target.parameters = {}
+                        target.parameters._guarded_edit = { Boolean: true }
+                    }
+                    try { checkbox.removeAttribute('data-guarded-edit') } catch(_) {}
+                }
+            } catch(_) { /* best-effort */ }
         })
 
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
@@ -3743,6 +3953,20 @@ export class OverseerRenderer {
             // Update the node value in the document structure (using real path if computed)
             // Instead of using the local node reference, find and update the node in the main document
             let skipElementEvent = false
+            // Track if we performed a direct update on a newly materialized target to suppress duplicate events later
+            let usedDirectMaterializedUpdate = false
+            // Snapshot the existing explicit value (if any) before applying updates to support guarded revert
+            let preExistingValueSnapshot = undefined
+            try {
+                const probePath = materializedRealPath ? materializedRealPath : fieldPath
+                if (probePath && window.app && window.app.currentDocument) {
+                    const arr = String(probePath).split('/')
+                    const target = this.findNodeByPath(window.app.currentDocument, arr)
+                    if (target && target.parameters && target.parameters.value !== undefined) {
+                        try { preExistingValueSnapshot = JSON.parse(JSON.stringify(target.parameters.value)) } catch(_) { preExistingValueSnapshot = target.parameters.value }
+                    }
+                }
+            } catch(_) { /* best-effort */ }
             // Optimization/guard: if we just materialized and the target field already equals the edited value,
             // skip issuing an update to avoid redundant UI churn.
             try {
@@ -3954,7 +4178,6 @@ export class OverseerRenderer {
                 } catch(_) {}
                 // Prefer a direct update of the newly materialized target (exact node reference) to avoid any mis-targeting
                 let success = false
-                let usedDirectMaterializedUpdate = false
                 try {
                     if (materializedRealPath && this._materializedTargets && this._materializedTargets.has(materializedRealPath)) {
                         const t = this._materializedTargets.get(materializedRealPath)
@@ -3979,6 +4202,7 @@ export class OverseerRenderer {
                                         }
                                     }
                                 } catch(_) { /* best-effort */ }
+                                // Apply update (guarded updates are marked below after path resolution)
                                 this.updateNodeValue(t.leafNode, newValue)
                                 success = true
                                 usedDirectMaterializedUpdate = true
@@ -4030,6 +4254,27 @@ export class OverseerRenderer {
                     }
                 }
 
+                // If this was a guarded edit, mark the node so serializer can drop or revert the change
+                try {
+                    const mode = this.getEffectiveMutableMode(node, element)
+                    const wasGuarded = (element && element.getAttribute && element.getAttribute('data-guarded-edit') === '1') || mode === 'guarded'
+                    if (wasGuarded) {
+                        const arr = String(fieldPath).split('/')
+                        const target = this.findNodeByPath(window.app.currentDocument, arr)
+                        if (target) {
+                            if (!target.parameters) target.parameters = {}
+                            target.parameters._guarded_edit = { Boolean: true }
+                            if (preExistingValueSnapshot === undefined) {
+                                // No explicit value existed prior; this override is new in-session -> allow serializer to drop it
+                                target.parameters._guarded_was_new_override = { Boolean: true }
+                            } else {
+                                // Preserve the original explicit value to restore during serialization
+                                try { target.parameters._guarded_original_value = JSON.parse(JSON.stringify(preExistingValueSnapshot)) } catch(_) { target.parameters._guarded_original_value = preExistingValueSnapshot }
+                            }
+                        }
+                        try { element.removeAttribute('data-guarded-edit') } catch(_) {}
+                    }
+                } catch(_) { /* best-effort */ }
                 // Immediately record this user edit for save-time merge to guard against
                 // any interim resolve that might overwrite the value before persisting.
                 try {
@@ -4319,9 +4564,45 @@ export class OverseerRenderer {
                 // Update the element with rendered markdown
                 element.innerHTML = this.renderMarkdown(newValue)
                 
-                // Update the node value in the document structure
-                this.updateNodeValue(node, newValue)
+                // Compute field path for selective updates and guarded marking
+                let fieldPath = null
+                try { fieldPath = this.buildNodePath(element).join('/') } catch(_) {}
+                // Snapshot any pre-existing explicit value to support guarded restore on save
+                let preExistingValueSnapshot = undefined
+                let targetNode = null
+                try {
+                    if (fieldPath && window.app && window.app.currentDocument) {
+                        targetNode = this.findNodeByPath(window.app.currentDocument, String(fieldPath).split('/'))
+                        if (targetNode && targetNode.parameters && targetNode.parameters.value !== undefined) {
+                            try { preExistingValueSnapshot = JSON.parse(JSON.stringify(targetNode.parameters.value)) } catch(_) { preExistingValueSnapshot = targetNode.parameters.value }
+                        }
+                    }
+                } catch(_) { /* best-effort */ }
+                
+                // Update the node value in the document structure (prefer resolved target by path)
+                try {
+                    if (targetNode) this.updateNodeValue(targetNode, newValue)
+                    else this.updateNodeValue(node, newValue)
+                } catch(_) { this.updateNodeValue(node, newValue) }
                 if (DEBUG_MODE) console.log('Markdown field updated:', node.name, newValue)
+
+                // If this was a guarded edit, mark flags so serializer can drop/revert
+                try {
+                    const wasGuarded = element && element.getAttribute && element.getAttribute('data-guarded-edit') === '1'
+                    if (wasGuarded && (targetNode || fieldPath)) {
+                        const tgt = targetNode || (this.findNodeByPath(window.app.currentDocument, String(fieldPath).split('/')))
+                        if (tgt) {
+                            if (!tgt.parameters) tgt.parameters = {}
+                            tgt.parameters._guarded_edit = { Boolean: true }
+                            if (preExistingValueSnapshot === undefined) {
+                                tgt.parameters._guarded_was_new_override = { Boolean: true }
+                            } else {
+                                try { tgt.parameters._guarded_original_value = JSON.parse(JSON.stringify(preExistingValueSnapshot)) } catch(_) { tgt.parameters._guarded_original_value = preExistingValueSnapshot }
+                            }
+                        }
+                        try { element.removeAttribute('data-guarded-edit') } catch(_) {}
+                    }
+                } catch(_) { /* best-effort */ }
                 
                 // Mark document as modified
                 if (window.app && window.app.markDocumentModified) {
@@ -4331,8 +4612,8 @@ export class OverseerRenderer {
                 if (window.app && window.app.reevaluateDocumentSelective) {
                     // Try to determine field path for selective update
                     try {
-                        const fieldPath = this.buildNodePath(element).join('/')
-                        window.app.reevaluateDocumentSelective([fieldPath])
+                        const fp = fieldPath || this.buildNodePath(element).join('/')
+                        window.app.reevaluateDocumentSelective([fp])
                     } catch (e) {
                         if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
                         window.app.reevaluateDocumentSelective([])
@@ -4452,7 +4733,12 @@ export class OverseerRenderer {
         const looksLikeDocArray = Array.isArray(updated) && updated.every(n => n && typeof n === 'object')
         const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)
         if (looksLikeDocArray || looksLikeDocObject) {
-            window.app.currentDocument = looksLikeDocArray ? updated : updated.children
+            const newDoc = looksLikeDocArray ? updated : updated.children
+            const oldDoc = window.app.currentDocument
+            // Tag any backend-driven changes under mutable=guarded so they remain UI-only until save
+            try { this._tagGuardedChangesAfterBackendUpdate(oldDoc, newDoc) } catch(_) {}
+            // Adopt using app’s preservation logic (formulas, flags), then render
+            try { if (typeof window.app._applyResolvedDocumentWithFormulaPreservation === 'function') { window.app._applyResolvedDocumentWithFormulaPreservation(newDoc) } else { window.app.currentDocument = newDoc } } catch(_) { window.app.currentDocument = newDoc }
             window.app.renderer.renderDocument(window.app.currentDocument)
             window.app.markDocumentModified && window.app.markDocumentModified()
         } else {

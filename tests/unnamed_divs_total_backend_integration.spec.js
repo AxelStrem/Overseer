@@ -42,9 +42,9 @@ function buildDoc(){
         { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
           { name:'T', node_type:'div', parameters:{}, is_hierarchy_transparent:false, children:[
             { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
-              { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 } }, children:[], is_hierarchy_transparent:false }
+              { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false }
             ]},
-            { name:'B', node_type:'int', parameters:{ value:{ Integer:2 } }, children:[], is_hierarchy_transparent:false },
+            { name:'B', node_type:'int', parameters:{ value:{ Integer:2 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
             { name:'C', node_type:'int', parameters:{ value:{ Formula:'A*B' } }, children:[], is_hierarchy_transparent:false },
           ]}
         ]}
@@ -53,9 +53,9 @@ function buildDoc(){
       { name:'L', node_type:'list', parameters:{ entry:{ Template:'T' } }, children:[
         { name:'T__1', node_type:'div', parameters:{ _from_template:true, _original_type:'T' }, is_hierarchy_transparent:false, children:[
           { name:'', node_type:'div', parameters:{}, is_hierarchy_transparent:true, children:[
-            { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 } }, children:[], is_hierarchy_transparent:false }
+            { name:'A', node_type:'int', parameters:{ label:{ String:'X' }, value:{ Integer:1 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false }
           ]},
-          { name:'B', node_type:'int', parameters:{ value:{ Integer:2 } }, children:[], is_hierarchy_transparent:false },
+          { name:'B', node_type:'int', parameters:{ value:{ Integer:2 }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
           { name:'C', node_type:'int', parameters:{ value:{ Formula:'A*B' } }, children:[], is_hierarchy_transparent:false },
         ]}
       ], is_hierarchy_transparent:false }

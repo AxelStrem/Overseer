@@ -64,16 +64,29 @@ export class OverseerApp {
         this.currentDocument = newDoc
     }
 
-    // Normalize in-memory document before sending to Rust: convert certain raw booleans
-    // in parameters to OverseerValue-shaped objects expected by Serde, e.g., { Boolean: true }.
-    // We touch known internal flags that can be set client-side.
+    // Normalize document for serialization (on a deep-cloned copy).
+    // IMPORTANT: This must not mutate the live in-memory document, otherwise flags like
+    // _guarded_edit get stripped too early during selective reevaluation, and guarded
+    // edits may end up persisted on subsequent saves. Always operate on a clone.
+    //
+    // - Ensures required schema fields exist (e.g., is_hierarchy_transparent)
+    // - Coerces known booleans to OverseerValue shapes
+    // - Applies guarded semantics (restore/drop values) only on the clone
+    // - Strips internal/transient parameters on the clone
     normalizeDocumentForSerialization(doc) {
+        // Deep clone helper (prefer structuredClone when available)
+        const deepClone = (obj) => {
+            try { if (typeof structuredClone === 'function') return structuredClone(obj) } catch(_) {}
+            try { return JSON.parse(JSON.stringify(obj)) } catch(_) { return obj }
+        }
+        const root = deepClone(doc)
         const visit = (node) => {
             if (!node || typeof node !== 'object') return
             // Ensure required schema property exists for all nodes
             if (typeof node.is_hierarchy_transparent !== 'boolean') node.is_hierarchy_transparent = false
             const p = node.parameters
             if (p && typeof p === 'object') {
+                const isFlagTrue = (v) => v === true || (v && typeof v === 'object' && v.Boolean === true)
                 const fix = (k) => {
                     if (p[k] === true) p[k] = { Boolean: true }
                     if (p[k] === false) p[k] = { Boolean: false }
@@ -82,6 +95,24 @@ export class OverseerApp {
                 fix('_explicit_child_override')
                 // Flags introduced by renderer for UI/rerender hints
                 fix('_from_template')
+                // Guarded edit handling: ensure UI-only changes do not persist
+                try {
+                    if (isFlagTrue(p._guarded_edit)) {
+                        if (isFlagTrue(p._guarded_was_new_override)) {
+                            // This override was created only in the session; drop it entirely
+                            if (Object.prototype.hasOwnProperty.call(p, 'value')) {
+                                delete p.value
+                            }
+                        } else if (p._guarded_original_value !== undefined) {
+                            // Restore the original explicit value captured at edit time
+                            p.value = p._guarded_original_value
+                        }
+                        // Strip guarded flags unconditionally before serialization
+                        delete p._guarded_edit
+                        delete p._guarded_was_new_override
+                        delete p._guarded_original_value
+                    }
+                } catch(_) { /* non-fatal */ }
                 // Strip parameters that were injected during link flattening so they don't persist to disk.
                 // These are copied from the real target into the proxy for UI but should not serialize as overrides.
                 try {
@@ -129,9 +160,9 @@ export class OverseerApp {
                 node.children.forEach(visit)
             }
         }
-        if (Array.isArray(doc)) doc.forEach(visit)
-        else visit(doc)
-        return doc
+        if (Array.isArray(root)) root.forEach(visit)
+        else visit(root)
+        return root
     }
 
     initializeEventListeners() {
@@ -337,6 +368,14 @@ tab Main {
                             try { n = this.renderer.resolveNodeByPathLoose(this.currentDocument, p) } catch(_) { n = null }
                         }
                         if (n) {
+                            // Skip merge if this node is under a guarded edit; its value should not persist to disk
+                            try {
+                                const gp = n.parameters || {}
+                                const isTrue = (v) => v === true || (v && typeof v === 'object' && v.Boolean === true)
+                                if (isTrue(gp._guarded_edit)) {
+                                    continue
+                                }
+                            } catch(_) { /* ignore */ }
                             const ov = this.coerceToOverseerValue(n, rec.value)
                             if (!n.parameters) n.parameters = {}
                             n.parameters.value = ov
@@ -346,8 +385,10 @@ tab Main {
             } catch(_) { /* non-fatal safeguard */ }
             
             // Serialize the current document state to Overseer DSL format (always serialize to keep state in sync for tests)
+            const _nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
+            try { if (typeof this._testHook_beforeSerialize === 'function') this._testHook_beforeSerialize(_nodesForSerialization) } catch(_) { /* test-only hook */ }
             const content = await invoke('serialize_overseer_nodes', { 
-                nodes: this.normalizeDocumentForSerialization(this.currentDocument) 
+                nodes: _nodesForSerialization 
             })
 
             // If no file path is set yet, treat this as a dry-run serialization only
@@ -801,6 +842,29 @@ tab Main {
             if (!this.currentDocument || !resolved) { this.currentDocument = resolved; return }
             const isFormula = (v) => v && typeof v === 'object' && v.Formula
             const isNullObj = (v) => v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v,'Null')
+            const copyGuardedFlags = (oldN, newN) => {
+                try {
+                    if (!oldN || !newN) return
+                    const op = oldN.parameters || {}
+                    if (!op) return
+                    const isTrue = (v) => v === true || (v && typeof v === 'object' && v.Boolean === true)
+                    if (isTrue(op._guarded_edit)) {
+                        if (!newN.parameters) newN.parameters = {}
+                        const np = newN.parameters
+                        // Always carry flags forward so later save normalization can act
+                        np._guarded_edit = { Boolean: true }
+                        if (isTrue(op._guarded_was_new_override)) {
+                            np._guarded_was_new_override = { Boolean: true }
+                        } else if (op._guarded_was_new_override !== undefined) {
+                            // Preserve explicit false when present
+                            np._guarded_was_new_override = { Boolean: false }
+                        }
+                        if (op._guarded_original_value !== undefined && np._guarded_original_value === undefined) {
+                            try { np._guarded_original_value = JSON.parse(JSON.stringify(op._guarded_original_value)) } catch(_) { np._guarded_original_value = op._guarded_original_value }
+                        }
+                    }
+                } catch(_) { /* non-fatal */ }
+            }
             const restoreFormulas = (oldN, newN) => {
                 if (!oldN || !newN) return
                 try {
@@ -812,6 +876,8 @@ tab Main {
                         newN.parameters.value = ov // restore original formula
                     }
                 } catch(_) {}
+                // Preserve guarded flags across adoption so save can revert/drop UI-only changes
+                copyGuardedFlags(oldN, newN)
                 if (Array.isArray(oldN.children) && Array.isArray(newN.children)) {
                     const len = Math.min(oldN.children.length, newN.children.length)
                     for (let i=0;i<len;i++) restoreFormulas(oldN.children[i], newN.children[i])
@@ -1050,6 +1116,8 @@ tab Main {
                                 if (t) return t
                             }}
                         }
+                            // Also propagate guarded flags for this node path explicitly
+                            copyGuardedFlags(oldTotal, newTotal)
                     } catch(_) {}
                     return null
                 }
