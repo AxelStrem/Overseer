@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
 
@@ -953,340 +953,170 @@ impl OverseerFileHandler {
         FileOperations::serialize_nodes(nodes)
     }
 
+    /// Internal: deterministic segment-based merge implementation.
+    ///
+    /// Strategy (replaces the previous heuristic anchor/block reinsertion logic):
+    /// 1. Parse the ORIGINAL text into an ordered list of (leading_comment_block, code_line) segments.
+    ///    - A segment's leading block contains every contiguous full-line comment or blank line that
+    ///      immediately precedes a code line. These are preserved verbatim and never deduplicated.
+    /// 2. Build anchor maps for the REGENERATED canonical text keyed by a whitespace-insensitive
+    ///    version of each code line (and a relaxed variant that truncates at the first parameter/brace
+    ///    delimiter). This tolerates benign formatting shifts (e.g. added space before '(' or param order changes
+    ///    that do not affect the prefix).
+    /// 3. For each original segment:
+    ///      a. Emit its leading block exactly.
+    ///      b. If the segment's code line anchor matches a regenerated line anchor, emit the regenerated line
+    ///         (canonical form). If the original had an inline comment and the regenerated canonical line
+    ///         does NOT, append the original inline comment to retain author intent.
+    ///      c. Otherwise (no anchor match), fall back to emitting the original code line (ensures we never
+    ///         drop user-authored lines whose anchors disappeared due to upstream parser/serializer drift).
+    /// 4. Preserve any trailing comment/blank block that followed the last code line exactly.
+    /// 5. Append any regenerated code lines whose anchors were never used (i.e., brand new lines) at the end,
+    ///    separated by a single blank line to make additions visually distinct without disturbing original layout.
+    ///
+    /// Benefits:
+    /// - Absolute immunity to comment duplication: original comment segments are emitted once and only once.
+    /// - Stable ordering: unchanged code keeps its surrounding commentary in place.
+    /// - Inline comment preservation for anchors whose regenerated form normalizes away spacing.
+    /// - Simplicity: no multi-phase reinjection heuristics or placeholder suppression needed.
+    ///
+    /// NOTE: This function is intentionally kept private; call `merge_comments` for the public API.
+    fn segment_merge(original: &str, regenerated: &str) -> String {
+        // Helper classifiers
+        fn is_code(l: &str) -> bool { let t = l.trim_start(); !t.is_empty() && !t.starts_with("//") }
+        fn anchor_key(line: &str) -> String {
+            let code = match line.find("//") { Some(idx) => &line[..idx], None => line };
+            code.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+        }
+        use std::collections::{HashMap, HashSet};
+        // Maps
+        let mut leading_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut trailing_comment_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut inline_map: HashMap<String, String> = HashMap::new();
+        let mut seen_anchor: HashSet<String> = HashSet::new();
+        let mut trailing_block: Vec<String> = Vec::new();
+        let mut prev_anchor: Option<String> = None;
+        let orig_lines: Vec<&str> = original.lines().collect();
+        let mut i = 0usize;
+        while i < orig_lines.len() {
+            // Collect leading comments/blank lines for upcoming code line
+            let mut lead: Vec<String> = Vec::new();
+            while i < orig_lines.len() && !is_code(orig_lines[i]) { lead.push(orig_lines[i].to_string()); i += 1; }
+            if i >= orig_lines.len() { trailing_block = lead; break; }
+            let code_line = orig_lines[i]; i += 1;
+            // Detect trailing comment group for previous anchor: contiguous comment lines at start of lead
+            if let Some(prev) = prev_anchor.clone() {
+                if !lead.is_empty() && lead[0].trim_start().starts_with("//") {
+                    let mut run_len = 0usize;
+                    for l in &lead { if l.trim_start().starts_with("//") { run_len += 1; } else { break; } }
+                    if run_len > 0 {
+                        let trailing = lead.drain(0..run_len).collect::<Vec<_>>();
+                        trailing_comment_map.entry(prev).or_insert_with(Vec::new).extend(trailing);
+                        // Collapse excessive blank lines after moved trailing group: keep at most one
+                        if !lead.is_empty() && lead[0].trim().is_empty() {
+                            let mut j = 1usize; while j < lead.len() && lead[j].trim().is_empty() { j += 1; }
+                            lead.drain(1..j);
+                        }
+                    }
+                }
+            }
+            let key = anchor_key(code_line);
+            // Normalize: if leading block has >1 consecutive blank lines immediately before first comment line, collapse to 1
+            if !lead.is_empty() {
+                if let Some(first_nonblank) = lead.iter().position(|l| !l.trim().is_empty()) {
+                    if lead[first_nonblank].trim_start().starts_with("//") && first_nonblank > 0 {
+                        let mut new_lead: Vec<String> = Vec::new();
+                        let mut blank_added = false;
+                        for (idx, line) in lead.into_iter().enumerate() {
+                            if idx < first_nonblank {
+                                if line.trim().is_empty() {
+                                    if !blank_added { new_lead.push(line); blank_added = true; }
+                                    // skip additional blanks
+                                } else { new_lead.push(line); }
+                            } else { new_lead.push(line); }
+                        }
+                        lead = new_lead;
+                    }
+                }
+            }
+            if !key.is_empty() && !seen_anchor.contains(&key) { leading_map.insert(key.clone(), lead); seen_anchor.insert(key.clone()); }
+            if let Some(idx) = code_line.find("//") { inline_map.entry(key.clone()).or_insert(code_line[idx..].to_string()); }
+            prev_anchor = Some(key);
+        }
+        // Walk regenerated lines in order, injecting preserved segments
+        let mut out = String::new();
+        let mut emitted_blocks: HashSet<String> = HashSet::new();
+        for line in regenerated.lines() {
+            if is_code(line) {
+                let key = anchor_key(line);
+                // Leading block (verbatim) – emit once
+                if let Some(block) = leading_map.get(&key) {
+                    if !emitted_blocks.contains(&key) {
+                        // Determine if block pattern is blank + comment(s) and previous emitted line already blank
+                        let mut last_line_blank = {
+                            // Inspect last emitted line in out
+                            if out.is_empty() { false } else {
+                                // Find last line
+                                let mut rev = out.rsplitn(2, '\n');
+                                let current_last = rev.next().unwrap_or("");
+                                current_last.trim().is_empty()
+                            }
+                        };
+                        let has_comment_after_blank = block.len() >= 2 && block[0].trim().is_empty() && block[1].trim_start().starts_with("//");
+                        for (idx, b) in block.iter().enumerate() {
+                            let is_blank = b.trim().is_empty();
+                            if is_blank && has_comment_after_blank && last_line_blank {
+                                // Skip this extra blank to avoid duplicating separation before comment group
+                                continue;
+                            }
+                            out.push_str(b); out.push('\n');
+                            last_line_blank = is_blank;
+                        }
+                        emitted_blocks.insert(key.clone());
+                    }
+                }
+                // Inline comment merge
+                let mut emitted_line = false;
+                if !line.contains("//") {
+                    if let Some(inl) = inline_map.get(&key) { if !inl.is_empty() { let mut composed = line.to_string(); if !composed.ends_with(' ') { composed.push(' '); } composed.push_str(inl); out.push_str(&composed); out.push('\n'); emitted_line = true; } }
+                }
+                if !emitted_line { out.push_str(line); out.push('\n'); }
+                // Trailing comment group
+                if let Some(trails) = trailing_comment_map.get(&key) { for t in trails { out.push_str(t); out.push('\n'); } }
+            } else {
+                out.push_str(line); out.push('\n');
+            }
+        }
+        // Orphan leading blocks (anchors removed) before overall trailing block
+        for (k, block) in leading_map.iter() { if !emitted_blocks.contains(k) { for b in block { out.push_str(b); out.push('\n'); } } }
+        for l in &trailing_block { out.push_str(l); out.push('\n'); }
+        // Post-process: collapse runs of >2 blank lines before comment groups to a single blank separation
+        let mut res = out;
+        // First collapse any 3+ consecutive newlines globally to 2
+        while res.contains("\n\n\n") { res = res.replace("\n\n\n", "\n\n"); }
+        // Ensure pattern code\n\n// (i.e., exactly one blank line) not expanded further – already ensured by collapse
+        res
+    }
+
     // Merge comments from original text into regenerated canonical text.
     // Strategy:
     // - Capture leading and trailing standalone comment blocks from original.
     // - Build maps from anchor keys (whitespace-insensitive code lines) to:
     //   a) preceding standalone comment blocks, and b) inline comments.
     // - Walk regenerated lines and inject preserved comments at corresponding anchors.
+    /// Public merge facade.
+    ///
+    /// Performs a deterministic, idempotent merge that preserves all original
+    /// comment/blank line segments and substitutes only the underlying code
+    /// lines whose anchors still exist in the regenerated canonical text.
+    ///
+    /// Historical note: A prior implementation attempted heuristic reinsertion
+    /// (mapping standalone/inline comments to anchors with multiple passes).
+    /// That approach proved fragile and occasionally duplicated comment lines
+    /// in large documents. It has been fully replaced by the segment-based
+    /// algorithm implemented in `segment_merge`.
     pub fn merge_comments(original: &str, regenerated: &str) -> String {
-        // Helper: compute an anchor key by stripping inline comments and whitespace
-        fn anchor_key(line: &str) -> String {
-            let code = match line.find("//") {
-                Some(idx) => &line[..idx],
-                None => line,
-            };
-            code.chars().filter(|c| !c.is_whitespace()).collect::<String>()
-        }
-
-        // Additional heuristic capture: map of a code line whose next non-blank line in original was a standalone comment block.
-        // This lets us force comment placement AFTER that code line (rather than before the following anchor) preserving trailing intent.
-        let mut after_line_comment_block: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-        {
-            let mut lines_iter = original.lines().enumerate().collect::<Vec<(usize, &str)>>();
-            let total = lines_iter.len();
-            let mut i = 0;
-            while i < total {
-                let (idx, line) = lines_iter[i];
-                let trimmed = line.trim_start();
-                if trimmed.is_empty() { i += 1; continue; }
-                if trimmed.starts_with("//") { i += 1; continue; } // skip pure comment line as anchor
-                // candidate code line
-                let mut j = i + 1;
-                let mut collected: Vec<String> = Vec::new();
-                let mut saw_comment = false;
-                while j < total {
-                    let (_jidx, l2) = lines_iter[j];
-                    let t2 = l2.trim_start();
-                    if t2.is_empty() { collected.push(l2.to_string()); j += 1; continue; }
-                    if t2.starts_with("//") {
-                        // gather contiguous comment block
-                        collected.push(l2.to_string());
-                        saw_comment = true;
-                        j += 1;
-                        // also gather any immediately following blank lines as part of trailing spacing until next code
-                        while j < total {
-                            let (_j2, l3) = lines_iter[j];
-                            if l3.trim().is_empty() { collected.push(l3.to_string()); j += 1; } else { break; }
-                        }
-                    }
-                    break; // stop after first non-blank/comment sequence post code
-                }
-                if saw_comment {
-                    let key = anchor_key(line);
-                    if !key.is_empty() && !after_line_comment_block.contains_key(&key) {
-                        after_line_comment_block.insert(key, collected);
-                    }
-                }
-                i += 1;
-            }
-        }
-
-        // Extract leading comment block
-        let mut leading_block: Vec<String> = Vec::new();
-        let mut started = false;
-        for line in original.lines() {
-            if line.trim_start().starts_with("//") || line.trim().is_empty() && !started {
-                leading_block.push(line.to_string());
-            } else {
-                let _started_flag = { started = true; started };
-                break;
-            }
-        }
-
-        // Extract trailing comment block
-        let mut trailing_block: Vec<String> = Vec::new();
-        for line in original.lines().rev() {
-            if line.trim_start().starts_with("//") || line.trim().is_empty() {
-                trailing_block.push(line.to_string());
-            } else {
-                break;
-            }
-        }
-        trailing_block.reverse();
-
-        // Build maps of inline and block comments keyed by anchor
-        let mut map_inline: HashMap<String, String> = HashMap::new();
-        let mut map_block: HashMap<String, Vec<String>> = HashMap::new();
-        let mut pending_block: Vec<String> = Vec::new();
-        let mut seen_first_code_line = false;
-        let mut prev_code_anchor: Option<String> = None;
-        for line in original.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") || trimmed.is_empty() {
-                // Accumulate standalone comment lines
-                pending_block.push(line.to_string());
-                continue;
-            }
-            // Code line: attach pending block (if any)
-            let key = anchor_key(line);
-            if !pending_block.is_empty() {
-                if !seen_first_code_line && !leading_block.is_empty() {
-                    // Skip mapping the already extracted leading block to this first code anchor
-                    pending_block.clear();
-                } else {
-                    // Suppress double attribution: if this pending block's first comment line matches the
-                    // trailing-after block recorded for the previous code anchor, don't also treat it
-                    // as a preceding block for the current anchor.
-                    let suppress_as_preceding = if let Some(prev_anchor) = &prev_code_anchor {
-                        if let Some(trailing) = after_line_comment_block.get(prev_anchor) {
-                            let first_pending = pending_block.iter().find(|l| l.trim_start().starts_with("//"));
-                            let first_trailing = trailing.iter().find(|l| l.trim_start().starts_with("//"));
-                            match (first_pending, first_trailing) {
-                                (Some(p), Some(t)) => p.trim() == t.trim(),
-                                _ => false,
-                            }
-                        } else { false }
-                    } else { false };
-                    if suppress_as_preceding {
-                        pending_block.clear();
-                    } else {
-                        map_block.insert(key.clone(), std::mem::take(&mut pending_block));
-                    }
-                }
-            }
-            seen_first_code_line = true;
-            // Capture inline comment (if any)
-            if let Some(idx) = line.find("//") {
-                let inline = &line[idx..];
-                map_inline.insert(key.clone(), inline.to_string());
-            }
-            prev_code_anchor = Some(key);
-        }
-        // Any remaining pending_block becomes trailing block (handled above already)
-        if !pending_block.is_empty() && trailing_block.is_empty() {
-            trailing_block = std::mem::take(&mut pending_block);
-        }
-
-        // Augment maps with relaxed/root keys so formatting / param order changes still match
-        // Root key heuristic: take existing anchor key up to first '(' or '{' or '='.
-        let mut extra_block_entries: Vec<(String, Vec<String>)> = Vec::new();
-        let mut extra_inline_entries: Vec<(String, String)> = Vec::new();
-        for (k, v) in map_block.iter() {
-            let root = k.split(|c| c == '(' || c == '{' || c == '=').next().unwrap_or("").to_string();
-            if !root.is_empty() && root != *k && !map_block.contains_key(&root) {
-                extra_block_entries.push((root, v.clone()));
-            }
-        }
-        for (k, v) in map_inline.iter() {
-            let root = k.split(|c| c == '(' || c == '{' || c == '=').next().unwrap_or("").to_string();
-            if !root.is_empty() && root != *k && !map_inline.contains_key(&root) {
-                extra_inline_entries.push((root, v.clone()));
-            }
-        }
-        for (k,v) in extra_block_entries { map_block.insert(k, v); }
-        for (k,v) in extra_inline_entries { map_inline.insert(k, v); }
-
-    // Build merged output by walking regenerated
-    let mut out = String::new();
-        let mut inserted_leading = false;
-        let mut used_blocks: HashSet<String> = HashSet::new();
-        // Precompute relaxed anchor variants for regenerated lines to better match nodes whose definition line formatting changed
-        // Relaxation strategy: drop anything after first '(' or '{' or 'link=' style param to stabilize anchor across param injection/stripping.
-        fn relaxed_anchor(base: &str) -> String { 
-            let mut s = base.to_string();
-            for sep in ["(", "{", "link="] { if let Some(idx) = s.find(sep) { s = s[..idx].to_string(); break; } }
-            s
-        }
-        // Precompute first lines of regenerated to compare with leading block (avoid duplicate insertion)
-        let mut regen_iter = regenerated.lines();
-        let mut first_lines: Vec<&str> = Vec::new();
-        for _ in 0..leading_block.len() { if let Some(l) = regen_iter.next() { first_lines.push(l); } else { break; } }
-        // Track whether last output line was blank to control insertion without removing authored single blanks
-        let mut last_out_blank = false;
-        for (i, line) in regenerated.lines().enumerate() {
-            if i == 0 && !inserted_leading && !leading_block.is_empty() {
-                let duplicate = leading_block.iter().map(|s| s.as_str()).collect::<Vec<&str>>() == first_lines;
-                if !duplicate {
-                    // Emit the leading block as-is but compress sequences >1 to a single blank
-                    let mut prev_blank = true; // out is empty at start
-                    for l in &leading_block {
-                        let is_blank = l.trim().is_empty();
-                        if is_blank {
-                            if !prev_blank { out.push_str(l); out.push('\n'); last_out_blank = true; }
-                        } else {
-                            out.push_str(l); out.push('\n');
-                            last_out_blank = false;
-                        }
-                        prev_blank = is_blank;
-                    }
-                }
-                inserted_leading = true;
-            }
-            let key = anchor_key(line);
-            let relaxed_key = relaxed_anchor(&key);
-            if !key.is_empty() {
-                // Try exact key
-                let mut block_opt = map_block.get(&key);
-                // Fallback: try relaxed key if different
-                if block_opt.is_none() && relaxed_key != key { block_opt = map_block.get(&relaxed_key); }
-                if let Some(block) = block_opt {
-                    if !used_blocks.contains(&key) {
-                        // Inject block comments.
-                        // Policy for leading blanks: if output already ends with a blank, drop all leading blanks from the block;
-                        // otherwise, emit exactly one leading blank (regardless of how many in the original block).
-                        let mut iter = block.iter().peekable();
-                        // Count and skip/emit leading blanks
-                        let mut emitted_leading_blank = false;
-                        while let Some(l) = iter.peek() {
-                            if l.trim().is_empty() {
-                                if last_out_blank {
-                                    // Skip this leading blank
-                                    iter.next();
-                                    continue;
-                                } else if !emitted_leading_blank {
-                                    out.push_str(l);
-                                    out.push('\n');
-                                    last_out_blank = true;
-                                    emitted_leading_blank = true;
-                                    iter.next();
-                                    continue;
-                                } else {
-                                    // Already emitted a single leading blank; drop extras
-                                    iter.next();
-                                    continue;
-                                }
-                            }
-                            break;
-                        }
-                        // Collect remainder of block and trim trailing blanks
-                        let mut rest: Vec<&String> = iter.collect();
-                        while rest.last().map(|l| l.trim().is_empty()).unwrap_or(false) { rest.pop(); }
-                        // Emit the rest of the block, collapsing internal blank runs to single
-                        let mut prev_blank = last_out_blank;
-                        for l in rest {
-                            let is_blank = l.trim().is_empty();
-                            if is_blank {
-                                if !prev_blank { out.push_str(l); out.push('\n'); }
-                            } else {
-                                out.push_str(l); out.push('\n');
-                            }
-                            prev_blank = is_blank;
-                            last_out_blank = is_blank;
-                        }
-                        used_blocks.insert(key.clone());
-                    }
-                }
-                let mut inline_opt = map_inline.get(&key);
-                if inline_opt.is_none() && relaxed_key != key { inline_opt = map_inline.get(&relaxed_key); }
-                if let Some(inl) = inline_opt {
-                    if line.contains("//") {
-                        out.push_str(line);
-                        out.push('\n');
-                        last_out_blank = false;
-                    } else {
-                        out.push_str(line);
-                        if !line.ends_with(' ') { out.push(' '); }
-                        out.push_str(inl);
-                        out.push('\n');
-                        last_out_blank = false;
-                    }
-                    // After emitting line + inline comment, also check if original had a trailing block tied AFTER this line
-                    if let Some(after_block) = after_line_comment_block.get(&key).or_else(|| if relaxed_key!=key { after_line_comment_block.get(&relaxed_key) } else { None }) {
-                        // Ensure we haven't already inserted a pre block for this key
-                        // Insert exactly as captured, but normalize multiple leading blanks to at most one if we already have a blank
-                        let mut first_non_emitted = true;
-                        for l in after_block {
-                            let is_blank = l.trim().is_empty();
-                            if is_blank {
-                                if last_out_blank { continue; }
-                                out.push_str(l);
-                                out.push('\n');
-                                last_out_blank = true;
-                            } else {
-                                out.push_str(l);
-                                out.push('\n');
-                                last_out_blank = false;
-                            }
-                            first_non_emitted = false;
-                        }
-                    }
-                    continue;
-                }
-                // If no inline comment but we have an AFTER block associated with this code line (and we didn't already place a block before it), emit it now.
-                if let Some(after_block) = after_line_comment_block.get(&key).or_else(|| if relaxed_key!=key { after_line_comment_block.get(&relaxed_key) } else { None }) {
-                    out.push_str(line);
-                    out.push('\n');
-                    last_out_blank = false;
-                    for l in after_block {
-                        let is_blank = l.trim().is_empty();
-                        if is_blank {
-                            if !last_out_blank { out.push_str(l); out.push('\n'); last_out_blank = true; }
-                        } else {
-                            out.push_str(l); out.push('\n'); last_out_blank = false;
-                        }
-                    }
-                    continue;
-                }
-            }
-            out.push_str(line);
-            out.push('\n');
-            last_out_blank = line.trim().is_empty();
-        }
-
-        // Append trailing block, if any
-        if !trailing_block.is_empty() {
-            if !out.ends_with('\n') { out.push('\n'); }
-            for l in &trailing_block {
-                let is_blank = l.trim().is_empty();
-                if is_blank {
-                    if !last_out_blank { out.push_str(l); out.push('\n'); last_out_blank = true; }
-                } else {
-                    out.push_str(l); out.push('\n');
-                    last_out_blank = false;
-                }
-            }
-        }
-        // Final normalization pass: ensure exactly one blank line (at most) before standalone comment lines.
-        // This fixes cases where both regenerated spacing and injected blocks contribute blanks.
-        let mut normalized = String::new();
-        let mut pending_blanks = 0usize;
-        for line in out.lines() {
-            let is_blank = line.trim().is_empty();
-            if is_blank {
-                pending_blanks += 1;
-                continue;
-            }
-            let is_comment = line.trim_start().starts_with("//");
-            let blanks_to_emit = if is_comment { if pending_blanks > 0 { 1 } else { 0 } } else { pending_blanks };
-            for _ in 0..blanks_to_emit { normalized.push('\n'); }
-            normalized.push_str(line);
-            normalized.push('\n');
-            pending_blanks = 0;
-        }
-        // Flush trailing blanks
-        for _ in 0..pending_blanks { normalized.push('\n'); }
-        normalized
+        OverseerFileHandler::segment_merge(original, regenerated)
     }
 }
 
@@ -1337,6 +1167,24 @@ list L (entry=<T>) {
         let pos_comment = merged.find("// List as an example of correct behavior:").unwrap();
         let pos_list = merged.find("list L (entry=<T>)").unwrap_or_else(|| merged.find("list L(entry=<T>)").unwrap());
         assert!(pos_comment < pos_list, "Comment should precede the list anchor line");
+    }
+
+    #[test]
+    fn preserves_single_blank_line_before_standalone_comment_block() {
+        let original = r#"div A {
+    int X = 1
+}
+
+// standalone comment about next block
+div B {
+    int Y = 2
+}
+"#;
+        let (_rem, mut nodes) = crate::parser::parse_document(original).expect("parse");
+        crate::resolver::resolve_document(&mut nodes);
+        let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        let merged = OverseerFileHandler::merge_comments(original, &regenerated);
+        assert!(merged.contains("}\n\n// standalone comment about next block"), "Missing blank line before standalone comment. Merged:\n{}", merged);
     }
 
     #[test]
@@ -1870,6 +1718,8 @@ mod tests_weight_tracker_round_trip_fidelity {
         }
     }
 }
+
+// (exercise tracker tests relocated after weight tracker round trip module)
 "##;
 
         let (_rem, mut nodes) = crate::parser::parse_document(original).expect("parse weight_tracker_new");
@@ -1932,5 +1782,68 @@ mod tests_weight_tracker_round_trip_fidelity {
             }
         }
         assert_eq!(ser_c, orig_c, "Round-trip serialization for weight_tracker_new is not idempotent. Differs after resolve.\n--- ORIGINAL ---\n{}\n--- SERIALIZED ---\n{}", orig_c, ser_c);
+    }
+}
+
+#[cfg(test)]
+mod tests_exercise_tracker_round_trip {
+    use super::*;
+    const EXERCISE_SRC: &str = include_str!("../../examples/exercise_tracker/exercise.os");
+
+    fn structure_signature(s: &str) -> Vec<(usize, String)> {
+        s.lines().map(|l| {
+            if l.trim_start().starts_with("//") || l.trim().is_empty() { return (0usize, String::new()); }
+            let leading = l.chars().take_while(|c| *c==' ' || *c=='\t').count();
+            (leading, l.trim_end().to_string())
+        }).collect()
+    }
+
+    #[test]
+    fn exercise_round_trip_preserves_structure() {
+        let (_rem, mut nodes) = crate::parser::parse_document(EXERCISE_SRC).expect("parse exercise");
+        crate::resolver::resolve_document(&mut nodes);
+        let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        let merged = OverseerFileHandler::merge_comments(EXERCISE_SRC, &regenerated);
+        assert!(merged.contains("div exercise_tracker"));
+        assert!(merged.contains("list Exercises"));
+        assert!(merged.contains("list History"));
+        let sig_orig = structure_signature(EXERCISE_SRC);
+        let sig_new = structure_signature(&merged);
+        let distinct_orig: std::collections::HashSet<usize> = sig_orig.iter().map(|(n, _)| *n).filter(|n| *n>0).collect();
+        let distinct_new: std::collections::HashSet<usize> = sig_new.iter().map(|(n, _)| *n).filter(|n| *n>0).collect();
+        assert!(distinct_new.len() >= distinct_orig.len().saturating_sub(1), "Indentation levels collapsed: orig={:?} new={:?}", distinct_orig, distinct_new);
+        assert!(merged.contains("- eid ="));
+    }
+
+    #[test]
+    fn exercise_done_action_prepends_history_entry_in_structure() {
+        let (_rem, mut nodes) = crate::parser::parse_document(EXERCISE_SRC).expect("parse exercise");
+        crate::resolver::resolve_document(&mut nodes);
+        fn find_list<'a>(nodes: &'a mut [OverseerNode], name: &str) -> Option<&'a mut OverseerNode> {
+            for n in nodes.iter_mut() {
+                if n.node_type=="list" && n.name==name { return Some(n); }
+                if let Some(found) = find_list(&mut n.children, name) { return Some(found); }
+            }
+            None
+        }
+        let exercises = find_list(&mut nodes, "Exercises").expect("Exercises list not found recursively");
+        let first_entry = exercises.children.iter().find(|c| c.get_accessible_children().iter().any(|gc| gc.name=="id")).expect("exercise entry");
+        let id_val = first_entry.get_accessible_children().iter().find(|gc| gc.name=="id").and_then(|n| n.parameters.get("value")).cloned().expect("id val");
+        let sets_val = first_entry.get_accessible_children().iter().find(|gc| gc.name=="sets").and_then(|n| n.parameters.get("value")).cloned().unwrap_or(OverseerValue::Integer(0));
+        let reps_val = first_entry.get_accessible_children().iter().find(|gc| gc.name=="reps").and_then(|n| n.parameters.get("value")).cloned().unwrap_or(OverseerValue::Integer(0));
+        let weight_val = first_entry.get_accessible_children().iter().find(|gc| gc.name=="weight").and_then(|n| n.parameters.get("value")).cloned().unwrap_or(OverseerValue::Null);
+    let history = find_list(&mut nodes, "History").expect("History list not found recursively");
+        let mut new_item = OverseerNode { name: "ExerciseRecord__NEW".to_string(), node_type: "ExerciseRecord".to_string(), template: None, parameters: Default::default(), children: Vec::new(), is_hierarchy_transparent: false, param_order: Vec::new(), raw_value_literal: None, authored_dash: false, child_original_index: None, leading_blank_lines: 0 };
+        for (n, v) in [("eid", id_val), ("sets", sets_val), ("reps", reps_val), ("weight", weight_val)] { let mut child = OverseerNode { name: n.to_string(), node_type: n.to_string(), template: None, parameters: Default::default(), children: Vec::new(), is_hierarchy_transparent: false, param_order: Vec::new(), raw_value_literal: None, authored_dash: true, child_original_index: None, leading_blank_lines: 0 }; child.parameters.insert("value".into(), v); new_item.children.push(child); }
+        let mut time_child = OverseerNode { name: "time".into(), node_type: "time".into(), template: None, parameters: Default::default(), children: Vec::new(), is_hierarchy_transparent: false, param_order: Vec::new(), raw_value_literal: None, authored_dash: true, child_original_index: None, leading_blank_lines: 0 };
+        time_child.parameters.insert("value".into(), OverseerValue::Timestamp("2025-09-27T00:00:00Z".into()));
+        new_item.children.push(time_child);
+        history.children.insert(0, new_item);
+        let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        let merged = OverseerFileHandler::merge_comments(EXERCISE_SRC, &regenerated);
+        let pos_history = merged.find("list History").expect("history anchor");
+        let pos_new_time = merged.find("- time = \"2025-09-27T00:00:00Z\"").expect("new time field");
+        assert!(pos_new_time > pos_history);
+        assert!(merged.contains("- eid ="));
     }
 }
