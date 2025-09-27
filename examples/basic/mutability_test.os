@@ -11,8 +11,8 @@ div dr {
 
         }
     }
-   
-   int E (mutable="guarded") = 10
+
+    int E (mutable="guarded") = 10
    // timestamp selected_date (mutable="guarded", precision="day") = "2025-09-23"
 
 }

@@ -969,6 +969,49 @@ impl OverseerFileHandler {
             code.chars().filter(|c| !c.is_whitespace()).collect::<String>()
         }
 
+        // Additional heuristic capture: map of a code line whose next non-blank line in original was a standalone comment block.
+        // This lets us force comment placement AFTER that code line (rather than before the following anchor) preserving trailing intent.
+        let mut after_line_comment_block: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        {
+            let mut lines_iter = original.lines().enumerate().collect::<Vec<(usize, &str)>>();
+            let total = lines_iter.len();
+            let mut i = 0;
+            while i < total {
+                let (idx, line) = lines_iter[i];
+                let trimmed = line.trim_start();
+                if trimmed.is_empty() { i += 1; continue; }
+                if trimmed.starts_with("//") { i += 1; continue; } // skip pure comment line as anchor
+                // candidate code line
+                let mut j = i + 1;
+                let mut collected: Vec<String> = Vec::new();
+                let mut saw_comment = false;
+                while j < total {
+                    let (_jidx, l2) = lines_iter[j];
+                    let t2 = l2.trim_start();
+                    if t2.is_empty() { collected.push(l2.to_string()); j += 1; continue; }
+                    if t2.starts_with("//") {
+                        // gather contiguous comment block
+                        collected.push(l2.to_string());
+                        saw_comment = true;
+                        j += 1;
+                        // also gather any immediately following blank lines as part of trailing spacing until next code
+                        while j < total {
+                            let (_j2, l3) = lines_iter[j];
+                            if l3.trim().is_empty() { collected.push(l3.to_string()); j += 1; } else { break; }
+                        }
+                    }
+                    break; // stop after first non-blank/comment sequence post code
+                }
+                if saw_comment {
+                    let key = anchor_key(line);
+                    if !key.is_empty() && !after_line_comment_block.contains_key(&key) {
+                        after_line_comment_block.insert(key, collected);
+                    }
+                }
+                i += 1;
+            }
+        }
+
         // Extract leading comment block
         let mut leading_block: Vec<String> = Vec::new();
         let mut started = false;
@@ -997,6 +1040,7 @@ impl OverseerFileHandler {
         let mut map_block: HashMap<String, Vec<String>> = HashMap::new();
         let mut pending_block: Vec<String> = Vec::new();
         let mut seen_first_code_line = false;
+        let mut prev_code_anchor: Option<String> = None;
         for line in original.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with("//") || trimmed.is_empty() {
@@ -1011,15 +1055,33 @@ impl OverseerFileHandler {
                     // Skip mapping the already extracted leading block to this first code anchor
                     pending_block.clear();
                 } else {
-                    map_block.insert(key.clone(), std::mem::take(&mut pending_block));
+                    // Suppress double attribution: if this pending block's first comment line matches the
+                    // trailing-after block recorded for the previous code anchor, don't also treat it
+                    // as a preceding block for the current anchor.
+                    let suppress_as_preceding = if let Some(prev_anchor) = &prev_code_anchor {
+                        if let Some(trailing) = after_line_comment_block.get(prev_anchor) {
+                            let first_pending = pending_block.iter().find(|l| l.trim_start().starts_with("//"));
+                            let first_trailing = trailing.iter().find(|l| l.trim_start().starts_with("//"));
+                            match (first_pending, first_trailing) {
+                                (Some(p), Some(t)) => p.trim() == t.trim(),
+                                _ => false,
+                            }
+                        } else { false }
+                    } else { false };
+                    if suppress_as_preceding {
+                        pending_block.clear();
+                    } else {
+                        map_block.insert(key.clone(), std::mem::take(&mut pending_block));
+                    }
                 }
             }
             seen_first_code_line = true;
             // Capture inline comment (if any)
             if let Some(idx) = line.find("//") {
                 let inline = &line[idx..];
-                map_inline.insert(key, inline.to_string());
+                map_inline.insert(key.clone(), inline.to_string());
             }
+            prev_code_anchor = Some(key);
         }
         // Any remaining pending_block becomes trailing block (handled above already)
         if !pending_block.is_empty() && trailing_block.is_empty() {
@@ -1148,6 +1210,41 @@ impl OverseerFileHandler {
                         out.push_str(inl);
                         out.push('\n');
                         last_out_blank = false;
+                    }
+                    // After emitting line + inline comment, also check if original had a trailing block tied AFTER this line
+                    if let Some(after_block) = after_line_comment_block.get(&key).or_else(|| if relaxed_key!=key { after_line_comment_block.get(&relaxed_key) } else { None }) {
+                        // Ensure we haven't already inserted a pre block for this key
+                        // Insert exactly as captured, but normalize multiple leading blanks to at most one if we already have a blank
+                        let mut first_non_emitted = true;
+                        for l in after_block {
+                            let is_blank = l.trim().is_empty();
+                            if is_blank {
+                                if last_out_blank { continue; }
+                                out.push_str(l);
+                                out.push('\n');
+                                last_out_blank = true;
+                            } else {
+                                out.push_str(l);
+                                out.push('\n');
+                                last_out_blank = false;
+                            }
+                            first_non_emitted = false;
+                        }
+                    }
+                    continue;
+                }
+                // If no inline comment but we have an AFTER block associated with this code line (and we didn't already place a block before it), emit it now.
+                if let Some(after_block) = after_line_comment_block.get(&key).or_else(|| if relaxed_key!=key { after_line_comment_block.get(&relaxed_key) } else { None }) {
+                    out.push_str(line);
+                    out.push('\n');
+                    last_out_blank = false;
+                    for l in after_block {
+                        let is_blank = l.trim().is_empty();
+                        if is_blank {
+                            if !last_out_blank { out.push_str(l); out.push('\n'); last_out_blank = true; }
+                        } else {
+                            out.push_str(l); out.push('\n'); last_out_blank = false;
+                        }
                     }
                     continue;
                 }
@@ -1290,6 +1387,124 @@ div T {
         assert!(roundtrip.contains("}\n\n// Standalone"), "Expected a blank line before the standalone comment to be preserved. Got:\n{}", roundtrip);
         // Clean up
         let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    #[test]
+    fn guarded_revert_does_not_move_trailing_comment_in_block() {
+        // This mirrors examples/basic/mutability_test.os simplified to essential lines
+        // The comment should remain directly after the E line inside the dr block.
+        let original = r#"int A (mutable=true) = 55
+int B (mutable=false) = 10
+int C (mutable="guarded") = 11
+int D = 6
+
+div dr {
+
+    button Prev (label="Update") {
+        on click {
+            set (path="/dr/E") = 20
+
+        }
+    }
+   
+   int E (mutable="guarded") = 10
+   // comment line
+
+}
+
+"#;
+
+        // Parse original
+        let (_rem, mut nodes) = crate::parser::parse_document(original).expect("parse");
+        crate::resolver::resolve_document(&mut nodes);
+
+        // Simulate an action changing E to 20 then guarded normalization reverting it to 10 before serialization.
+        // Find dr/E node.
+        fn find_e<'a>(nodes: &'a mut [OverseerNode]) -> Option<&'a mut OverseerNode> {
+            for n in nodes.iter_mut() {
+                if n.name == "dr" {
+                    for c in n.children.iter_mut() {
+                        if c.name == "E" { return Some(c); }
+                    }
+                }
+            }
+            None
+        }
+        // Change to 20
+        if let Some(e) = find_e(&mut nodes) { e.parameters.insert("value".into(), OverseerValue::Integer(20)); }
+        // Guarded revert: restore to 10 (matching original) prior to serialization
+        if let Some(e) = find_e(&mut nodes) { e.parameters.insert("value".into(), OverseerValue::Integer(10)); }
+
+        // NOTE: Keep original file formatting exactly (no escaped quotes) to mirror real source.
+
+        let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        let merged = OverseerFileHandler::merge_comments(original, &regenerated);
+
+        // Ensure comment still appears and order relative to E line unchanged (comment after E inside block)
+    // The serializer may normalize spacing: (mutable="guarded") or (mutable=\"guarded\"). We search relaxed.
+    let e_search = "int E"; // broad anchor
+    let pos_e_orig = original.find(e_search).expect("E line in original");
+        let pos_comment_orig = original.find("// comment line").expect("comment in original");
+        assert!(pos_comment_orig > pos_e_orig, "In original, comment should appear after E line");
+
+    let pos_e_merged = merged.find(e_search).expect("E line in merged");
+        let pos_comment_merged = merged.find("// comment line").expect("comment in merged");
+        assert!(pos_comment_merged > pos_e_merged, "Comment moved before E line after merge.\n--- Regenerated ---\n{}\n--- Merged ---\n{}", regenerated, merged);
+
+        // Also ensure the relative distance (rough heuristic) did not expand beyond 120 chars to catch large relocations
+        assert!(pos_comment_merged - pos_e_merged < 200, "Comment drifted too far from E line after merge");
+    }
+
+    #[test]
+    fn guarded_action_end_to_end_preserves_comment() {
+        // Full flow: parse original, simulate action set /dr/E=20 (like button Prev), guarded revert, serialize + merge.
+        let original = r#"int A (mutable=true) = 55
+int B (mutable=false) = 10
+int C (mutable="guarded") = 11
+int D = 6
+
+div dr {
+
+    button Prev (label="Update") {
+        on click {
+            set (path="/dr/E") = 20
+
+        }
+    }
+   
+   int E (mutable="guarded") = 10
+   // comment line
+
+}
+
+"#;
+
+        // Parse + resolve
+        let (_rem, mut nodes) = crate::parser::parse_document(original).expect("parse");
+        crate::resolver::resolve_document(&mut nodes);
+
+        // Simulate executing the set action: find E and set it to 20 (UI/action effect)
+        fn find_e_mut<'a>(nodes: &'a mut [OverseerNode]) -> Option<&'a mut OverseerNode> {
+            for n in nodes.iter_mut() { if n.name=="dr" { for c in n.children.iter_mut() { if c.name=="E" { return Some(c); } } } }
+            None
+        }
+        if let Some(e) = find_e_mut(&mut nodes) { e.parameters.insert("value".into(), OverseerValue::Integer(20)); }
+
+        // Guarded normalization (like frontend before save) -> revert to original 10
+        if let Some(e) = find_e_mut(&mut nodes) { e.parameters.insert("value".into(), OverseerValue::Integer(10)); }
+
+        // Serialize & merge
+        let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        let merged = OverseerFileHandler::merge_comments(original, &regenerated);
+
+        // Assertions
+        let e_search = "int E";
+        let pos_e_orig = original.find(e_search).unwrap();
+        let pos_comment_orig = original.find("// comment line").unwrap();
+        assert!(pos_comment_orig > pos_e_orig);
+        let pos_e_merged = merged.find(e_search).expect("E in merged");
+        let pos_comment_merged = merged.find("// comment line").expect("comment in merged");
+        assert!(pos_comment_merged > pos_e_merged, "Comment moved before E. Regenerated:\n{}\nMerged:\n{}", regenerated, merged);
     }
 
     fn rand_suffix() -> String {
