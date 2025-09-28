@@ -1303,7 +1303,7 @@ mod tests_aggregate_inherited_fields_persistence {
         // Confirm initial total formula intact and computed shadow present
         let total = find(&nodes, "main/total").unwrap();
         assert!(matches!(total.parameters.get("value"), Some(OverseerValue::Formula(s)) if s.contains("map(|x| x/C).sum()")));
-        let initial_total_val = total.parameters.get("_computed_value").cloned();
+    let _initial_total_val = total.parameters.get("_computed_value").cloned();
 
         // Simulate first selective edit: change A from 2 -> 5
         {
@@ -1320,7 +1320,7 @@ mod tests_aggregate_inherited_fields_persistence {
 
         let total_after_first = find(&nodes, "main/total").unwrap();
         assert!(matches!(total_after_first.parameters.get("value"), Some(OverseerValue::Formula(_))), "Formula should persist after first edit");
-    let after_first_val = total_after_first.parameters.get("_computed_value").cloned();
+    let _after_first_val = total_after_first.parameters.get("_computed_value").cloned();
     // NOTE: We expect this to change after selective propagation fix; current focus is persistence, so we don't assert difference yet.
 
         // Second selective edit: change B 3 -> 4
@@ -1338,7 +1338,7 @@ mod tests_aggregate_inherited_fields_persistence {
 
         let total_after_second = find(&nodes, "main/total").unwrap();
         assert!(matches!(total_after_second.parameters.get("value"), Some(OverseerValue::Formula(_))), "Formula should persist after second edit");
-    let after_second_val = total_after_second.parameters.get("_computed_value").cloned();
+    let _after_second_val = total_after_second.parameters.get("_computed_value").cloned();
     // Similarly, skip asserting change pending selective propagation bug resolution.
     // Ensure still formula after two edits
     assert!(matches!(total_after_second.parameters.get("value"), Some(OverseerValue::Formula(_))));
@@ -1558,6 +1558,7 @@ fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::H
 
 /// Recursively traverses the node tree, evaluating formulas along the way.
 /// It maintains the path to the current node, which is crucial for the EvaluationContext.
+#[allow(dead_code)]
 unsafe fn recursively_evaluate_node_formulas(
     node_ptr: *mut OverseerNode,
     _parent_ptr: *const OverseerNode,
