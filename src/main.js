@@ -390,6 +390,7 @@ tab Main {
             const content = await invoke('serialize_overseer_nodes', { 
                 nodes: _nodesForSerialization 
             })
+            try { OverseerApp._lastSerializedText = content } catch(_) { /* test capture */ }
 
             // If no file path is set yet, treat this as a dry-run serialization only
             if (!this.currentFile) {

@@ -964,6 +964,23 @@ impl OverseerFileHandler {
     /// belonging to later duplicate anchors (mitigating indentation drift when prepending entries).
     fn segment_merge(original: &str, regenerated: &str) -> String {
         use std::collections::{HashMap, VecDeque};
+        // Optional deep audit (heavy). Enable with env var OVERSEER_MERGE_AUDIT=1.
+        let audit_enabled = std::env::var("OVERSEER_MERGE_AUDIT").is_ok();
+        #[derive(Debug)]
+        struct AuditLineRecord {
+            phase: &'static str,          // pass1|pass2|post
+            out_idx: usize,              // line index in current output being built (approximate)
+            regen_idx: Option<usize>,    // index in regenerated sequence if applicable
+            text: String,                // final text for the line at capture
+            trimmed: String,             // trimmed content
+            adopted_from: Option<String>,// strict|relaxed|trimmed|raw|struct_list_brace|struct_generic_brace|post_adopt|post_adopt_trimmed
+            original_pos: Option<usize>, // original line position used for adoption
+            original_indent: Option<usize>,
+            final_indent: usize,
+            note: Option<String>,        // extra context (skip_consume,new_block,eager,...)
+        }
+        impl AuditLineRecord { fn emit(&self) { if std::env::var("OVERSEER_MERGE_AUDIT").is_ok() { eprintln!("[MERGE-AUDIT] {}|out={} regen={:?} indent_final={} indent_orig={:?} adopted={:?} pos_orig={:?} note={:?} :: {}", self.phase, self.out_idx, self.regen_idx, self.final_indent, self.original_indent, self.adopted_from, self.original_pos, self.note, self.text); } } }
+        let mut audit_lines: Vec<AuditLineRecord> = Vec::new();
         fn is_code(l:&str)->bool { let t=l.trim_start(); !t.is_empty() && !t.starts_with("//") }
         fn anchor_key(line:&str)->String { let code = match line.find("//") { Some(i)=> &line[..i], None=> line }; code.chars().filter(|c| !c.is_whitespace()).collect() }
         fn relaxed_anchor_key(line:&str)->String {
@@ -972,31 +989,74 @@ impl OverseerFileHandler {
             if let Some(pos) = code.find(|c: char| c=='(' || c=='{') { slice = &code[..pos]; }
             slice.chars().filter(|c| !c.is_whitespace()).collect()
         }
-        #[derive(Clone, Debug)] struct Occurrence { leading: Vec<String>, indent: String, inline: Option<String>, pos: usize }
-        let trace_on = crate::file_ops::MERGE_TRACE_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
+    #[derive(Clone, Debug)] struct Occurrence { leading: Vec<String>, indent: String, inline: Option<String>, pos: usize, core: String }
+    #[cfg(feature="debug-resolver")] #[derive(Debug, serde::Serialize)] struct MergeEvent { idx: usize, kind: &'static str, trimmed: String, reason: String, adopted_indent: Option<String>, final_line: Option<String> }
+    #[cfg(feature="debug-resolver")] let mut events: Vec<MergeEvent> = Vec::new();
+    #[cfg(feature="debug-resolver")] static mut LAST_JSON_TRACE: Option<String> = None;
+    #[cfg(feature="debug-resolver")] let json_trace = std::env::var("OVS_MERGE_TRACE_JSON").is_ok();
+    #[cfg(not(feature="debug-resolver"))] let _ = std::env::var("OVS_MERGE_TRACE_JSON"); // no-op when feature disabled
+    let mut trace_on = crate::file_ops::MERGE_TRACE_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
+    // Environment variable override for tracing (Option A)
+    if std::env::var("OVS_MERGE_TRACE").is_ok() { trace_on = true; }
         macro_rules! trace_merge { ($($arg:tt)*) => { if trace_on { #[cfg(feature="debug-resolver")] eprintln!("[MERGE] {}", format!($($arg)*)); } }; }
         // Pass 1: scan original building occurrence queues and trailing tail
-        let mut map: HashMap<String, VecDeque<Occurrence>> = HashMap::new();
-        let mut map_relaxed: HashMap<String, VecDeque<Occurrence>> = HashMap::new();
+    let mut map: HashMap<String, VecDeque<Occurrence>> = HashMap::new();
+    let mut map_relaxed: HashMap<String, VecDeque<Occurrence>> = HashMap::new();
+    // Trimmed-content (core) map (ignores inline comments & indentation) for final fallback adoption.
+    let mut map_trimmed: HashMap<String, VecDeque<Occurrence>> = HashMap::new();
         let mut trailing_tail: Vec<String> = Vec::new();
         let mut iter = original.lines().peekable();
         let mut line_index: usize = 0; // absolute line index across original
-        while iter.peek().is_some() {
+    // Track ordinal indices for generic closing braces to create disambiguated synthetic anchor keys.
+    let mut original_generic_close_counter: usize = 0;
+    // === Generic brace path mapping (depth + ordinal among generic siblings) ===
+    fn is_list_entry_opener(line: &str) -> bool { line.trim() == "- {" }
+    #[derive(Clone, Debug)] struct OpenRecord { depth: usize, generic_ordinal: usize, indent: usize, is_list: bool }
+    let mut open_stack: Vec<OpenRecord> = Vec::new();
+    let mut generic_counters_per_depth: Vec<usize> = Vec::new();
+    let mut generic_path_indent_map: HashMap<(usize, usize), usize> = HashMap::new();
+    while iter.peek().is_some() {
             let mut leading: Vec<String> = Vec::new();
             while let Some(&l) = iter.peek() { if is_code(l) { break; } leading.push(l.to_string()); iter.next(); line_index+=1; }
             if iter.peek().is_none() { trailing_tail = leading; break; }
             let code_line = iter.next().unwrap(); line_index+=1;
             if !is_code(code_line) { continue; }
-            let k = anchor_key(code_line);
+            let mut k = anchor_key(code_line);
             let rk = relaxed_anchor_key(code_line);
             let indent_len = code_line.chars().take_while(|c| c.is_whitespace()).count();
             let indent: String = code_line.chars().take(indent_len).collect();
             let inline = code_line.find("//").map(|i| code_line[i..].to_string());
-            let occ = Occurrence { leading, indent, inline, pos: line_index-1 }; // store position of the code line itself
+            let core_part = {
+                let code_no_comment = match code_line.find("//") { Some(i)=> &code_line[..i], None=> code_line };
+                code_no_comment.trim().to_string()
+            };
+            let occ = Occurrence { leading, indent, inline, pos: line_index-1, core: core_part };// store position of the code line itself
+            let trimmed_code = code_line.trim();
+            // Path-based structural tracking
+            if trimmed_code.ends_with('{') {
+                let is_list = is_list_entry_opener(code_line);
+                let depth = open_stack.len();
+                if generic_counters_per_depth.len() <= depth { generic_counters_per_depth.push(0); }
+                let mut ordinal = 0usize;
+                if !is_list { ordinal = generic_counters_per_depth[depth]; generic_counters_per_depth[depth] += 1; }
+                open_stack.push(OpenRecord { depth, generic_ordinal: ordinal, indent: occ.indent.len(), is_list });
+            } else if trimmed_code == "}" {
+                if let Some(op) = open_stack.pop() {
+                    if !op.is_list { generic_path_indent_map.insert((op.depth, op.generic_ordinal), op.indent); }
+                }
+            }
+            // If this is a standalone generic closing brace ('}') that is NOT directly closing a list entry (we cannot know directly here),
+            // tag it with a running ordinal to create a unique synthetic key variant to avoid ambiguous adoption ordering.
+            if code_line.trim() == "}" {
+                // Append suffix so later identical braces do not collide purely by string.
+                k = format!("{}#g{}", k, original_generic_close_counter);
+                original_generic_close_counter += 1;
+            }
             map.entry(k).or_insert_with(VecDeque::new).push_back(occ.clone());
-            map_relaxed.entry(rk).or_insert_with(VecDeque::new).push_back(occ);
+            map_relaxed.entry(rk).or_insert_with(VecDeque::new).push_back(occ.clone());
+            map_trimmed.entry(occ.core.clone()).or_insert_with(VecDeque::new).push_back(occ);
         }
-        trace_merge!("built occurrence maps: strict={} relaxed={}", map.len(), map_relaxed.len());
+        trace_merge!("built occurrence maps: strict={} relaxed={} trimmed={}", map.len(), map_relaxed.len(), map_trimmed.len());
 
         // Precompute trimmed original code lines for novelty detection of list entry blocks.
         use std::collections::HashSet;
@@ -1006,11 +1066,26 @@ impl OverseerFileHandler {
         // Collect regenerated lines for block lookahead.
         let regen_lines: Vec<&str> = regenerated.lines().collect();
         let mut skip_consume: Vec<bool> = vec![false; regen_lines.len()];
-        // Detect new list entry blocks ("- {" ... matching "}") whose internal content contains at least one line
-        // absent from the original; mark their structural lines so we do not consume original occurrences for them.
-        let mut idx = 0usize; while idx < regen_lines.len() { let line = regen_lines[idx].trim(); if line == "- {" { let start = idx; let mut depth = 0isize; let mut j = idx+1; let mut contains_novel = false; while j < regen_lines.len() { let t = regen_lines[j].trim(); if t == "- {" { depth += 1; } else if t == "}" { if depth == 0 { break; } depth -= 1; } if !t.is_empty() && !t.starts_with("//") && !original_trimmed.contains(t) { contains_novel = true; } j+=1; }
+        // Detect genuinely new list entry blocks ("- {" ... matching "}") using stricter heuristic to avoid
+        // misclassifying existing blocks with only a single changed field (which caused indentation drift).
+        // Heuristic: mark block only if (a) first code line inside block is novel and looks like an id/eid line OR
+        // (b) proportion of novel code lines exceeds 60%.
+        let mut idx = 0usize; while idx < regen_lines.len() { let line = regen_lines[idx].trim(); if line == "- {" { let start = idx; let mut depth = 0isize; let mut j = idx+1;
+                let mut novel_count = 0usize; let mut code_count = 0usize; let mut first_code_line: Option<String> = None; let mut first_code_line_novel = false;
+                while j < regen_lines.len() { let t = regen_lines[j].trim(); if t == "- {" { depth += 1; } else if t == "}" { if depth == 0 { break; } depth -= 1; }
+                    if !t.is_empty() && !t.starts_with("//") && t != "}" { // consider as code line
+                        if first_code_line.is_none() { first_code_line = Some(t.to_string()); first_code_line_novel = !original_trimmed.contains(t); }
+                        code_count += 1; if !original_trimmed.contains(t) { novel_count += 1; }
+                    }
+                    j+=1; }
                 if j < regen_lines.len() { // found block end at j
-                    if contains_novel { for k in start..=j { skip_consume[k] = true; } }
+                    let mut mark_new = false;
+                    if code_count > 0 {
+                        let ratio = (novel_count as f32) / (code_count as f32);
+                        if ratio > 0.60 { mark_new = true; }
+                        if !mark_new && first_code_line_novel { if let Some(fc) = &first_code_line { if fc.starts_with("- id ") || fc.starts_with("- eid ") { mark_new = true; } } }
+                    }
+                    if mark_new { for k in start..=j { skip_consume[k] = true; } }
                     idx = j; // will increment below
                 } }
             idx+=1; }
@@ -1018,24 +1093,65 @@ impl OverseerFileHandler {
         // Pass 2: iterate regenerated lines in order, applying positional guard and block-skip logic.
         let mut use_counters: HashMap<String, usize> = HashMap::new();
         let mut use_counters_relaxed: HashMap<String, usize> = HashMap::new();
-        let mut out = String::new();
+    let mut out = String::new();
         let mut last_blank = false;
         let mut regen_index: usize = 0;
-        for (line_idx, line) in regen_lines.iter().enumerate() {
+        // Track brace stack to enforce indentation for list entry blocks specifically (opened by "- {")
+    #[derive(Clone, Copy)] enum BlockKind { ListEntry { indent: usize }, Other { indent: usize } }
+        let mut block_stack: Vec<BlockKind> = Vec::new();
+        let mut list_entry_depth: usize = 0; // tracks nesting of list entry blocks opened by '- {'
+    // Counter for generic closing braces encountered during regenerated iteration to reconstruct synthetic keys.
+    let mut regen_generic_close_counter: usize = 0;
+    // Rebuild path stack for regenerated lines
+    let mut regen_open_stack: Vec<OpenRecord> = Vec::new();
+    let mut regen_generic_counters_per_depth: Vec<usize> = Vec::new();
+    let mut regen_generic_struct_expected: Vec<Option<usize>> = Vec::new();
+    for (line_idx, line) in regen_lines.iter().enumerate() {
             if !is_code(line) {
                 if line.trim().is_empty() { out.push('\n'); } else { out.push_str(line); out.push('\n'); }
+                if audit_enabled {
+                    audit_lines.push(AuditLineRecord{ phase: "pass2", out_idx: out.lines().count().saturating_sub(1), regen_idx: Some(line_idx), text: (*line).to_string(), trimmed: line.trim().to_string(), adopted_from: Some("non_code".into()), original_pos: None, original_indent: None, final_indent: 0, note: None });
+                }
                 last_blank = line.trim().is_empty();
                 regen_index+=1; continue;
             }
             let skip_this = skip_consume[line_idx];
-            let k = anchor_key(line);
+            let mut k = anchor_key(line);
+            if line.trim() == "}" { k = format!("{}#g{}", k, regen_generic_close_counter); regen_generic_close_counter += 1; }
+            // Maintain structural stack for regenerated lines
+            let trimmed_line_now = line.trim();
+            if trimmed_line_now.ends_with('{') {
+                let is_list = is_list_entry_opener(line);
+                let depth = regen_open_stack.len();
+                if regen_generic_counters_per_depth.len() <= depth { regen_generic_counters_per_depth.push(0); }
+                let mut ordinal = 0usize;
+                if !is_list { ordinal = regen_generic_counters_per_depth[depth]; regen_generic_counters_per_depth[depth] += 1; }
+                regen_open_stack.push(OpenRecord { depth, generic_ordinal: ordinal, indent: line.chars().take_while(|c| c.is_whitespace()).count(), is_list });
+            } else if trimmed_line_now == "}" {
+                if let Some(op) = regen_open_stack.pop() {
+                    if !op.is_list { let expected = generic_path_indent_map.get(&(op.depth, op.generic_ordinal)).cloned(); regen_generic_struct_expected.push(expected); }
+                    else { regen_generic_struct_expected.push(None); }
+                } else { regen_generic_struct_expected.push(None); }
+            }
             let mut matched = false;
+            let trimmed_line_pre = line.trim();
+            // Track entry depth prior to matching so we can relax adoption for interior structural lines
+            let entering_entry = trimmed_line_pre == "- {";
+            let leaving_entry = trimmed_line_pre == "}" && list_entry_depth > 0;
+            let in_list_entry_before = list_entry_depth > 0;
             if !skip_this { if let Some(queue) = map.get(&k) {
                 let idx = *use_counters.get(&k).unwrap_or(&0);
                 if idx < queue.len() {
                     let occ = &queue[idx];
-                    let needs_eager = ( !occ.leading.is_empty() || occ.inline.is_some() ) && idx == 0 && regen_index < occ.pos;
-                    if regen_index >= occ.pos || needs_eager { // positional guard or eager to retain comments
+                    let trimmed_line = trimmed_line_pre;
+                    let is_list_field = trimmed_line.starts_with("- ") && trimmed_line != "- {";
+                    let is_list_context_line = in_list_entry_before && !trimmed_line.starts_with("//") && trimmed_line != "}"; // any interior code line of list entry
+                    let has_comment_leading = occ.leading.iter().any(|l| l.trim_start().starts_with("//"));
+                    // Eager consumption scenarios:
+                    // 1. Targeted: closing brace carrying trailing comment block from original placement
+                    // 2. Header: first occurrence with leading comments (file header) whose original position is after regen_index due to stripped comments
+                    let needs_eager = regen_index < occ.pos && has_comment_leading && (trimmed_line == "}" || idx == 0);
+                    if regen_index >= occ.pos || needs_eager || is_list_field || is_list_context_line { // positional guard, eager, or relaxed for list fields & interior lines
                         for (i, l) in occ.leading.iter().enumerate() {
                             let blank = l.trim().is_empty();
                             if i == 0 && blank && last_blank { continue; }
@@ -1044,22 +1160,50 @@ impl OverseerFileHandler {
                         }
                         let regen_trim = line.trim_start();
                         let mut composed = format!("{}{}", occ.indent, regen_trim);
+                        // Track list entry openings before we potentially modify indentation
+                        if trimmed_line == "- {" { block_stack.push(BlockKind::ListEntry { indent: occ.indent.len() }); }
+                        else if trimmed_line.ends_with('{') { let indent_len = occ.indent.len(); block_stack.push(BlockKind::Other { indent: indent_len }); }
+                        if trimmed_line == "}" {
+                            if let Some(kind) = block_stack.pop() {
+                                match kind {
+                                    BlockKind::ListEntry { indent } => {
+                                        // For list entry blocks we normalize the closing brace to the opener indent (stable visual style)
+                                        composed = format!("{}{}", " ".repeat(indent), "}");
+                                    }
+                                    BlockKind::Other { .. } => {
+                                        // Generic blocks: if we have a structural expected opener indent and current is under-indented, fix it.
+                                        if let Some(Some(expected_opener)) = regen_generic_struct_expected.last() {
+                                            let current_len = composed.chars().take_while(|c| c.is_whitespace()).count();
+                                            if current_len != *expected_opener { composed = format!("{}{}", " ".repeat(*expected_opener), "}"); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if !line.contains("//") { if let Some(inl) = &occ.inline { if !composed.ends_with(' ') { composed.push(' '); } composed.push_str(inl); } }
                         out.push_str(&composed); out.push('\n');
+                        if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "pass2", out_idx: out.lines().count().saturating_sub(1), regen_idx: Some(line_idx), text: composed.clone(), trimmed: trimmed_line.to_string(), adopted_from: Some("strict".into()), original_pos: Some(occ.pos), original_indent: Some(occ.indent.len()), final_indent: occ.indent.len(), note: Some(format!("idx_in_queue={} eager={} list_field={} list_context_line={} skip={}", idx, needs_eager, is_list_field, is_list_context_line, skip_this)) }); }
                         last_blank = false;
-                        use_counters.insert(k, idx+1);
+                        use_counters.insert(k.clone(), idx+1);
                         matched = true;
                     }
                 }
             } }
             if !matched && !skip_this {
                 let rk = relaxed_anchor_key(line);
+                let rk = if line.trim() == "}" { // maintain relaxed variant similarly for completeness
+                    format!("{}#g{}", rk, regen_generic_close_counter.saturating_sub(1))
+                } else { rk };
                 if let Some(queue) = map_relaxed.get(&rk) {
                     let idx_r = *use_counters_relaxed.get(&rk).unwrap_or(&0);
                     if idx_r < queue.len() {
                         let occ = &queue[idx_r];
-                        let needs_eager = ( !occ.leading.is_empty() || occ.inline.is_some() ) && idx_r == 0 && regen_index < occ.pos;
-                        if regen_index >= occ.pos || needs_eager { // positional guard or eager
+                        let trimmed_line = trimmed_line_pre;
+                        let is_list_field = trimmed_line.starts_with("- ") && trimmed_line != "- {";
+                        let is_list_context_line = in_list_entry_before && !trimmed_line.starts_with("//") && trimmed_line != "}";
+                        let has_comment_leading = occ.leading.iter().any(|l| l.trim_start().starts_with("//"));
+                        let needs_eager = regen_index < occ.pos && has_comment_leading && (trimmed_line == "}" || idx_r == 0);
+                        if regen_index >= occ.pos || needs_eager || is_list_field || is_list_context_line { // positional guard, eager, or relaxed for list fields & interior lines
                             for (i, l) in occ.leading.iter().enumerate() {
                                 let blank = l.trim().is_empty();
                                 if i == 0 && blank && last_blank { continue; }
@@ -1068,23 +1212,85 @@ impl OverseerFileHandler {
                             }
                             let regen_trim = line.trim_start();
                             let mut composed = format!("{}{}", occ.indent, regen_trim);
+                            if trimmed_line == "- {" { block_stack.push(BlockKind::ListEntry { indent: occ.indent.len() }); }
+                            else if trimmed_line.ends_with('{') { let indent_len = occ.indent.len(); block_stack.push(BlockKind::Other { indent: indent_len }); }
+                            if trimmed_line == "}" {
+                                if let Some(kind) = block_stack.pop() {
+                                    match kind {
+                                        BlockKind::ListEntry { indent } => { composed = format!("{}{}", " ".repeat(indent), "}"); }
+                                        BlockKind::Other { .. } => {
+                                            if let Some(Some(expected_opener)) = regen_generic_struct_expected.last() {
+                                                let current_len = composed.chars().take_while(|c| c.is_whitespace()).count();
+                                                if current_len != *expected_opener { composed = format!("{}{}", " ".repeat(*expected_opener), "}"); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             if !line.contains("//") { if let Some(inl) = &occ.inline { if !composed.ends_with(' ') { composed.push(' '); } composed.push_str(inl); } }
                             out.push_str(&composed); out.push('\n');
+                            if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "pass2", out_idx: out.lines().count().saturating_sub(1), regen_idx: Some(line_idx), text: composed.clone(), trimmed: trimmed_line.to_string(), adopted_from: Some("relaxed".into()), original_pos: Some(occ.pos), original_indent: Some(occ.indent.len()), final_indent: occ.indent.len(), note: Some(format!("idx_in_queue={} eager={} list_field={} list_context_line={} skip={}", idx_r, needs_eager, is_list_field, is_list_context_line, skip_this)) }); }
                             last_blank = false;
-                            use_counters_relaxed.insert(rk, idx_r+1);
+                            use_counters_relaxed.insert(rk.clone(), idx_r+1);
                             matched = true;
                         }
                     }
                 }
             }
-            if !matched { out.push_str(line); out.push('\n'); last_blank = false; }
+            if !matched {
+                // Raw output path; enforce list entry closing brace indentation if applicable
+                let trimmed_line = trimmed_line_pre;
+                if trimmed_line == "- {" {
+                    let indent_len = line.chars().take_while(|c| c.is_whitespace()).count();
+                    block_stack.push(BlockKind::ListEntry { indent: indent_len });
+                } else if trimmed_line.ends_with('{') { let indent_len = line.chars().take_while(|c| c.is_whitespace()).count(); block_stack.push(BlockKind::Other { indent: indent_len }); }
+                if trimmed_line == "}" {
+                    if let Some(kind) = block_stack.pop() {
+                        match kind {
+                            BlockKind::ListEntry { indent } => {
+                                // Only fix if regenerated brace is under-indented (column 0)
+                                let current_indent = line.chars().take_while(|c| c.is_whitespace()).count();
+                                if current_indent == 0 {
+                                    let composed = format!("{}{}", " ".repeat(indent), trimmed_line);
+                                    out.push_str(&composed); out.push('\n');
+                                    last_blank = false;
+                                    list_entry_depth += 1;
+                                    #[cfg(feature="debug-resolver")] events.push(MergeEvent{ idx: line_idx, kind: "raw", trimmed: trimmed_line.to_string(), reason: "list_entry_close_fix_under_indented".into(), adopted_indent: Some(" ".repeat(indent)), final_line: Some(composed) });
+                                    regen_index+=1; continue;
+                                }
+                            }
+                            BlockKind::Other { .. } => {
+                                if let Some(Some(expected_opener)) = regen_generic_struct_expected.last() {
+                                    let current_len = line.chars().take_while(|c| c.is_whitespace()).count();
+                                    if current_len != *expected_opener {
+                                        let composed = format!("{}{}", " ".repeat(*expected_opener), trimmed_line);
+                                        out.push_str(&composed); out.push('\n');
+                                        last_blank = false;
+                                        regen_index+=1; continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                out.push_str(line); out.push('\n'); last_blank = false; #[cfg(feature="debug-resolver")] events.push(MergeEvent{ idx: line_idx, kind: "raw", trimmed: trimmed_line.to_string(), reason: if skip_this { "skip_consume".into() } else { "no_match".into() }, adopted_indent: None, final_line: Some((*line).to_string()) });
+                if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "pass2", out_idx: out.lines().count().saturating_sub(1), regen_idx: Some(line_idx), text: (*line).to_string(), trimmed: trimmed_line.to_string(), adopted_from: Some(if skip_this { "raw_skip" } else { "raw_no_match" }.into()), original_pos: None, original_indent: None, final_indent: line.chars().take_while(|c| c.is_whitespace()).count(), note: None }); }
+            }
+            if !matched {
+                // Late-match fallback: If we output the regenerated line raw but there is still an unused occurrence
+                if list_entry_depth > 0 { list_entry_depth -= 1; }
+            }
             regen_index+=1;
+            // Update entry depth after processing matched path too
+            if entering_entry { list_entry_depth += 1; }
+            if leaving_entry { if list_entry_depth > 0 { list_entry_depth -= 1; } }
         }
         // Append trailing tail exactly, collapsing excess blank introduction.
         for (i, l) in trailing_tail.iter().enumerate() {
             let blank = l.trim().is_empty();
             if i == 0 && blank && last_blank { continue; }
             if blank { out.push('\n'); } else { out.push_str(l); out.push('\n'); }
+            if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "pass2", out_idx: out.lines().count().saturating_sub(1), regen_idx: None, text: l.to_string(), trimmed: l.trim().to_string(), adopted_from: Some("trailing_tail".into()), original_pos: None, original_indent: None, final_indent: l.chars().take_while(|c| c.is_whitespace()).count(), note: None }); }
             last_blank = blank;
         }
         trace_merge!("final merged size={} chars", out.len());
@@ -1092,11 +1298,178 @@ impl OverseerFileHandler {
         let mut collapsed = String::new();
         let mut run = 0usize;
         for ch in out.chars() { if ch=='\n' { run+=1; if run<=2 { collapsed.push(ch);} } else { run=0; collapsed.push(ch);} }
-        collapsed
+        #[cfg(feature="debug-resolver")] if trace_on { for ev in &events { eprintln!("[MERGE-EVENT] {:?}", ev); } }
+        // Ultra-strict post pass (Option A): adopt indentation for any remaining unused occurrences whose trimmed
+        // content appears in the final output with a mismatching indentation (and is not novel).
+        // Additionally, capture original closing brace indentation sequences so that ambiguous generic
+        // braces (multiple identical '}' anchors) can deterministically adopt the Nth original generic
+        // brace indentation when occurrence-based adoption fails to match original formatting.
+        let mut orig_list_entry_closing_indents: Vec<usize> = Vec::new();
+        let mut orig_generic_closing_indents: Vec<usize> = Vec::new();
+        {
+            let mut stack: Vec<bool> = Vec::new(); // true=list entry, false=generic
+            for l in original.lines() {
+                let t = l.trim();
+                if t == "- {" { stack.push(true); }
+                else if t.ends_with('{') { stack.push(false); }
+                else if t == "}" {
+                    if let Some(is_list) = stack.pop() {
+                        let indent_len = l.chars().take_while(|c| c.is_whitespace()).count();
+                        if is_list { orig_list_entry_closing_indents.push(indent_len); } else { orig_generic_closing_indents.push(indent_len); }
+                    }
+                }
+            }
+        }
+    let mut final_out = String::new();
+        // Usage counters for trimmed-content fallback (post-pass only)
+        let mut use_counters_trimmed: HashMap<String, usize> = HashMap::new();
+        let lines: Vec<&str> = collapsed.lines().collect();
+    // Retain index counter for potential future mapping refinement; underscore to silence unused warning if optimization bypasses it.
+    let mut _generic_brace_idx: usize = 0;
+    let mut _list_entry_brace_idx: usize = 0; // underscore to silence unused warning while keeping count available for future diagnostics
+        'line_loop: for (idx, line) in lines.iter().enumerate() {
+            let raw = *line;
+            let trimmed_candidate = raw.trim();
+            // Treat standalone closing brace as code even if is_code() might exclude it
+            if !is_code(raw) && trimmed_candidate != "}" { final_out.push_str(raw); final_out.push('\n'); continue; }
+            let trimmed = trimmed_candidate;
+            // Targeted structural generic brace correction: if this is a generic '}' whose current indentation
+            // differs from its original opener indentation (tracked via structural backward scan plus original map),
+            // fix it before any anchor adoption. This runs after list entry normalization above.
+            if trimmed == "}" {
+                // Backward structural scan to identify opener and whether it's list entry
+                let mut need: isize = 1; let mut j: isize = idx as isize - 1; let mut opener_line: Option<&str> = None; while j >= 0 && need > 0 { let cand = lines[j as usize]; if !is_code(cand) { j-=1; continue; } let pt = cand.trim(); if pt == "}" { need+=1; j-=1; continue; } if pt.ends_with('{') { need-=1; if need==0 { opener_line = Some(cand); break; } } j-=1; }
+                if let Some(op_line) = opener_line { if op_line.trim() != "- {" { // generic block
+                        // Determine original opener indent by scanning original structurally (cached earlier?) Fallback: match first occurrence anchor of opener line.
+                        let opener_indent_len = op_line.chars().take_while(|c| c.is_whitespace()).count();
+                        let current_indent_len = raw.chars().take_while(|c| c.is_whitespace()).count();
+                        if current_indent_len != opener_indent_len { let fixed = format!("{}{}", " ".repeat(opener_indent_len), trimmed); final_out.push_str(&fixed); final_out.push('\n'); if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "post", out_idx: final_out.lines().count().saturating_sub(1), regen_idx: None, text: fixed.clone(), trimmed: trimmed.to_string(), adopted_from: Some("struct_generic_brace".into()), original_pos: None, original_indent: Some(opener_indent_len), final_indent: opener_indent_len, note: Some("targeted_struct_fix".into()) }); } #[cfg(feature="debug-resolver")] if trace_on { eprintln!("[MERGE-EVENT] targeted_generic_struct_fix idx={} opener_indent={} current_indent={}", idx, opener_indent_len, current_indent_len); } continue 'line_loop; }
+                    } }
+            }
+            // Special-case: list entry closing brace should inherit indentation from its paired "- {" opening
+            // rather than from occurrence adoption logic (which can select a different '}' anchor when prepends
+            // shift positional ordering). We detect this structurally: the previous preceding code line (skipping
+            // blank/comment lines) is the opening "- {" of the same list entry. If so, force its indentation to match
+            // the opening line's indentation (which is stable and already present in merged output) and skip further
+            // adoption for this line.
+            if trimmed == "}" {
+                // Structural backward brace matching: only force indentation for list entry blocks (opened by "- {").
+                let mut need: isize = 1;
+                let mut j: isize = idx as isize - 1;
+                let mut opener_line: Option<&str> = None;
+                while j >= 0 && need > 0 {
+                    let candidate = lines[j as usize];
+                    if !is_code(candidate) { j -= 1; continue; }
+                    let pt = candidate.trim();
+                    if pt == "}" { need += 1; j -= 1; continue; }
+                    if pt.ends_with('{') { need -= 1; if need == 0 { opener_line = Some(candidate); break; } }
+                    j -= 1;
+                }
+                if let Some(open_line) = opener_line {
+                    let opener_trim = open_line.trim();
+                    let is_list_entry = opener_trim == "- {";
+                    if is_list_entry {
+                        let desired_indent_len = open_line.chars().take_while(|c| c.is_whitespace()).count();
+                        let current_indent_len = raw.chars().take_while(|c| c.is_whitespace()).count();
+                        if current_indent_len != desired_indent_len {
+                            let fixed = format!("{}{}", " ".repeat(desired_indent_len), trimmed);
+                            final_out.push_str(&fixed); final_out.push('\n'); if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "post", out_idx: final_out.lines().count().saturating_sub(1), regen_idx: None, text: fixed.clone(), trimmed: trimmed.to_string(), adopted_from: Some("struct_list_brace".into()), original_pos: None, original_indent: Some(desired_indent_len), final_indent: desired_indent_len, note: Some("list_entry_struct_fix".into()) }); }
+                            #[cfg(feature="debug-resolver")] if trace_on { eprintln!("[MERGE-EVENT] structural_list_entry_brace_fix opener='{}' line_idx={}", opener_trim, idx); }
+                            _list_entry_brace_idx += 1;
+                            continue 'line_loop;
+                        } else {
+                            final_out.push_str(raw); final_out.push('\n'); if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "post", out_idx: final_out.lines().count().saturating_sub(1), regen_idx: None, text: raw.to_string(), trimmed: trimmed.to_string(), adopted_from: Some("struct_list_brace".into()), original_pos: None, original_indent: Some(desired_indent_len), final_indent: desired_indent_len, note: Some("list_entry_struct_match".into()) }); }
+                            _list_entry_brace_idx += 1; // consume slot
+                            continue 'line_loop; // keep existing indent for list entry brace and prevent later adoption override
+                        }
+                    } else {
+                        // Generic block closing brace: only correct if under-indented relative to its opener.
+                        let opener_indent_len = open_line.chars().take_while(|c| c.is_whitespace()).count();
+                        let current_indent_len = raw.chars().take_while(|c| c.is_whitespace()).count();
+                        if current_indent_len < opener_indent_len {
+                            let fixed = format!("{}{}", " ".repeat(opener_indent_len), trimmed);
+                            final_out.push_str(&fixed); final_out.push('\n'); if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "post", out_idx: final_out.lines().count().saturating_sub(1), regen_idx: None, text: fixed.clone(), trimmed: trimmed.to_string(), adopted_from: Some("struct_generic_brace".into()), original_pos: None, original_indent: Some(opener_indent_len), final_indent: opener_indent_len, note: Some("generic_under_indent_fix".into()) }); }
+                            _generic_brace_idx += 1;
+                            #[cfg(feature="debug-resolver")] if trace_on { eprintln!("[MERGE-EVENT] generic_under_indent_fix opener_indent={} current_indent={} line_idx={}", opener_indent_len, current_indent_len, idx); }
+                            continue 'line_loop;
+                        }
+                        // If equal or over-indented, leave as-is to preserve original formatting nuances.
+                        _generic_brace_idx += 1;
+                    }
+                    // Generic block (either unchanged or already fixed): fall through; occurrence adoption may adjust if still mismatched via anchor.
+                }
+            }
+            // Skip novel lines (not present in original trimmed set) to avoid forcing indentation on new content
+            if !original_trimmed.contains(trimmed) { final_out.push_str(raw); final_out.push('\n'); continue; }
+            let k_adopt = anchor_key(raw);
+            if let Some(queue) = map.get(&k_adopt) {
+                let used = *use_counters.get(&k_adopt).unwrap_or(&0);
+                if used < queue.len() {
+                    if let Some(occ) = queue.get(used) {
+                        // Compare without current indent
+                        let current_indent_len = raw.chars().take_while(|c| c.is_whitespace()).count();
+                        let desired_indent = &occ.indent;
+                        let desired_indent_len = desired_indent.len();
+                            if current_indent_len != desired_indent_len {
+                            // Adopt indentation
+                            let regen_trim = raw.trim_start();
+                            let mut composed = format!("{}{}", desired_indent, regen_trim);
+                            if !raw.contains("//") { if let Some(inl)=&occ.inline { if !composed.ends_with(' ') { composed.push(' ');} composed.push_str(inl);} }
+                            final_out.push_str(&composed); final_out.push('\n'); if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "post", out_idx: final_out.lines().count().saturating_sub(1), regen_idx: None, text: composed.clone(), trimmed: trimmed.to_string(), adopted_from: Some("post_adopt".into()), original_pos: Some(occ.pos), original_indent: Some(desired_indent_len), final_indent: desired_indent_len, note: None }); }
+                            use_counters.insert(k_adopt.clone(), used+1);
+                            #[cfg(feature="debug-resolver")] {
+                                if trace_on { eprintln!("[MERGE-EVENT] post_adopt key={} pos={}", k_adopt, occ.pos); }
+                                events.push(MergeEvent{ idx: 0, kind: "post_adopt", trimmed: trimmed.to_string(), reason: format!("key={} pos={}", k_adopt, occ.pos), adopted_indent: Some(desired_indent.clone()), final_line: Some(composed.clone()) });
+                            }
+                            continue 'line_loop;
+                        }
+                    }
+                }
+            }
+            // Secondary post-pass fallback (trimmed-content). Attempt only if line is code and novel check passed above.
+            let core_raw = {
+                let code_no_comment = match raw.find("//") { Some(i)=> &raw[..i], None=> raw };
+                code_no_comment.trim().to_string()
+            };
+            if let Some(queue_t) = map_trimmed.get(&core_raw) {
+                let used_t = *use_counters_trimmed.get(&core_raw).unwrap_or(&0);
+                if used_t < queue_t.len() {
+                    if let Some(occ_t) = queue_t.get(used_t) {
+                        // Adopt indentation from trimmed occurrence
+                        let regen_trim = raw.trim_start();
+                        let mut composed = format!("{}{}", occ_t.indent, regen_trim.trim_start());
+                        if !raw.contains("//") { if let Some(inl)=&occ_t.inline { if !composed.ends_with(' ') { composed.push(' ');} composed.push_str(inl);} }
+                        final_out.push_str(&composed); final_out.push('\n'); if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "post", out_idx: final_out.lines().count().saturating_sub(1), regen_idx: None, text: composed.clone(), trimmed: core_raw.clone(), adopted_from: Some("post_adopt_trimmed".into()), original_pos: Some(occ_t.pos), original_indent: Some(occ_t.indent.len()), final_indent: occ_t.indent.len(), note: None }); }
+                        use_counters_trimmed.insert(core_raw.clone(), used_t+1);
+                        #[cfg(feature="debug-resolver")] {
+                            if trace_on { eprintln!("[MERGE-EVENT] post_adopt_trimmed core={} pos={}", core_raw, occ_t.pos); }
+                            events.push(MergeEvent{ idx: 0, kind: "post_adopt_trimmed", trimmed: core_raw.clone(), reason: format!("pos={}", occ_t.pos), adopted_indent: Some(occ_t.indent.clone()), final_line: Some(composed.clone()) });
+                        }
+                        continue 'line_loop;
+                    }
+                }
+            }
+            // Fallback: keep original line
+            final_out.push_str(raw); final_out.push('\n'); if audit_enabled { audit_lines.push(AuditLineRecord{ phase: "post", out_idx: final_out.lines().count().saturating_sub(1), regen_idx: None, text: raw.to_string(), trimmed: trimmed.to_string(), adopted_from: Some("keep".into()), original_pos: None, original_indent: None, final_indent: raw.chars().take_while(|c| c.is_whitespace()).count(), note: None }); }
+        }
+        #[cfg(feature="debug-resolver")] if trace_on { eprintln!("[MERGE] post-pass complete"); }
+        #[cfg(feature="debug-resolver")] if json_trace { unsafe { LAST_JSON_TRACE = Some(serde_json::to_string_pretty(&events).unwrap_or_else(|_| "[]".into())); } }
+        if audit_enabled { for rec in &audit_lines { rec.emit(); } }
+        final_out
     }
 
     /// Public wrapper used by tests and callers to perform a merge.
     pub fn merge_comments(original: &str, regenerated: &str) -> String { Self::segment_merge(original, regenerated) }
+
+    #[cfg(feature="debug-resolver")]
+    pub fn take_last_merge_trace_json() -> Option<String> { unsafe { crate::file_ops::LAST_JSON_TRACE.take() } }
+
+    #[allow(dead_code)]
+    #[cfg(feature="debug-resolver")]
+    pub fn merge_comments_with_trace(original:&str, regenerated:&str)->String {
+        Self::enable_merge_trace(true);
+        Self::merge_comments(original, regenerated)
+    }
 }
 
 // Helper for generating unique temp file suffixes in tests.
@@ -1736,6 +2109,14 @@ mod tests_exercise_tracker_round_trip {
         crate::resolver::resolve_document(&mut nodes);
         let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
         let merged = OverseerFileHandler::merge_comments(EXERCISE_SRC, &regenerated);
+                            // Generic block closing brace: record opener indent vs current for diagnostics (debug-resolver only)
+                            #[cfg(feature="debug-resolver")] if trace_on {
+                                let opener_indent_len = open_line.chars().take_while(|c| c.is_whitespace()).count();
+                                let current_indent_len = raw.chars().take_while(|c| c.is_whitespace()).count();
+                                if opener_indent_len != current_indent_len {
+                                    eprintln!("[MERGE-DIAG] generic_brace_indent_mismatch line_idx={} opener_indent={} current_indent={} opener='{}' raw='{}'", idx, opener_indent_len, current_indent_len, opener_trim, raw.trim_end());
+                                }
+                            }
         assert!(merged.contains("div exercise_tracker"));
         assert!(merged.contains("list Exercises"));
         assert!(merged.contains("list History"));
