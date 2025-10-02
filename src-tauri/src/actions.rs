@@ -1423,6 +1423,9 @@ impl ActionExecutor {
             authored_dash: false,
             child_original_index: None,
             leading_blank_lines: 0,
+            source_snapshot: None,
+            source_id: None,
+            source_fingerprint: None,
         };
         Self::execute_load_mount(nodes, owner_indices, owner_path, &action_stub)
     }
@@ -1444,6 +1447,9 @@ impl ActionExecutor {
             authored_dash: false,
             child_original_index: None,
             leading_blank_lines: 0,
+            source_snapshot: None,
+            source_id: None,
+            source_fingerprint: None,
         };
         // owner_path not needed
         Self::execute_unload_mount(nodes, owner_indices, &Vec::new(), &action_stub)
@@ -1511,7 +1517,30 @@ impl ActionExecutor {
         } else {
             let mut cur_opt: Option<OverseerNode> = None;
             for n in &loaded_roots { if n.name == internal_path[0] { cur_opt = Some(n.clone()); break; } }
-            let mut cur = match cur_opt { Some(n) => n, None => { if load_error.is_none() { load_error = Some("mount internal path root not found".to_string()); } OverseerNode { name: String::new(), node_type: String::new(), template: None, parameters: Default::default(), children: Vec::new(), is_hierarchy_transparent: false, param_order: Vec::new(), raw_value_literal: None, authored_dash: false, child_original_index: None, leading_blank_lines: 0 } } };
+            let mut cur = match cur_opt {
+                Some(n) => n,
+                None => {
+                    if load_error.is_none() {
+                        load_error = Some("mount internal path root not found".to_string());
+                    }
+                    OverseerNode {
+                        name: String::new(),
+                        node_type: String::new(),
+                        template: None,
+                        parameters: Default::default(),
+                        children: Vec::new(),
+                        is_hierarchy_transparent: false,
+                        param_order: Vec::new(),
+                        raw_value_literal: None,
+                        authored_dash: false,
+                        child_original_index: None,
+                        leading_blank_lines: 0,
+                        source_snapshot: None,
+                        source_id: None,
+                        source_fingerprint: None,
+                    }
+                }
+            };
             if load_error.is_none() && !cur.name.is_empty() {
                 for seg in internal_path.iter().skip(1) {
                     if let Some(next) = cur.children.iter().find(|c| &c.name == seg) { cur = next.clone(); } else { load_error = Some(format!("mount internal path segment not found: {}", seg)); break; }
@@ -1735,6 +1764,9 @@ impl ActionExecutor {
             authored_dash: false,
             child_original_index: None,
             leading_blank_lines: 0,
+            source_snapshot: None,
+            source_id: None,
+            source_fingerprint: None,
         };
         // Also clear computed params at the root clone
         Self::clear_computed_recursive(&mut node);
@@ -1745,6 +1777,9 @@ impl ActionExecutor {
 
     // Mark a node and its subtree as template-derived for serializer filtering
     fn mark_template_child_recursive_action(node: &mut OverseerNode) {
+        node.source_snapshot = None;
+        node.source_id = None;
+        node.source_fingerprint = None;
         node
             .parameters
             .insert("_template_node".to_string(), OverseerValue::Boolean(true));
@@ -1807,6 +1842,9 @@ impl ActionExecutor {
                 authored_dash: true,
                 child_original_index: None,
                 leading_blank_lines: 0,
+                source_snapshot: None,
+                source_id: None,
+                source_fingerprint: None,
             };
             item.children.push(new_field);
             // Track override at parent level
@@ -2011,6 +2049,9 @@ impl ActionExecutor {
                         authored_dash: false,
                         child_original_index: None,
                         leading_blank_lines: 0,
+                        source_snapshot: None,
+                        source_id: None,
+                        source_fingerprint: None,
                     };
                     item.parameters.insert("value".to_string(), val);
                     list_node.children.push(item);
@@ -2081,6 +2122,9 @@ impl ActionExecutor {
                         authored_dash: false,
                         child_original_index: None,
                         leading_blank_lines: 0,
+                        source_snapshot: None,
+                        source_id: None,
+                        source_fingerprint: None,
                     };
                     item.parameters.insert("value".to_string(), val);
                     list_node.children.insert(0, item);
@@ -2229,6 +2273,9 @@ impl ActionExecutor {
                     authored_dash: true,
                     child_original_index: None,
                     leading_blank_lines: 0,
+                    source_snapshot: None,
+                    source_id: None,
+                    source_fingerprint: None,
                 };
                 // Copy/evaluate params
                 for (k, v) in ov.parameters.iter() {
@@ -3184,6 +3231,9 @@ mod tests_clone_from_template {
             authored_dash: false,
             child_original_index: None,
             leading_blank_lines: 0,
+            source_snapshot: None,
+            source_id: None,
+            source_fingerprint: None,
         };
         t.parameters.insert("_original_type".to_string(), OverseerValue::String("div".to_string()));
         let cloned = ActionExecutor::clone_from_template(&t);

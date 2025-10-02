@@ -27,6 +27,13 @@ pub struct OverseerNode {
     // Number of blank (empty) lines that preceded this node in the source
     #[serde(default)]
     pub leading_blank_lines: u8,
+    // Snapshot of original source trivia and spans (runtime metadata only)
+    #[serde(skip)]
+    pub source_snapshot: Option<NodeSourceSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fingerprint: Option<u64>,
 }
 
 impl OverseerNode {
@@ -43,6 +50,9 @@ impl OverseerNode {
             authored_dash: false,
             child_original_index: None,
             leading_blank_lines: 0,
+            source_snapshot: None,
+            source_id: None,
+            source_fingerprint: None,
         }
     }
     
@@ -84,6 +94,9 @@ impl OverseerNode {
             authored_dash: false,
             child_original_index: None,
             leading_blank_lines: 0,
+            source_snapshot: None,
+            source_id: None,
+            source_fingerprint: None,
         }
     }
     
@@ -103,6 +116,17 @@ impl OverseerNode {
         
         result
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeSourceSnapshot {
+    pub span: (usize, usize),
+    pub leading_span: Option<(usize, usize)>,
+    pub full_text: String,
+    pub leading_trivia: String,
+    pub indent_unit: Option<String>,
+    pub newline: Option<String>,
+    pub fingerprint: u64,
 }
 
 #[cfg(test)]

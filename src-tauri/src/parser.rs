@@ -1,4 +1,5 @@
-use crate::types::{OverseerNode, OverseerValue, Color, CssSize, BorderStyle};
+use crate::source_registry::SourceRegistry;
+use crate::types::{OverseerNode, OverseerValue, Color, CssSize, BorderStyle, NodeSourceSnapshot};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
@@ -16,10 +17,142 @@ macro_rules! debug_parser {
         println!($($arg)*);
     };
 }
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::Hasher;
+use twox_hash::XxHash64;
+
+#[derive(Clone, Copy, Debug)]
+struct ParserInputContext {
+    base_ptr: usize,
+    len: usize,
+}
+
+thread_local! {
+    static PARSER_CONTEXT_STACK: RefCell<Vec<ParserInputContext>> = RefCell::new(Vec::new());
+}
+
+struct ParserContextGuard;
+
+impl ParserContextGuard {
+    fn push(input: &str) -> Self {
+        let ctx = ParserInputContext {
+            base_ptr: input.as_ptr() as usize,
+            len: input.len(),
+        };
+        PARSER_CONTEXT_STACK.with(|stack| stack.borrow_mut().push(ctx));
+        ParserContextGuard
+    }
+}
+
+impl Drop for ParserContextGuard {
+    fn drop(&mut self) {
+        PARSER_CONTEXT_STACK.with(|stack| {
+            let mut stack = stack.borrow_mut();
+            stack.pop();
+        });
+    }
+}
+
+fn current_parser_context() -> Option<ParserInputContext> {
+    PARSER_CONTEXT_STACK.with(|stack| stack.borrow().last().copied())
+}
+
+fn slice_from_offsets(ctx: ParserInputContext, start: usize, end: usize) -> String {
+    if end <= start || end > ctx.len {
+        return String::new();
+    }
+    unsafe {
+        let ptr = (ctx.base_ptr + start) as *const u8;
+        let len = end - start;
+        let bytes = std::slice::from_raw_parts(ptr, len);
+        std::str::from_utf8(bytes).unwrap().to_string()
+    }
+}
+
+fn assign_snapshot(node: &mut OverseerNode, leading_ptr: usize, start_ptr: usize, end_ptr: usize) {
+    if end_ptr < start_ptr {
+        return;
+    }
+    let Some(ctx) = current_parser_context() else { return; };
+    if start_ptr < ctx.base_ptr || end_ptr > ctx.base_ptr + ctx.len {
+        return;
+    }
+    let span_start = start_ptr - ctx.base_ptr;
+    let span_end = end_ptr - ctx.base_ptr;
+    let leading_start = if leading_ptr < start_ptr { leading_ptr - ctx.base_ptr } else { span_start };
+    let leading_end = if leading_ptr < start_ptr { span_start } else { span_start };
+    let leading_span = if leading_start < leading_end {
+        Some((leading_start, leading_end))
+    } else {
+        None
+    };
+
+    let full_text = slice_from_offsets(ctx, span_start, span_end);
+    let leading_trivia = if let Some((ls, le)) = leading_span {
+        slice_from_offsets(ctx, ls, le)
+    } else {
+        String::new()
+    };
+    let newline = if full_text.contains("\r\n") {
+        Some("\r\n".to_string())
+    } else if full_text.contains('\n') {
+        Some("\n".to_string())
+    } else if leading_trivia.contains("\r\n") {
+        Some("\r\n".to_string())
+    } else if leading_trivia.contains('\n') {
+        Some("\n".to_string())
+    } else {
+        None
+    };
+    let indent_from_full_text = full_text
+        .lines()
+        .next()
+        .and_then(|line| {
+            let indent: String = line
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            if indent.is_empty() { None } else { Some(indent) }
+        });
+    let indent_from_leading = {
+        let tail = leading_trivia
+            .rsplit_once('\n')
+            .map(|(_, tail)| tail)
+            .unwrap_or_else(|| leading_trivia.as_str());
+        let indent: String = tail
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+        if indent.is_empty() { None } else { Some(indent) }
+    };
+    let indent_unit = indent_from_full_text.or(indent_from_leading);
+
+    let mut hasher = XxHash64::with_seed(0);
+    hasher.write(leading_trivia.as_bytes());
+    hasher.write(full_text.as_bytes());
+    let fingerprint = hasher.finish();
+
+    let snapshot = NodeSourceSnapshot {
+        span: (span_start, span_end),
+        leading_span,
+        full_text,
+        leading_trivia,
+        indent_unit,
+        newline,
+        fingerprint,
+    };
+    node.source_id = Some(SourceRegistry::register(&snapshot));
+    node.source_snapshot = Some(snapshot);
+    node.source_fingerprint = Some(fingerprint);
+}
 
 /// Parse the entire document (top-level nodes)
 pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
+    let _ctx_guard = ParserContextGuard::push(input);
+    #[cfg(test)]
+    let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
+    SourceRegistry::reset();
     // Loop similar to previous many0(parse_node) but augmented to capture the count of
     // contiguous blank (whitespace-only) lines immediately preceding each parsed node.
     // We continue to ignore comment lines for blank-line counting so that stylistic
@@ -52,6 +185,10 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
         match parse_node(after_comments) {
             Ok((rest, mut node)) => {
                 node.leading_blank_lines = blank_count;
+                let cur_ptr = cur.as_ptr() as usize;
+                let node_start_ptr = after_comments.as_ptr() as usize;
+                let rest_ptr = rest.as_ptr() as usize;
+                assign_snapshot(&mut node, cur_ptr, node_start_ptr, rest_ptr);
                 nodes.push(node);
                 cur = rest;
             }
@@ -353,6 +490,10 @@ fn parse_block(input: &str) -> IResult<&str, Vec<OverseerNode>> {
         match parse_node(after_comments) {
             Ok((rest, mut node)) => {
                 node.leading_blank_lines = blank_count; // record intra-block blank spacing
+                let cursor_ptr = cursor.as_ptr() as usize;
+                let node_start_ptr = after_comments.as_ptr() as usize;
+                let rest_ptr = rest.as_ptr() as usize;
+                assign_snapshot(&mut node, cursor_ptr, node_start_ptr, rest_ptr);
                 children.push(node);
                 input = rest;
             }
@@ -676,6 +817,7 @@ fn parse_identifier(input: &str) -> IResult<&str, &str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::SourceRegistry;
 
     #[test]
     fn test_parse_simple_node() {
@@ -784,13 +926,72 @@ mod tests {
         assert_eq!(node.parameters.get("layout"), Some(&OverseerValue::String("vertical".to_string())));
         assert_eq!(node.parameters.get("spacing"), Some(&OverseerValue::Integer(8)));
         assert_eq!(node.parameters.get("margin-bottom"), Some(&OverseerValue::Integer(12)));
-        
         assert_eq!(node.children.len(), 1);
         let child = &node.children[0];
         assert_eq!(child.node_type, "string");
         assert_eq!(child.name, "title");
         assert_eq!(child.parameters.get("margin-top"), Some(&OverseerValue::Integer(4)));
         assert_eq!(child.parameters.get("value"), Some(&OverseerValue::String("Card Title".to_string())));
+    }
+
+    #[test]
+    fn parse_document_captures_source_snapshots() {
+    let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
+        let src = concat!(
+            "div Root {\n",
+            "    string child = \"Value\"\n",
+            "}\n",
+            "\n",
+            "// comment about next\n",
+            "\n",
+            "string next = \"Other\"\n",
+        );
+        let (remaining, mut nodes) = parse_document(src).expect("document should parse");
+        assert!(remaining.trim().is_empty(), "expected all input consumed, got '{remaining}'");
+        assert_eq!(nodes.len(), 2, "expected two top-level nodes");
+
+        let root = nodes.remove(0);
+        let root_snapshot = root.source_snapshot.as_ref().expect("root should have snapshot");
+        assert_eq!(root_snapshot.span.0, 0, "root span should begin at start of document");
+        assert!(root_snapshot.full_text.starts_with("div Root {"));
+        assert!(root_snapshot.full_text.contains("string child = \"Value\""));
+        assert!(root_snapshot.leading_trivia.is_empty());
+        assert!(root_snapshot.indent_unit.is_none());
+        assert!(root_snapshot.leading_span.is_none());
+        let root_id = root.source_id.as_ref().expect("root should have source id");
+        let fetched_root = SourceRegistry::get(root_id).expect("root id should resolve in registry");
+        assert_eq!(fetched_root.full_text, root_snapshot.full_text);
+
+        let child = root.children.get(0).expect("root should have child");
+        let child_snapshot = child.source_snapshot.as_ref().expect("child should have snapshot");
+        assert_eq!(child_snapshot.leading_trivia, "\n    ");
+        assert_eq!(child_snapshot.indent_unit.as_deref(), Some("    "));
+        assert_eq!(child_snapshot.full_text.trim_end(), "string child = \"Value\"");
+        assert_eq!(child_snapshot.span.0, src.find("string child").expect("child text present"));
+        let child_leading_span = child_snapshot.leading_span.expect("child should record leading span");
+        assert_eq!(child_leading_span.1 - child_leading_span.0, child_snapshot.leading_trivia.len());
+        let child_id = child.source_id.as_ref().expect("child should have source id");
+        assert_ne!(child_id, root_id, "child and root should have distinct ids");
+        let fetched_child = SourceRegistry::get(child_id).expect("child id should resolve in registry");
+        assert_eq!(fetched_child.full_text, child_snapshot.full_text);
+
+        let next = nodes.into_iter().next().expect("expected second node");
+    assert_eq!(next.leading_blank_lines, 2, "blank lines between nodes should be recorded");
+        let next_snapshot = next.source_snapshot.as_ref().expect("second node should have snapshot");
+        assert!(next_snapshot.full_text.starts_with("string next = \"Other\""));
+        assert!(next_snapshot.leading_trivia.starts_with("\n"));
+        assert!(next_snapshot.leading_trivia.contains("// comment about next"));
+        assert!(next_snapshot.indent_unit.is_none());
+        assert_eq!(next_snapshot.span.0, src.find("string next").expect("second node text present"));
+        let next_leading_span = next_snapshot.leading_span.expect("second node should record leading span");
+        assert_eq!(next_leading_span.1 - next_leading_span.0, next_snapshot.leading_trivia.len());
+        let next_id = next.source_id.as_ref().expect("second node should have source id");
+        let fetched_next = SourceRegistry::get(next_id).expect("second node id should resolve in registry");
+        assert_eq!(fetched_next.full_text, next_snapshot.full_text);
+
+        assert_eq!(SourceRegistry::len(), 3, "registry should track all parsed nodes in sample");
+
+        SourceRegistry::reset();
     }
 
     #[test]

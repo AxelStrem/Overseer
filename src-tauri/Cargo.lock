@@ -1956,6 +1956,7 @@ dependencies = [
  "chrono",
  "nom",
  "notify",
+ "parking_lot",
  "regex",
  "serde",
  "serde_json",
@@ -1963,6 +1964,7 @@ dependencies = [
  "tauri-build",
  "thiserror",
  "tokio",
+ "twox-hash",
 ]
 
 [[package]]
@@ -2851,6 +2853,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
 name = "string_cache"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3472,6 +3480,17 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "twox-hash"
+version = "1.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
+dependencies = [
+ "cfg-if",
+ "rand 0.8.5",
+ "static_assertions",
 ]
 
 [[package]]

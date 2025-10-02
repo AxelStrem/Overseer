@@ -494,6 +494,9 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         authored_dash: false,
                                         child_original_index: None,
                                         leading_blank_lines: 0,
+                                        source_snapshot: None,
+                                        source_id: None,
+                                        source_fingerprint: None,
                                     };
                                     // Mark all cloned children as template-derived so serializer can omit them unless overridden
                                     for (c_idx, child) in resolved_item.children.iter_mut().enumerate() {
@@ -591,6 +594,9 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         authored_dash: false,
                                         child_original_index: None,
                                         leading_blank_lines: 0,
+                                        source_snapshot: None,
+                                        source_id: None,
+                                        source_fingerprint: None,
                                     };
                                     resolved_children.push(resolved_item);
                                 } else {
@@ -621,6 +627,9 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                             authored_dash: false,
                                             child_original_index: None,
                                             leading_blank_lines: 0,
+                                            source_snapshot: None,
+                                            source_id: None,
+                                            source_fingerprint: None,
                                         };
                                         for child in resolved_item.children.iter_mut() {
                                             mark_template_child_recursive(child);
@@ -675,6 +684,9 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                 authored_dash: false,
                                 child_original_index: None,
                                 leading_blank_lines: 0,
+                                source_snapshot: None,
+                                source_id: None,
+                                source_fingerprint: None,
                             };
                             resolved_item.parameters.insert("value".to_string(), val.clone());
                             resolved_children.push(resolved_item);
@@ -1080,6 +1092,8 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
 
 /// Mark a node and its subtree as template-derived by adding _template_ markers for present params
 fn mark_template_child_recursive(node: &mut OverseerNode) {
+    node.source_snapshot = None;
+    node.source_id = None;
     // Mark a simple flag to indicate this whole node is from a template
     node.parameters.insert("_template_node".to_string(), OverseerValue::Boolean(true));
     // For all existing parameters, add a _template_ marker so serializer excludes them by default

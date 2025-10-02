@@ -11,6 +11,7 @@ mod formula_evaluator;
 mod actions;
 mod docmgr;
 mod dependency_tracker;
+mod source_registry;
 
 use types::*;
 use actions::ActionExecutor;
