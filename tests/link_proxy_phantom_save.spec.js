@@ -73,7 +73,7 @@ describe('Phantom edit then save serializes with required schema', () => {
     currentDoc = [
       { name: 'Task', node_type: 'div', parameters: {}, children: [
         { name: 'id', node_type: 'string', parameters: { value: { String: '' } }, children: [] },
-        { name: 'title', node_type: 'string', parameters: { value: { String: '' }, mutable: { Boolean: true } }, children: [] }
+        { name: 'title', node_type: 'string', parameters: { value: { String: '' } }, children: [] }
       ], is_hierarchy_transparent: false },
       { name: 'Root', node_type: 'div', parameters: {}, children: [
         { name: 'Tasks', node_type: 'list', parameters: { entry: { Template: 'Task' }, key: { String: 'id' } }, children: [], is_hierarchy_transparent: false },

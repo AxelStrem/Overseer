@@ -41,174 +41,6 @@ export class OverseerRenderer {
         this.tabContainer = document.getElementById('tab-container')
         // Track live intervals so we can clear them on each full re-render
         this._liveIntervals = new Set()
-        // Track newly materialized targets so updates apply to the exact node, not a loosely-resolved path
-        this._materializedTargets = new Map()
-    // Default top-level mutability: disabled by default (can be enabled per-node via mutable=true or inherited)
-    this._defaultTopLevelMutable = false
-    }
-
-    // Compute effective mutability mode at a specific path within a provided document tree.
-    // Returns one of: 'true' | 'false' | 'guarded'. Falls back to top-level default when unspecified.
-    _computeEffectiveMutableAtPath(doc, pathArr) {
-        const parseMode = (v) => {
-            if (v === null || v === undefined) return 'inherited'
-            if (typeof v === 'boolean') return v ? 'true' : 'false'
-            const s = String(v).toLowerCase().trim()
-            if (s === 'true') return 'true'
-            if (s === 'false') return 'false'
-            if (s === 'guarded') return 'guarded'
-            if (s === 'inherit' || s === 'inherited') return 'inherited'
-            return 'inherited'
-        }
-        const readMutableParam = (n) => {
-            try {
-                const comp = this.getParameterValue(n, '_computed_mutable')
-                if (comp !== null && comp !== undefined) return comp
-            } catch(_) {}
-            try { return this.getParameterValue(n, 'mutable') } catch(_) { return null }
-        }
-        try {
-            if (!doc || !Array.isArray(pathArr) || pathArr.length === 0) {
-                return this._defaultTopLevelMutable ? 'true' : 'false'
-            }
-            // Build ancestor chain from deepest to root
-            const ancestors = []
-            for (let i = pathArr.length; i >= 1; i--) {
-                const sub = pathArr.slice(0, i)
-                const n = this.findNodeByPath(doc, sub)
-                if (n) ancestors.push(n)
-            }
-            for (const anc of ancestors) {
-                const raw = readMutableParam(anc)
-                const mode = parseMode(raw)
-                if (mode !== 'inherited') return mode
-            }
-            return this._defaultTopLevelMutable ? 'true' : 'false'
-        } catch(_) {
-            return this._defaultTopLevelMutable ? 'true' : 'false'
-        }
-    }
-
-    // Tag value changes that came from backend actions for nodes that are mutable=guarded so they won’t persist on save.
-    // This function walks the new document and compares against the old document by canonical path (name + ordinal).
-    _tagGuardedChangesAfterBackendUpdate(oldDoc, newDoc) {
-        try {
-            if (!oldDoc || !newDoc) return
-            const deepClone = (obj) => {
-                try { if (typeof structuredClone === 'function') return structuredClone(obj) } catch(_) {}
-                try { return JSON.parse(JSON.stringify(obj)) } catch(_) { return obj }
-            }
-            const valuesEqual = (a, b) => {
-                try { return window?.app?.valuesEqual ? window.app.valuesEqual(a, b) : JSON.stringify(a) === JSON.stringify(b) } catch(_) { return false }
-            }
-            const walk = (node, parent, pathArr) => {
-                if (!node || typeof node !== 'object') return
-                const p = node.parameters || {}
-                const oldNode = this.findNodeByPath(oldDoc, pathArr)
-                const oldVal = oldNode && oldNode.parameters ? oldNode.parameters.value : undefined
-                const newVal = p ? p.value : undefined
-                // Determine effective mutability at this path using the NEW doc
-                const mode = this._computeEffectiveMutableAtPath(newDoc, pathArr)
-                if (mode === 'guarded') {
-                    const changed = !valuesEqual(oldVal, newVal)
-                    if (!oldNode) {
-                        // Newly created node (e.g., new override) under guarded scope
-                        if (!node.parameters) node.parameters = {}
-                        node.parameters._guarded_edit = { Boolean: true }
-                        node.parameters._guarded_was_new_override = { Boolean: true }
-                    } else if (changed) {
-                        if (!node.parameters) node.parameters = {}
-                        node.parameters._guarded_edit = { Boolean: true }
-                        if (oldVal === undefined) {
-                            node.parameters._guarded_was_new_override = { Boolean: true }
-                        } else {
-                            try { node.parameters._guarded_original_value = deepClone(oldVal) } catch(_) { node.parameters._guarded_original_value = oldVal }
-                        }
-                    }
-                }
-                // Recurse children with canonical ordinal-aware path segments
-                if (Array.isArray(node.children)) {
-                    for (let i = 0; i < node.children.length; i++) {
-                        const ch = node.children[i]
-                        if (!ch || typeof ch !== 'object') continue
-                        const base = ch.name || ch.node_type || ch.type || 'child'
-                        const ord = node.children.slice(0, i).filter(c => c && (c.name || c.node_type || c.type) === base).length
-                        const seg = ord > 0 ? `${base}#${ord}` : base
-                        walk(ch, node, pathArr.concat([seg]))
-                    }
-                }
-            }
-            // Root(s)
-            const rootsNew = Array.isArray(newDoc) ? newDoc : [newDoc]
-            for (let i = 0; i < rootsNew.length; i++) {
-                const r = rootsNew[i]
-                if (!r) continue
-                walk(r, null, [r.name || r.node_type || r.type || 'root'])
-            }
-        } catch(_) { /* best-effort tagging */ }
-    }
-
-    // Resolve effective mutability mode for a node: 'true' | 'false' | 'guarded'
-    // Parameter forms supported: boolean true/false, string 'true'|'false'|'inherited'|'guarded'
-    // Inheritance walks up parent chain using node.__overseer_path or nearest DOM data-path.
-    getEffectiveMutableMode(node, elementHint = null) {
-        const parseMode = (v) => {
-            if (v === null || v === undefined) return 'inherited'
-            if (typeof v === 'boolean') return v ? 'true' : 'false'
-            const s = String(v).toLowerCase().trim()
-            if (s === 'true') return 'true'
-            if (s === 'false') return 'false'
-            if (s === 'guarded') return 'guarded'
-            if (s === 'inherit' || s === 'inherited') return 'inherited'
-            return 'inherited'
-        }
-        const readMutableParam = (n) => {
-            try {
-                // Prefer computed if available, else raw
-                const comp = this.getParameterValue(n, '_computed_mutable')
-                if (comp !== null && comp !== undefined) return comp
-            } catch(_) { /* ignore */ }
-            try { return this.getParameterValue(n, 'mutable') } catch(_) { return null }
-        }
-        // 1) If the node itself declares an explicit mode, honor it immediately (works for phantom previews as well)
-        try {
-            const selfRaw = readMutableParam(node)
-            const selfMode = parseMode(selfRaw)
-            if (selfMode !== 'inherited') return selfMode
-        } catch(_) { /* ignore */ }
-        // Resolve the path to walk ancestors
-        let pathArr = []
-        try {
-            if (node && Array.isArray(node.__overseer_path)) pathArr = node.__overseer_path.slice()
-        } catch(_) {}
-        if ((!pathArr || pathArr.length === 0) && elementHint && elementHint.dataset && elementHint.dataset.path) {
-            try { pathArr = JSON.parse(elementHint.dataset.path) } catch(_) { pathArr = [] }
-        }
-        // Walk from node up to root looking for explicit mode
-        try {
-            const doc = window?.app?.currentDocument
-            if (!Array.isArray(pathArr) || pathArr.length === 0 || !doc) {
-                // Fallback to default
-                return this._defaultTopLevelMutable ? 'true' : 'false'
-            }
-            // Build ancestor chain of nodes (from deepest to root)
-            const ancestors = []
-            for (let i = pathArr.length; i >= 1; i--) {
-                const sub = pathArr.slice(0, i)
-                const n = this.findNodeByPath(doc, sub)
-                if (n) ancestors.push(n)
-            }
-            // First explicit non-inherited wins (closest ancestor first)
-            for (const anc of ancestors) {
-                const raw = readMutableParam(anc)
-                const mode = parseMode(raw)
-                if (mode !== 'inherited') return mode
-            }
-            // No explicit setting found: default at top-level
-            return this._defaultTopLevelMutable ? 'true' : 'false'
-        } catch(_) {
-            return this._defaultTopLevelMutable ? 'true' : 'false'
-        }
     }
 
     // Build a non-persistent preview item based on list's entry template, with key preset.
@@ -300,8 +132,6 @@ export class OverseerRenderer {
             // so the preview displays the selected key immediately (even if template had $today()).
             keyChild.parameters.value = coerced
             try { keyChild.parameters._computed_value = coerced } catch(_) {}
-            // Mark as explicit so when materialized later, the key is persisted
-            try { keyChild.parameters._override_present = { Boolean: true } } catch(_) {}
             // Reflect that this is a template-derived instance for styling/layout if needed
             preview.parameters = Object.assign({}, preview.parameters || {}, { _from_template: true })
 
@@ -454,42 +284,13 @@ export class OverseerRenderer {
             }
             const tmpl = tmplName ? findByNameDeep(roots, tmplName) : null
             let newItem = tmpl ? JSON.parse(JSON.stringify(tmpl)) : { name: tmplName || 'Item', node_type: 'div', parameters: {}, children: [] }
-            // Assign a stable UID to the new item (used for DOM mapping independent of name/position)
-            try {
-                const uid = `uid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
-                if (!newItem.parameters) newItem.parameters = {}
-                // Store in parameters to persist through rerenders (not serialized if we prefix underscore)
-                newItem.parameters._uid = { String: uid }
-                newItem.__uid = uid
-                if (!this._uidToNode) this._uidToNode = new Map()
-                this._uidToNode.set(uid, newItem)
-                if (DEBUG_MODE) console.debug('[Overseer] uid assign (materialize)', uid, newItem.name)
-            } catch(_) { /* best-effort */ }
             // Ensure required schema fields exist on the new item
             if (newItem.is_hierarchy_transparent === undefined) newItem.is_hierarchy_transparent = (tmpl && typeof tmpl.is_hierarchy_transparent === 'boolean') ? tmpl.is_hierarchy_transparent : false
             // Mark as originating from a template to help selective UI rerenders detect templated instances
             try { newItem.parameters = Object.assign({}, newItem.parameters || {}, { _from_template: true }) } catch (_) {}
-            // Assign a unique instance name similar to backend logic (T__N), avoiding collisions by scanning siblings
-            const baseNameRaw = (tmplName || newItem.name || 'Item')
-            const baseName = String(baseNameRaw).replace(/__\d+$/, '')
-            const usedSuffixes = new Set()
-            for (const sib of (Array.isArray(listNode.children) ? listNode.children : [])) {
-                const nm = sib && sib.name ? String(sib.name) : ''
-                if (nm === baseName) { usedSuffixes.add(1); continue }
-                const m = nm.startsWith(baseName + '__') ? nm.slice(baseName.length + 2).match(/^(\d+)$/) : null
-                if (m) {
-                    const n = parseInt(m[1], 10)
-                    if (!isNaN(n)) usedSuffixes.add(n)
-                }
-            }
-            let nextN = 1
-            if (usedSuffixes.size > 0) {
-                let max = 0
-                for (const n of usedSuffixes) if (n > max) max = n
-                nextN = max + 1
-            }
-            newItem.name = `${baseName}__${nextN}`
-            
+            // Assign a unique instance name similar to backend logic (T__N)
+            const ordinal = listNode.children.length + 1
+            newItem.name = `${tmplName || newItem.name}__${ordinal}`
             // Set key field value
             if (!newItem.children) newItem.children = []
             let keyChild = newItem.children.find(c => c && c.name === keyField)
@@ -533,38 +334,9 @@ export class OverseerRenderer {
             // Assign the key and mirror it in _computed_value to avoid template-computed fallbacks overriding display
             keyChild.parameters.value = kvTyped
             try { keyChild.parameters._computed_value = kvTyped } catch(_) {}
-            // Ensure the key field persists on serialization as an explicit override
-            try { keyChild.parameters._override_present = { Boolean: true } } catch(_) {}
             // Insert into list honoring requested position
             const pos = (options && typeof options.position === 'string') ? options.position.toLowerCase() : 'append'
             if (pos === 'prepend') {
-                // Prior to inserting at the front, freeze existing sibling weight values so reevaluation does not shift them.
-                try {
-                    let frozenCount = 0
-                    for (const sib of (Array.isArray(listNode.children) ? listNode.children : [])) {
-                        if (!sib || !Array.isArray(sib.children)) continue
-                        const weightChild = sib.children.find(c => c && c.name === 'weight')
-                        if (!weightChild) continue
-                        if (!weightChild.parameters) weightChild.parameters = {}
-                        const hasExplicit = weightChild.parameters.value !== undefined
-                        if (hasExplicit) continue // already explicit, skip
-                        // Prefer an existing computed value; fall back to fallback; else skip
-                        const cv = weightChild.parameters._computed_value || weightChild.parameters._computed_fallback || null
-                        if (!cv || typeof cv !== 'object') continue
-                        // Mirror value structure exactly (Float/Integer/String/etc.)
-                        try {
-                            weightChild.parameters.value = JSON.parse(JSON.stringify(cv))
-                            // Mark override so serializer persists it
-                            weightChild.parameters._override_present = { Boolean: true }
-                            frozenCount++
-                        } catch(_) { /* ignore */ }
-                    }
-                    if (frozenCount > 0) {
-                        
-                    } else {
-                        
-                    }
-                } catch(_) { /* best-effort */ }
                 listNode.children.unshift(newItem)
             } else {
                 listNode.children.push(newItem)
@@ -575,12 +347,11 @@ export class OverseerRenderer {
             // Return a real field path if the edit targeted a child in tailSegments; otherwise the item path
             // Use the actual item name (with instance suffix) for correct path resolution
             const siblings = listNode.children
-            // Use the exact instance name (which already contains __N) to avoid ambiguity; still include
-            // an ordinal when multiple siblings coincidentally share the same exact name (extremely rare given unique suffix selection above).
+            // Find the actual index of the newly inserted item (works for both append and prepend)
             const idxNew = siblings.indexOf(newItem)
-            const itemExactName = newItem.name // e.g., WeightRecord__19
-            const itemOrd = siblings.slice(0, idxNew).filter(c => c && c.name === itemExactName).length
-            const itemSeg = itemOrd > 0 ? `${itemExactName}#${itemOrd}` : itemExactName
+            const itemBaseName = newItem.name
+            const itemOrd = siblings.slice(0, idxNew).filter(c => c && c.name === itemBaseName).length
+            const itemSeg = itemOrd > 0 ? `${itemBaseName}#${itemOrd}` : itemBaseName
             let realPathArr = listPathArr.concat([itemSeg])
             // Traverse tail segments directly on the newly created item, creating missing fields on demand,
             // and construct canonical path segments using the actual picked names and true ordinal among siblings.
@@ -615,49 +386,7 @@ export class OverseerRenderer {
                 realPathArr = realPathArr.concat([segName])
                 curRef = pick
             }
-            const __finalPath = realPathArr.join('/')
-            // Record a direct reference to the newly created leaf target so later edits update exactly this node
-            try {
-                // Attach diagnostic markers for identity tracking
-                const materializeId = `mat_${Date.now()}_${Math.random().toString(36).slice(2)}`
-                try { newItem.__materialize_id = materializeId } catch(_) {}
-                try { curRef.__materialize_id = materializeId + '_leaf' } catch(_) {}
-                // If this appears to be a WeightRecord template with a 'weight' child, ensure it has an explicit starting value so backend reevaluation doesn't cascade-shift others.
-                try {
-                    const isWeightRecord = /weightrecord/i.test(newItem.name || '')
-                    if (isWeightRecord) {
-                        const wLeaf = (newItem.children||[]).find(c => c && c.name === 'weight')
-                        if (wLeaf) {
-                            if (!wLeaf.parameters) wLeaf.parameters = {}
-                            const existingExplicit = wLeaf.parameters.value
-                            if (existingExplicit === undefined) {
-                                const baseVal = wLeaf.parameters._computed_value || wLeaf.parameters._computed_fallback
-                                if (baseVal && typeof baseVal === 'object') {
-                                    try { wLeaf.parameters.value = JSON.parse(JSON.stringify(baseVal)) } catch(_) {}
-                                    wLeaf.parameters._override_present = { Boolean: true }
-                                    
-                                }
-                            }
-                        }
-                    }
-                } catch(_) { /* best-effort */ }
-                this._materializedTargets.set(__finalPath, { itemNode: newItem, leafNode: curRef, ts: Date.now(), materializeId, position: pos })
-                
-            } catch(_) { /* best-effort */ }
-            if (DEBUG_MODE) console.debug('[Overseer] _materializePhantomAndComputePath summary', {
-                list: listPathArr.join('/'),
-                template: tmplName,
-                newItemName: newItem && newItem.name,
-                keyField,
-                keyValue: kvTyped,
-                position: pos,
-                finalPath: __finalPath
-            })
-            try {
-                const ordering = (listNode.children||[]).map((c,i)=>({ idx:i, name:c && c.name }))
-                
-            } catch(_) {}
-            return __finalPath
+            return realPathArr.join('/')
         } catch(_) { return null }
     }
 
@@ -720,12 +449,10 @@ export class OverseerRenderer {
 
     renderDocument(overseerDocument) {
         if (DEBUG_MODE) {
-            try {
-                console.log('Rendering document:', overseerDocument)
-                console.log('Document type:', typeof overseerDocument)
-                console.log('Document is array:', Array.isArray(overseerDocument))
-                console.log('Document length:', overseerDocument?.length)
-            } catch(_) {}
+            console.log('Rendering document:', overseerDocument)
+            console.log('Document type:', typeof overseerDocument)
+            console.log('Document is array:', Array.isArray(overseerDocument))
+            console.log('Document length:', overseerDocument?.length)
         }
 
         // Clear previous content
@@ -752,13 +479,8 @@ export class OverseerRenderer {
             }
             cleanupNode(this.contentDisplay)
         } catch(_) {}
-        // Defensive guards: in headless test environments elements can be null
-        if (this.contentDisplay) {
-            try { this.contentDisplay.innerHTML = '' } catch(_) {}
-        }
-        if (this.tabContainer) {
-            try { this.tabContainer.innerHTML = '' } catch(_) {}
-        }
+        this.contentDisplay.innerHTML = ''
+        this.tabContainer.innerHTML = ''
 
         // Optional lightweight debug info (avoid dumping full document JSON)
         if (DEBUG_MODE) {
@@ -766,12 +488,12 @@ export class OverseerRenderer {
             debugInfo.style.cssText = 'background: #f0f0f0; padding: 6px 10px; margin: 8px; border: 1px solid #ccc; font-family: monospace; color: #000;'
             const rootCount = Array.isArray(overseerDocument) ? overseerDocument.length : 1
             debugInfo.textContent = `DEBUG: roots=${rootCount} type=${typeof overseerDocument}`
-            if (this.contentDisplay) this.contentDisplay.appendChild(debugInfo)
+            this.contentDisplay.appendChild(debugInfo)
         }
 
         if (!overseerDocument) {
             console.error('Document is null or undefined')
-            if (this.contentDisplay) this.contentDisplay.innerHTML += '<p>No document provided</p>'
+            this.contentDisplay.innerHTML += '<p>No document provided</p>'
             return
         }
 
@@ -779,7 +501,7 @@ export class OverseerRenderer {
             if (DEBUG_MODE) console.log('Processing array document with', overseerDocument.length, 'nodes')
 
             if (overseerDocument.length === 0) {
-                if (this.contentDisplay) this.contentDisplay.innerHTML += '<p>Document is empty (no nodes parsed)</p>'
+                this.contentDisplay.innerHTML += '<p>Document is empty (no nodes parsed)</p>'
                 return
             }
 
@@ -793,7 +515,7 @@ export class OverseerRenderer {
             // Single root node
             this.renderNode(overseerDocument, this.contentDisplay, {}, [overseerDocument.name || overseerDocument.node_type || overseerDocument.type || 'root'])
         } else {
-            if (DEBUG_MODE) console.warn('Unexpected document format:', overseerDocument)
+            console.warn('Unexpected document format:', overseerDocument)
             this.contentDisplay.innerHTML += '<p>Unexpected document format</p>'
         }
 
@@ -804,7 +526,7 @@ export class OverseerRenderer {
     if (DEBUG_MODE) console.log('renderNode called with:', node, 'container:', container)
 
         if (!node || typeof node !== 'object') {
-            if (DEBUG_MODE) console.warn('Invalid node:', node)
+            console.warn('Invalid node:', node)
             return
         }
 
@@ -819,29 +541,6 @@ export class OverseerRenderer {
             }
         } catch (_) { /* no-op */ }
 
-        // Ensure node has a stable uid (for list items and any node we need to target precisely)
-        try {
-            if (!node.__uid) {
-                const existingUid = (() => {
-                    try { const u = node.parameters?._uid; if (u && typeof u === 'object' && u.String !== undefined) return String(u.String) } catch(_) {}
-                    return null
-                })()
-                if (existingUid) {
-                    node.__uid = existingUid
-                } else {
-                    const gen = `uid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
-                    if (!node.parameters) node.parameters = {}
-                    node.parameters._uid = { String: gen }
-                    node.__uid = gen
-                }
-                if (!this._uidToNode) this._uidToNode = new Map()
-                this._uidToNode.set(node.__uid, node)
-            } else {
-                if (!this._uidToNode) this._uidToNode = new Map()
-                if (!this._uidToNode.has(node.__uid)) this._uidToNode.set(node.__uid, node)
-            }
-        } catch(_) { /* best-effort */ }
-
         const element = this.createNodeElement(node)
     if (DEBUG_MODE) console.log('Created element:', element)
 
@@ -850,12 +549,9 @@ export class OverseerRenderer {
             try {
                 if (element.dataset) {
                     element.dataset.path = JSON.stringify(Array.isArray(path) ? path : [])
-                    if (node.__uid) element.dataset.uid = node.__uid
                 }
             } catch (_) { /* no-op */ }
 
-            // Guard against null/undefined container (can occur during selective patch attempts when DOM node not found)
-            if (!container) { if (DEBUG_MODE) console.warn('renderNode: null container for path', path, 'node', node); return }
             container.appendChild(element)
             if (DEBUG_MODE) console.log('Appended element to container')
 
@@ -932,19 +628,21 @@ export class OverseerRenderer {
                             if (computedLink !== undefined) node.parameters._computed_link = { String: String(computedLink) }
                         } catch(_) {}
                         if (phantomPreviewNode && phantomMeta) {
-                            // Flattened phantom rendering: behave like future materialized node root.
+                            // Missing-key phantom: render a preview and tag the container
                             this._linkDepth = (this._linkDepth || 0) + 1
                             if (this._linkDepth <= 6) {
                                 try { this.renderEventControls(node, element) } catch(_) {}
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
-                                try { element.setAttribute('data-link-phantom', JSON.stringify(phantomMeta)) } catch(_) {}
+                                // Clear any previous target-path; phantom does not have a concrete target yet
                                 try { element.removeAttribute('data-link-target-path') } catch(_) {}
-                                // Policy: auto materialize on-access if configured
+                                try { element.setAttribute('data-link-phantom', JSON.stringify(phantomMeta)) } catch(_) {}
+                                // Policy: create on access if requested
                                 try {
                                     const policyRaw = this.getParameterValue(node, 'phantom-materialize')
                                     const policy = (policyRaw ? String(policyRaw) : 'none').toLowerCase()
                                     if (policy.endsWith('on-access')) {
                                         const isPrepend = policy.startsWith('prepend')
+                                        // Kick off materialization without blocking render
                                         this._materializePhantomAndComputePath(Object.assign({}, phantomMeta), { position: isPrepend ? 'prepend' : 'append' })
                                             .then((realPath) => {
                                                 if (!realPath) return
@@ -952,159 +650,44 @@ export class OverseerRenderer {
                                                 const pathArr = String(realPath).split('/')
                                                 const nodeReal = this.findNodeByPath(window.app.currentDocument, pathArr)
                                                 if (nodeReal) {
+                                                    // Replace contents with the real node subtree
                                                     try { element.innerHTML = '' } catch(_) {}
                                                     this.renderNode(nodeReal, element, nextInherited, pathArr)
                                                 }
                                             })
                                             .catch(() => {/* ignore */})
                                     }
-                                } catch(_) { /* ignore */ }
-                                // Merge phantom root params into proxy without clobbering explicit overrides
+                                } catch(_) { /* ignore policy errors; fall back to preview */ }
+                                // Apply per-link overrides to phantom preview as well
+                                let phantomToRender = phantomPreviewNode
                                 try {
-                                    const tgtParams = phantomPreviewNode.parameters || {}
-                                    const proxyParams = node.parameters = node.parameters || {}
-                                    const proxyHasBgOverride = proxyParams['background-color'] !== undefined && proxyParams['background-color'] !== null
-                                    // Initialize tracking list for injected params if not present
-                                    if (!Array.isArray(proxyParams._injected_link_params)) proxyParams._injected_link_params = []
-                                    for (const k of Object.keys(tgtParams)) {
-                                        // Skip copying target's computed bg and raw bg if proxy explicitly overrides bg
-                                        if (proxyHasBgOverride && (k === '_computed_background-color' || k === 'background-color')) continue
-                                        if (proxyParams[k] !== undefined) continue
-                                        proxyParams[k] = tgtParams[k]
-                                        try { if (!proxyParams._injected_link_params.includes(k)) proxyParams._injected_link_params.push(k) } catch(_) {}
-                                    }
-                                    // Remove any lingering computed bg on proxy if it overrides bg
-                                    if (proxyHasBgOverride && proxyParams['_computed_background-color'] !== undefined) {
-                                        try { delete proxyParams['_computed_background-color'] } catch(_) {}
-                                    }
-                                } catch(_) { /* ignore */ }
-                                // Determine which background should drive inheritance for the phantom subtree:
-                                // 1) Explicit proxy override if present
-                                // 2) Otherwise, a literal or computed background on the phantom preview root
-                                let phantomEffectiveBg = null
-                                try {
-                                    // Prefer computed if available on preview (rare), else a literal non-formula value
-                                    const p = (phantomPreviewNode && phantomPreviewNode.parameters) ? phantomPreviewNode.parameters : {}
-                                    const previewHasComputed = p && p['_computed_background-color'] !== undefined
-                                    const previewRaw = p ? p['background-color'] : null
-                                    const previewHasFormula = this.parameterHasFormula(phantomPreviewNode, 'background-color')
-                                    if (previewHasComputed) {
-                                        phantomEffectiveBg = this.convertColorValue(p['_computed_background-color'])
-                                    } else if (!previewHasFormula && previewRaw !== null && previewRaw !== undefined) {
-                                        phantomEffectiveBg = this.convertColorValue(previewRaw)
-                                    }
-                                } catch(_) { /* ignore */ }
-                                let proxyExplicitBg = null
-                                let proxyHasBgOverride = false
-                                try {
-                                    const p = node.parameters || {}
-                                    if (p['background-color'] !== undefined && p['background-color'] !== null) {
-                                        proxyHasBgOverride = true
-                                        proxyExplicitBg = this.convertColorValue(p['background-color']) || p['background-color']
-                                    }
-                                } catch(_) { /* ignore */ }
-                                // Decide selected background and propagate to current element and children
-                                const selectedInheritedBg = (proxyExplicitBg !== null && proxyExplicitBg !== undefined)
-                                    ? proxyExplicitBg
-                                    : ((phantomEffectiveBg !== null && phantomEffectiveBg !== undefined) ? phantomEffectiveBg : null)
-                                // Override element background and update inherited styles for children
-                                let inheritedForChildren = nextInherited
-                                try {
-                                    if (selectedInheritedBg !== null && selectedInheritedBg !== undefined) {
-                                        element.style.backgroundColor = selectedInheritedBg
-                                        inheritedForChildren = Object.assign({}, nextInherited, { backgroundColor: selectedInheritedBg })
-                                    }
-                                } catch(_) { /* ignore */ }
-                                // Apply overrides recursively to a clone of children
-                                let mergedChildren = []
-                                try {
-                                    const baseChildren = Array.isArray(phantomPreviewNode.children) ? JSON.parse(JSON.stringify(phantomPreviewNode.children)) : []
                                     const overrideSpecs = (node.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
                                     if (overrideSpecs.length > 0) {
-                                        const applyOverrideRecursive = (kids, oNode) => {
-                                            if (!kids) return
+                                        const clone = JSON.parse(JSON.stringify(phantomPreviewNode))
+                                        const applyOverrideRecursive = (tNode, oNode) => {
+                                            if (!tNode || !oNode) return
+                                            const kids = Array.isArray(tNode.children) ? tNode.children : []
                                             const exact = kids.find(c => c && c.name === oNode.name)
+                                            let targetMatch = exact || (tNode.name === oNode.name ? tNode : null)
                                             const mergeParams = (target, src) => {
-                                                if (!target || !src) return
+                                                if (!src || !target) return
                                                 const sp = src.parameters || {}
                                                 if (!target.parameters) target.parameters = {}
                                                 for (const k of Object.keys(sp)) target.parameters[k] = sp[k]
                                             }
-                                            if (exact) {
-                                                mergeParams(exact, oNode)
+                                            if (targetMatch) {
+                                                mergeParams(targetMatch, oNode)
                                                 const oKids = Array.isArray(oNode.children) ? oNode.children : []
-                                                for (const ok of oKids) applyOverrideRecursive(exact.children, ok)
+                                                for (const ok of oKids) applyOverrideRecursive(targetMatch, ok)
                                             }
                                         }
-                                        for (const ov of overrideSpecs) applyOverrideRecursive(baseChildren, ov)
+                                        for (const ov of overrideSpecs) applyOverrideRecursive(clone, ov)
+                                        phantomToRender = clone
                                     }
-                                    mergedChildren = baseChildren
-                                } catch(_) { mergedChildren = Array.isArray(phantomPreviewNode.children) ? phantomPreviewNode.children : [] }
-                                // Sanitize child backgrounds (same as real target flatten path) so inheritance from proxy/phantom works on first paint
-                                try {
-                                    const proxyBgRaw = (() => { try { const p = node.parameters||{}; return (p['background-color'] !== undefined && p['background-color'] !== null) ? p['background-color'] : null } catch(_) { return null } })()
-                                    const useBg = (proxyBgRaw !== null && proxyBgRaw !== undefined) ? proxyBgRaw : selectedInheritedBg
-                                    if (useBg !== null && useBg !== undefined) {
-                                        const scrubNode = (n) => {
-                                            if (!n || !n.parameters) return
-                                            // Always remove computed background so proxy override can take effect, even if there is a formula
-                                            if (n.parameters['_computed_background-color'] !== undefined) { try { delete n.parameters['_computed_background-color'] } catch(_) {} }
-                                            // Remove explicit literal background only when it's not a formula
-                                            const hasFormula = this.parameterHasFormula(n, 'background-color')
-                                            if (!hasFormula && n.parameters['background-color'] !== undefined) { try { delete n.parameters['background-color'] } catch(_) {} }
-                                            const kids = Array.isArray(n.children) ? n.children : []
-                                            for (const k of kids) scrubNode(k)
-                                        }
-                                        mergedChildren = JSON.parse(JSON.stringify(mergedChildren))
-                                        for (const c of mergedChildren) scrubNode(c)
-                                    }
-                                } catch(_) { /* ignore */ }
-                                // Leaf target fallback: if link points directly at a field (string/number/etc.) there will be no children to render.
-                                // In that case render the target node itself (as if it were a single child) so the field UI appears for editing.
-                                try {
-                                    if ((!mergedChildren || mergedChildren.length === 0) && phantomPreviewNode && (
-                                        !Array.isArray(phantomPreviewNode.children) || phantomPreviewNode.children.length === 0
-                                    )) {
-                                        // Avoid mutating original preview node; clone shallow.
-                                        const leafClone = JSON.parse(JSON.stringify(phantomPreviewNode))
-                                        // Ensure it does not accidentally carry a link that would recurse; leaf nodes in tests do not, but guard anyway.
-                                        if (leafClone.parameters && leafClone.parameters.link) {
-                                            try { delete leafClone.parameters.link } catch(_) {}
-                                        }
-                                        mergedChildren = [leafClone]
-                                    }
-                                } catch(_) { /* best-effort leaf fallback */ }
+                                } catch(_) { /* best-effort only */ }
+                                // Render preview under a synthetic path; edits will be intercepted
                                 const syntheticPath = path.concat(['<phantom>'])
-                                for (const ch of mergedChildren) {
-                                    const segBase = (ch.name || ch.node_type || ch.type || 'child')
-                                    const chPath = syntheticPath.concat([segBase])
-                                    this.renderNode(ch, element, inheritedForChildren, chPath)
-                                }
-                                // Post-pass: enforce inheritance visually for descendants without explicit override using CSS variable
-                                try {
-                                    if (selectedInheritedBg !== null && selectedInheritedBg !== undefined) {
-                                        try {
-                                            const conv = selectedInheritedBg
-                                            element.style.setProperty('--overseer-link-proxy-bg', conv)
-                                            element.setAttribute('data-proxy-bg','1')
-                                        } catch(_) {}
-                                        const descendants = element.querySelectorAll(':scope *')
-                                        for (const d of descendants) {
-                                            try {
-                                                const styleBg = d.style && d.style.backgroundColor
-                                                const hasExplicit = !!styleBg && styleBg !== '' && styleBg !== 'inherit'
-                                                if (hasExplicit) {
-                                                    if (!d.hasAttribute('data-bg-explicit')) {
-                                                        d.style.removeProperty('background-color')
-                                                    }
-                                                }
-                                                if (!d.hasAttribute('data-bg-explicit')) {
-                                                    d.style.backgroundColor = 'var(--overseer-link-proxy-bg)'
-                                                }
-                                            } catch(_) {}
-                                        }
-                                    }
-                                } catch(_) { /* best-effort */ }
+                                this.renderNode(phantomToRender, element, nextInherited, syntheticPath)
                                 this._linkDepth -= 1
                                 return
                             } else {
@@ -1112,168 +695,58 @@ export class OverseerRenderer {
                             }
                             this._linkDepth -= 1
                         } else if (targetNode && targetPath && Array.isArray(targetPath)) {
-                            // Flattened link rendering: make this proxy element act as the target root visually.
+                            // Guard against runaway recursion in case of cycles
                             this._linkDepth = (this._linkDepth || 0) + 1
                             if (this._linkDepth <= 6) {
+                                // Clear any stale phantom flag when binding to a real target
                                 try { element.removeAttribute('data-link-phantom') } catch(_) {}
+                                // Even when acting as a link proxy, expose any event controls (e.g., on click -> button)
                                 try { this.renderEventControls(node, element) } catch(_) {}
+                                // Mark this container as a link proxy to enable event bubbling on edit
                                 try { element.setAttribute('data-link-proxy', '1') } catch(_) {}
+                                // Record the concrete target path this proxy is rendering, to aid selective updates
                                 try { element.setAttribute('data-link-target-path', JSON.stringify(targetPath)) } catch(_) {}
-                                // Merge target root parameters into proxy (without overwriting explicit overrides)
+                                // Apply per-link child overrides by cloning the target and merging override params
+                                let toRender = targetNode
                                 try {
-                                    const tgtParams = targetNode.parameters || {}
-                                    const proxyParams = node.parameters = node.parameters || {}
-                                    if (!Array.isArray(proxyParams._injected_link_params)) proxyParams._injected_link_params = []
-                                    const proxyHasBgOverride = proxyParams['background-color'] !== undefined && proxyParams['background-color'] !== null
-                                    for (const k of Object.keys(tgtParams)) {
-                                        // Skip copying target's computed background shadow if proxy overrides bg
-                                        if (proxyHasBgOverride && (k === '_computed_background-color' || k === 'background-color')) continue
-                                        if (proxyParams[k] !== undefined) continue
-                                        proxyParams[k] = tgtParams[k]
-                                        try { if (!proxyParams._injected_link_params.includes(k)) proxyParams._injected_link_params.push(k) } catch(_) {}
-                                    }
-                                    // If proxy overrides background-color, remove any lingering computed bg so style block uses override
-                                    if (proxyHasBgOverride && proxyParams['_computed_background-color'] !== undefined) {
-                                        try { delete proxyParams['_computed_background-color'] } catch(_) {}
-                                    }
-                                } catch(_) { /* ignore */ }
-                                // Prepare cloned children with overrides applied
-                                let mergedChildren = []
-                                try {
-                                    const baseChildren = Array.isArray(targetNode.children) ? JSON.parse(JSON.stringify(targetNode.children)) : []
                                     const overrideSpecs = (node.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
                                     if (overrideSpecs.length > 0) {
-                                        const applyOverrideRecursive = (kids, oNode) => {
-                                            if (!kids) return
-                                            const exact = kids.find(c => c && c.name === oNode.name)
+                                        const clone = JSON.parse(JSON.stringify(targetNode))
+                                        const applyOverrideRecursive = (tNode, oNode) => {
+                                            if (!tNode || !oNode) return
+                                            // Try to match by name among immediate children; if not found and names equal, apply to self
+                                            const pickChild = (parent, name) => {
+                                                const kids = Array.isArray(parent.children) ? parent.children : []
+                                                const exact = kids.find(c => c && c.name === name)
+                                                return exact || null
+                                            }
+                                            // Merge parameters from override node into target match
                                             const mergeParams = (target, src) => {
-                                                if (!target || !src) return
+                                                if (!src || !target) return
                                                 const sp = src.parameters || {}
                                                 if (!target.parameters) target.parameters = {}
-                                                for (const k of Object.keys(sp)) target.parameters[k] = sp[k]
+                                                for (const k of Object.keys(sp)) {
+                                                    // Copy all params; rely on author to avoid conflicting link overrides
+                                                    target.parameters[k] = sp[k]
+                                                }
                                             }
-                                            if (exact) {
-                                                mergeParams(exact, oNode)
+                                            // Find target child by override name
+                                            let targetMatch = pickChild(tNode, oNode.name)
+                                            if (!targetMatch && (tNode.name === oNode.name)) targetMatch = tNode
+                                            if (targetMatch) {
+                                                mergeParams(targetMatch, oNode)
+                                                // Recurse for nested overrides
                                                 const oKids = Array.isArray(oNode.children) ? oNode.children : []
-                                                for (const ok of oKids) applyOverrideRecursive(exact.children, ok)
+                                                for (const ok of oKids) applyOverrideRecursive(targetMatch, ok)
                                             }
                                         }
-                                        for (const ov of overrideSpecs) applyOverrideRecursive(baseChildren, ov)
+                                        for (const ov of overrideSpecs) applyOverrideRecursive(clone, ov)
+                                        toRender = clone
                                     }
-                                    mergedChildren = baseChildren
-                                } catch(_) { mergedChildren = Array.isArray(targetNode.children) ? targetNode.children : [] }
-                                // If proxy sets explicit background-color, strip descendant computed background colors so they inherit.
-                                try {
-                                    const parentHasBgOverride = (() => { try { const raw = this.getParameterValue(node, 'background-color'); return raw !== null && raw !== undefined } catch(_) { return false } })()
-                                    if (parentHasBgOverride) {
-                                        // Capture original target root bg (computed or literal) to identify inherited duplicates.
-                                        let originalRootBg = null
-                                        try {
-                                            const tp = targetNode.parameters || {}
-                                            if (tp['_computed_background-color'] !== undefined) originalRootBg = tp['_computed_background-color']
-                                            else if (tp['background-color'] !== undefined) originalRootBg = tp['background-color']
-                                        } catch(_) { /* ignore */ }
-                                        const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
-                                        const normalize = (v) => {
-                                            if (v == null) return null
-                                            let s = String(v).trim().toLowerCase()
-                                            // Collapse 8-digit hex with full alpha to 6-digit for comparison (#rrggbbff -> #rrggbb)
-                                            if (/^#([0-9a-f]{8})$/.test(s)) {
-                                                const core = s.slice(1)
-                                                const rgb = core.slice(0,6)
-                                                const alpha = core.slice(6)
-                                                if (alpha === 'ff') s = '#'+rgb
-                                            }
-                                            return s
-                                        }
-                                        const normOriginal = normalize(originalRootBg)
-                                        const normProxy = normalize(proxyBg)
-                                        const stripInheritedBg = (n) => {
-                                            if (!n || !n.parameters) return
-                                            const p = n.parameters
-                                            const hasFormula = this.parameterHasFormula(n, 'background-color')
-                                            if (!hasFormula) {
-                                                const explicit = p['background-color']
-                                                const comp = p['_computed_background-color']
-                                                const normExplicit = normalize(explicit)
-                                                const normComp = normalize(comp)
-                                                // Remove computed shadow always so it can inherit proxy override
-                                                if (comp !== undefined) { try { delete p['_computed_background-color'] } catch(_) {} }
-                                                // Remove explicit literal if:
-                                                //  a) it matches original root bg we're overriding OR
-                                                //  b) it matches proxy bg (duplicate not needed) OR
-                                                //  c) we cannot determine origin but want inheritance (treat as inherited) AND it is not an explicitly overridden child.
-                                                // Heuristic (c): if explicit exists but this node name not present in overrideSpecs list (captured earlier) and normProxy is non-null.
-                                                const isExplicitlyOverridden = false // we don't track per-child override mark; future improvement could tag
-                                                if (explicit !== undefined) {
-                                                    if ((normExplicit === normOriginal && normOriginal !== normProxy) ||
-                                                        (normExplicit === normProxy) ||
-                                                        (!isExplicitlyOverridden && normProxy)) {
-                                                        try { delete p['background-color'] } catch(_) {}
-                                                    }
-                                                }
-                                            }
-                                            const kids = Array.isArray(n.children) ? n.children : []
-                                            for (const k of kids) stripInheritedBg(k)
-                                        }
-                                        for (const ch of mergedChildren) stripInheritedBg(ch)
-                                    }
-                                } catch(_) { /* ignore */ }
-                                const basePath = targetPath.slice()
-                                // Build sanitized clones so descendants without explicit override inherit proxy bg deterministically.
-                                let childrenToRender = mergedChildren
-                                try {
-                                    const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
-                                    if (proxyBg !== null && proxyBg !== undefined) {
-                                        const scrubNode = (n) => {
-                                            if (!n || !n.parameters) return
-                                            const hasFormula = this.parameterHasFormula(n, 'background-color')
-                                            if (!hasFormula) {
-                                                if (n.parameters['_computed_background-color'] !== undefined) { try { delete n.parameters['_computed_background-color'] } catch(_) {} }
-                                                if (n.parameters['background-color'] !== undefined) { try { delete n.parameters['background-color'] } catch(_) {} }
-                                            }
-                                            const kids = Array.isArray(n.children) ? n.children : []
-                                            for (const k of kids) scrubNode(k)
-                                        }
-                                        childrenToRender = JSON.parse(JSON.stringify(mergedChildren))
-                                        for (const c of childrenToRender) scrubNode(c)
-                                    }
-                                } catch(_) { /* best-effort */ }
-                                for (const ch of childrenToRender) {
-                                    const segBase = (ch.name || ch.node_type || ch.type || 'child')
-                                    const chPath = basePath.concat([segBase])
-                                    this.renderNode(ch, element, nextInherited, chPath)
-                                }
-                                // Post-pass: enforce inheritance visually for descendants without explicit override.
-                                try {
-                                    const proxyBg = (() => { try { return this.getParameterValue(node, 'background-color') } catch(_) { return null } })()
-                                    if (proxyBg !== null && proxyBg !== undefined) {
-                                        // Establish a stable CSS variable for proxy background so descendants consistently inherit it
-                                        try {
-                                            const conv = this.convertColorValue(proxyBg) || proxyBg
-                                            element.style.setProperty('--overseer-link-proxy-bg', conv)
-                                            element.setAttribute('data-proxy-bg','1')
-                                        } catch(_) {}
-                                        const descendants = element.querySelectorAll(':scope *')
-                                        for (const d of descendants) {
-                                            try {
-                                                // If descendant has a hard-coded inline background (not a gradient or transparent), but its dataset path derives from the link target subtree, normalize it.
-                                                const styleBg = d.style && d.style.backgroundColor
-                                                const hasExplicit = !!styleBg && styleBg !== '' && styleBg !== 'inherit'
-                                                if (hasExplicit) {
-                                                    // Whitelist: if element carries data-bg-explicit we respect it
-                                                    if (!d.hasAttribute('data-bg-explicit')) {
-                                                        d.style.removeProperty('background-color')
-                                                    }
-                                                }
-                                                // Always set variable-based background if no explicit override marker.
-                                                if (!d.hasAttribute('data-bg-explicit')) {
-                                                    d.style.backgroundColor = 'var(--overseer-link-proxy-bg)'
-                                                }
-                                            } catch(_) {}
-                                        }
-                                    }
-                                } catch(_) { /* best-effort */ }
+                                } catch(_) { /* best-effort only */ }
+                                // Render the (possibly overridden) target subtree inside this container
+                                this.renderNode(toRender, element, nextInherited, targetPath.slice())
+                                // Do not render this node's own children for a link-proxy container
                                 this._linkDepth -= 1
                                 return
                             } else {
@@ -1368,9 +841,9 @@ export class OverseerRenderer {
         let nodeType = node.node_type || node.type || node.name || 'div'
 
         if (DEBUG_MODE) {
-            if (DEBUG_MODE) console.log('[DEBUG] createNodeElement:', { nodeType, node });
+            console.log('[DEBUG] createNodeElement:', { nodeType, node });
             if (node.children && Array.isArray(node.children)) {
-                if (DEBUG_MODE) console.log(`[DEBUG] Node ${nodeType} has ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
+                console.log(`[DEBUG] Node ${nodeType} has ${node.children.length} children:`, node.children.map(c => ({ name: c.name, type: c.node_type, parameters: c.parameters })));
             }
         }
 
@@ -1782,14 +1255,6 @@ export class OverseerRenderer {
     }
 
     createTabElement(node) {
-        // In headless / test environments tabContainer may be null; bail out gracefully
-        if (!this.tabContainer) {
-            if (DEBUG_MODE) console.warn('Skipping tab creation: tabContainer is null')
-            const placeholder = document.createElement('div')
-            placeholder.className = 'tab-content'
-            placeholder.style.display = 'none'
-            return placeholder
-        }
         const tabButton = document.createElement('button')
         tabButton.className = 'tab-button'
     // Bug 8: Tabs should use a 'label' parameter instead of exposing node name
@@ -1804,9 +1269,14 @@ export class OverseerRenderer {
         
         // Tab click handler
         tabButton.addEventListener('click', () => {
-            // Hide all tab contents and deactivate buttons
-            document.querySelectorAll('.tab-content').forEach(content => { content.style.display = 'none' })
-            document.querySelectorAll('.tab-button').forEach(btn => { btn.classList.remove('active') })
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.style.display = 'none'
+            })
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active')
+            })
+            
             // Show this tab's content
             tabContent.style.display = 'block'
             tabButton.classList.add('active')
@@ -1999,11 +1469,8 @@ export class OverseerRenderer {
     value.className = 'field-value'
         value.textContent = this.getNodeValue(node) || ''
         
-        // Make it editable on double-click (respect mutable)
+        // Make it editable on double-click
         value.addEventListener('dblclick', () => {
-            const mode = this.getEffectiveMutableMode(node, value)
-            if (mode === 'false') return
-            if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.makeFieldEditable(value, node)
         })
         
@@ -2047,11 +1514,8 @@ export class OverseerRenderer {
             value.style.whiteSpace = 'pre-wrap'
         }
         
-        // Make it editable on double-click (respect mutable)
+        // Make it editable on double-click
         value.addEventListener('dblclick', () => {
-            const mode = this.getEffectiveMutableMode(node, value)
-            if (mode === 'false') return
-            if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             const hasFormula = node?.parameters && typeof node.parameters.value === 'object' && node.parameters.value?.Formula !== undefined
             if (hasFormula) {
                 // Always use formula editor when a formula exists
@@ -2118,11 +1582,8 @@ export class OverseerRenderer {
         }
         value.textContent = `${pref}${fmtNumber(rawVal)}${suf}`
         
-        // Make it editable on double-click (respect mutable)
+        // Make it editable on double-click
         value.addEventListener('dblclick', () => {
-            const mode = this.getEffectiveMutableMode(node, value)
-            if (mode === 'false') return
-            if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.makeFieldEditable(value, node)
         })
         
@@ -2406,16 +1867,8 @@ export class OverseerRenderer {
 
         container.appendChild(checkbox)
 
-        // Handle changes (respect mutability)
+        // Handle changes
         checkbox.addEventListener('change', () => {
-            const mode = this.getEffectiveMutableMode(node, checkbox)
-            if (mode === 'false') {
-                // Revert UI toggle to the current node value
-                const current = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
-                if (checkbox.checked !== current) checkbox.checked = current
-                return
-            }
-            if (mode === 'guarded') { try { checkbox.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.updateNodeValue(node, checkbox.checked)
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
@@ -2426,22 +1879,10 @@ export class OverseerRenderer {
                     const fieldPath = this.buildNodePath(container).join('/')
                     window.app.reevaluateDocumentSelective([fieldPath])
                 } catch (e) {
-                    if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
+                    console.warn('Failed to build field path, falling back to full update:', e)
                     window.app.reevaluateDocumentSelective([])
                 }
             }
-            // Mark guarded flag on target if applicable so serializer may skip it
-            try {
-                if (mode === 'guarded') {
-                    const fieldPath = this.buildNodePath(container).join('/')
-                    const target = this.findNodeByPath(window.app.currentDocument, fieldPath.split('/'))
-                    if (target) {
-                        if (!target.parameters) target.parameters = {}
-                        target.parameters._guarded_edit = { Boolean: true }
-                    }
-                    try { checkbox.removeAttribute('data-guarded-edit') } catch(_) {}
-                }
-            } catch(_) { /* best-effort */ }
         })
         
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
@@ -2521,16 +1962,8 @@ export class OverseerRenderer {
             container.appendChild(checkbox)
         }
 
-        // Handle checkbox changes with default events: toggle, check, uncheck (respect mutability)
+        // Handle checkbox changes with default events: toggle, check, uncheck
         checkbox.addEventListener('change', async () => {
-            const mode = this.getEffectiveMutableMode(node, checkbox)
-            if (mode === 'false') {
-                // Revert UI toggle to the current node value
-                const current = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
-                if (checkbox.checked !== current) checkbox.checked = current
-                return
-            }
-            if (mode === 'guarded') { try { checkbox.setAttribute('data-guarded-edit','1') } catch(_) {} }
             if (DEBUG_MODE) console.log('Checkbox changed:', node.name, checkbox.checked)
             this.updateNodeValue(node, checkbox.checked)
 
@@ -2545,7 +1978,7 @@ export class OverseerRenderer {
                     const fieldPath = this.buildNodePath(container).join('/')
                     window.app.reevaluateDocumentSelective([fieldPath])
                 } catch (e) {
-                    if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
+                    console.warn('Failed to build field path, falling back to full update:', e)
                     window.app.reevaluateDocumentSelective([])
                 }
             }
@@ -2563,18 +1996,6 @@ export class OverseerRenderer {
             if (hasHandler('change')) {
                 try { await this.emitEvent(node, checkbox, 'change') } catch(_) {}
             }
-            // Mark guarded flag on target if applicable so serializer may skip it
-            try {
-                if (mode === 'guarded') {
-                    const fieldPath = this.buildNodePath(container).join('/')
-                    const target = this.findNodeByPath(window.app.currentDocument, fieldPath.split('/'))
-                    if (target) {
-                        if (!target.parameters) target.parameters = {}
-                        target.parameters._guarded_edit = { Boolean: true }
-                    }
-                    try { checkbox.removeAttribute('data-guarded-edit') } catch(_) {}
-                }
-            } catch(_) { /* best-effort */ }
         })
 
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
@@ -3862,41 +3283,29 @@ export class OverseerRenderer {
             try {
                 fieldPath = this.buildNodePath(element).join('/')
             } catch (e) {
-                if (DEBUG_MODE) console.warn('Failed to build field path before editing:', e)
+                console.warn('Failed to build field path before editing:', e)
             }
-            // Detect if this edit is occurring under a phantom link preview (before we touch DOM text)
-            let isUnderPhantom = false
-            try {
-                let scan = element
-                while (scan && scan !== document.body && !scan.hasAttribute?.('data-link-phantom')) { scan = scan.parentElement }
-                if (scan && scan.hasAttribute && scan.hasAttribute('data-link-phantom')) {
-                    isUnderPhantom = true
-                }
-            } catch(_) {}
-
+            
             const newValue = input.value
-            // Keep current display as-is; DOM will be updated after materialization/selective update.
+            // Keep showing the previous computed value if a formula was entered/edited
             const prevDisplay = element.textContent
             const isFormulaInput = typeof newValue === 'string' && /\$\([\s\S]*\)/.test(newValue.trim())
+            element.textContent = isFormulaInput ? prevDisplay : newValue
             element.style.display = 'inline'
             
             // Safely remove input element
             try {
                 input.remove()
             } catch (e) {
-                if (DEBUG_MODE) console.warn('Input element already removed:', e)
+                console.warn('Input element already removed:', e)
             }
             
             // If this edit is under a phantom link preview, materialize the item first and recompute a real path
-            let materializedRealPath = null
-            // Will hold the link container path (the proxy that hosted the phantom) for targeted refresh after materialization.
-            let linkContainerPathArr = null
             try {
                 let p = element
                 while (p && p !== document.body && !p.hasAttribute?.('data-link-phantom')) { p = p.parentElement }
                 if (p && p.hasAttribute && p.hasAttribute('data-link-phantom')) {
                     const meta = JSON.parse(p.getAttribute('data-link-phantom') || '{}')
-                    try { linkContainerPathArr = JSON.parse(p.dataset.path || '[]') } catch(_) {}
                     // Derive tail segments from the edited element's synthetic path relative to the link container
                     let metaWithTail = meta
                     try {
@@ -3927,308 +3336,19 @@ export class OverseerRenderer {
                         }
                     } catch(_) { /* default to append */ }
                     const realPath = await this._materializePhantomAndComputePath(metaWithTail, { position })
-                    
-                    if (DEBUG_MODE) console.debug('[Overseer] Phantom materialized on edit. Computed realPath:', realPath)
-                    if (realPath) { fieldPath = realPath; materializedRealPath = realPath }
-                    // After materialization, switch the proxy container from phantom preview to the real target
-                    try {
-                        p.removeAttribute('data-link-phantom')
-                        const containerPathArr = JSON.parse(p.dataset.path || '[]')
-                        if (Array.isArray(containerPathArr) && containerPathArr.length > 0) {
-                            if (DEBUG_MODE) console.debug('[Overseer] Re-rendering link proxy container after materialization at path:', containerPathArr.join('/'))
-                            this.rerenderSubtree(window.app.currentDocument, containerPathArr)
-                        }
-                    } catch(_) { /* best-effort */ }
-                    // Additionally, re-render the owning list subtree to ensure DOM paths align with the new instance
-                    try {
-                        const listPathArr = Array.isArray(metaWithTail.listPath) ? metaWithTail.listPath : []
-                        if (listPathArr.length > 0) {
-                            
-                            this.rerenderSubtree(window.app.currentDocument, listPathArr)
-                        }
-                    } catch(_) { /* best-effort */ }
+                    if (realPath) { fieldPath = realPath }
+                    try { p.removeAttribute('data-link-phantom') } catch(_) {}
                 }
             } catch(_) {}
 
             // Update the node value in the document structure (using real path if computed)
             // Instead of using the local node reference, find and update the node in the main document
             let skipElementEvent = false
-            // Track if we performed a direct update on a newly materialized target to suppress duplicate events later
-            let usedDirectMaterializedUpdate = false
-            // Snapshot the existing explicit value (if any) before applying updates to support guarded revert
-            let preExistingValueSnapshot = undefined
-            try {
-                const probePath = materializedRealPath ? materializedRealPath : fieldPath
-                if (probePath && window.app && window.app.currentDocument) {
-                    const arr = String(probePath).split('/')
-                    const target = this.findNodeByPath(window.app.currentDocument, arr)
-                    if (target && target.parameters && target.parameters.value !== undefined) {
-                        try { preExistingValueSnapshot = JSON.parse(JSON.stringify(target.parameters.value)) } catch(_) { preExistingValueSnapshot = target.parameters.value }
-                    }
-                }
-            } catch(_) { /* best-effort */ }
-            // Optimization/guard: if we just materialized and the target field already equals the edited value,
-            // skip issuing an update to avoid redundant UI churn.
-            try {
-                if (materializedRealPath) {
-                    // Strong guarantee: Prefer a direct update of the newly materialized node immediately
-                    try {
-                        if (this._materializedTargets && this._materializedTargets.has(materializedRealPath)) {
-                            const t = this._materializedTargets.get(materializedRealPath)
-                            if (t && t.leafNode) {
-                                // Capture previous value for change record
-                                let prevVal = null
-                                try { prevVal = this.getNodeValue(t.leafNode) } catch(_) {}
-                                // Verify that the stored leaf belongs to the expected freshly inserted item
-                                try {
-                                    const targetPathArr = materializedRealPath.split('/')
-                                    const listPathArr = targetPathArr.slice(0, -2)
-                                    const itemName = targetPathArr[targetPathArr.length - 2]
-                                    const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
-                                    if (listNode && Array.isArray(listNode.children)) {
-                                        const liveItem = listNode.children.find(ch => ch && ch.name === itemName)
-                                        if (liveItem) {
-                                            const liveLeaf = (liveItem.children||[]).find(ch => ch && ch.name === 'weight') || null
-                                            if (liveLeaf && liveLeaf !== t.leafNode) {
-                                                if (DEBUG_MODE) console.warn('[Overseer] materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
-                                                t.leafNode = liveLeaf
-                                            }
-                                        } else {
-                                            if (DEBUG_MODE) console.warn('[Overseer] could not find live item for materialized path', materializedRealPath)
-                                        }
-                                    }
-                                } catch(_) { /* diagnostics best-effort */ }
-                                this.updateNodeValue(t.leafNode, newValue)
-                                
-                                // Immediately refresh computed values/DOM via selective reevaluation
-                                try {
-                                    const metaTarget = this._materializedTargets.get(materializedRealPath)
-                                    if (metaTarget && metaTarget.position === 'prepend') {
-                                        
-                                        // Direct DOM paint via UID (new item should be at dataset.uid = newItem.__uid)
-                                        try {
-                                            const uid = metaTarget.itemNode && metaTarget.itemNode.__uid
-                                            if (uid) {
-                                                const el = document.querySelector(`[data-uid='${uid}']`)
-                                                if (el) {
-                                                    // Find weight field element inside this item
-                                                    let valueHolder = el.querySelector(`[data-path*='${materializedRealPath.split('/').slice(-2).join('/')}'] .field-value`)
-                                                    if (!valueHolder) {
-                                                        // fallback: any descendant with class field-value
-                                                        valueHolder = el.querySelector('.field-value')
-                                                    }
-                                                    if (valueHolder) {
-                                                        valueHolder.textContent = String(newValue)
-                                                        
-                                                    }
-                                                }
-                                            }
-                                        } catch(_) { /* best-effort */ }
-                                        // Targeted update: we still need the link container (e.g., SelectedWeightRecord) to reflect new selection.
-                                        // Strategy: pin existing sibling weights (explicit value) then reevaluate only the link container path if available.
-                                        try {
-                                            const targetPathArr = materializedRealPath.split('/')
-                                            const listPathArr = targetPathArr.slice(0, -2)
-                                            const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
-                                            if (listNode && Array.isArray(listNode.children)) {
-                                                for (const sib of listNode.children) {
-                                                    if (!sib || !Array.isArray(sib.children)) continue
-                                                    const wLeaf = sib.children.find(c => c && c.name === 'weight')
-                                                    if (!wLeaf) continue
-                                                    if (!wLeaf.parameters) wLeaf.parameters = {}
-                                                    if (wLeaf.parameters.value === undefined) {
-                                                        const curVal = wLeaf.parameters._computed_value || wLeaf.parameters._computed_fallback
-                                                        if (curVal && typeof curVal === 'object') {
-                                                            try { wLeaf.parameters.value = JSON.parse(JSON.stringify(curVal)) } catch(_) {}
-                                                            wLeaf.parameters._override_present = { Boolean: true }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } catch(_) { /* best-effort pin */ }
-                                        if (linkContainerPathArr) {
-                                            try {
-                                                this.rerenderSubtree(window.app.currentDocument, linkContainerPathArr)
-                                                
-                                            } catch(e) { console.warn('[Overseer] link container rerender failed', e) }
-                                        }
-                                    } else if (window.app && typeof window.app.reevaluateDocumentSelective === 'function') {
-                                        await window.app.reevaluateDocumentSelective([materializedRealPath], [{ path: materializedRealPath, oldValue: prevVal, newValue }])
-                                    }
-                                } catch(_) { /* best-effort */ }
-                                // Ensure the owning list subtree is in sync in case DOM nodes were not yet present
-                                try {
-                                    const listPathArr = materializedRealPath.split('/').slice(0, -2)
-                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
-                                } catch(_) { /* ignore */ }
-                                skipElementEvent = true
-                                try { this._materializedTargets.delete(materializedRealPath) } catch(_) {}
-                            }
-                        }
-                    } catch(_) { /* fall through to gates below if direct route not available */ }
-                    
-                    // First, compare against what the user actually saw (prevDisplay). If equal, skip.
-                    const prevStr = String(prevDisplay ?? '')
-                    const newStrDirect = String(newValue ?? '')
-                    const eqNum = (() => {
-                        // Use parseFloat to tolerate suffixes like ` kg` in display
-                        const a = parseFloat(prevStr)
-                        const b = parseFloat(newStrDirect)
-                        return !isNaN(a) && !isNaN(b) && Math.abs(a - b) < 1e-9
-                    })()
-                    
-                    if (prevStr === newStrDirect || eqNum) {
-                        
-                        try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
-                        return
-                    }
-                    const arr = materializedRealPath.split('/')
-                    const nodeAtTarget = this.findNodeByPath(window.app.currentDocument, arr)
-                    if (nodeAtTarget) {
-                        const currentStr = String(this.getNodeValue(nodeAtTarget) ?? '')
-                        const newStr = String(newValue ?? '')
-                        const eqNum2 = (() => { const a=parseFloat(currentStr), b=parseFloat(newStr); return !isNaN(a)&&!isNaN(b)&&Math.abs(a-b)<1e-9 })()
-                        
-                        if (currentStr === newStr || eqNum2) {
-                            
-                            // Paint the DOM immediately so the user sees the updated value on the new instance
-                            try {
-                                const targetPathArr = materializedRealPath.split('/')
-                                const selector = `[data-path='${JSON.stringify(targetPathArr)}']`
-                                let targetEl = null
-                                // Scope to owning list to avoid touching stale duplicates
-                                try {
-                                    const listPathArr = targetPathArr.slice(0, -2)
-                                    const listSelector = `[data-path='${JSON.stringify(listPathArr)}']`
-                                    const listEl = document.querySelector(listSelector)
-                                    if (listEl) targetEl = listEl.querySelector(selector)
-                                } catch(_) {}
-                                if (!targetEl) targetEl = document.querySelector(selector)
-                                if (targetEl) {
-                                    const holder = targetEl.querySelector('.field-value, .text-content, .overseer-list-value') || targetEl
-                                    // Try to respect numeric formatting (precision, prefix, suffix)
-                                    let display = String(newStr)
-                                    try {
-                                        const nodeAt = this.findNodeByPath(window.app.currentDocument, targetPathArr)
-                                        const pref = String(this.getParameterValue(nodeAt, 'prefix') ?? '')
-                                        const suf = String(this.getParameterValue(nodeAt, 'suffix') ?? '')
-                                        const precRaw = this.getParameterValue(nodeAt, 'precision')
-                                        let body = newStr
-                                        const asNum = parseFloat(newStr)
-                                        if (!isNaN(asNum)) {
-                                            const p = (precRaw === null || precRaw === undefined) ? undefined : parseInt(precRaw, 10)
-                                            if (!isNaN(p) && p >= 0) body = asNum.toFixed(p)
-                                            else body = String(asNum)
-                                        }
-                                        display = `${pref}${body}${suf}`
-                                    } catch(_) { /* fallback to raw newStr */ }
-                                    holder.textContent = display
-                                } else {
-                                    // As a fallback, re-render the owning list subtree
-                                    try {
-                                        const listPathArr = materializedRealPath.split('/').slice(0, -2)
-                                        this.rerenderSubtree(window.app.currentDocument, listPathArr)
-                                    } catch(_) {}
-                                }
-                            } catch(_) { /* best-effort paint */ }
-                            // We still want to mark the document modified minimally so save picks up the new instance.
-                            try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
-                            return
-                        }
-                    }
-                }
-            } catch(_) {}
             if (fieldPath && window.app && window.app.currentDocument) {
                 if (DEBUG_MODE) console.log('🔧 Updating node in main document at path:', fieldPath, 'with value:', newValue)
-                // If we have a materialized path, check the rendered element first; if it already shows the same value, skip
-                try {
-                    if (materializedRealPath && typeof newValue === 'string') {
-                        const targetPathArr = materializedRealPath.split('/')
-                        const sel = `[data-path='${JSON.stringify(targetPathArr)}']`
-                        const el = document.querySelector(sel)
-                        if (el) {
-                            const holder = el.querySelector('.field-value, .text-content, .overseer-list-value') || el
-                            const shownRaw = holder ? String(holder.textContent ?? '') : ''
-                            // Try to account for numeric fields that render with prefix/suffix (e.g., kg)
-                            let prefix = '', suffix = ''
-                            try {
-                                const n = this.findNodeByPath(window.app.currentDocument, targetPathArr)
-                                prefix = String(this.getParameterValue(n, 'prefix') ?? '')
-                                suffix = String(this.getParameterValue(n, 'suffix') ?? '')
-                            } catch(_) {}
-                            const stripAffixes = (s) => {
-                                let out = String(s || '')
-                                if (prefix && out.startsWith(prefix)) out = out.slice(prefix.length)
-                                if (suffix && out.endsWith(suffix)) out = out.slice(0, -suffix.length)
-                                return out.trim()
-                            }
-                            const shown = stripAffixes(shownRaw)
-                            const want = String(newValue ?? '')
-                            const a = parseFloat(shown)
-                            const b = parseFloat(want)
-                            const eqNum3 = (!isNaN(a) && !isNaN(b) && Math.abs(a - b) < 1e-9)
-                            
-                            if (shown === want || eqNum3) {
-                                
-                                try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
-                                return
-                            }
-                        }
-                    }
-                } catch(_) {}
-                // Prefer a direct update of the newly materialized target (exact node reference) to avoid any mis-targeting
-                let success = false
-                try {
-                    if (materializedRealPath && this._materializedTargets && this._materializedTargets.has(materializedRealPath)) {
-                        const t = this._materializedTargets.get(materializedRealPath)
-                        if (t && t.leafNode) {
-                            try {
-                                let prevVal = null
-                                try { prevVal = this.getNodeValue(t.leafNode) } catch(_) {}
-                                // Re-verify pointer integrity before second-stage direct update
-                                try {
-                                    const targetPathArr = materializedRealPath.split('/')
-                                    const listPathArr = targetPathArr.slice(0, -2)
-                                    const itemName = targetPathArr[targetPathArr.length - 2]
-                                    const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
-                                    if (listNode && Array.isArray(listNode.children)) {
-                                        const liveItem = listNode.children.find(ch => ch && ch.name === itemName)
-                                        if (liveItem) {
-                                            const liveLeaf = (liveItem.children||[]).find(ch => ch && ch.name === 'weight') || null
-                                            if (liveLeaf && liveLeaf !== t.leafNode) {
-                                                if (DEBUG_MODE) console.warn('[Overseer] late materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
-                                                t.leafNode = liveLeaf
-                                            }
-                                        }
-                                    }
-                                } catch(_) { /* best-effort */ }
-                                // Apply update (guarded updates are marked below after path resolution)
-                                this.updateNodeValue(t.leafNode, newValue)
-                                success = true
-                                usedDirectMaterializedUpdate = true
-                                
-                                // Refresh computed values/DOM
-                                try {
-                                    if (window.app && typeof window.app.reevaluateDocumentSelective === 'function') {
-                                        await window.app.reevaluateDocumentSelective([materializedRealPath], [{ path: materializedRealPath, oldValue: prevVal, newValue }])
-                                    }
-                                } catch(_) { /* best-effort */ }
-                                try {
-                                    const listPathArr = materializedRealPath.split('/').slice(0, -2)
-                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
-                                } catch(_) { /* ignore */ }
-                            } catch(_) {}
-                        }
-                        // Clean up the entry after use
-                        try { this._materializedTargets.delete(materializedRealPath) } catch(_) {}
-                    }
-                } catch(_) { /* fall back to path-based below */ }
+                const success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
                 if (!success) {
-                    
-                    success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
-                }
-                if (!success) {
-                    if (DEBUG_MODE) console.warn('⚠️ Failed to update node by path, attempting loose path resolution')
+                    console.warn('⚠️ Failed to update node by path, attempting loose path resolution')
                     try {
                         const targetNode = this.resolveNodeByPathLoose(window.app.currentDocument, fieldPath)
                         if (targetNode) {
@@ -4242,7 +3362,7 @@ export class OverseerRenderer {
                                 if (alt) {
                                     this.updateNodeValue(alt, newValue)
                                 } else {
-                                    if (DEBUG_MODE) console.warn('⚠️ Could not resolve target node via any resolver; falling back to local node update')
+                                    console.warn('⚠️ Could not resolve target node via any resolver; falling back to local node update')
                                     this.updateNodeValue(node, newValue)
                                 }
                             } catch (_) {
@@ -4254,27 +3374,6 @@ export class OverseerRenderer {
                     }
                 }
 
-                // If this was a guarded edit, mark the node so serializer can drop or revert the change
-                try {
-                    const mode = this.getEffectiveMutableMode(node, element)
-                    const wasGuarded = (element && element.getAttribute && element.getAttribute('data-guarded-edit') === '1') || mode === 'guarded'
-                    if (wasGuarded) {
-                        const arr = String(fieldPath).split('/')
-                        const target = this.findNodeByPath(window.app.currentDocument, arr)
-                        if (target) {
-                            if (!target.parameters) target.parameters = {}
-                            target.parameters._guarded_edit = { Boolean: true }
-                            if (preExistingValueSnapshot === undefined) {
-                                // No explicit value existed prior; this override is new in-session -> allow serializer to drop it
-                                target.parameters._guarded_was_new_override = { Boolean: true }
-                            } else {
-                                // Preserve the original explicit value to restore during serialization
-                                try { target.parameters._guarded_original_value = JSON.parse(JSON.stringify(preExistingValueSnapshot)) } catch(_) { target.parameters._guarded_original_value = preExistingValueSnapshot }
-                            }
-                        }
-                        try { element.removeAttribute('data-guarded-edit') } catch(_) {}
-                    }
-                } catch(_) { /* best-effort */ }
                 // Immediately record this user edit for save-time merge to guard against
                 // any interim resolve that might overwrite the value before persisting.
                 try {
@@ -4321,54 +3420,8 @@ export class OverseerRenderer {
                         }
                         skipElementEvent = true
                     }
-                    // If we just materialized a phantom, ensure the correct instance element reflects the new value immediately
-                    try {
-                        if (materializedRealPath) {
-                            const targetPathArr = materializedRealPath.split('/')
-                            const selector = `[data-path='${JSON.stringify(targetPathArr)}']`
-                            // Try to scope the search within the owning list container to avoid stale duplicates
-                            let targetEl = null
-                            try {
-                                const listPathArr = targetPathArr.slice(0, -2)
-                                const listSelector = `[data-path='${JSON.stringify(listPathArr)}']`
-                                const listEl = document.querySelector(listSelector)
-                                if (listEl) {
-                                    // Remove any stray duplicates for the same path outside this list container
-                                    const allMatches = Array.from(document.querySelectorAll(selector))
-                                    for (const m of allMatches) {
-                                        if (!listEl.contains(m)) {
-                                            try { m.remove() } catch(_) {}
-                                        }
-                                    }
-                                    targetEl = listEl.querySelector(selector)
-                                }
-                            } catch(_) { /* ignore; fall back to global */ }
-                            if (!targetEl) targetEl = document.querySelector(selector)
-                            if (targetEl) {
-                                const holder = targetEl.querySelector('.field-value, .text-content, .overseer-list-value') || targetEl
-                                const nv = (newValue == null) ? '' : String(newValue)
-                                if (holder.classList && holder.classList.contains('text-content') && holder.classList.contains('markdown-enabled')) {
-                                    holder.textContent = nv
-                                } else {
-                                    holder.textContent = nv
-                                }
-                                if (DEBUG_MODE) console.debug('[Overseer] Painted materialized field at', materializedRealPath)
-                            } else {
-                                if (DEBUG_MODE) console.debug('[Overseer] No DOM element yet for', materializedRealPath, '— refreshing list subtree again')
-                                // Last resort: refresh owning list subtree again
-                                try {
-                                    const listPathArr = materializedRealPath.split('/').slice(0, -2) // .../WeightRecord__N/field -> take list path
-                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
-                                } catch(_) {}
-                            }
-                        }
-                    } catch(_) {}
-                    // If we used a direct update for a materialized target, suppress subsequent event emission to avoid unintended side-effects
-                    if (usedDirectMaterializedUpdate) {
-                        skipElementEvent = true
-                    }
                 } else {
-                    if (DEBUG_MODE) console.warn('No field path available, falling back to full update')
+                    console.warn('No field path available, falling back to full update')
                     await window.app.reevaluateDocumentSelective([])
                 }
             }
@@ -4395,7 +3448,7 @@ export class OverseerRenderer {
                 try {
                     input.remove()
                 } catch (e) {
-                    if (DEBUG_MODE) console.warn('Input element already removed:', e)
+                    console.warn('Input element already removed:', e)
                 }
             }
         })
@@ -4426,15 +3479,10 @@ export class OverseerRenderer {
             }
             const findMatches = (nodes, wantBase, wantOrd) => {
                 const baseNorm = normalizeName(wantBase)
-                const hasInstanceSuffix = /__\d+$/.test(String(wantBase))
                 // 1) Exact name match first
                 const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
                 if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
                 if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
-                // If the caller specified an explicit instance suffix (e.g., WeightRecord__5) but we didn't
-                // find an exact match, do NOT fall back to normalized or type-based matching — that could
-                // resolve to the wrong sibling. Force a miss so upstream logic can re-materialize or error.
-                if (hasInstanceSuffix) return null
                 // 2) Name normalized match (handles '#k' and '__N')
                 const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
                 if (normMatches.length > 0) return normMatches[wantOrd] || normMatches[0] || null
@@ -4564,45 +3612,9 @@ export class OverseerRenderer {
                 // Update the element with rendered markdown
                 element.innerHTML = this.renderMarkdown(newValue)
                 
-                // Compute field path for selective updates and guarded marking
-                let fieldPath = null
-                try { fieldPath = this.buildNodePath(element).join('/') } catch(_) {}
-                // Snapshot any pre-existing explicit value to support guarded restore on save
-                let preExistingValueSnapshot = undefined
-                let targetNode = null
-                try {
-                    if (fieldPath && window.app && window.app.currentDocument) {
-                        targetNode = this.findNodeByPath(window.app.currentDocument, String(fieldPath).split('/'))
-                        if (targetNode && targetNode.parameters && targetNode.parameters.value !== undefined) {
-                            try { preExistingValueSnapshot = JSON.parse(JSON.stringify(targetNode.parameters.value)) } catch(_) { preExistingValueSnapshot = targetNode.parameters.value }
-                        }
-                    }
-                } catch(_) { /* best-effort */ }
-                
-                // Update the node value in the document structure (prefer resolved target by path)
-                try {
-                    if (targetNode) this.updateNodeValue(targetNode, newValue)
-                    else this.updateNodeValue(node, newValue)
-                } catch(_) { this.updateNodeValue(node, newValue) }
+                // Update the node value in the document structure
+                this.updateNodeValue(node, newValue)
                 if (DEBUG_MODE) console.log('Markdown field updated:', node.name, newValue)
-
-                // If this was a guarded edit, mark flags so serializer can drop/revert
-                try {
-                    const wasGuarded = element && element.getAttribute && element.getAttribute('data-guarded-edit') === '1'
-                    if (wasGuarded && (targetNode || fieldPath)) {
-                        const tgt = targetNode || (this.findNodeByPath(window.app.currentDocument, String(fieldPath).split('/')))
-                        if (tgt) {
-                            if (!tgt.parameters) tgt.parameters = {}
-                            tgt.parameters._guarded_edit = { Boolean: true }
-                            if (preExistingValueSnapshot === undefined) {
-                                tgt.parameters._guarded_was_new_override = { Boolean: true }
-                            } else {
-                                try { tgt.parameters._guarded_original_value = JSON.parse(JSON.stringify(preExistingValueSnapshot)) } catch(_) { tgt.parameters._guarded_original_value = preExistingValueSnapshot }
-                            }
-                        }
-                        try { element.removeAttribute('data-guarded-edit') } catch(_) {}
-                    }
-                } catch(_) { /* best-effort */ }
                 
                 // Mark document as modified
                 if (window.app && window.app.markDocumentModified) {
@@ -4612,10 +3624,10 @@ export class OverseerRenderer {
                 if (window.app && window.app.reevaluateDocumentSelective) {
                     // Try to determine field path for selective update
                     try {
-                        const fp = fieldPath || this.buildNodePath(element).join('/')
-                        window.app.reevaluateDocumentSelective([fp])
+                        const fieldPath = this.buildNodePath(element).join('/')
+                        window.app.reevaluateDocumentSelective([fieldPath])
                     } catch (e) {
-                        if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
+                        console.warn('Failed to build field path, falling back to full update:', e)
                         window.app.reevaluateDocumentSelective([])
                     }
                 }
@@ -4659,86 +3671,16 @@ export class OverseerRenderer {
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
     try { if (DEBUG_MODE) console.debug('[Overseer] emitEvent', eventName, 'path=', path) } catch(_) {}
-        // Guard: ensure nodes is an array (backend expects Vec<OverseerNode> root or serialized map)
-        let nodesArg = window.app.currentDocument
-        if (nodesArg && !Array.isArray(nodesArg)) {
-            // Some earlier logic might have wrapped the document; attempt to unwrap
-            if (nodesArg.children && Array.isArray(nodesArg.children)) {
-                nodesArg = nodesArg.children
-            } else {
-                // Fallback: wrap single root into array
-                nodesArg = [nodesArg]
-            }
-        }
-        // Defensive: ensure no stray primitive sneaks into root document array
-        if (Array.isArray(nodesArg)) {
-            const invalids = []
-            for (let i = 0; i < nodesArg.length; i++) {
-                const n = nodesArg[i]
-                if (!n || typeof n !== 'object' || Array.isArray(n)) invalids.push({ index: i, type: typeof n, value: n })
-            }
-            if (invalids.length > 0) {
-                try { if (DEBUG_MODE) console.warn('[Overseer] Filtering invalid root nodes before event invoke', invalids) } catch(_) {}
-                nodesArg = nodesArg.filter(n => n && typeof n === 'object' && !Array.isArray(n))
-            }
-        }
-        // Normalize raw boolean parameter values into OverseerValue objects to satisfy serde expectations
-        try {
-            const wrapBooleanParams = (node) => {
-                if (!node || typeof node !== 'object') return
-                const p = node.parameters
-                if (p && typeof p === 'object') {
-                    for (const k of Object.keys(p)) {
-                        if (p[k] === true) p[k] = { Boolean: true }
-                        else if (p[k] === false) p[k] = { Boolean: false }
-                        else if (k === 'value' && typeof p[k] === 'object' && p[k] !== null) {
-                            // leave structured OverseerValue as-is
-                        }
-                    }
-                }
-                if (Array.isArray(node.children)) node.children.forEach(wrapBooleanParams)
-            }
-            if (Array.isArray(nodesArg)) nodesArg.forEach(wrapBooleanParams)
-        } catch(errNorm) { try { console.warn('[Overseer] boolean normalization failed', errNorm) } catch(_) {} }
-        let updated = null
-        try {
-            // Sanitize nodes: deep clone shallowly to strip any live references / accidental arrays in fields
-            const sanitizeNode = (n) => {
-                if (!n || typeof n !== 'object') return null
-                const copy = { name: n.name, node_type: n.node_type || n.type, parameters: {}, children: [], is_hierarchy_transparent: !!n.is_hierarchy_transparent }
-                if (n.parameters && typeof n.parameters === 'object') {
-                    for (const [k,v] of Object.entries(n.parameters)) {
-                        // Skip transient client-only helpers
-                        if (k === '_injected_link_params') continue
-                        copy.parameters[k] = v
-                    }
-                }
-                if (Array.isArray(n.children)) copy.children = n.children.map(ch => sanitizeNode(ch)).filter(Boolean)
-                return copy
-            }
-            const sanitized = Array.isArray(nodesArg) ? nodesArg.map(n=>sanitizeNode(n)).filter(Boolean) : []
-            updated = await invoke('execute_overseer_event', {
-                nodes: sanitized,
-                node_path: path,
-                nodePath: path, // provide camelCase variant for environments expecting it
-                event_name: eventName,
-                eventName // camelCase variant
-            })
-        } catch(err) {
-            // Attach additional context for debugging invalid args issues
-            try { console.warn('[Overseer] execute_overseer_event failed', err, { eventName, path, nodesType: typeof nodesArg, sampleNode: nodesArg && nodesArg[0] && nodesArg[0].name }) } catch(_) {}
-            throw err
-        }
+        const updated = await invoke('execute_overseer_event', {
+            nodes: window.app.currentDocument,
+            nodePath: path,
+            eventName
+        })
         // Only replace the document when the backend actually returned a document structure.
         const looksLikeDocArray = Array.isArray(updated) && updated.every(n => n && typeof n === 'object')
         const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)
         if (looksLikeDocArray || looksLikeDocObject) {
-            const newDoc = looksLikeDocArray ? updated : updated.children
-            const oldDoc = window.app.currentDocument
-            // Tag any backend-driven changes under mutable=guarded so they remain UI-only until save
-            try { this._tagGuardedChangesAfterBackendUpdate(oldDoc, newDoc) } catch(_) {}
-            // Adopt using app’s preservation logic (formulas, flags), then render
-            try { if (typeof window.app._applyResolvedDocumentWithFormulaPreservation === 'function') { window.app._applyResolvedDocumentWithFormulaPreservation(newDoc) } else { window.app.currentDocument = newDoc } } catch(_) { window.app.currentDocument = newDoc }
+            window.app.currentDocument = looksLikeDocArray ? updated : updated.children
             window.app.renderer.renderDocument(window.app.currentDocument)
             window.app.markDocumentModified && window.app.markDocumentModified()
         } else {
@@ -4775,14 +3717,10 @@ export class OverseerRenderer {
             }
             const findMatches = (nodes, wantBase, wantOrd) => {
                 const baseNorm = normalizeName(wantBase)
-                const hasInstanceSuffix = /__\d+$/.test(String(wantBase))
                 // 1) Exact name match first
                 const exactMatches = nodes.filter(n => exactName(n.name) === wantBase)
                 if (wantOrd === 0 && exactMatches.length > 0) return exactMatches[0]
                 if (exactMatches.length > wantOrd) return exactMatches[wantOrd]
-                // If an explicit instance suffix was provided but no exact match, do not degrade to
-                // normalized or type-based matching. This avoids accidentally targeting another item.
-                if (hasInstanceSuffix) return null
                 // 2) Name normalized match (handles '#k' and '__N')
                 const normMatches = nodes.filter(n => normalizeName(n.name) === baseNorm)
                 if (normMatches.length > 0) return normMatches[wantOrd] || normMatches[0] || null
@@ -4831,7 +3769,7 @@ export class OverseerRenderer {
                 }
 
                 if (!nextNode) {
-                    if (DEBUG_MODE) console.warn('❌ Could not find node at path:', fieldPath, 'missing:', part)
+                    console.warn('❌ Could not find node at path:', fieldPath, 'missing:', part)
                     return false
                 }
 
@@ -4848,11 +3786,11 @@ export class OverseerRenderer {
                 this.updateNodeValue(targetNode, newValue)
                 return true
             } else {
-                if (DEBUG_MODE) console.warn('❌ Target node not found at path:', fieldPath)
+                console.warn('❌ Target node not found at path:', fieldPath)
                 return false
             }
         } catch (e) {
-                console.warn('❌ Error updating node by path:', e)
+            console.warn('❌ Error updating node by path:', e)
             return false
         }
     }
@@ -4947,31 +3885,8 @@ export class OverseerRenderer {
 
     renderMarkdown(text) {
         try {
-            // Preprocess custom inline color syntax before passing to markdown parser.
-            // Syntax: <color=#FF0000 | This text is red>
-            // Allowed color value formats: #RRGGBB, #RGB, named CSS color (alphabetic), rgb(a)(), hsl(a)().
-            // We sanitize by whitelisting acceptable patterns and discarding anything else (leaving raw text).
-            const preprocessColorTags = (input) => {
-                if (!input || typeof input !== 'string' || input.indexOf('<color=') === -1) return input
-                return input.replace(/<color=([^|>]+)\|(.*?)>/gms, (match, rawColor, inner) => {
-                    const color = String(rawColor).trim()
-                    const content = String(inner).trim()
-                    // Basic safe patterns
-                    const isHex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)
-                    const isNamed = /^[a-zA-Z]+$/.test(color)
-                    const isRgb = /^rgb(a)?\(\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
-                    const isHsl = /^hsl(a)?\(\s*[-+]?\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
-                    if (!(isHex || isNamed || isRgb || isHsl)) {
-                        return content // Unsafe or unsupported color format; strip tag but keep text
-                    }
-                    // Escape angle brackets in content minimally (marked will further sanitize if configured)
-                    const esc = content.replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                    return `<span class=\"md-inline-color\" style=\"color:${color}\">${esc}</span>`
-                })
-            }
-            const preprocessed = preprocessColorTags(text)
-            // Use marked library for proper markdown rendering on preprocessed text
-            return marked.parse(preprocessed);
+            // Use marked library for proper markdown rendering
+            return marked.parse(text);
         } catch (error) {
             console.warn('Markdown parsing error:', error);
             // Fallback to basic markdown rendering
@@ -5089,30 +4004,19 @@ export class OverseerRenderer {
                             const p = JSON.parse(el.dataset.path || '[]')
                             if (!Array.isArray(p) || p.length === 0) continue
                             const linkPath = p.join('/')
+                            // Skip re-rendering a proxy if the changed field is inside that proxy's subtree.
+                            // This prevents overwriting the just-updated DOM with a stale render.
+                            // Also skip if the changed field is inside the proxy's target subtree.
                             let targetPathArr = null
                             try { targetPathArr = JSON.parse(el.getAttribute('data-link-target-path') || 'null') } catch(_) { targetPathArr = null }
                             const targetPathStr = Array.isArray(targetPathArr) ? targetPathArr.join('/') : null
-                            // If selected_date (or any interpolated field) changed and affects this link (heuristic: link has $( ) pattern in its raw param), force refresh.
-                            let forceDueToInterpolation = false
-                            try {
-                                const node = this.findNodeByPath(newDocument, p)
-                                const rawLink = node && node.parameters && (node.parameters.link?.String || node.parameters.link)
-                                if (rawLink && /\$\([^)]*\)/.test(String(rawLink))) {
-                                    // If any changed field path shares the same ancestor (parent of proxy) assume interpolation may differ
-                                    const parentPath = p.slice(0, -1).join('/')
-                                    forceDueToInterpolation = changedFieldPaths.some(cf => cf.startsWith(parentPath + '/'))
-                                }
-                            } catch(_) {}
-                            // Skip only if the change occurred inside the proxy's own subtree (avoid overwriting live edit) AND not forced
-                            const changedInsideProxy = changedFieldPaths.some(cf => cf.startsWith(linkPath + '/'))
-                            if (changedInsideProxy && !forceDueToInterpolation) {
-                                if (DEBUG_MODE) console.log('⏭️ Skipping link proxy refresh (internal change) for', linkPath)
+                            const containsChanged = changedFieldPaths.some(cf => cf.startsWith(linkPath + '/'))
+                                || (targetPathStr ? changedFieldPaths.some(cf => cf.startsWith(targetPathStr + '/')) : false)
+                            if (containsChanged) {
+                                if (DEBUG_MODE) console.log('⏭️ Skipping link proxy refresh for', linkPath, 'because it contains changed field(s)')
                                 continue
                             }
-                            if (forceDueToInterpolation || !changedInsideProxy) {
-                                if (DEBUG_MODE) console.log('🔁 Refreshing link proxy', linkPath, 'forceDueToInterpolation=', forceDueToInterpolation)
-                                this.rerenderSubtree(newDocument, p)
-                            }
+                            this.rerenderSubtree(newDocument, p)
                         } catch (_) { /* ignore individual failures */ }
                     }
                 }
@@ -5212,16 +4116,20 @@ export class OverseerRenderer {
      * Update DOM for cascade fields that were changed by backend processing
      */
     updateDocumentForCascadeFields(oldDocument, newDocument, userChangedFields, cascadeFields = null) {
-        if (DEBUG_MODE) console.log('🔄 Updating DOM for cascade fields after backend processing')
+    if (DEBUG_MODE) console.log('🔄 Updating DOM for cascade fields after backend processing')
+        
         // Use provided cascade fields if available, otherwise compute them
         let fieldsToUpdate = cascadeFields
         if (!fieldsToUpdate) {
             // Find all fields that changed between old and new documents
             const allChangedFields = this.findAllChangedFields(oldDocument, newDocument, '')
+            
             // Filter out user-changed fields to get only cascade fields
             fieldsToUpdate = allChangedFields.filter(field => !userChangedFields.includes(field))
         }
+        
     if (DEBUG_MODE) console.log('🎯 Cascade fields to update:', fieldsToUpdate)
+        
         // Update DOM for each cascade field
         for (let fieldPath of fieldsToUpdate) {
             // If the change points to a nested property like '/value', repaint the node element itself
@@ -5231,9 +4139,32 @@ export class OverseerRenderer {
             try {
                 this.updateSingleFieldInDOM(oldDocument, newDocument, fieldPath)
             } catch (e) {
-                if (DEBUG_MODE) console.warn(`Failed to update cascade field ${fieldPath}:`, e)
+                console.warn(`Failed to update cascade field ${fieldPath}:`, e)
             }
         }
+    }
+
+    /**
+     * Find all fields that have different computed values between two documents
+     */
+    findAllChangedFields(node1, node2, currentPath) {
+        const changedFields = []
+        // Support both node objects and top-level document arrays
+        const isArr1 = Array.isArray(node1)
+        const isArr2 = Array.isArray(node2)
+        if (isArr1 && isArr2) {
+            const len = Math.min(node1.length || 0, node2.length || 0)
+            for (let i = 0; i < len; i++) {
+                const a = node1[i]
+                const b = node2[i]
+                if (!a || !b) continue
+                const childPath = currentPath ? `${currentPath}/${a.name}` : (a.name || '')
+                this.collectChangedFields(a, b, childPath, changedFields)
+            }
+        } else {
+            this.collectChangedFields(node1, node2, currentPath, changedFields)
+        }
+        return changedFields
     }
 
     /**
@@ -5241,8 +4172,6 @@ export class OverseerRenderer {
      */
     collectChangedFields(node1, node2, currentPath, changedFields) {
         if (!node1 || !node2) return
-        // Normalize base path so it always includes the full chain from the root.
-        const basePath = currentPath || node1.name || ''
 
         // Check computed parameters for changes
         if (node1.parameters && node2.parameters) {
@@ -5251,7 +4180,7 @@ export class OverseerRenderer {
                     const value2 = node2.parameters[key]
                     if (!this.valuesEqual(value1, value2)) {
                         const fieldName = key.replace('_computed_', '')
-                        const fieldPath = fieldName === 'value' ? basePath : `${basePath}/${fieldName}`
+                        const fieldPath = currentPath ? `${currentPath}/${fieldName}` : fieldName
                         changedFields.push(fieldPath)
                         if (DEBUG_MODE) console.log(`📝 Detected cascade change: ${fieldPath}`)
                     }
@@ -5263,19 +4192,20 @@ export class OverseerRenderer {
                 const v2 = node2.parameters.value
                 const eq = (a,b) => JSON.stringify(a) === JSON.stringify(b)
                 if (!eq(v1, v2)) {
-                    changedFields.push(basePath)
-                    if (DEBUG_MODE) console.log(`📝 Detected raw value change: ${basePath}`)
+                    const fp = currentPath ? `${currentPath}/value` : 'value'
+                    changedFields.push(fp)
+                    if (DEBUG_MODE) console.log(`📝 Detected raw value change: ${fp}`)
                 }
             } catch(_) {}
         }
 
-        // Recursively check children (propagating full path prefix)
+        // Recursively check children
         if (node1.children && node2.children) {
             for (let i = 0; i < Math.min(node1.children.length, node2.children.length); i++) {
                 const child1 = node1.children[i]
                 const child2 = node2.children[i]
                 if (child1 && child2 && child1.name === child2.name) {
-                    const childPath = basePath ? `${basePath}/${child1.name}` : child1.name
+                    const childPath = currentPath ? `${currentPath}/${child1.name}` : child1.name
                     this.collectChangedFields(child1, child2, childPath, changedFields)
                 }
             }
@@ -5304,7 +4234,7 @@ export class OverseerRenderer {
                     }
                 }
             } catch (e) {
-                if (DEBUG_MODE) console.warn(`Failed to update element for ${fieldPath}:`, e)
+                console.warn(`Failed to update element for ${fieldPath}:`, e)
             }
         }
     }
@@ -5404,7 +4334,7 @@ export class OverseerRenderer {
                     }
                 }
             } catch (e) {
-                if (DEBUG_MODE) console.warn('Error processing element for selective update:', e)
+                console.warn('Error processing element for selective update:', e)
             }
         }
     }
@@ -5520,63 +4450,15 @@ export class OverseerRenderer {
                 case 'checkbox':
                     this.updateCheckboxElement(element, newNode)
                     break
-                case 'div':
-                    // Treat generic div as a structural container. We can't trivially patch inner values
-                    // because children may have changed (new computed values). Re-render just this subtree.
-                    try {
-                        if (DEBUG_MODE) console.log('🔁 Re-rendering div container subtree for selective update:', pathArray.join('/'))
-                        this.rerenderSubtree([...(Array.isArray(newNode)?newNode:[newNode])], pathArray)
-                        return true
-                    } catch(e) {
-                        if (DEBUG_MODE) console.warn('Div selective subtree re-render failed, falling back:', e)
-                        return false
-                    }
-                    break
-                case 'list':
-                case 'tab':
-                    // Re-render container subtree for lists and tabs
-                    try {
-                        if (DEBUG_MODE) console.log(`🔁 Re-rendering ${nodeType} container subtree for selective update:`, pathArray.join('/'))
-                        // Render directly with provided node to avoid path resolution mismatches
-                        const parent = element.parentElement
-                        if (!parent) return false
-                        const idx = Array.prototype.indexOf.call(parent.children, element)
-                        const wrapper = document.createElement('div')
-                        const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null
-                        this.renderNode(newNode, wrapper, { backgroundColor: bg }, pathArray)
-                        const fresh = wrapper.firstElementChild
-                        if (fresh) {
-                            parent.replaceChild(fresh, parent.children[idx])
-                            return true
-                        }
-                    } catch (e) {
-                        if (DEBUG_MODE) console.warn(`${nodeType} selective subtree re-render failed, falling back:`, e)
-                    }
-                    return false
+                    
                 default:
-                    // Unknown/custom component (e.g., WeightRecord). Re-render subtree like a container.
-                    try {
-                        if (DEBUG_MODE) console.log('🔁 Re-rendering custom container subtree for selective update:', pathArray.join('/'), 'type=', nodeType)
-                        const parent = element.parentElement
-                        if (!parent) return false
-                        const idx = Array.prototype.indexOf.call(parent.children, element)
-                        const wrapper = document.createElement('div')
-                        const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null
-                        this.renderNode(newNode, wrapper, { backgroundColor: bg }, pathArray)
-                        const fresh = wrapper.firstElementChild
-                        if (fresh) {
-                            parent.replaceChild(fresh, parent.children[idx])
-                            return true
-                        }
-                    } catch (e) {
-                        if (DEBUG_MODE) console.warn('Custom container selective subtree re-render failed, falling back:', e)
-                    }
+                    console.warn('Selective update not implemented for node type:', nodeType)
                     return false
             }
             
             return true
         } catch (error) {
-            if (DEBUG_MODE) console.warn('Failed to update single element:', error)
+            console.warn('Failed to update single element:', error)
             return false
         }
     }

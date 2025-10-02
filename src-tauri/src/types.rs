@@ -12,21 +12,6 @@ pub struct OverseerNode {
     pub parameters: HashMap<String, OverseerValue>,
     pub children: Vec<OverseerNode>,
     pub is_hierarchy_transparent: bool, // If true, children are accessible as if they belong to parent
-    // Parameter insertion order as authored (list of keys) - used to preserve ordering fidelity
-    #[serde(default)]
-    pub param_order: Vec<String>,
-    // Raw literal for this node's value (if it was an explicitly authored numeric with formatting such as trailing zeros)
-    #[serde(default)]
-    pub raw_value_literal: Option<String>,
-    // Whether this node's value line was authored using dash shorthand (- name = value)
-    #[serde(default)]
-    pub authored_dash: bool,
-    // Original child order index relative to its siblings as parsed (used for stable round-trip ordering)
-    #[serde(default)]
-    pub child_original_index: Option<usize>,
-    // Number of blank (empty) lines that preceded this node in the source
-    #[serde(default)]
-    pub leading_blank_lines: u8,
 }
 
 impl OverseerNode {
@@ -38,25 +23,9 @@ impl OverseerNode {
             parameters: HashMap::new(),
             children: Vec::new(),
             is_hierarchy_transparent: false,
-            param_order: Vec::new(),
-            raw_value_literal: None,
-            authored_dash: false,
-            child_original_index: None,
-            leading_blank_lines: 0,
         }
     }
     
-    /// Construct a node with an explicit `node_type` and optional `name`.
-    ///
-    /// Transparency rules (kept in sync with the renderer's "generic transparent" logic):
-    /// - Unnamed `div` is considered hierarchy-transparent. We later default its `name` to
-    ///   `"div"`, so the renderer's check (name empty OR name == type) will still treat it as
-    ///   a generic transparent wrapper and elide it from DOM path segments.
-    /// - `tab` is always hierarchy-transparent; its default name is also `"tab"` when unnamed.
-    /// - Named `div` is NOT transparent by default.
-    ///
-    /// Note: We compute `is_transparent` BEFORE defaulting the name, because transparency for
-    /// unnamed `div` depends on whether a name was provided by the author.
     pub fn new_with_type(node_type: String, name: Option<String>) -> Self {
         // A node is considered transparent for rendering if it's a top-level container
         // like 'tab', or an unnamed 'div' which is used for logical grouping.
@@ -79,11 +48,6 @@ impl OverseerNode {
             parameters: HashMap::new(),
             children: Vec::new(),
             is_hierarchy_transparent: is_transparent,
-            param_order: Vec::new(),
-            raw_value_literal: None,
-            authored_dash: false,
-            child_original_index: None,
-            leading_blank_lines: 0,
         }
     }
     
@@ -102,36 +66,6 @@ impl OverseerNode {
         }
         
         result
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unnamed_div_defaults_to_transparent_and_name_div() {
-        let n = OverseerNode::new_with_type("div".to_string(), None);
-        assert!(n.is_hierarchy_transparent, "Unnamed div should be hierarchy-transparent");
-        assert_eq!(n.name, "div", "Unnamed div should default its name to its type");
-    }
-
-    #[test]
-    fn named_div_is_not_transparent_by_default() {
-        let n = OverseerNode::new_with_type("div".to_string(), Some("Container".to_string()));
-        assert!(!n.is_hierarchy_transparent, "Named div should NOT be hierarchy-transparent");
-        assert_eq!(n.name, "Container");
-    }
-
-    #[test]
-    fn tab_is_always_transparent_and_defaults_name() {
-        let unnamed = OverseerNode::new_with_type("tab".to_string(), None);
-        assert!(unnamed.is_hierarchy_transparent, "Tab should be hierarchy-transparent");
-        assert_eq!(unnamed.name, "tab", "Unnamed tab should default its name to its type");
-
-        let named = OverseerNode::new_with_type("tab".to_string(), Some("Root".to_string()));
-        assert!(named.is_hierarchy_transparent, "Named tab should still be hierarchy-transparent");
-        assert_eq!(named.name, "Root");
     }
 }
 

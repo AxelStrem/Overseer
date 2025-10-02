@@ -47,7 +47,7 @@ function buildWeightDoc(){
       { name:'', node_type:'div', parameters:{}, children:[
         { name:'WeightRecord', node_type:'div', parameters:{}, children:[
           { name:'date', node_type:'timestamp', parameters:{ precision:{ String:'day' }, value:{ Timestamp: '2025.08.24' } }, children:[], is_hierarchy_transparent:false },
-          { name:'test_data', node_type:'string', parameters:{ value:{ String:'test' }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false }
+          { name:'test_data', node_type:'string', parameters:{ value:{ String:'test' } }, children:[], is_hierarchy_transparent:false }
         ], is_hierarchy_transparent:false }
       ], is_hierarchy_transparent:true },
       { name:'Selected', node_type:'div', parameters:{}, children:[
@@ -59,19 +59,19 @@ function buildWeightDoc(){
       { name:'History', node_type:'list', parameters:{ entry:{ Template:'WeightRecord' }, key:{ String:'date' }, keyPrecision:{ String:'day' } }, children:[
         { name:'WeightRecord__1', node_type:'div', parameters:{ _from_template:true }, children:[
           { name:'date', node_type:'timestamp', parameters:{ value:{ String:'2025.08.27' } }, children:[], is_hierarchy_transparent:false },
-          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Wednesday' }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
+          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Wednesday' } }, children:[], is_hierarchy_transparent:false },
         ], is_hierarchy_transparent:false },
         { name:'WeightRecord__2', node_type:'div', parameters:{ _from_template:true }, children:[
           { name:'date', node_type:'timestamp', parameters:{ value:{ String:'2025.08.26' } }, children:[], is_hierarchy_transparent:false },
-          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Wednesday' }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
+          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Wednesday' } }, children:[], is_hierarchy_transparent:false },
         ], is_hierarchy_transparent:false },
         { name:'WeightRecord__3', node_type:'div', parameters:{ _from_template:true }, children:[
           { name:'date', node_type:'timestamp', parameters:{ value:{ String:'2025.08.25' } }, children:[], is_hierarchy_transparent:false },
-          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Tuesday' }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
+          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Tuesday' } }, children:[], is_hierarchy_transparent:false },
         ], is_hierarchy_transparent:false },
         { name:'WeightRecord__4', node_type:'div', parameters:{ _from_template:true }, children:[
           { name:'date', node_type:'timestamp', parameters:{ value:{ String:'2025.08.24' } }, children:[], is_hierarchy_transparent:false },
-          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Monday' }, mutable:{ Boolean:true } }, children:[], is_hierarchy_transparent:false },
+          { name:'test_data', node_type:'string', parameters:{ value:{ String:'Monday' } }, children:[], is_hierarchy_transparent:false },
         ], is_hierarchy_transparent:false },
       ], is_hierarchy_transparent:false }
     ], is_hierarchy_transparent:false }

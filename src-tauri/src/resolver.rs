@@ -79,8 +79,8 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     // After layout resolution, resolve parameter inheritance
     resolve_parameter_inheritance(nodes, &HashMap::new());
     
-    // After parameter inheritance, evaluate formulas (multi-pass so aggregates whose inputs appear later update)
-    evaluate_formulas_in_document_multi_pass(nodes);
+    // After parameter inheritance, evaluate formulas
+    evaluate_formulas_in_document(nodes);
 
     // After formulas, compute chart series for charts/plots (MVP)
     compute_chart_series(nodes);
@@ -489,14 +489,9 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         },
                                         children: template_node.children.clone(),
                                         is_hierarchy_transparent: template_node.is_hierarchy_transparent,
-                                        param_order: Vec::new(),
-                                        raw_value_literal: None,
-                                        authored_dash: false,
-                                        child_original_index: None,
-                                        leading_blank_lines: 0,
                                     };
                                     // Mark all cloned children as template-derived so serializer can omit them unless overridden
-                                    for (c_idx, child) in resolved_item.children.iter_mut().enumerate() {
+                                    for child in resolved_item.children.iter_mut() {
                                         mark_template_child_recursive(child);
                                         // Ensure override markers are clean on fresh clones; only true overrides will set these later
                                         if child.parameters.remove("_explicit_child_override").is_some() {
@@ -505,8 +500,6 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         if child.parameters.remove("_override_present").is_some() {
                                             debug_resolver!("[RESOLVER] cleaned _override_present on clone child '{}')", child.name);
                                         }
-                                        // Assign ordering index after authored children (authored indices assigned at parse time). Since these are cloned now, just use sequence.
-                                        child.child_original_index = Some(c_idx);
                                     }
                                     let overrides: HashMap<String, &OverseerNode> = list_item
                                         .children
@@ -515,39 +508,6 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         .collect();
                                     debug_resolver!("[RESOLVER]     Override fields: {:?}", overrides.keys().collect::<Vec<_>>());
                                     merge_node(&mut resolved_item, &overrides);
-                                    // After merging, recursively propagate authored_dash, explicit markers, and ordering from override tree
-                                    fn propagate_override_metadata(src: &OverseerNode, dst: &mut OverseerNode) {
-                                        // Only act if names match (root call ensures this for children)
-                                        if src.name == dst.name || src.name.is_empty() { /* proceed */ }
-                                        // If source was dash-authored and has a simple value override, mark destination
-                                        if src.authored_dash && src.parameters.contains_key("value") {
-                                            dst.authored_dash = true;
-                                        }
-                                        // If source provides an explicit value override (has 'value' param and no non-internal extra params) mark explicit flags
-                                        if src.parameters.contains_key("value") {
-                                            // Remove template value marker so serializer treats it as explicit
-                                            dst.parameters.remove("_template_value");
-                                            dst.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                                            dst.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
-                                        }
-                                        // Preserve authored ordering index if present and destination not yet set or we want override precedence
-                                        if let Some(idx) = src.child_original_index {
-                                            dst.child_original_index = Some(idx);
-                                        }
-                                        // Recurse for children: build map by name for dst
-                                        if !src.children.is_empty() {
-                                            for child_src in &src.children {
-                                                if let Some(child_dst) = dst.children.iter_mut().find(|c| c.name == child_src.name) {
-                                                    propagate_override_metadata(child_src, child_dst);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    for ov in list_item.children.iter() {
-                                        if let Some(dst_child) = resolved_item.children.iter_mut().find(|c| c.name == ov.name) {
-                                            propagate_override_metadata(ov, dst_child);
-                                        }
-                                    }
                                     
                                     // Mark template-derived styling parameters for all field children
                                     for child in resolved_item.children.iter_mut() {
@@ -586,11 +546,6 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         },
                                         children: Vec::new(),
                                         is_hierarchy_transparent: template_node.is_hierarchy_transparent,
-                                        param_order: Vec::new(),
-                                        raw_value_literal: None,
-                                        authored_dash: false,
-                                        child_original_index: None,
-                                        leading_blank_lines: 0,
                                     };
                                     resolved_children.push(resolved_item);
                                 } else {
@@ -616,11 +571,6 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                             },
                                             children: template_node.children.clone(),
                                             is_hierarchy_transparent: template_node.is_hierarchy_transparent,
-                                            param_order: Vec::new(),
-                                            raw_value_literal: None,
-                                            authored_dash: false,
-                                            child_original_index: None,
-                                            leading_blank_lines: 0,
                                         };
                                         for child in resolved_item.children.iter_mut() {
                                             mark_template_child_recursive(child);
@@ -670,11 +620,6 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                 parameters: HashMap::new(),
                                 children: Vec::new(),
                                 is_hierarchy_transparent: false,
-                                param_order: Vec::new(),
-                                raw_value_literal: None,
-                                authored_dash: false,
-                                child_original_index: None,
-                                leading_blank_lines: 0,
                             };
                             resolved_item.parameters.insert("value".to_string(), val.clone());
                             resolved_children.push(resolved_item);
@@ -787,7 +732,7 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
 fn infer_dash_types_from_template(instance: &mut OverseerNode, template: &OverseerNode) {
     // For each child in instance, find matching template child by name
     for child in instance.children.iter_mut() {
-    if let Some(t_child) = template.children.iter().find(|t| t.name == child.name) {
+        if let Some(t_child) = template.children.iter().find(|t| t.name == child.name) {
             if child.node_type == "-" {
                 debug_resolver!(
                     "[RESOLVER]     Resolving '-' type for {}: {} -> {}",
@@ -974,10 +919,6 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 template_field
                     .parameters
                     .insert("value".to_string(), val.clone());
-                // Preserve original raw numeric/text literal formatting if present on override
-                if override_field.raw_value_literal.is_some() {
-                    template_field.raw_value_literal = override_field.raw_value_literal.clone();
-                }
                 // Treat presence in source as an explicit override even if equal to template default
                 template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                 template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
@@ -985,12 +926,6 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                 // Remove template marker for value if present so serializers won't treat it as inherited
                 if template_field.parameters.contains_key("_template_value") {
                     template_field.parameters.remove("_template_value");
-                }
-                // Propagate authored dash provenance so serializer can retain concise form
-                if override_field.authored_dash { template_field.authored_dash = true; }
-                // Preserve original sibling ordering if override carried an index (use existing if already set)
-                if template_field.child_original_index.is_none() && override_field.child_original_index.is_some() {
-                    template_field.child_original_index = override_field.child_original_index;
                 }
             }
 
@@ -1016,18 +951,14 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                     template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
                     debug_resolver!("[RESOLVER] set explicit override (list children) on '{}'", template_field.name);
                 }
-                // Preserve dash-authored style from the override for list containers too,
-                // so the serializer can emit "- name { ... }" instead of "list name { ... }" when authored that way.
-                if override_field.authored_dash {
-                    template_field.authored_dash = true;
-                }
             } else if !override_field.children.is_empty() {
                 // For non-list container nodes, deep-merge override children by name
                 // rather than replacing the entire children array. This preserves defaults
                 // for siblings that are not explicitly overridden.
-                let override_order: Vec<String> = override_field.children.iter().map(|c| c.name.clone()).collect();
                 let mut child_overrides: HashMap<String, &OverseerNode> = HashMap::new();
-                for ch in &override_field.children { child_overrides.insert(ch.name.clone(), ch); }
+                for ch in &override_field.children {
+                    child_overrides.insert(ch.name.clone(), ch);
+                }
                 if !child_overrides.is_empty() {
                     // Mark the container as having explicit child overrides
                     template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
@@ -1035,29 +966,6 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
                     debug_resolver!("[RESOLVER] deep-merging {} child override(s) into container '{}'", child_overrides.len(), template_field.name);
                     // Recursively merge into this container field
                     merge_node(template_field, &child_overrides);
-                    // If the override container itself was dash-authored, propagate to template_field
-                    if override_field.authored_dash { template_field.authored_dash = true; }
-                    if template_field.child_original_index.is_none() && override_field.child_original_index.is_some() {
-                        template_field.child_original_index = override_field.child_original_index;
-                    }
-                    // Apply ordering & dash provenance to overridden children
-                    if !override_order.is_empty() {
-                        for (seq, name) in override_order.iter().enumerate() {
-                            if let Some(ch) = template_field.children.iter_mut().find(|c| c.name == *name) {
-                                if child_overrides.get(name).map(|o| o.authored_dash).unwrap_or(false) {
-                                    ch.authored_dash = true;
-                                }
-                                ch.child_original_index = Some(seq);
-                            }
-                        }
-                        // Push non-overridden children after overridden ones, preserving existing order among them
-                        let mut next_idx = override_order.len();
-                        for ch in template_field.children.iter_mut() {
-                            if override_order.iter().any(|n| n == &ch.name) { continue; }
-                            if ch.child_original_index.is_none() { ch.child_original_index = Some(next_idx); next_idx += 1; }
-                            else { ch.child_original_index = Some(ch.child_original_index.unwrap() + override_order.len()); }
-                        }
-                    }
                 } else {
                     debug_resolver!("[RESOLVER]     No child overrides to merge for '{}'", template_field.name);
                 }
@@ -1096,86 +1004,46 @@ fn mark_template_child_recursive(node: &mut OverseerNode) {
     }
 }
 
+/// Entry point for formula evaluation.
+/// It creates an immutable snapshot of the document for safe lookups
+/// and then starts the recursive evaluation process.
+fn evaluate_formulas_in_document(nodes: &mut Vec<OverseerNode>) {
+    debug_resolver!("[RESOLVER] Starting formula evaluation");
+    let document_root_snapshot = nodes.clone();
 
-fn collect_all_node_paths(nodes: &[OverseerNode], prefix: &mut Vec<String>, acc: &mut std::collections::HashSet<String>) {
-    for (idx, n) in nodes.iter().enumerate() {
-        let name = n.name.clone();
-        // Disambiguate duplicate siblings with ordinal like main#1
-        let k = nodes.iter().take(idx).filter(|c| c.name == name).count();
-        let seg = if k > 0 { format!("{}#{}", name, k) } else { name };
-        prefix.push(seg);
-        acc.insert(prefix.join("/"));
-        if !n.children.is_empty() { collect_all_node_paths(&n.children, prefix, acc); }
-        prefix.pop();
+    // Walk using raw pointers so we can pass parent immutable reference alongside child mutable
+    let len = nodes.len();
+    for i in 0..len {
+        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
+        unsafe { recursively_evaluate_node_formulas(node_ptr, std::ptr::null(), &mut current_path, &document_root_snapshot); }
     }
-}
 
-fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
-    debug_resolver!("[RESOLVER] Starting multi-pass formula evaluation");
-    // Build a path set of all node paths so selective evaluator effectively treats entire tree as target
-    let mut all_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut pref: Vec<String> = Vec::new();
-    collect_all_node_paths(nodes, &mut pref, &mut all_paths);
-    // Re-run up to MAX_PASSES (logic borrowed from selective path) until stable
-    const MAX_PASSES: usize = 4;
-    let mut pass = 0usize;
-    let mut progress = true;
-    while pass < MAX_PASSES && progress {
-        pass += 1;
-        progress = false;
-        let snapshot = nodes.clone();
-        let len = nodes.len();
-        for i in 0..len {
-            let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-            let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-            unsafe {
-                if recursively_evaluate_node_formulas_selective(
-                    node_ptr,
-                    std::ptr::null(),
-                    &mut current_path,
-                    &snapshot,
-                    &all_paths
-                ) { progress = true; }
-            }
-        }
-        debug_resolver!("[RESOLVER] Multi-pass formula evaluation pass {} progress={} ({} total paths)", pass, progress, all_paths.len());
-    }
-    debug_resolver!("[RESOLVER] Multi-pass formula evaluation completed in {} pass(es)", pass);
+    debug_resolver!("[RESOLVER] Formula evaluation completed");
 }
 
 /// Selective formula evaluation that only processes specific field paths
 fn evaluate_formulas_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
-    debug_resolver!("[RESOLVER] Starting selective formula evaluation for {} fields (multi-pass)", field_paths.len());
-    debug_resolver!("[RESOLVER] Field paths target set: {:?}", field_paths);
-    // We run multiple lightweight passes because dependents may require upstream values to be
-    // recomputed earlier in the same selective cycle (e.g. A -> C -> total aggregate). A single
-    // DFS over an arbitrary tree order can leave aggregate formulas stale when their inputs are
-    // later in traversal order. Cap passes to prevent runaway loops.
-    const MAX_PASSES: usize = 4;
-    let mut pass = 0usize;
-    let mut progress = true;
-    while pass < MAX_PASSES && progress {
-        pass += 1;
-        progress = false;
-        debug_resolver!("[RESOLVER] Selective pass {}", pass);
-        let snapshot = nodes.clone();
-        let len = nodes.len();
-        for i in 0..len {
-            let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-            let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-            unsafe {
-                if recursively_evaluate_node_formulas_selective(
-                    node_ptr,
-                    std::ptr::null(),
-                    &mut current_path,
-                    &snapshot,
-                    field_paths
-                ) { progress = true; }
-            }
+    debug_resolver!("[RESOLVER] Starting selective formula evaluation for {} fields", field_paths.len());
+    let document_root_snapshot = nodes.clone();
+
+    // Walk using raw pointers so we can pass parent immutable reference alongside child mutable
+    let len = nodes.len();
+    for i in 0..len {
+        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
+        unsafe { 
+            recursively_evaluate_node_formulas_selective(
+                node_ptr, 
+                std::ptr::null(), 
+                &mut current_path, 
+                &document_root_snapshot,
+                field_paths
+            ); 
         }
-        if !progress { debug_resolver!("[RESOLVER] No changes in pass {}, stopping", pass); }
     }
-    debug_resolver!("[RESOLVER] Selective formula evaluation completed in {} pass(es)", pass);
+
+    debug_resolver!("[RESOLVER] Selective formula evaluation completed");
 }
 
 /// Selective chart computation that only processes charts affected by specific field changes
@@ -1245,103 +1113,6 @@ mod tests_inheritance_bug7 {
         let title = inst.children.iter().find(|c| c.name == "Title").expect("title child");
         assert_eq!(title.node_type, "string");
         assert!(matches!(title.parameters.get("value"), Some(OverseerValue::String(v)) if v == "Hello"));
-    }
-}
-
-#[cfg(test)]
-mod tests_aggregate_inherited_fields_persistence {
-    use super::*;
-    use crate::parser::parse_document;
-
-    // This test ensures that editing inherited template fields (A,B) in list items triggers recomputation of C and total
-    // without overwriting the aggregate node's formula value with a literal, across multiple selective edits.
-    #[test]
-    fn aggregate_formula_not_clobbered_across_two_selective_edits() {
-        let input = r#"
-        tab main {
-            int total (value=$(L.map(|x| x/C).sum()))
-            list L (entry=<T>) {
-                <T> T__1 {}
-            }
-            div T {
-                div { int A (value=2) }
-                int B (value=3)
-                int C (value=$(A*B))
-            }
-        }
-        "#;
-        let mut nodes = parse_document(input).unwrap().1;
-        resolve_document(&mut nodes);
-
-        // Helper: locate paths
-        fn find<'a>(nodes: &'a [OverseerNode], path: &str) -> Option<&'a OverseerNode> {
-            let mut cur: &[OverseerNode] = nodes;
-            let mut found: Option<&OverseerNode> = None;
-            for seg in path.split('/') {
-                found = cur.iter().find(|n| n.name == seg);
-                if let Some(f) = found { cur = &f.children; } else { return None; }
-            }
-            found
-        }
-
-        // Local helper to get mutable node by slash path
-        fn find_node_by_path_mut<'a>(nodes: &'a mut [OverseerNode], path: &str) -> Option<&'a mut OverseerNode> {
-            let parts: Vec<&str> = path.split('/').collect();
-            let mut current: &mut [OverseerNode] = nodes;
-            for (i, part) in parts.iter().enumerate() {
-                let idx_opt = current.iter().position(|n| n.name == *part);
-                if let Some(idx) = idx_opt {
-                    if i == parts.len()-1 { return Some(&mut current[idx]); }
-                    let next: *mut Vec<OverseerNode> = &mut current[idx].children as *mut _;
-                    // Safety: we only hold one mutable reference path at a time
-                    unsafe { current = &mut *next; }
-                } else { return None; }
-            }
-            None
-        }
-
-        // Confirm initial total formula intact and computed shadow present
-        let total = find(&nodes, "main/total").unwrap();
-        assert!(matches!(total.parameters.get("value"), Some(OverseerValue::Formula(s)) if s.contains("map(|x| x/C).sum()")));
-    let _initial_total_val = total.parameters.get("_computed_value").cloned();
-
-        // Simulate first selective edit: change A from 2 -> 5
-        {
-            let a_path = "main/L/T__1/A";
-            if let Some(a_node) = find_node_by_path_mut(&mut nodes, a_path) {
-                a_node.parameters.insert("value".to_string(), OverseerValue::Integer(5));
-            }
-            let mut dep = crate::dependency_tracker::DependencyGraph::new();
-            dep.build_from_document(&nodes).unwrap();
-            let mut to_update: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for c in dep.calculate_update_cascade(&format!("{}/value", a_path)) { to_update.insert(c); }
-            if !to_update.is_empty() { resolve_specific_fields(&mut nodes, &to_update); }
-        }
-
-        let total_after_first = find(&nodes, "main/total").unwrap();
-        assert!(matches!(total_after_first.parameters.get("value"), Some(OverseerValue::Formula(_))), "Formula should persist after first edit");
-    let _after_first_val = total_after_first.parameters.get("_computed_value").cloned();
-    // NOTE: We expect this to change after selective propagation fix; current focus is persistence, so we don't assert difference yet.
-
-        // Second selective edit: change B 3 -> 4
-        {
-            let b_path = "main/L/T__1/B";
-            if let Some(b_node) = find_node_by_path_mut(&mut nodes, b_path) {
-                b_node.parameters.insert("value".to_string(), OverseerValue::Integer(4));
-            }
-            let mut dep = crate::dependency_tracker::DependencyGraph::new();
-            dep.build_from_document(&nodes).unwrap();
-            let mut to_update: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for c in dep.calculate_update_cascade(&format!("{}/value", b_path)) { to_update.insert(c); }
-            if !to_update.is_empty() { resolve_specific_fields(&mut nodes, &to_update); }
-        }
-
-        let total_after_second = find(&nodes, "main/total").unwrap();
-        assert!(matches!(total_after_second.parameters.get("value"), Some(OverseerValue::Formula(_))), "Formula should persist after second edit");
-    let _after_second_val = total_after_second.parameters.get("_computed_value").cloned();
-    // Similarly, skip asserting change pending selective propagation bug resolution.
-    // Ensure still formula after two edits
-    assert!(matches!(total_after_second.parameters.get("value"), Some(OverseerValue::Formula(_))));
     }
 }
 
@@ -1558,7 +1329,6 @@ fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::H
 
 /// Recursively traverses the node tree, evaluating formulas along the way.
 /// It maintains the path to the current node, which is crucial for the EvaluationContext.
-#[allow(dead_code)]
 unsafe fn recursively_evaluate_node_formulas(
     node_ptr: *mut OverseerNode,
     _parent_ptr: *const OverseerNode,
@@ -1621,12 +1391,7 @@ unsafe fn recursively_evaluate_node_formulas(
         // Merge computed shadow params into node.parameters (do not overwrite originals).
         // Insert after each pass so subsequent passes can read newly available _computed_* values.
         for (k, v) in computed_params {
-                // Never overwrite original formula in 'value' with computed primitive; store only in shadow key
-                if k == "_computed_value" {
-                    node.parameters.insert(k, v);
-                } else {
-                    node.parameters.insert(k, v);
-                }
+            node.parameters.insert(k, v);
         }
     }
     
@@ -1653,29 +1418,21 @@ unsafe fn recursively_evaluate_node_formulas_selective(
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
     field_paths: &std::collections::HashSet<String>,
-) -> bool {
-    // Track whether any _computed_* param mutated in this subtree so caller can record progress
-    let mut subtree_changed = false;
+) {
     let node: &mut OverseerNode = &mut *node_ptr;
     let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() { None } else { Some(&*_parent_ptr) };
     
     // Skip evaluating formulas for nodes inside action handler blocks
     if let Some(p) = _parent_ref {
         if p.node_type == "on" {
-            return false; // Skip action handler blocks entirely
+            return;
         }
     }
     
     // Check if this node's path is in the fields we need to update
     let current_path_str = current_path.join("/");
-    // Normalization experiment: build alternate path stripping empty name segments for matching
-    let normalized_no_empty: String = current_path.iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("/");
     let should_evaluate_this_node = field_paths.contains(&current_path_str) || 
-        field_paths.iter().any(|path| path.starts_with(&current_path_str)) ||
-        (!normalized_no_empty.is_empty() && (field_paths.contains(&normalized_no_empty) || field_paths.iter().any(|p| p.starts_with(&normalized_no_empty))));
-    if should_evaluate_this_node {
-        debug_resolver!("[RESOLVER] selective match path='{}' normalized='{}'", current_path_str, normalized_no_empty);
-    }
+        field_paths.iter().any(|path| path.starts_with(&current_path_str));
     
     if should_evaluate_this_node {
     debug_resolver!("🔄 Selectively evaluating formulas for node at path: {}", current_path_str);
@@ -1694,14 +1451,6 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         for _ in 0..2 {
             let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
             let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
-            // Compute fallback first (parity with full evaluator) so dependents can read _computed_fallback immediately
-            if let Some(fb) = node.parameters.get("fallback").cloned() {
-                let fb_val = match fb {
-                    OverseerValue::Formula(f) => FormulaEvaluator::evaluate_formula(f.as_str(), &context).unwrap_or(OverseerValue::Null),
-                    other => other,
-                };
-                computed_params.push(("_computed_fallback".to_string(), fb_val));
-            }
             for (key, formula_src) in &formula_pairs {
                 debug_resolver!("[RESOLVER] Selectively evaluating formula in {}.{}: {}", node.name, key, formula_src);
                 let shadow_key = if key == "value" { "_computed_value".to_string() } else { format!("_computed_{}", key) };
@@ -1718,13 +1467,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
             }
             drop(context);
             for (k, v) in computed_params {
-                // Prevent formula clobber: if this is the shadow key it's safe; raw 'value' never replaced here
-                let changed = match node.parameters.get(&k) {
-                    Some(existing) => existing != &v,
-                    None => true,
-                };
-                if changed { subtree_changed = true; }
-                node.parameters.insert(k, v); // k could be _computed_value or _computed_paramName
+                node.parameters.insert(k, v);
             }
         }
     }
@@ -1739,12 +1482,9 @@ unsafe fn recursively_evaluate_node_formulas_selective(
             let k = node.children.iter().take(idx).filter(|c| c.name == name).count();
             if k > 0 { current_path.push(format!("{}#{}", name, k)); } else { current_path.push(name); }
         }
-        if recursively_evaluate_node_formulas_selective(child_ptr, node as *const OverseerNode, current_path, document_root, field_paths) {
-            subtree_changed = true;
-        }
+        recursively_evaluate_node_formulas_selective(child_ptr, node as *const OverseerNode, current_path, document_root, field_paths);
         current_path.pop();
     }
-    subtree_changed
 }
 
 // Note: child formula evaluation is handled via recursively_evaluate_node_formulas above

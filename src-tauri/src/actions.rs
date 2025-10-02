@@ -1418,11 +1418,6 @@ impl ActionExecutor {
             parameters: std::collections::HashMap::new(),
             children: vec![],
             is_hierarchy_transparent: false,
-            param_order: Vec::new(),
-            raw_value_literal: None,
-            authored_dash: false,
-            child_original_index: None,
-            leading_blank_lines: 0,
         };
         Self::execute_load_mount(nodes, owner_indices, owner_path, &action_stub)
     }
@@ -1439,11 +1434,6 @@ impl ActionExecutor {
             parameters: std::collections::HashMap::new(),
             children: vec![],
             is_hierarchy_transparent: false,
-            param_order: Vec::new(),
-            raw_value_literal: None,
-            authored_dash: false,
-            child_original_index: None,
-            leading_blank_lines: 0,
         };
         // owner_path not needed
         Self::execute_unload_mount(nodes, owner_indices, &Vec::new(), &action_stub)
@@ -1511,7 +1501,7 @@ impl ActionExecutor {
         } else {
             let mut cur_opt: Option<OverseerNode> = None;
             for n in &loaded_roots { if n.name == internal_path[0] { cur_opt = Some(n.clone()); break; } }
-            let mut cur = match cur_opt { Some(n) => n, None => { if load_error.is_none() { load_error = Some("mount internal path root not found".to_string()); } OverseerNode { name: String::new(), node_type: String::new(), template: None, parameters: Default::default(), children: Vec::new(), is_hierarchy_transparent: false, param_order: Vec::new(), raw_value_literal: None, authored_dash: false, child_original_index: None, leading_blank_lines: 0 } } };
+            let mut cur = match cur_opt { Some(n) => n, None => { if load_error.is_none() { load_error = Some("mount internal path root not found".to_string()); } OverseerNode { name: String::new(), node_type: String::new(), template: None, parameters: Default::default(), children: Vec::new(), is_hierarchy_transparent: false } } };
             if load_error.is_none() && !cur.name.is_empty() {
                 for seg in internal_path.iter().skip(1) {
                     if let Some(next) = cur.children.iter().find(|c| &c.name == seg) { cur = next.clone(); } else { load_error = Some(format!("mount internal path segment not found: {}", seg)); break; }
@@ -1730,11 +1720,6 @@ impl ActionExecutor {
             parameters: params,
             children,
             is_hierarchy_transparent: template.is_hierarchy_transparent,
-            param_order: Vec::new(),
-            raw_value_literal: None,
-            authored_dash: false,
-            child_original_index: None,
-            leading_blank_lines: 0,
         };
         // Also clear computed params at the root clone
         Self::clear_computed_recursive(&mut node);
@@ -1770,8 +1755,6 @@ impl ActionExecutor {
             // Mark explicit override so serializer will persist this child even if template-derived
             child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
             child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-            // Treat runtime-created explicit overrides as dash-authored for concise style persistence
-            child.authored_dash = true;
             // Remove template marker for value on this field if present
             child.parameters.remove("_template_value");
             // Clear any stale computed value on this field
@@ -1802,11 +1785,6 @@ impl ActionExecutor {
                 },
                 children: Vec::new(),
                 is_hierarchy_transparent: false,
-                param_order: Vec::new(),
-                raw_value_literal: None,
-                authored_dash: true,
-                child_original_index: None,
-                leading_blank_lines: 0,
             };
             item.children.push(new_field);
             // Track override at parent level
@@ -2006,11 +1984,6 @@ impl ActionExecutor {
                         parameters: Default::default(),
                         children: Vec::new(),
                         is_hierarchy_transparent: false,
-                        param_order: Vec::new(),
-                        raw_value_literal: None,
-                        authored_dash: false,
-                        child_original_index: None,
-                        leading_blank_lines: 0,
                     };
                     item.parameters.insert("value".to_string(), val);
                     list_node.children.push(item);
@@ -2076,11 +2049,6 @@ impl ActionExecutor {
                         parameters: Default::default(),
                         children: Vec::new(),
                         is_hierarchy_transparent: false,
-                        param_order: Vec::new(),
-                        raw_value_literal: None,
-                        authored_dash: false,
-                        child_original_index: None,
-                        leading_blank_lines: 0,
                     };
                     item.parameters.insert("value".to_string(), val);
                     list_node.children.insert(0, item);
@@ -2181,8 +2149,6 @@ impl ActionExecutor {
                     child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                     child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
                     child.parameters.remove("_template_value");
-                    // Treat explicit runtime override as dash-authored for serializer stylistic reproduction
-                    child.authored_dash = true;
                     // Track at parent level
                     let entry = target
                         .parameters
@@ -2224,11 +2190,6 @@ impl ActionExecutor {
                     parameters: Default::default(),
                     children: Vec::new(),
                     is_hierarchy_transparent: false,
-                    param_order: Vec::new(),
-                    raw_value_literal: None,
-                    authored_dash: true,
-                    child_original_index: None,
-                    leading_blank_lines: 0,
                 };
                 // Copy/evaluate params
                 for (k, v) in ov.parameters.iter() {
@@ -2256,7 +2217,6 @@ impl ActionExecutor {
                 new_child.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
                 new_child.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
                 new_child.parameters.remove("_template_value");
-                new_child.authored_dash = true;
                 // Recurse
                 if !ov.children.is_empty() {
                     Self::apply_overrides_evaluated(&mut new_child, &ov.children, owner_path, snapshot)?;
@@ -3179,11 +3139,6 @@ mod tests_clone_from_template {
             parameters: Default::default(),
             children: vec![],
             is_hierarchy_transparent: false,
-            param_order: Vec::new(),
-            raw_value_literal: None,
-            authored_dash: false,
-            child_original_index: None,
-            leading_blank_lines: 0,
         };
         t.parameters.insert("_original_type".to_string(), OverseerValue::String("div".to_string()));
         let cloned = ActionExecutor::clone_from_template(&t);

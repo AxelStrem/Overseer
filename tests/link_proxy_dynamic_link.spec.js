@@ -67,8 +67,8 @@ describe('Dynamic link with $(...) inside selector', () => {
     // Build minimal weight_minimal structure with Selected/selected_date and a link using $(../selected_date)
     currentDoc = [
       { name: 'WeightRecord', node_type: 'div', parameters: {}, children: [
-  { name: 'date', node_type: 'timestamp', parameters: { value: { Timestamp: '2025-09-06T00:00:00Z' }, precision: { String: 'day' } }, children: [] },
-  { name: 'test_data', node_type: 'string', parameters: { value: { String: '' }, mutable: { Boolean: true } }, children: [] }
+        { name: 'date', node_type: 'timestamp', parameters: { value: { Timestamp: '2025-09-06T00:00:00Z' }, precision: { String: 'day' } }, children: [] },
+        { name: 'test_data', node_type: 'string', parameters: { value: { String: '' } }, children: [] }
       ]},
       { name: 'weight_minimal', node_type: 'tab', parameters: {}, children: [
         { name: 'Selected', node_type: 'div', parameters: {}, children: [

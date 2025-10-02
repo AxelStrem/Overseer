@@ -394,33 +394,6 @@ text MarkdownContent (markdown=true) = "# Heading
 text PlainContent = "This is plain text without markdown formatting"
 ```
 
-##### Inline Color Syntax (Markdown Extension)
-You can apply color to an inline span of markdown text without assigning a `font-color` parameter to the whole `text` node using the custom angle bracket form:
-
-```
-<color=#FF0000 | This text is red>
-<color=blue | Named color>
-<color=rgb(30,144,255) | RGB value>
-```
-
-Rules:
-- Pattern: `<color=COLOR | TEXT>`
-- Supported COLOR formats: `#RGB`, `#RRGGBB`, named CSS colors (e.g., `red`, `steelblue`), `rgb(...)`, `rgba(...)`, `hsl(...)`, `hsla(...)`.
-- The `TEXT` portion is still parsed as markdown after color preprocessing, so you can nest formatting:
-
-```
-text Colored (markdown=true) = "Normal <color=#E91E63 | **bold pink** and *italic* inside> outside"
-```
-
-Output will render `<span style="color:#E91E63">` wrapping the inner markdown result.
-- Unsupported or unsafe color values cause the tag to be stripped, leaving just `TEXT`.
-- Does not override or conflict with a node-level `font-color` parameter; spans simply apply inline style precedence.
-
-Security & Sanitization:
-- Only whitelisted patterns are allowed; anything else is dropped to prevent script injection via `javascript:` URIs.
-
-Use node-level `font-color` for broad styling, and inline color syntax for emphasis or multi-colored text segments.
-
 #### Chart Configuration:
 ```overseer
 chart WeightChart (
