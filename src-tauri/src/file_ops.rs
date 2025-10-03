@@ -142,9 +142,26 @@ impl FileOperations {
         } else {
             trivia.to_string()
         };
-        if output.ends_with('\n') && normalized.starts_with('\n') && normalized.trim().is_empty() {
+        if normalized.is_empty() {
+            return;
+        }
+
+        if normalized.chars().all(|c| c == '\n') {
+            let existing_blank_run = output
+                .chars()
+                .rev()
+                .take_while(|&ch| ch == '\n')
+                .count();
+            let desired_blank_run = normalized.len();
+            if desired_blank_run <= existing_blank_run {
+                return;
+            }
+            let additional = desired_blank_run - existing_blank_run;
+            normalized = "\n".repeat(additional);
+        } else if output.ends_with('\n') && normalized.starts_with('\n') && normalized.trim().is_empty() {
             normalized.remove(0);
         }
+
         output.push_str(&normalized);
     }
 
@@ -275,8 +292,24 @@ impl FileOperations {
         fallback_indent_unit: &str,
     ) -> Result<()> {
         let snapshot = Self::snapshot_for(node);
-        let allow_snapshot_trivia = !Self::should_skip_trailing_trivia(node);
         let fallback_indent_unit = if fallback_indent_unit.is_empty() { "    " } else { fallback_indent_unit };
+
+        if let (Some(snap), Some(fingerprint)) = (snapshot.as_ref(), node.source_fingerprint) {
+            if matches!(snap.origin, SnapshotOrigin::Parsed) && fingerprint == snap.fingerprint {
+                if !snap.leading_trivia.is_empty() {
+                    Self::push_trivia(output, &snap.leading_trivia);
+                }
+                if snap.full_text.contains('\r') {
+                    let normalized = snap.full_text.replace("\r\n", "\n");
+                    output.push_str(&normalized);
+                } else {
+                    output.push_str(&snap.full_text);
+                }
+                return Ok(());
+            }
+        }
+
+        let allow_snapshot_trivia = !Self::should_skip_trailing_trivia(node);
 
         let mut emitted_leading_trivia = false;
         if allow_snapshot_trivia {
@@ -298,6 +331,9 @@ impl FileOperations {
                 }
             }
             for _ in 0..blank_lines_to_emit {
+                output.push('\n');
+            }
+            if !output.is_empty() && !output.ends_with('\n') {
                 output.push('\n');
             }
         }
@@ -438,6 +474,9 @@ impl FileOperations {
                         // Always collect any explicit descendant value overrides; do not filter by instance list.
                         collect_descendant_value_overrides(child, &_explicit_names_ignored, &mut desc_overrides);
                         if !desc_overrides.is_empty() {
+                            if !output.ends_with('\n') {
+                                output.push('\n');
+                            }
                             for (n, v) in desc_overrides {
                                 output.push_str(&format!(
                                     "{}- {} = {}\n",
@@ -474,6 +513,9 @@ impl FileOperations {
                                 None => false,
                             };
                             if has_explicit_override || differs_from_template {
+                                if !output.ends_with('\n') {
+                                    output.push('\n');
+                                }
                                 output.push_str(&format!(
                                     "{}- {} = {}\n",
                                     child_indent,
@@ -738,6 +780,9 @@ impl FileOperations {
                     let mut desc_overrides: Vec<(&str, &OverseerValue)> = Vec::new();
                     collect_descendant_value_overrides(child, &explicit_names, &mut desc_overrides);
                     if !desc_overrides.is_empty() {
+                        if !output.ends_with('\n') {
+                            output.push('\n');
+                        }
             for (n, v) in desc_overrides {
                             output.push_str(&format!(
                                 "{}- {} = {}\n",
@@ -782,6 +827,9 @@ impl FileOperations {
                             has_value
                         );
                         let val = child.parameters.get("value").unwrap();
+                        if !output.ends_with('\n') {
+                            output.push('\n');
+                        }
                         output.push_str(&format!(
                             "{}- {} = {}\n",
                             child_indent,
