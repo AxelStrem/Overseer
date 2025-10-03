@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use crate::types::{OverseerNode, OverseerValue, Color, CssSize};
+use crate::types::{OverseerNode, OverseerValue, Color, CssSize, NodeSourceSnapshot};
 use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext};
 use std::collections::HashMap;
 
@@ -498,6 +498,15 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         source_id: None,
                                         source_fingerprint: None,
                                     };
+                                    resolved_item.adopt_template_snapshot(&template_node);
+                                    if resolved_item.source_snapshot.is_none() {
+                                        let (indent_unit, newline) = node
+                                            .source_snapshot
+                                            .as_ref()
+                                            .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                                            .unwrap_or((None, None));
+                                        resolved_item.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                                    }
                                     // Mark all cloned children as template-derived so serializer can omit them unless overridden
                                     for (c_idx, child) in resolved_item.children.iter_mut().enumerate() {
                                         mark_template_child_recursive(child);
@@ -573,7 +582,7 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                 } else if let Some(val) = list_item.parameters.get("value") {
                                     debug_resolver!("[RESOLVER]     Simple value list item: {:?}", val);
                                     // Simple value: create a node of the template's type, with value
-                    let resolved_item = OverseerNode {
+                    let mut resolved_item = OverseerNode {
                                         name: {
                                             let n = list_item.name.clone();
                                             if n.is_empty() || n == "-" { format!("{}__{}", template_node.name, idx + 1) } else { n }
@@ -598,6 +607,15 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         source_id: None,
                                         source_fingerprint: None,
                                     };
+                                    resolved_item.adopt_template_snapshot(&template_node);
+                                    if resolved_item.source_snapshot.is_none() {
+                                        let (indent_unit, newline) = node
+                                            .source_snapshot
+                                            .as_ref()
+                                            .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                                            .unwrap_or((None, None));
+                                        resolved_item.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                                    }
                                     resolved_children.push(resolved_item);
                                 } else {
                                     // '-' with empty block and no value => instantiate default template clone; else, fallback clone
@@ -631,6 +649,15 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                             source_id: None,
                                             source_fingerprint: None,
                                         };
+                                        resolved_item.adopt_template_snapshot(&template_node);
+                                        if resolved_item.source_snapshot.is_none() {
+                                            let (indent_unit, newline) = node
+                                                .source_snapshot
+                                                .as_ref()
+                                                .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                                                .unwrap_or((None, None));
+                                            resolved_item.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                                        }
                                         for child in resolved_item.children.iter_mut() {
                                             mark_template_child_recursive(child);
                                             if child.parameters.remove("_explicit_child_override").is_some() {
@@ -689,6 +716,12 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                 source_fingerprint: None,
                             };
                             resolved_item.parameters.insert("value".to_string(), val.clone());
+                            let (indent_unit, newline) = node
+                                .source_snapshot
+                                .as_ref()
+                                .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                                .unwrap_or((None, None));
+                            resolved_item.synthesize_snapshot_with_style_recursive(indent_unit, newline);
                             resolved_children.push(resolved_item);
                         } else {
                             debug_resolver!("[RESOLVER]     No value found, keeping as-is: {} (type: {})", list_item.name, list_item.node_type);
@@ -751,6 +784,15 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
             node.children = template_node.children.clone();
             for child in node.children.iter_mut() {
                 mark_template_child_recursive(child);
+                child.mark_snapshot_as_template_clone();
+                if child.source_snapshot.is_none() {
+                    let (indent_unit, newline) = node
+                        .source_snapshot
+                        .as_ref()
+                        .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                        .unwrap_or((None, None));
+                    child.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                }
                 // Ensure override markers are clean on fresh clones; only true overrides will set these later
                 if child.parameters.remove("_explicit_child_override").is_some() {
                     debug_resolver!("[RESOLVER] cleaned _explicit_child_override on inst child '{}')", child.name);
@@ -1092,7 +1134,13 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
 
 /// Mark a node and its subtree as template-derived by adding _template_ markers for present params
 fn mark_template_child_recursive(node: &mut OverseerNode) {
-    node.source_snapshot = None;
+    if let Some(existing_snapshot) = node.source_snapshot.clone() {
+        let fingerprint = existing_snapshot.fingerprint;
+        node.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(&existing_snapshot));
+        node.source_fingerprint = Some(fingerprint);
+    } else {
+        node.source_fingerprint = None;
+    }
     node.source_id = None;
     // Mark a simple flag to indicate this whole node is from a template
     node.parameters.insert("_template_node".to_string(), OverseerValue::Boolean(true));

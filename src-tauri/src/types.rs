@@ -116,17 +116,144 @@ impl OverseerNode {
         
         result
     }
+
+    /// Convert this node (and its descendants) to a synthetic snapshot clone of their existing snapshots.
+    /// Used when duplicating already-parsed structures (e.g., template children) so we preserve authored
+    /// trivia but mark them as synthetic clones.
+    pub fn mark_snapshot_as_template_clone(&mut self) {
+        if let Some(existing) = self.source_snapshot.clone() {
+            let fingerprint = existing.fingerprint;
+            self.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(&existing));
+            self.source_fingerprint = Some(fingerprint);
+        } else {
+            self.source_snapshot = None;
+            self.source_fingerprint = None;
+        }
+        self.source_id = None;
+        for child in self.children.iter_mut() {
+            child.mark_snapshot_as_template_clone();
+        }
+    }
+
+    /// Adopt structured snapshot metadata from a template node, marking it as a synthetic template clone.
+    /// The caller is responsible for ensuring this node's structure mirrors the template's for best fidelity.
+    pub fn adopt_template_snapshot(&mut self, template: &OverseerNode) {
+        if let Some(template_snapshot) = template.source_snapshot.as_ref() {
+            let fingerprint = template_snapshot.fingerprint;
+            self.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(template_snapshot));
+            self.source_fingerprint = Some(fingerprint);
+        } else {
+            self.source_snapshot = None;
+            self.source_fingerprint = None;
+        }
+        self.source_id = None;
+        for (child, template_child) in self.children.iter_mut().zip(template.children.iter()) {
+            child.adopt_template_snapshot(template_child);
+        }
+    }
+
+    /// Attach a synthetic snapshot carrying only formatting style (indent/newline) when no source clone exists.
+    pub fn synthesize_snapshot_with_style(&mut self, indent_unit: Option<String>, newline: Option<String>) {
+        self.source_snapshot = Some(NodeSourceSnapshot::synthetic_with_style(indent_unit, newline));
+        self.source_fingerprint = None;
+        self.source_id = None;
+    }
+
+    /// Recursively apply style-only synthetic snapshots to this node and descendants.
+    pub fn synthesize_snapshot_with_style_recursive(&mut self, indent_unit: Option<String>, newline: Option<String>) {
+        let indent_clone = indent_unit.clone();
+        let newline_clone = newline.clone();
+        self.synthesize_snapshot_with_style(indent_unit, newline);
+        for child in self.children.iter_mut() {
+            child.synthesize_snapshot_with_style_recursive(indent_clone.clone(), newline_clone.clone());
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SourceSlice {
+    pub span: (usize, usize),
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeHeaderSnapshot {
+    pub template: Option<SourceSlice>,
+    pub type_token: Option<SourceSlice>,
+    pub name: Option<SourceSlice>,
+    pub parameters: Option<SourceSlice>,
+    pub assignment_operator: Option<SourceSlice>,
+    pub trailing: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeChildEnvelopeSnapshot {
+    pub open: Option<SourceSlice>,
+    pub close: Option<SourceSlice>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeBodySnapshot {
+    pub value: Option<SourceSlice>,
+    pub child_envelope: NodeChildEnvelopeSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SnapshotOrigin {
+    Parsed,
+    Synthetic(SyntheticSnapshotKind),
+}
+
+impl Default for SnapshotOrigin {
+    fn default() -> Self {
+        SnapshotOrigin::Parsed
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SyntheticSnapshotKind {
+    TemplateClone,
+    RuntimeConstructed,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct NodeSourceSnapshot {
     pub span: (usize, usize),
     pub leading_span: Option<(usize, usize)>,
+    pub header_span: (usize, usize),
+    pub body_span: Option<(usize, usize)>,
+    pub trailing_span: Option<(usize, usize)>,
     pub full_text: String,
     pub leading_trivia: String,
+    pub header: NodeHeaderSnapshot,
+    pub body: NodeBodySnapshot,
+    pub trailing_trivia: String,
     pub indent_unit: Option<String>,
     pub newline: Option<String>,
     pub fingerprint: u64,
+    pub origin: SnapshotOrigin,
+}
+
+impl NodeSourceSnapshot {
+    pub fn synthetic_from_template(template: &NodeSourceSnapshot) -> Self {
+        let mut snapshot = template.clone();
+        snapshot.span = (0, 0);
+        snapshot.leading_span = None;
+        snapshot.header_span = (0, 0);
+        snapshot.body_span = snapshot.body_span.map(|_| (0, 0));
+        snapshot.trailing_span = None;
+        snapshot.indent_unit = None;
+        snapshot.origin = SnapshotOrigin::Synthetic(SyntheticSnapshotKind::TemplateClone);
+        snapshot
+    }
+
+    pub fn synthetic_with_style(indent_unit: Option<String>, newline: Option<String>) -> Self {
+        let mut snapshot = NodeSourceSnapshot::default();
+        snapshot.indent_unit = indent_unit;
+        snapshot.newline = newline;
+        snapshot.origin = SnapshotOrigin::Synthetic(SyntheticSnapshotKind::RuntimeConstructed);
+        snapshot
+    }
 }
 
 #[cfg(test)]

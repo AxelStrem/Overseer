@@ -1,6 +1,6 @@
 use crate::resolver;
 use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext, BoundValue};
-use crate::types::{OverseerError, OverseerNode, OverseerValue};
+use crate::types::{OverseerError, OverseerNode, OverseerValue, NodeSourceSnapshot};
 use chrono::{Local, Utc, Duration};
 use std::sync::OnceLock;
 
@@ -1770,6 +1770,15 @@ impl ActionExecutor {
         };
         // Also clear computed params at the root clone
         Self::clear_computed_recursive(&mut node);
+        node.adopt_template_snapshot(template);
+        if node.source_snapshot.is_none() {
+            let (indent_unit, newline) = template
+                .source_snapshot
+                .as_ref()
+                .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                .unwrap_or((None, None));
+            node.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+        }
         node
     }
 
@@ -1777,9 +1786,14 @@ impl ActionExecutor {
 
     // Mark a node and its subtree as template-derived for serializer filtering
     fn mark_template_child_recursive_action(node: &mut OverseerNode) {
-        node.source_snapshot = None;
+        if let Some(existing_snapshot) = node.source_snapshot.clone() {
+            let fingerprint = existing_snapshot.fingerprint;
+            node.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(&existing_snapshot));
+            node.source_fingerprint = Some(fingerprint);
+        } else {
+            node.source_fingerprint = None;
+        }
         node.source_id = None;
-        node.source_fingerprint = None;
         node
             .parameters
             .insert("_template_node".to_string(), OverseerValue::Boolean(true));
@@ -1824,7 +1838,7 @@ impl ActionExecutor {
             }
         } else {
             // Add simple string field if missing
-            let new_field = OverseerNode {
+            let mut new_field = OverseerNode {
                 name: field.to_string(),
                 node_type: "string".to_string(),
                 template: None,
@@ -1846,6 +1860,12 @@ impl ActionExecutor {
                 source_id: None,
                 source_fingerprint: None,
             };
+            let (indent_unit, newline) = item
+                .source_snapshot
+                .as_ref()
+                .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                .unwrap_or((None, None));
+            new_field.synthesize_snapshot_with_style_recursive(indent_unit, newline);
             item.children.push(new_field);
             // Track override at parent level
             let entry = item
@@ -2320,6 +2340,19 @@ impl ActionExecutor {
                             OverseerValue::Timestamp(_) => "timestamp".to_string(),
                             _ => new_child.node_type.clone(),
                         };
+                    }
+                }
+                if new_child.source_snapshot.is_none() {
+                    let (indent_unit, newline) = target
+                        .source_snapshot
+                        .as_ref()
+                        .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                        .unwrap_or((None, None));
+                    new_child.synthesize_snapshot_with_style(indent_unit.clone(), newline.clone());
+                    for child in new_child.children.iter_mut() {
+                        if child.source_snapshot.is_none() {
+                            child.synthesize_snapshot_with_style_recursive(indent_unit.clone(), newline.clone());
+                        }
                     }
                 }
                 target.children.push(new_child);

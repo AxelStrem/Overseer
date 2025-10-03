@@ -1,5 +1,16 @@
 use crate::source_registry::SourceRegistry;
-use crate::types::{OverseerNode, OverseerValue, Color, CssSize, BorderStyle, NodeSourceSnapshot};
+use crate::types::{
+    OverseerNode,
+    OverseerValue,
+    Color,
+    CssSize,
+    BorderStyle,
+    NodeSourceSnapshot,
+    NodeHeaderSnapshot,
+    NodeBodySnapshot,
+    SourceSlice,
+    SnapshotOrigin,
+};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
@@ -30,6 +41,75 @@ struct ParserInputContext {
 
 thread_local! {
     static PARSER_CONTEXT_STACK: RefCell<Vec<ParserInputContext>> = RefCell::new(Vec::new());
+}
+
+#[derive(Debug)]
+struct ParsedNode {
+    node: OverseerNode,
+    snapshot: ParsedNodeSnapshotData,
+}
+
+#[derive(Debug)]
+struct ParsedNodeSnapshotData {
+    template_span: Option<(usize, usize)>,
+    type_span: Option<(usize, usize)>,
+    name_span: Option<(usize, usize)>,
+    params_span: Option<(usize, usize)>,
+    header_gap_span: Option<(usize, usize)>,
+    value_span: Option<(usize, usize)>,
+    assignment_span: Option<(usize, usize)>,
+    block_open_span: Option<(usize, usize)>,
+    block_close_span: Option<(usize, usize)>,
+    header_end_ptr: usize,
+    body_start_ptr: usize,
+    body_end_ptr: usize,
+    trailing_start_ptr: usize,
+    trailing_end_ptr: usize,
+    trailing_whitespace_bytes: usize,
+}
+
+fn count_blank_lines_in_trivia(trivia: &str) -> u8 {
+    let mut count: u8 = 0;
+    let ends_with_newline = trivia.ends_with('\n');
+    let mut iter = trivia.split_terminator('\n').peekable();
+    while let Some(segment) = iter.next() {
+        let is_last_segment_without_newline = !ends_with_newline && iter.peek().is_none();
+        if is_last_segment_without_newline {
+            break;
+        }
+        if segment.trim().is_empty() {
+            count = count.saturating_add(1);
+        }
+    }
+    count
+}
+
+#[derive(Debug)]
+struct ValueAssignmentCapture {
+    value: OverseerValue,
+    raw_literal: Option<String>,
+    assignment_span: (usize, usize),
+    value_span: (usize, usize),
+}
+
+#[derive(Debug)]
+struct DirectValueCapture {
+    value: OverseerValue,
+    span: (usize, usize),
+}
+
+#[derive(Debug)]
+struct BlockCapture {
+    children: Vec<OverseerNode>,
+    open_span: (usize, usize),
+    close_span: (usize, usize),
+}
+
+enum BodyKind {
+    None,
+    ValueAssignment(ValueAssignmentCapture),
+    DirectValue(DirectValueCapture),
+    Block(BlockCapture),
 }
 
 struct ParserContextGuard;
@@ -70,7 +150,13 @@ fn slice_from_offsets(ctx: ParserInputContext, start: usize, end: usize) -> Stri
     }
 }
 
-fn assign_snapshot(node: &mut OverseerNode, leading_ptr: usize, start_ptr: usize, end_ptr: usize) {
+fn assign_snapshot(
+    node: &mut OverseerNode,
+    leading_ptr: usize,
+    start_ptr: usize,
+    meta: &ParsedNodeSnapshotData,
+) {
+    let end_ptr = meta.trailing_end_ptr;
     if end_ptr < start_ptr {
         return;
     }
@@ -88,9 +174,46 @@ fn assign_snapshot(node: &mut OverseerNode, leading_ptr: usize, start_ptr: usize
         None
     };
 
+    let to_offset = |ptr: usize| -> usize {
+        if ptr <= ctx.base_ptr {
+            0
+        } else {
+            (ptr - ctx.base_ptr).min(ctx.len)
+        }
+    };
+
+    let header_start = span_start;
+    let mut header_end = to_offset(meta.header_end_ptr);
+    if header_end < header_start { header_end = header_start; }
+    if header_end > span_end { header_end = span_end; }
+
+    let body_span = if meta.body_end_ptr > meta.body_start_ptr {
+        let mut start = to_offset(meta.body_start_ptr);
+        let mut end = to_offset(meta.body_end_ptr);
+        if start < span_start { start = span_start; }
+        if end > span_end { end = span_end; }
+        if end > start { Some((start, end)) } else { None }
+    } else {
+        None
+    };
+
+    let trailing_span = if end_ptr > meta.trailing_start_ptr {
+        let mut start = to_offset(meta.trailing_start_ptr);
+        if start < span_start { start = span_start; }
+        let end = span_end;
+        if end > start { Some((start, end)) } else { None }
+    } else {
+        None
+    };
+
     let full_text = slice_from_offsets(ctx, span_start, span_end);
     let leading_trivia = if let Some((ls, le)) = leading_span {
         slice_from_offsets(ctx, ls, le)
+    } else {
+        String::new()
+    };
+    let trailing_trivia = if let Some((ts, te)) = trailing_span {
+        slice_from_offsets(ctx, ts, te)
     } else {
         String::new()
     };
@@ -133,18 +256,65 @@ fn assign_snapshot(node: &mut OverseerNode, leading_ptr: usize, start_ptr: usize
     hasher.write(full_text.as_bytes());
     let fingerprint = hasher.finish();
 
+        let make_slice = |span: Option<(usize, usize)>| -> Option<SourceSlice> {
+            span.and_then(|(s_ptr, e_ptr)| {
+                if e_ptr <= s_ptr { return None; }
+                let start = to_offset(s_ptr);
+                let end = to_offset(e_ptr);
+                if end <= start { return None; }
+                let text = slice_from_offsets(ctx, start, end);
+                Some(SourceSlice { span: (start, end), text })
+            })
+        };
+
+        let header_trailing = meta
+            .header_gap_span
+            .and_then(|(s_ptr, e_ptr)| {
+                if e_ptr <= s_ptr { return None; }
+                let start = to_offset(s_ptr);
+                let end = to_offset(e_ptr);
+                if end <= start { return None; }
+                Some(slice_from_offsets(ctx, start, end))
+            })
+            .unwrap_or_default();
+
+        let mut header_snapshot = NodeHeaderSnapshot::default();
+        header_snapshot.template = make_slice(meta.template_span);
+        header_snapshot.type_token = make_slice(meta.type_span);
+        header_snapshot.name = make_slice(meta.name_span);
+        header_snapshot.parameters = make_slice(meta.params_span);
+        header_snapshot.assignment_operator = make_slice(meta.assignment_span);
+        header_snapshot.trailing = header_trailing;
+
+        let mut body_snapshot = NodeBodySnapshot::default();
+        body_snapshot.value = make_slice(meta.value_span);
+        body_snapshot.child_envelope.open = make_slice(meta.block_open_span);
+        body_snapshot.child_envelope.close = make_slice(meta.block_close_span);
+
     let snapshot = NodeSourceSnapshot {
         span: (span_start, span_end),
         leading_span,
+        header_span: (header_start, header_end),
+        body_span,
+        trailing_span,
         full_text,
         leading_trivia,
+            header: header_snapshot,
+            body: body_snapshot,
+        trailing_trivia,
         indent_unit,
         newline,
         fingerprint,
+            origin: SnapshotOrigin::Parsed,
     };
     node.source_id = Some(SourceRegistry::register(&snapshot));
     node.source_snapshot = Some(snapshot);
     node.source_fingerprint = Some(fingerprint);
+}
+
+fn finalize_parsed_node(mut parsed: ParsedNode, leading_ptr: usize, start_ptr: usize) -> OverseerNode {
+    assign_snapshot(&mut parsed.node, leading_ptr, start_ptr, &parsed.snapshot);
+    parsed.node
 }
 
 /// Parse the entire document (top-level nodes)
@@ -160,36 +330,35 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
     // remain handled by merge_comments using the original source text.
     let mut nodes: Vec<OverseerNode> = Vec::new();
     let mut cur = input;
+    let mut pending_whitespace_bytes: usize = 0;
     loop {
         // Skip EOF / pure whitespace remainder
         if cur.trim().is_empty() { break; }
 
-        // Count leading blank lines (whitespace-only) BEFORE skipping comments.
-        let mut scan = cur;
-        let mut blank_count: u8 = 0;
-        loop {
-            // Examine next line
-            if let Some(pos) = scan.find('\n') {
-                let (line, rest) = scan.split_at(pos);
-                if line.trim().is_empty() {
-                    blank_count = blank_count.saturating_add(1);
-                    scan = &rest[1..];
-                    continue;
-                }
-            }
-            break;
-        }
-        // Skip comments/whitespace after the blank lines (do not increment blank count for comments)
-        let (after_comments, _) = match skip_comments_and_whitespace(scan) { Ok(t) => t, Err(_) => (scan, ()) };
+        let (after_comments, _) = match skip_comments_and_whitespace(cur) { Ok(t) => t, Err(_) => (cur, ()) };
+        let cur_ptr = cur.as_ptr() as usize;
+        let leading_ptr = cur_ptr.saturating_sub(pending_whitespace_bytes);
+        pending_whitespace_bytes = 0;
         // Attempt parse at after_comments
-        match parse_node(after_comments) {
-            Ok((rest, mut node)) => {
-                node.leading_blank_lines = blank_count;
-                let cur_ptr = cur.as_ptr() as usize;
+        match parse_node_with_meta(after_comments) {
+            Ok((rest, parsed)) => {
+                    let trailing_whitespace_bytes = parsed.snapshot.trailing_whitespace_bytes;
                 let node_start_ptr = after_comments.as_ptr() as usize;
-                let rest_ptr = rest.as_ptr() as usize;
-                assign_snapshot(&mut node, cur_ptr, node_start_ptr, rest_ptr);
+                let mut node = finalize_parsed_node(parsed, leading_ptr, node_start_ptr);
+                let mut leading_trivia_blanks = node
+                    .source_snapshot
+                    .as_ref()
+                    .map(|snap| count_blank_lines_in_trivia(&snap.leading_trivia))
+                    .unwrap_or(0);
+                if let Some(snap) = node.source_snapshot.as_ref() {
+                    let trimmed_start = snap.leading_trivia.trim_start_matches(|c| c == '\r' || c == '\n');
+                    if trimmed_start.trim_start().starts_with("//") && leading_trivia_blanks > 0 {
+                        leading_trivia_blanks = leading_trivia_blanks.saturating_sub(1);
+                    }
+                }
+                node.leading_blank_lines = leading_trivia_blanks;
                 nodes.push(node);
+                    pending_whitespace_bytes = trailing_whitespace_bytes;
                 cur = rest;
             }
             Err(_) => {
@@ -275,7 +444,7 @@ fn skip_whitespace(input: &str) -> IResult<&str, ()> {
 }
 
 /// Parse a single node
-fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
+fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     // Only skip lines that start with '=' and are not part of a value assignment after a type or identifier
     let trimmed = input.trim_start();
     if trimmed.starts_with('=') {
@@ -285,66 +454,137 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     // Debug: print the input being parsed (disabled by default)
     debug_parser!("[PARSER] input: {}", input.chars().take(80).collect::<String>());
 
-    // A node definition can be templated or regular
-    let (input, (template_val, node_type)) = match alt((
+    let mut cur = input;
+    let mut template_span = None;
+    let mut type_span = None;
+    let mut name_span = None;
+    let mut params_span = None;
+    let mut header_gap_span = None;
+    let mut value_span = None;
+    let mut assignment_span = None;
+    let mut block_open_span = None;
+    let mut block_close_span = None;
+
+    // Parse template or type token
+    let token_start_ptr = cur.as_ptr() as usize;
+    let (next, (template_val_opt, node_type_opt)) = match alt((
         map(parse_template_value, |p| (Some(p), None)),
         map(parse_node_type, |t| (None, Some(t.to_string()))),
-    ))(input) {
+    ))(cur) {
         Ok(res) => res,
         Err(e) => {
-            if !input.trim().is_empty() {
+            if !cur.trim().is_empty() {
                 debug_parser!("[PARSER] Failed to parse node type: {:?}", e);
             }
             return Err(e);
         }
     };
+    let token_end_ptr = next.as_ptr() as usize;
+    let mut template_value: Option<OverseerValue> = None;
+    let mut node_type_value: Option<String> = None;
+    if let Some(template_val) = template_val_opt {
+        template_span = Some((token_start_ptr, token_end_ptr));
+        template_value = Some(template_val);
+    }
+    if let Some(node_type_str) = node_type_opt {
+        type_span = Some((token_start_ptr, token_end_ptr));
+        node_type_value = Some(node_type_str);
+    }
+    cur = next;
+    let (next, _) = multispace0(cur)?;
+    cur = next;
 
-    // Then parse optional name and parameters
-    let (input, _) = multispace0(input)?;
-    let (input, node_name) = opt(parse_identifier)(input)?;
-    let (input, _) = multispace0(input)?;
-    debug_parser!("[PARSER] Before parsing parameters, input: {}", input.chars().take(50).collect::<String>());
-    let (input, parameters_with_order) = opt(parse_parameters)(input)?;
-    debug_parser!("[PARSER] After parsing parameters, input: {}", input.chars().take(50).collect::<String>());
-    let (input, _) = multispace0(input)?;
+    // Parse optional name
+    let name_start_ptr = cur.as_ptr() as usize;
+    let (after_name, name_opt) = opt(parse_identifier)(cur)?;
+    let mut node_name_value: Option<String> = None;
+    cur = after_name;
+    if let Some(name_token) = name_opt {
+        node_name_value = Some(name_token.to_string());
+        let name_end_ptr = cur.as_ptr() as usize;
+        name_span = Some((name_start_ptr, name_end_ptr));
+    }
+    let (next, _) = multispace0(cur)?;
+    cur = next;
 
-    // Then parse body, which can be a block, a value assignment, or nothing
-    debug_parser!("[PARSER] Before parsing body, input: {}", input.chars().take(50).collect::<String>());
-    let (input, body) = match opt(alt((
-        map(parse_value_assignment_with_raw, |(val, raw)| (Some((val, raw)), Vec::new())),
-        map(parse_direct_value, |val| (Some((val, None)), Vec::new())),
-        map(parse_block, |children| (None, children)),
-    )))(input) {
-        Ok(res) => res,
-        Err(e) => {
-            debug_parser!("[PARSER] Failed to parse body: {:?}", e);
-            return Err(e);
-        }
-    };
-    debug_parser!("[PARSER] After parsing body, input: {}", input.chars().take(50).collect::<String>());
+    debug_parser!("[PARSER] Before parsing parameters, input: {}", cur.chars().take(50).collect::<String>());
+    let params_start_ptr = cur.as_ptr() as usize;
+    let (after_params, parameters_with_order) = opt(parse_parameters)(cur)?;
+    cur = after_params;
+    if parameters_with_order.is_some() {
+        let params_end_ptr = cur.as_ptr() as usize;
+        params_span = Some((params_start_ptr, params_end_ptr));
+    }
+    debug_parser!("[PARSER] After parsing parameters, input: {}", cur.chars().take(50).collect::<String>());
 
-    let (value_wrapped, children) = body.unwrap_or((None, Vec::new()));
+    let header_end_ptr = cur.as_ptr() as usize;
+    let (next, _) = multispace0(cur)?;
+    let header_gap_end_ptr = next.as_ptr() as usize;
+    if header_gap_end_ptr > header_end_ptr {
+        header_gap_span = Some((header_end_ptr, header_gap_end_ptr));
+    }
+    cur = next;
 
-    // Determine the template path string, if it exists
-    let template_path = if let Some(OverseerValue::Template(t)) = &template_val {
-        Some(t.clone())
+    // Parse body
+    debug_parser!("[PARSER] Before parsing body, input: {}", cur.chars().take(50).collect::<String>());
+    let body_start_ptr = cur.as_ptr() as usize;
+    let body_kind = if let Ok((after_assign, capture)) = parse_value_assignment_capture(cur) {
+        cur = after_assign;
+        BodyKind::ValueAssignment(capture)
+    } else if let Ok((after_block, capture)) = parse_block_capture(cur) {
+        cur = after_block;
+        BodyKind::Block(capture)
+    } else if let Ok((after_value, capture)) = parse_direct_value_capture(cur) {
+        cur = after_value;
+        BodyKind::DirectValue(capture)
     } else {
-        None
+        BodyKind::None
     };
+    let body_end_ptr = cur.as_ptr() as usize;
+    let trailing_start_ptr = body_end_ptr;
+    debug_parser!("[PARSER] After parsing body, input: {}", cur.chars().take(50).collect::<String>());
+    let (next, _) = multispace0(cur)?;
+    let trailing_end_ptr = next.as_ptr() as usize;
+    let consumed_len = cur.len() - next.len();
+    let trailing_whitespace_bytes = consumed_len;
+    cur = next;
 
-    // Construct the node
-    // Keep '-' as the type - type inference will happen in the resolver stage
-    let final_node_type = if let Some(nt) = node_type {
+    let mut children: Vec<OverseerNode> = Vec::new();
+    let mut raw_value_literal: Option<String> = None;
+    let mut value_parameter: Option<OverseerValue> = None;
+
+    match body_kind {
+        BodyKind::ValueAssignment(capture) => {
+            assignment_span = Some(capture.assignment_span);
+            value_span = Some(capture.value_span);
+            raw_value_literal = capture.raw_literal;
+            value_parameter = Some(capture.value);
+        }
+        BodyKind::DirectValue(capture) => {
+            value_span = Some(capture.span);
+            value_parameter = Some(capture.value);
+        }
+        BodyKind::Block(capture) => {
+            block_open_span = Some(capture.open_span);
+            block_close_span = Some(capture.close_span);
+            children = capture.children;
+        }
+        BodyKind::None => {}
+    }
+
+    let template_path = template_value.as_ref().and_then(|val| {
+        if let OverseerValue::Template(t) = val { Some(t.clone()) } else { None }
+    });
+
+    let final_node_type = if let Some(nt) = node_type_value.clone() {
         nt
     } else if let Some(t) = &template_path {
-        // If the type is a template, we can use the template path as a hint for the type
         t.split('/').last().unwrap_or_default().to_string()
-    } else { 
-        "".to_string() 
+    } else {
+        "".to_string()
     };
-    // NOTE: For 'mount' nodes, parameters like source/lazy/placeholder will be validated later in resolver.
-    let mut node = OverseerNode::new_with_type(final_node_type.clone(), node_name.map(|s| s.to_string()));
 
+    let mut node = OverseerNode::new_with_type(final_node_type.clone(), node_name_value);
     node.template = template_path;
     if let Some((param_map, order)) = parameters_with_order {
         node.param_order = order;
@@ -352,17 +592,15 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
     }
     node.children = children;
 
-    // Capture authored dash style: if the original type token was '-' OR if this node will serialize later
-    // as a dash override (value-only with no explicit type). We only have the first heuristic here.
     if final_node_type == "-" {
         node.authored_dash = true;
     }
 
-    if let Some(v) = value_wrapped {
-        match v {
-            (val, Some(raw)) => { node.parameters.insert("value".to_string(), val); node.raw_value_literal = Some(raw); },
-            (val, None) => { node.parameters.insert("value".to_string(), val); }
-        }
+    if let Some(val) = value_parameter {
+        node.parameters.insert("value".to_string(), val);
+    }
+    if let Some(raw) = raw_value_literal {
+        node.raw_value_literal = Some(raw);
     }
 
     debug_parser!("[PARSER] Parsed node: type='{}', name='{}'", node.node_type, node.name);
@@ -370,7 +608,31 @@ fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
         debug_parser!("[PARSER]   Parameters: {:?}", node.parameters);
     }
 
-    Ok((input, node))
+    Ok((cur, ParsedNode {
+        node,
+        snapshot: ParsedNodeSnapshotData {
+            template_span,
+            type_span,
+            name_span,
+            params_span,
+            header_gap_span,
+            value_span,
+            assignment_span,
+            block_open_span,
+            block_close_span,
+            header_end_ptr,
+            body_start_ptr,
+            body_end_ptr,
+            trailing_start_ptr,
+            trailing_end_ptr,
+            trailing_whitespace_bytes,
+        },
+    }))
+}
+
+#[cfg(test)]
+fn parse_node(input: &str) -> IResult<&str, OverseerNode> {
+    map(parse_node_with_meta, |parsed| parsed.node)(input)
 }
 
 /// Parse a node type, which is an identifier or a hyphen for inference
@@ -414,17 +676,32 @@ fn parse_parameter(input: &str) -> IResult<&str, (String, OverseerValue)> {
     )(input)
 }
 
-/// Parse value assignment (= value)
-fn parse_value_assignment_with_raw(input: &str) -> IResult<&str, (OverseerValue, Option<String>)> {
-    let (remaining, _) = pair(multispace0, char('='))(input)?;
-    let (remaining, _) = multispace0(remaining)?;
-    // Attempt to parse a number to capture raw literal first
-    if let Ok((after_num, ov)) = parse_number_value_with_raw(remaining) {
-        return Ok((after_num, ov));
+/// Parse value assignment (= value) capturing source spans
+fn parse_value_assignment_capture(input: &str) -> IResult<&str, ValueAssignmentCapture> {
+    let (after_ws, _) = multispace0(input)?;
+    let equals_token_start = after_ws.as_ptr() as usize;
+    let (after_eq, _) = char('=')(after_ws)?;
+    let (after_gap, _) = multispace0(after_eq)?;
+    let value_start_ptr = after_gap.as_ptr() as usize;
+
+    if let Ok((after_value, (value, raw_literal))) = parse_number_value_with_raw(after_gap) {
+        let value_end_ptr = after_value.as_ptr() as usize;
+        return Ok((after_value, ValueAssignmentCapture {
+            value,
+            raw_literal,
+            assignment_span: (equals_token_start, value_start_ptr),
+            value_span: (value_start_ptr, value_end_ptr),
+        }));
     }
-    // Fallback to normal value parsing (no raw capture)
-    let (after, val) = parse_value(remaining)?;
-    Ok((after, (val, None)))
+
+    let (after_value, value) = parse_value(after_gap)?;
+    let value_end_ptr = after_value.as_ptr() as usize;
+    Ok((after_value, ValueAssignmentCapture {
+        value,
+        raw_literal: None,
+        assignment_span: (equals_token_start, value_start_ptr),
+        value_span: (value_start_ptr, value_end_ptr),
+    }))
 }
 
 fn parse_number_value_with_raw(input: &str) -> IResult<&str, (OverseerValue, Option<String>)> {
@@ -444,68 +721,79 @@ fn parse_number_value_with_raw(input: &str) -> IResult<&str, (OverseerValue, Opt
 }
 
 /// Parse a value directly (without =) - only for quoted strings, numbers, booleans, etc.
-fn parse_direct_value(input: &str) -> IResult<&str, OverseerValue> {
-    preceded(multispace0, alt((
-        parse_quoted_string_value,
-        parse_template_value,
-        parse_number_value,
-        parse_boolean_value,
-        // Note: We don't include parse_unquoted_string_value here to avoid conflicts
-    )))(input)
+fn parse_direct_value_capture(input: &str) -> IResult<&str, DirectValueCapture> {
+    let start_ptr = input.as_ptr() as usize;
+    let (remaining, value) = parse_value(input)?;
+    let trimmed_remaining = remaining.trim_start();
+    if let Some(next) = trimmed_remaining.chars().next() {
+        let is_comment = next == '/' && (trimmed_remaining.starts_with("//") || trimmed_remaining.starts_with("/*"));
+        if !is_comment {
+            return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+        }
+    }
+    let end_ptr = remaining.as_ptr() as usize;
+    Ok((remaining, DirectValueCapture { value, span: (start_ptr, end_ptr) }))
 }
 
-/// Parse a block { ... }
-fn parse_block(input: &str) -> IResult<&str, Vec<OverseerNode>> {
-    let (mut input, _) = preceded(multispace0, char('{'))(input)?;
-    let mut children = Vec::new();
+/// Parse a block { ... } capturing brace spans
+fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
+    let (after_ws, _) = multispace0(input)?;
+    let open_start_ptr = after_ws.as_ptr() as usize;
+    let (mut cursor, _) = char('{')(after_ws)?;
+    let open_end_ptr = cursor.as_ptr() as usize;
+    let mut children: Vec<OverseerNode> = Vec::new();
+    let mut pending_whitespace_bytes: usize = 0;
 
     loop {
-        // Fast path: skip pure whitespace then check for close brace
-    let cursor = input; // cursor retained for clarity; not mutable
-        // Count contiguous blank (whitespace-only) lines BEFORE comments for the next child.
-        // Special case: if the very first char is a newline (i.e., the previous node ended right before this),
-        // do NOT count it as a blank line. This avoids every normal line being treated as preceded by a blank line.
-        let mut scan = cursor;
-        if scan.starts_with('\n') { scan = &scan[1..]; }
-        let mut blank_count: u8 = 0;
-        loop {
-            if let Some(pos) = scan.find('\n') {
-                let (line, rest) = scan.split_at(pos);
-                if line.trim().is_empty() {
-                    blank_count = blank_count.saturating_add(1);
-                    scan = &rest[1..];
-                    continue;
-                }
-            }
-            break;
-        }
-        // After counting blank lines, skip comments/whitespace (without incrementing blank_count for comments)
-        let (after_comments, _) = match skip_comments_and_whitespace(scan) { Ok(t) => t, Err(_) => (scan, ()) };
-        // If next significant token is '}' end block (do not attach trailing blank lines to phantom child)
+    let (after_comments, _) = match skip_comments_and_whitespace(cursor) { Ok(t) => t, Err(_) => (cursor, ()) };
+        let cursor_ptr = cursor.as_ptr() as usize;
+        let leading_ptr = cursor_ptr.saturating_sub(pending_whitespace_bytes);
+        pending_whitespace_bytes = 0;
+        let node_start_ptr = after_comments.as_ptr() as usize;
+
         if let Some(rest) = after_comments.strip_prefix('}') {
-            input = rest; // consume '}'
-            break;
+            for (idx, ch) in children.iter_mut().enumerate() {
+                ch.child_original_index = Some(idx);
+            }
+            let close_start_ptr = after_comments.as_ptr() as usize;
+            let close_end_ptr = rest.as_ptr() as usize;
+            return Ok((rest, BlockCapture {
+                children,
+                open_span: (open_start_ptr, open_end_ptr),
+                close_span: (close_start_ptr, close_end_ptr),
+            }));
         }
-        // Attempt to parse a node at after_comments
-        match parse_node(after_comments) {
-            Ok((rest, mut node)) => {
-                node.leading_blank_lines = blank_count; // record intra-block blank spacing
-                let cursor_ptr = cursor.as_ptr() as usize;
-                let node_start_ptr = after_comments.as_ptr() as usize;
-                let rest_ptr = rest.as_ptr() as usize;
-                assign_snapshot(&mut node, cursor_ptr, node_start_ptr, rest_ptr);
+
+        match parse_node_with_meta(after_comments) {
+            Ok((rest, parsed)) => {
+                let trailing_whitespace_bytes = parsed.snapshot.trailing_whitespace_bytes;
+                let mut node = finalize_parsed_node(parsed, leading_ptr, node_start_ptr);
+                let mut leading_trivia_blanks = node
+                    .source_snapshot
+                    .as_ref()
+                    .map(|snap| count_blank_lines_in_trivia(&snap.leading_trivia))
+                    .unwrap_or(0);
+                if let Some(snap) = node.source_snapshot.as_ref() {
+                    let trimmed_start = snap.leading_trivia.trim_start_matches(|c| c == '\r' || c == '\n');
+                    if trimmed_start.trim_start().starts_with("//") && leading_trivia_blanks > 0 {
+                        leading_trivia_blanks = leading_trivia_blanks.saturating_sub(1);
+                    }
+                }
+                node.leading_blank_lines = leading_trivia_blanks;
+                cursor = rest;
                 children.push(node);
-                input = rest;
+                pending_whitespace_bytes = trailing_whitespace_bytes;
             }
             Err(_) => {
-                // Failed parse: advance by one char from original input (not after_comments) to avoid infinite loop
-                if !input.is_empty() { input = &input[1..]; } else { break; }
+                if cursor.is_empty() {
+                    break;
+                }
+                cursor = &cursor[1..];
             }
         }
     }
-    // Assign original child ordering indices for fidelity in serializer
-    for (idx, ch) in children.iter_mut().enumerate() { ch.child_original_index = Some(idx); }
-    Ok((input, children))
+
+    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char)))
 }
 
 /// Parse different types of values
@@ -958,6 +1246,11 @@ mod tests {
         assert!(root_snapshot.leading_trivia.is_empty());
         assert!(root_snapshot.indent_unit.is_none());
         assert!(root_snapshot.leading_span.is_none());
+    assert_eq!(root_snapshot.header_span.0, root_snapshot.span.0);
+    assert!(root_snapshot.header_span.1 <= root_snapshot.span.1);
+    assert!(root_snapshot.body_span.is_some());
+    assert!(root_snapshot.trailing_span.is_some());
+    assert!(root_snapshot.trailing_trivia.contains('\n'));
         let root_id = root.source_id.as_ref().expect("root should have source id");
         let fetched_root = SourceRegistry::get(root_id).expect("root id should resolve in registry");
         assert_eq!(fetched_root.full_text, root_snapshot.full_text);
@@ -970,6 +1263,9 @@ mod tests {
         assert_eq!(child_snapshot.span.0, src.find("string child").expect("child text present"));
         let child_leading_span = child_snapshot.leading_span.expect("child should record leading span");
         assert_eq!(child_leading_span.1 - child_leading_span.0, child_snapshot.leading_trivia.len());
+    let child_body_span = child_snapshot.body_span.expect("child should have body span recorded");
+    assert!(child_body_span.1 > child_body_span.0);
+    assert!(child_snapshot.trailing_span.is_some());
         let child_id = child.source_id.as_ref().expect("child should have source id");
         assert_ne!(child_id, root_id, "child and root should have distinct ids");
         let fetched_child = SourceRegistry::get(child_id).expect("child id should resolve in registry");
@@ -985,9 +1281,13 @@ mod tests {
         assert_eq!(next_snapshot.span.0, src.find("string next").expect("second node text present"));
         let next_leading_span = next_snapshot.leading_span.expect("second node should record leading span");
         assert_eq!(next_leading_span.1 - next_leading_span.0, next_snapshot.leading_trivia.len());
+    assert_eq!(next_snapshot.header_span.0, next_snapshot.span.0);
+    assert!(next_snapshot.body_span.is_some());
+    assert!(next_snapshot.trailing_trivia.ends_with('\n'));
         let next_id = next.source_id.as_ref().expect("second node should have source id");
         let fetched_next = SourceRegistry::get(next_id).expect("second node id should resolve in registry");
         assert_eq!(fetched_next.full_text, next_snapshot.full_text);
+
 
         assert_eq!(SourceRegistry::len(), 3, "registry should track all parsed nodes in sample");
 
@@ -1097,4 +1397,5 @@ mod tests {
         assert_eq!(node.parameters.get("markdown"), Some(&OverseerValue::Boolean(true)));
         assert_eq!(node.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(18.0))));
     }
+
 }
