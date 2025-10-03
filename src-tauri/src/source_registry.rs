@@ -5,6 +5,7 @@ use parking_lot::ReentrantMutex;
 
 use crate::types::NodeSourceSnapshot;
 
+static DOCUMENT_TRAILING: LazyLock<RwLock<String>> = LazyLock::new(|| RwLock::new(String::new()));
 static SNAPSHOT_REGISTRY: LazyLock<RwLock<HashMap<String, NodeSourceSnapshot>>> = LazyLock::new(|| {
     RwLock::new(HashMap::new())
 });
@@ -29,6 +30,7 @@ impl SourceRegistry {
         let mut guard = SNAPSHOT_REGISTRY.write().expect("snapshot registry poisoned");
         guard.clear();
         REGISTRY_COUNTER.store(1, Ordering::Relaxed);
+        Self::reset_document_trailing();
     }
 
     /// Register the provided snapshot and return an opaque identifier that can be stored on
@@ -52,5 +54,23 @@ impl SourceRegistry {
     pub fn len() -> usize {
         let guard = SNAPSHOT_REGISTRY.read().expect("snapshot registry poisoned");
         guard.len()
+    }
+
+    pub fn reset_document_trailing() {
+        let mut guard = DOCUMENT_TRAILING.write().expect("snapshot registry poisoned");
+        guard.clear();
+    }
+
+    pub fn append_document_trailing(chunk: &str) {
+        if chunk.is_empty() {
+            return;
+        }
+        let mut guard = DOCUMENT_TRAILING.write().expect("snapshot registry poisoned");
+        guard.push_str(chunk);
+    }
+
+    pub fn take_document_trailing() -> String {
+        let mut guard = DOCUMENT_TRAILING.write().expect("snapshot registry poisoned");
+        std::mem::take(&mut *guard)
     }
 }

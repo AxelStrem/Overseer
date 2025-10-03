@@ -1,8 +1,15 @@
 use crate::resolver;
 use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext, BoundValue};
-use crate::types::{OverseerError, OverseerNode, OverseerValue, NodeSourceSnapshot};
+use crate::types::{OverseerError, OverseerNode, OverseerValue, NodeSourceSnapshot, SnapshotOrigin};
 use chrono::{Local, Utc, Duration};
 use std::sync::OnceLock;
+
+#[derive(Clone, Debug, Default)]
+struct ListEntryStyleGuide {
+    leading_blank_lines: u8,
+    newline: Option<String>,
+    indent_unit: Option<String>,
+}
 
 // Runtime flag for verbose timer logging (set OVERSEER_DEBUG_TIMERS=1)
 fn timers_debug() -> bool {
@@ -2024,6 +2031,8 @@ impl ActionExecutor {
             .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
         if list_node.node_type != "list" { return Err(OverseerError::ValidationError("append.target is not a list".to_string())); }
 
+        let style_guide = Self::derive_list_entry_style(list_node, false);
+
         // Determine entry type
         if let Some(entry) = list_node.parameters.get("entry") {
             match entry {
@@ -2050,7 +2059,9 @@ impl ActionExecutor {
                     new_item.name = format!("{}__{}", template_def.name, ordinal);
                     // Apply evaluated overrides from action block
                     Self::apply_overrides_evaluated(&mut new_item, overrides, owner_path, &snapshot)?;
+                    Self::apply_list_entry_style(&mut new_item, &style_guide);
                     list_node.children.push(new_item);
+                    Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
                     Self::mark_field_explicit_override(nodes, &indices);
                 }
@@ -2074,7 +2085,9 @@ impl ActionExecutor {
                         source_fingerprint: None,
                     };
                     item.parameters.insert("value".to_string(), val);
+                    Self::apply_list_entry_style(&mut item, &style_guide);
                     list_node.children.push(item);
+                    Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
                     Self::mark_field_explicit_override(nodes, &indices);
                 }
@@ -2100,9 +2113,11 @@ impl ActionExecutor {
             .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
         let list_node = Self::get_node_mut_by_indices(nodes, &indices)
             .ok_or_else(|| OverseerError::ValidationError(format!("List not found: {}", list_path)))?;
-        if list_node.node_type != "list" { return Err(OverseerError::ValidationError("prepend.target is not a list".to_string())); }
+    if list_node.node_type != "list" { return Err(OverseerError::ValidationError("prepend.target is not a list".to_string())); }
 
-        if let Some(entry) = list_node.parameters.get("entry") {
+    let style_guide = Self::derive_list_entry_style(list_node, true);
+
+    if let Some(entry) = list_node.parameters.get("entry") {
             match entry {
                 OverseerValue::Template(t) => {
                     let chosen_template_name = if let Some(name) = template_name { name.to_string() } else {
@@ -2124,7 +2139,9 @@ impl ActionExecutor {
                     let ordinal = list_node.children.len() + 1;
                     new_item.name = format!("{}__{}", template_def.name, ordinal);
                     Self::apply_overrides_evaluated(&mut new_item, overrides, owner_path, &snapshot)?;
+                    Self::apply_list_entry_style(&mut new_item, &style_guide);
                     list_node.children.insert(0, new_item);
+                    Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
                     Self::mark_field_explicit_override(nodes, &indices);
                 }
@@ -2147,7 +2164,9 @@ impl ActionExecutor {
                         source_fingerprint: None,
                     };
                     item.parameters.insert("value".to_string(), val);
+                    Self::apply_list_entry_style(&mut item, &style_guide);
                     list_node.children.insert(0, item);
+                    Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
                     Self::mark_field_explicit_override(nodes, &indices);
                 }
@@ -2157,6 +2176,102 @@ impl ActionExecutor {
             return Err(OverseerError::ValidationError("prepend: list has no entry parameter".to_string()));
         }
         Ok(())
+    }
+
+    fn derive_list_entry_style(list_node: &OverseerNode, inserting_at_front: bool) -> ListEntryStyleGuide {
+        let mut guide = ListEntryStyleGuide {
+            leading_blank_lines: 1,
+            newline: list_node
+                .source_snapshot
+                .as_ref()
+                .and_then(|snap| snap.newline.clone()),
+            indent_unit: list_node
+                .source_snapshot
+                .as_ref()
+                .and_then(|snap| snap.indent_unit.clone()),
+        };
+
+        let iter: Box<dyn Iterator<Item = &OverseerNode>> = if inserting_at_front {
+            Box::new(list_node.children.iter())
+        } else {
+            Box::new(list_node.children.iter().rev())
+        };
+
+        let mut fallback_blank_lines: Option<u8> = None;
+
+        for child in iter {
+            if guide.newline.is_none() {
+                if let Some(snap) = child.source_snapshot.as_ref() {
+                    if let Some(nl) = snap.newline.clone() {
+                        guide.newline = Some(nl);
+                    }
+                }
+            }
+            if guide.indent_unit.is_none() {
+                if let Some(snap) = child.source_snapshot.as_ref() {
+                    if let Some(ind) = snap.indent_unit.clone() {
+                        if !ind.is_empty() {
+                            guide.indent_unit = Some(ind);
+                        }
+                    }
+                }
+            }
+            if let Some(snapshot) = child.source_snapshot.as_ref() {
+                if matches!(snapshot.origin, SnapshotOrigin::Parsed) {
+                    guide.leading_blank_lines = child.leading_blank_lines.max(1);
+                    return guide;
+                }
+            }
+            if fallback_blank_lines.is_none() {
+                fallback_blank_lines = Some(child.leading_blank_lines.max(1));
+            }
+        }
+
+        if guide.leading_blank_lines == 1 {
+            if let Some(lines) = fallback_blank_lines {
+                guide.leading_blank_lines = lines;
+            }
+        }
+
+        if guide.indent_unit.is_none() {
+            guide.indent_unit = Some("    ".to_string());
+        }
+
+        guide
+    }
+
+    fn apply_list_entry_style(node: &mut OverseerNode, style: &ListEntryStyleGuide) {
+        node.leading_blank_lines = style.leading_blank_lines;
+        match node.source_snapshot.as_mut() {
+            Some(snapshot) => {
+                if let Some(indent) = style.indent_unit.clone() {
+                    snapshot.indent_unit = Some(indent);
+                }
+                if snapshot.newline.is_none() {
+                    snapshot.newline = style.newline.clone();
+                }
+            }
+            None => {
+                if style.indent_unit.is_some() || style.newline.is_some() {
+                    node.synthesize_snapshot_with_style(style.indent_unit.clone(), style.newline.clone());
+                }
+            }
+        }
+    }
+
+    fn harmonize_list_entry_spacing(list_node: &mut OverseerNode, style: &ListEntryStyleGuide) {
+        if list_node.children.len() <= 1 {
+            return;
+        }
+        let desired = style.leading_blank_lines.max(1);
+        if desired <= 1 {
+            return;
+        }
+        for child in list_node.children.iter_mut().skip(1) {
+            if child.leading_blank_lines < desired {
+                child.leading_blank_lines = desired;
+            }
+        }
     }
 
     /// Mark a field (at indices) as explicitly overridden on its parent so serializer/resolver persist mutations.
@@ -3376,6 +3491,7 @@ button Add { on click { append (template="<T>", list="/L") { - a = "hello" - b =
         let mut nodes = parse_document(input).unwrap().1;
         assert!(ActionExecutor::execute_event(&mut nodes, &vec!["Add".into()], "click").is_ok());
         let s = OverseerFileHandler::serialize_nodes(&nodes).unwrap();
+    println!("{}", s);
         assert!(s.contains("list L ("));
         assert!(s.contains("- {"));
         assert!(s.contains("- a = \"hello\""));

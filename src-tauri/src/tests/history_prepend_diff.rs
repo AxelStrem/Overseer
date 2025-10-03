@@ -1,7 +1,7 @@
 use std::fs;
 
 // Integration-style test verifying that prepending a new history entry to the large
-// exercise tracker example only introduces that new block in the merged output
+// exercise tracker example only introduces that new block in the regenerated output
 // (no incidental indentation or whitespace changes to existing history entries).
 #[test]
 fn prepending_history_entry_only_adds_new_block() {
@@ -29,6 +29,14 @@ fn prepending_history_entry_only_adds_new_block() {
 
     // Create new entry with a timestamp guaranteed to sort to the top (future time)
     let mut new_entry = template_entry.clone();
+    new_entry.source_snapshot = None;
+    new_entry.source_fingerprint = None;
+    new_entry.child_original_index = None;
+    for child in new_entry.children.iter_mut() {
+        child.source_snapshot = None;
+        child.source_fingerprint = None;
+        child.child_original_index = None;
+    }
     // update time parameter; find param 'time'
     if let Some(v) = new_entry.parameters.get_mut("time") { *v = crate::ast::OverseerValue::Timestamp("2099-12-31T23:59:59.000000+00:00".to_string()); }
     else { new_entry.parameters.insert("time".into(), crate::ast::OverseerValue::Timestamp("2099-12-31T23:59:59.000000+00:00".to_string())); }
@@ -39,23 +47,20 @@ fn prepending_history_entry_only_adds_new_block() {
     // Serialize regenerated canonical
     let regenerated = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
 
-    // Merge comments
-    let merged = crate::file_ops::OverseerFileHandler::merge_comments(&original, &regenerated);
-
-    // Diff logic: ensure original is contained in merged (minus the new first block) with identical indentation
+    // Diff logic: ensure original is contained in regenerated (minus the new first block) with identical indentation
     // Strategy: locate the new timestamp line and remove its surrounding entry block from merged, then compare remaining
     let marker = "2099-12-31T23:59:59.000000+00:00";
-    let merged_lines: Vec<&str> = merged.lines().collect();
+    let regenerated_lines: Vec<&str> = regenerated.lines().collect();
     let mut start_idx = None; let mut end_idx = None; let mut depth = 0usize;
-    for (i, line) in merged_lines.iter().enumerate() {
+    for (i, line) in regenerated_lines.iter().enumerate() {
         if line.contains(marker) { // inside the new block; walk backward to its opening "- {"
             // backward search for line containing "- {"
             for j in (0..=i).rev() {
-                if merged_lines[j].trim() == "- {" { start_idx = Some(j); break; }
+                if regenerated_lines[j].trim() == "- {" { start_idx = Some(j); break; }
             }
             // forward search to closing single '}' that aligns one indent level
-            for k in i..merged_lines.len() {
-                let t = merged_lines[k].trim();
+            for k in i..regenerated_lines.len() {
+                let t = regenerated_lines[k].trim();
                 if t == "- {" { depth += 1; }
                 else if t == "}" {
                     if depth == 0 { end_idx = Some(k); break; } else { depth -=1; }
@@ -66,7 +71,7 @@ fn prepending_history_entry_only_adds_new_block() {
     }
     let (s,e) = (start_idx.expect("start"), end_idx.expect("end"));
     let mut without_new = Vec::new();
-    for (i, l) in merged_lines.iter().enumerate() { if i < s || i > e { without_new.push(*l); } }
+    for (i, l) in regenerated_lines.iter().enumerate() { if i < s || i > e { without_new.push(*l); } }
     let reconstructed = without_new.join("\n") + "\n"; // ensure trailing newline
 
     // Normalize repeated blank lines for a lenient comparison (should already be stable)
@@ -82,6 +87,6 @@ fn prepending_history_entry_only_adds_new_block() {
         let mut first_diff = None;
         for i in 0..o_lines.len().min(r_lines.len()) { if o_lines[i] != r_lines[i] { first_diff = Some(i); break; } }
         if let Some(idx) = first_diff { let start = idx.saturating_sub(5); let end = (idx+5).min(o_lines.len()); for i in start..end { mismatch_report.push_str(&format!("ORIG {:04}: {}\n", i, o_lines[i])); mismatch_report.push_str(&format!("NEW  {:04}: {}\n", i, r_lines[i])); } }
-        panic!("Indentation/whitespace drift detected after merge when prepending new history entry. First diff vicinity:\n{}", mismatch_report);
+        panic!("Indentation/whitespace drift detected after serialization when prepending new history entry. First diff vicinity:\n{}", mismatch_report);
     }
 }

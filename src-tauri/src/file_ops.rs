@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
 
@@ -112,11 +112,18 @@ impl FileOperations {
 
     pub fn serialize_nodes(nodes: &[OverseerNode]) -> Result<String> {
         let mut output = String::new();
-    let prefs = Self::detect_formatting(nodes);
+        #[cfg(test)]
+        let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
+        let prefs = Self::detect_formatting(nodes);
         let indent_fallback = prefs.indent_unit.clone();
 
         for node in nodes {
             Self::serialize_node(node, &mut output, 0, indent_fallback.as_str())?;
+        }
+
+        let trailing = SourceRegistry::take_document_trailing();
+        if !trailing.is_empty() {
+            Self::push_trivia(&mut output, &trailing);
         }
 
         if prefs.newline == "\r\n" {
@@ -124,6 +131,81 @@ impl FileOperations {
         }
 
         Ok(output)
+    }
+
+    fn push_trivia(output: &mut String, trivia: &str) {
+        if trivia.is_empty() {
+            return;
+        }
+        let mut normalized = if trivia.contains("\r\n") {
+            trivia.replace("\r\n", "\n")
+        } else {
+            trivia.to_string()
+        };
+        if output.ends_with('\n') && normalized.starts_with('\n') && normalized.trim().is_empty() {
+            normalized.remove(0);
+        }
+        output.push_str(&normalized);
+    }
+
+    fn emit_trailing_trivia(snapshot: &Option<NodeSourceSnapshot>, output: &mut String) {
+        if let Some(snap) = snapshot {
+            if snap.trailing_trivia.trim().is_empty() {
+                return;
+            }
+            Self::push_trivia(output, &snap.trailing_trivia);
+        }
+    }
+
+    fn should_skip_trailing_trivia(node: &OverseerNode) -> bool {
+        let from_template = node.parameters.get("_from_template");
+        matches!(from_template, Some(OverseerValue::Boolean(true)))
+    }
+
+    fn emit_trailing_trivia_if_allowed(
+        node: &OverseerNode,
+        snapshot: &Option<NodeSourceSnapshot>,
+        output: &mut String,
+    ) {
+        if Self::should_skip_trailing_trivia(node) {
+            return;
+        }
+        Self::emit_trailing_trivia(snapshot, output);
+    }
+
+    fn snapshot_block_inner(snapshot: &NodeSourceSnapshot) -> Option<String> {
+        let (body_start, body_end) = snapshot.body_span?;
+        if body_end <= body_start {
+            return None;
+        }
+        let span_start = snapshot.span.0;
+        let rel_start = body_start.saturating_sub(span_start);
+        let rel_end = body_end.saturating_sub(span_start);
+        if rel_start >= snapshot.full_text.len() || rel_end > snapshot.full_text.len() || rel_start >= rel_end {
+            return None;
+        }
+        let slice = &snapshot.full_text[rel_start..rel_end];
+        let first_newline = slice.find('\n')?;
+        let last_newline = slice.rfind('\n')?;
+        if last_newline <= first_newline {
+            return None;
+        }
+        let inner = &slice[first_newline + 1..last_newline + 1];
+        if inner.trim().is_empty() {
+            return None;
+        }
+        Some(inner.replace("\r\n", "\n"))
+    }
+
+    fn is_auto_generated_entry_name(name: &str) -> bool {
+        let trimmed = name.trim();
+        if let Some((prefix, suffix)) = trimmed.rsplit_once("__") {
+            if prefix.is_empty() {
+                return false;
+            }
+            return suffix.chars().all(|c| c.is_ascii_digit());
+        }
+        false
     }
 
     fn snapshot_for(node: &OverseerNode) -> Option<NodeSourceSnapshot> {
@@ -193,25 +275,42 @@ impl FileOperations {
         fallback_indent_unit: &str,
     ) -> Result<()> {
         let snapshot = Self::snapshot_for(node);
+        let allow_snapshot_trivia = !Self::should_skip_trailing_trivia(node);
         let fallback_indent_unit = if fallback_indent_unit.is_empty() { "    " } else { fallback_indent_unit };
 
-        let mut blank_lines_to_emit = node.leading_blank_lines;
-        if !output.is_empty() {
-            if indent_level == 0 {
-                blank_lines_to_emit = 0;
-            } else {
-                blank_lines_to_emit = blank_lines_to_emit.saturating_sub(1);
+        let mut emitted_leading_trivia = false;
+        if allow_snapshot_trivia {
+            if let Some(snap) = snapshot.as_ref() {
+            if !snap.leading_trivia.is_empty() {
+                Self::push_trivia(output, &snap.leading_trivia);
+                emitted_leading_trivia = true;
             }
         }
-        for _ in 0..blank_lines_to_emit {
-            output.push('\n');
+        }
+
+        if !emitted_leading_trivia {
+            let mut blank_lines_to_emit = node.leading_blank_lines;
+            if !output.is_empty() {
+                if indent_level == 0 {
+                    blank_lines_to_emit = 0;
+                } else {
+                    blank_lines_to_emit = blank_lines_to_emit.saturating_sub(1);
+                }
+            }
+            for _ in 0..blank_lines_to_emit {
+                output.push('\n');
+            }
         }
 
         let indent = snapshot
             .as_ref()
             .and_then(|snap| snap.indent_unit.clone())
+            .filter(|ind| !ind.is_empty())
             .unwrap_or_else(|| fallback_indent_unit.repeat(indent_level));
-        output.push_str(&indent);
+        let needs_indent = !emitted_leading_trivia || output.ends_with('\n') || output.is_empty();
+        if needs_indent {
+            output.push_str(&indent);
+        }
 
         // Handle list-style items which start with '-'
         if in_list_body || node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-") {
@@ -229,11 +328,22 @@ impl FileOperations {
             output.push_str("- ");
             output.push_str(&Self::serialize_value_with_node(node, value));
                         output.push('\n');
+                        Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                         return Ok(());
                     }
                 }
-                // Complex/template-based item: emit as "- { ... }" and use the standard child emission (with concise override rules)
-                output.push_str("- {\n");
+                // Complex/template-based item: emit as "- name { ... }" (name optional) and use the standard child emission (with concise override rules)
+                output.push_str("- ");
+                let entry_name = node.name.trim();
+                let has_displayable_name = !entry_name.is_empty()
+                    && entry_name != "-"
+                    && !Self::is_auto_generated_entry_name(entry_name);
+                if has_displayable_name {
+                    output.push_str(entry_name);
+                    output.push_str(" {\n");
+                } else {
+                    output.push_str("{\n");
+                }
                 // Suppress template-derived children for instances and emit concise overrides
                 let suppress_template_children = node.template.is_some()
                     || matches!(
@@ -378,7 +488,16 @@ impl FileOperations {
                     // so field lines and nested blocks render correctly.
                     Self::serialize_node_context(child, output, indent_level + 1, false, fallback_indent_unit)?;
                 }
+                if node.children.is_empty() {
+                    if let Some(body_text) = snapshot
+                        .as_ref()
+                        .and_then(|snap| Self::snapshot_block_inner(snap))
+                    {
+                        Self::push_trivia(output, &body_text);
+                    }
+                }
                 output.push_str(&format!("{}}}\n", indent));
+                Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                 return Ok(());
             } else {
                 // Non-list context override: allow "- name = value" syntax
@@ -389,6 +508,7 @@ impl FileOperations {
                         output.push_str(" = ");
                         output.push_str(&Self::serialize_value_with_node(node, value));
                         output.push('\n');
+                        Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                         return Ok(());
                     }
                 }
@@ -401,6 +521,7 @@ impl FileOperations {
                         Self::serialize_node_context(child, output, indent_level + 1, false, fallback_indent_unit)?;
                     }
                     output.push_str(&format!("{}}}\n", indent));
+                    Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                     return Ok(());
                 }
                 // Else: fall through to normal serialization
@@ -418,6 +539,7 @@ impl FileOperations {
                         output.push_str(" = ");
                         output.push_str(&Self::serialize_value(val));
                         output.push('\n');
+                        Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                         return Ok(());
                     }
                 }
@@ -520,9 +642,15 @@ impl FileOperations {
         if let Some(value) = node.parameters.get("value") {
             output.push_str(&format!(" = {}\n", Self::serialize_value_with_node(node, value)));
         } else if node.children.is_empty() {
+            if let Some(body_text) = snapshot
+                .as_ref()
+                .and_then(|snap| Self::snapshot_block_inner(snap))
+            {
+                Self::push_trivia(output, &body_text);
+            }
             output.push('\n');
         } else {
-            output.push_str(" {\n");
+            output.push_str(" {");
             // Children under a list node are list-body items (render as '-')
             let children_in_list_body = node.node_type == "list";
             // Suppress template-derived children for any node that originated from a template (standalone instances or list entries)
@@ -668,6 +796,8 @@ impl FileOperations {
             output.push_str(&format!("{}}}\n", indent));
         }
 
+    Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
+
         Ok(())
     }
 
@@ -801,300 +931,21 @@ impl OverseerFileHandler {
     pub fn serialize_nodes(nodes: &[OverseerNode]) -> Result<String> {
         FileOperations::serialize_nodes(nodes)
     }
-
-    // Merge comments from original text into regenerated canonical text.
-    // Strategy:
-    // - Capture leading and trailing standalone comment blocks from original.
-    // - Build maps from anchor keys (whitespace-insensitive code lines) to:
-    //   a) preceding standalone comment blocks, and b) inline comments.
-    // - Walk regenerated lines and inject preserved comments at corresponding anchors.
-    pub fn merge_comments(original: &str, regenerated: &str) -> String {
-        // Helper: compute an anchor key by stripping inline comments and whitespace
-        fn anchor_key(line: &str) -> String {
-            let code = match line.find("//") {
-                Some(idx) => &line[..idx],
-                None => line,
-            };
-            let indent = code.chars().take_while(|c| c.is_whitespace()).count();
-            let trimmed_original = code.trim_start();
-
-            let mut canonical = code.trim_end().to_string();
-            loop {
-                let trimmed = canonical.trim_end();
-                if trimmed.ends_with("{}") {
-                    let new_len = trimmed.len().saturating_sub(2);
-                    canonical.truncate(new_len);
-                    continue;
-                }
-                if trimmed.ends_with('{') {
-                    let new_len = trimmed.len().saturating_sub(1);
-                    canonical.truncate(new_len);
-                    continue;
-                }
-                break;
-            }
-            let trimmed = canonical.trim_start();
-
-            if trimmed_original.starts_with("- {") {
-                return "list_entry".to_string();
-            }
-            if trimmed.starts_with("plot") {
-                let mut parts = trimmed.split_whitespace();
-                let _ = parts.next(); // "plot"
-                let name = parts.next().unwrap_or("");
-                let label_value = trimmed
-                    .split("label=")
-                    .nth(1)
-                    .map(|rest| {
-                        rest.split(|c| c == ',' || c == ')')
-                            .next()
-                            .unwrap_or("")
-                            .trim_matches('"')
-                            .trim_matches('\'')
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| "nolabel".to_string());
-                return format!("plot:{}:{}", name, label_value);
-            }
-
-            fn filtered(s: &str) -> String {
-                s.chars()
-                    .filter(|c| {
-                        !c.is_whitespace()
-                            && *c != '"'
-                            && *c != '\''
-                            && !c.is_ascii_digit()
-                    })
-                    .collect()
-            }
-
-            let normalized: String = if let Some(start) = trimmed.find('(') {
-                let (prefix, rest) = trimmed.split_at(start);
-                if let Some(end) = rest.rfind(')') {
-                    let inside = &rest[1..end];
-                    let mut parts: Vec<String> = inside
-                        .split(',')
-                        .map(|p| filtered(p))
-                        .filter(|p| !p.is_empty())
-                        .collect();
-                    parts.sort();
-                    let mut key = String::new();
-                    key.push_str(&filtered(prefix));
-                    key.push('(');
-                    key.push_str(&parts.join(","));
-                    key.push(')');
-                    let trailing = &rest[end + 1..];
-                    let trailing_filtered = filtered(trailing);
-                    if !trailing_filtered.is_empty() {
-                        key.push_str(&trailing_filtered);
-                    }
-                    key
-                } else {
-                    filtered(trimmed)
-                }
-            } else {
-                filtered(trimmed)
-            };
-            if normalized.is_empty() {
-                String::new()
-            } else if normalized == "}" {
-                format!("{}:}}", indent)
-            } else {
-                normalized
-            }
-        }
-
-        // Extract leading comment block
-        let mut leading_block: Vec<String> = Vec::new();
-        let mut started = false;
-        for line in original.lines() {
-            if line.trim_start().starts_with("//") || line.trim().is_empty() && !started {
-                leading_block.push(line.to_string());
-            } else {
-                let _started_flag = { started = true; started };
-                break;
-            }
-        }
-
-        // Identify the first non-comment code line to avoid double-inserting its leading block later
-        let first_code_key = original
-            .lines()
-            .find(|line| {
-                let trimmed = line.trim_start();
-                !trimmed.starts_with("//") && !trimmed.is_empty()
-            })
-            .map(anchor_key);
-
-        // Extract trailing comment block
-        let mut trailing_block: Vec<String> = Vec::new();
-        for line in original.lines().rev() {
-            if line.trim_start().starts_with("//") || line.trim().is_empty() {
-                trailing_block.push(line.to_string());
-            } else {
-                break;
-            }
-        }
-        trailing_block.reverse();
-
-        // Build maps of inline and block comments keyed by anchor
-        let mut map_inline: HashMap<String, String> = HashMap::new();
-        let mut map_block: HashMap<String, VecDeque<Vec<String>>> = HashMap::new();
-        let mut pending_block: Vec<String> = Vec::new();
-        for line in original.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") || trimmed.is_empty() {
-                // Accumulate standalone comment lines
-                pending_block.push(line.to_string());
-                continue;
-            }
-            // Code line: attach pending block (if any)
-            let key = anchor_key(line);
-            if !pending_block.is_empty() {
-                let block = std::mem::take(&mut pending_block);
-                map_block
-                    .entry(key.clone())
-                    .or_insert_with(VecDeque::new)
-                    .push_back(block);
-            }
-            // Capture inline comment (if any)
-            if let Some(idx) = line.find("//") {
-                let inline = &line[idx..];
-                map_inline.insert(key, inline.to_string());
-            }
-        }
-        // Any remaining pending_block becomes trailing block (handled above already)
-        if !pending_block.is_empty() && trailing_block.is_empty() {
-            trailing_block = std::mem::take(&mut pending_block);
-        }
-
-        // If we already captured a leading block and know the first anchor, drop its pending entry to avoid duplicates
-        if !leading_block.is_empty() {
-            if let Some(key) = first_code_key {
-                let mut remove_key = false;
-                if let Some(blocks) = map_block.get_mut(&key) {
-                    let _ = blocks.pop_front();
-                    remove_key = blocks.is_empty();
-                }
-                if remove_key {
-                    map_block.remove(&key);
-                }
-            }
-        }
-
-        // Precompute whether regenerated already includes captured leading/trailing blocks
-        let regen_lines: Vec<&str> = regenerated.lines().collect();
-        let leading_block_present = !leading_block.is_empty()
-            && leading_block.len() <= regen_lines.len()
-            && leading_block
-                .iter()
-                .zip(regen_lines.iter())
-                .all(|(expected, actual)| expected == actual);
-        let trailing_block_present = !trailing_block.is_empty()
-            && trailing_block.len() <= regen_lines.len()
-            && trailing_block
-                .iter()
-                .rev()
-                .zip(regen_lines.iter().rev())
-                .all(|(expected, actual)| expected == actual);
-
-        // Build merged output by walking regenerated
-        let mut out = String::new();
-        let mut inserted_leading = false;
-        for (i, line) in regenerated.lines().enumerate() {
-            if i == 0 && !inserted_leading && !leading_block.is_empty() && !leading_block_present {
-                for l in &leading_block { out.push_str(l); out.push('\n'); }
-                inserted_leading = true;
-            }
-            let key = anchor_key(line);
-            if !key.is_empty() {
-                let mut remove_key = false;
-                if let Some(blocks) = map_block.get_mut(&key) {
-                    if let Some(block) = blocks.pop_front() {
-                        for l in &block { out.push_str(l); out.push('\n'); }
-                    }
-                    remove_key = blocks.is_empty();
-                }
-                if remove_key {
-                    map_block.remove(&key);
-                }
-                if let Some(inl) = map_inline.get(&key) {
-                    if line.contains("//") {
-                        out.push_str(line);
-                        out.push('\n');
-                    } else {
-                        out.push_str(line);
-                        if !line.ends_with(' ') { out.push(' '); }
-                        out.push_str(inl);
-                        out.push('\n');
-                    }
-                    continue;
-                }
-            }
-            out.push_str(line);
-            out.push('\n');
-        }
-
-        // Append trailing block, if any
-        if !trailing_block.is_empty() && !trailing_block_present {
-            if !out.ends_with('\n') { out.push('\n'); }
-            for l in &trailing_block { out.push_str(l); out.push('\n'); }
-        }
-        out
-    }
 }
 
 #[cfg(test)]
-mod tests_merge_comments {
+mod tests_serializer_comment_trivia {
     use super::*;
 
-    #[test]
-    fn preserves_standalone_comment_before_block_with_param_spacing_change() {
-        let original = r#"div T {
-    int A = 1
-    int B = 2
-    int C = 3
-}
-<T> I {
-    - A = 3
-    - B = 2
-}
-
-// List as an example of correct behavior:
-list L(entry=<T>) {
-    - {
-        - A = 3
-        - B = 2
-    }
-}
-"#;
-        // Regenerated content may insert a space before '(' in parameter list
-        let regenerated = r#"div T {
-    int A = 1
-    int B = 2
-    int C = 3
-}
-<T> I {
-    - A = 3
-    - B = 2
-}
-list L (entry=<T>) {
-    - {
-        - A = 3
-        - B = 2
-    }
-}
-"#;
-        let merged = OverseerFileHandler::merge_comments(original, regenerated);
-        assert!(merged.contains("// List as an example of correct behavior:"), "Expected the standalone comment to be preserved in merged output.\nMerged:\n{}", merged);
-        // Ensure the comment appears before the list line
-        let pos_comment = merged.find("// List as an example of correct behavior:").unwrap();
-        let pos_list = merged.find("list L (entry=<T>)").unwrap_or_else(|| merged.find("list L(entry=<T>)").unwrap());
-        assert!(pos_comment < pos_list, "Comment should precede the list anchor line");
+    fn parse_and_resolve(src: &str) -> Vec<OverseerNode> {
+        let (_rem, mut nodes) = crate::parser::parse_document(src).expect("parse");
+        crate::resolver::resolve_document(&mut nodes);
+        nodes
     }
 
     #[test]
-    fn round_trip_save_preserves_comments_and_whitespace() {
-        // Original text with header, inline, leading/trailing comment blocks and blank lines
+    fn field_update_preserves_comments() {
+        let _guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
         let original = r#"// Header line 1
 // Header line 2
 
@@ -1114,81 +965,119 @@ div T {
 // Trailing file comment
 "#;
 
-        // Parse, resolve, and regenerate canonical content
-        let (_rem, mut nodes) = crate::parser::parse_document(original).expect("parse");
-        crate::resolver::resolve_document(&mut nodes);
-        let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
-        // Merge comments from original
-        let merged = OverseerFileHandler::merge_comments(original, &regenerated);
+        let mut nodes = parse_and_resolve(original);
+        let div_t = nodes
+            .iter_mut()
+            .find(|n| n.node_type == "div" && n.name == "T")
+            .expect("div T not found");
+        let field_b = div_t
+            .children
+            .iter_mut()
+            .find(|child| child.name == "B")
+            .expect("field B not found");
+    field_b.parameters.insert("value".to_string(), OverseerValue::Integer(42));
+        field_b.source_fingerprint = None;
 
-        // Write to a temporary file and read back
-        let mut tmp = std::env::temp_dir();
-        tmp.push(format!("overseer_test_{}_{}.os", std::process::id(), rand_suffix()));
-        let tmp_path = tmp.to_string_lossy().to_string();
-        std::fs::write(&tmp_path, &merged).expect("write");
-        let roundtrip = std::fs::read_to_string(&tmp_path).expect("read");
-
-        // Assertions: header, inline, standalone, trailing comments survive
-        assert!(roundtrip.contains("// Header line 1"));
-        assert!(roundtrip.contains("// Header line 2"));
-        assert!(roundtrip.contains("// comment before field A"));
-        assert!(roundtrip.contains("// inline A"));
-        assert!(roundtrip.contains("// Standalone comment before instance"));
-        assert!(roundtrip.trim_end().ends_with("// Trailing file comment"));
-        // Ensure the spacer before the standalone comment remains
-        assert!(roundtrip.contains("}\n\n// Standalone"), "Expected a blank line before the standalone comment to be preserved. Got:\n{}", roundtrip);
-        // Clean up
-        let _ = std::fs::remove_file(&tmp_path);
+        let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        assert!(output.contains("// Header line 1"));
+        assert!(output.contains("// comment before field A"));
+        assert!(output.contains("// inline A"));
+        assert!(output.contains("// Standalone comment before instance"));
+        assert!(output.trim_end().ends_with("// Trailing file comment"));
+        assert!(output.contains("int B = 42"));
     }
 
     #[test]
-    fn preserves_comment_inside_empty_block_entry() {
+    fn list_comment_survives_entry_change() {
+        let _guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
+        let original = r#"div T {
+    int A = 1
+    int B = 2
+    int C = 3
+}
+<T> I {
+    - A = 3
+    - B = 2
+}
+
+// List as an example of correct behavior:
+list L(entry=<T>) {
+    - {
+        - A = 3
+        - B = 2
+    }
+}
+"#;
+
+        let mut nodes = parse_and_resolve(original);
+        let list_l = nodes
+            .iter_mut()
+            .find(|n| n.node_type == "list" && n.name == "L")
+            .expect("list L not found");
+        list_l.source_fingerprint = None;
+        let entry = list_l.children.first_mut().expect("entry not found");
+        entry.source_fingerprint = None;
+        if let Some(field_b) = entry.children.iter_mut().find(|child| child.name == "B") {
+            field_b.parameters.insert("value".to_string(), OverseerValue::Integer(5));
+            field_b.source_fingerprint = None;
+        }
+
+        let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        assert!(output.contains("// List as an example of correct behavior:"));
+        assert!(output.contains("list L (entry=<T>)"));
+        assert!(output.contains("- B = 5"));
+    }
+
+    #[test]
+    fn empty_block_comment_preserved_after_rename() {
+        let _guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
         let original = r#"list FinalTemplate (entry=<ExtendedTemplate>) {
     - {
         // Should inherit BaseTemplate parameters through ExtendedTemplate
     }
 }
 "#;
-        let regenerated = r#"list FinalTemplate (entry=<ExtendedTemplate>) {
-    - {
-    }
-}
-"#;
-        let merged = OverseerFileHandler::merge_comments(original, regenerated);
-        assert!(
-            merged.contains("// Should inherit BaseTemplate parameters through ExtendedTemplate"),
-            "Expected comment inside empty list entry to be preserved. Got:\n{}",
-            merged
-        );
+
+        let mut nodes = parse_and_resolve(original);
+        let list = nodes
+            .iter_mut()
+            .find(|n| n.node_type == "list" && n.name == "FinalTemplate")
+            .expect("list not found");
+        list.source_fingerprint = None;
+        let entry = list.children.first_mut().expect("entry not found");
+        entry.name = "Entry1".to_string();
+        entry.source_fingerprint = None;
+
+        let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        assert!(output.contains("// Should inherit BaseTemplate parameters through ExtendedTemplate"));
+        assert!(output.contains("Entry1"));
     }
 
     #[test]
-    fn preserves_chart_comment_before_plot_line() {
-    let original = r##"chart C {
+    fn chart_comment_survives_plot_update() {
+        let _guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
+        let original = r##"chart C {
     plot P1 (color="#ff0000", label="A", source=$(foo), x=$(bar), y=$(baz))
     // P3: cumulative average over all exercises per day for each point's day
     plot P3 (color="#b42c22ff", label="Exercises", source=$(/drum_tracker/History.filter(|x| x/eid == 98) ), x=$(|t| t/time), y=$(|t| /drum_tracker/History.filter(|x| same_day(x/time, t/time)&&(x/eid!=33 && x/eid!=31 )).average(|x| x/avg_points)))
     plot P3 (color="#792eabff", label="Syncopated", source=$(/drum_tracker/History.filter(|x| x/eid == 80) ), x=$(|t| t/time), y=$(|t| /drum_tracker/History.filter(|x| same_day(x/time, t/time)&&(x/eid==80||x/eid==84)).average(|x| x/avg_points)))
 }
 "##;
-    let regenerated = r##"chart C {
-    plot P1 (color="#ff0000", label="A", source=$(foo), x=$(bar), y=$(baz))
-    plot P3 (color="#2eab35ff", label="Exercises", source=$(/drum_tracker/History.filter(|x| x/eid == 98)), x=$(|t| t/time), y=$(|t| /drum_tracker/History.filter(|x| same_day(x/time, t/time)&&(x/eid!=33 && x/eid!=31 )).average(|x| x/avg_points)))
-    plot P3 (color="#792eabff", label="Syncopated", source=$(/drum_tracker/History.filter(|x| x/eid == 80)), x=$(|t| t/time), y=$(|t| /drum_tracker/History.filter(|x| same_day(x/time, t/time)&&(x/eid==80||x/eid==84)).average(|x| x/avg_points)))
-}
-"##;
-        let merged = OverseerFileHandler::merge_comments(original, regenerated);
-        assert!(
-            merged.contains("// P3: cumulative average over all exercises per day for each point's day"),
-            "Expected chart comment to be preserved. Got:\n{}",
-            merged
-        );
-    }
 
-    fn rand_suffix() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        format!("{}", nanos)
+        let mut nodes = parse_and_resolve(original);
+        let chart = nodes
+            .iter_mut()
+            .find(|n| n.node_type == "chart" && n.name == "C")
+            .expect("chart not found");
+        chart.source_fingerprint = None;
+        if let Some(plot) = chart.children.iter_mut().find(|child| child.name == "P1") {
+            plot.parameters.insert("color".to_string(), OverseerValue::String("#00ff00".to_string()));
+            plot.source_fingerprint = None;
+        }
+
+        let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        assert!(output.contains("// P3: cumulative average over all exercises per day for each point's day"));
+        assert!(output.contains("color=\"#00ff00\""));
     }
 }
 

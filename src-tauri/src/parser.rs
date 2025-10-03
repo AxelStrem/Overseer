@@ -326,8 +326,8 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
     // Loop similar to previous many0(parse_node) but augmented to capture the count of
     // contiguous blank (whitespace-only) lines immediately preceding each parsed node.
     // We continue to ignore comment lines for blank-line counting so that stylistic
-    // vertical spacing authored purely with empty lines is preserved while comments
-    // remain handled by merge_comments using the original source text.
+    // vertical spacing authored purely with empty lines is preserved while comments are
+    // replayed directly from stored trivia during serialization.
     let mut nodes: Vec<OverseerNode> = Vec::new();
     let mut cur = input;
     let mut pending_whitespace_bytes: usize = 0;
@@ -335,7 +335,9 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
         // Skip EOF / pure whitespace remainder
         if cur.trim().is_empty() { break; }
 
-        let (after_comments, _) = match skip_comments_and_whitespace(cur) { Ok(t) => t, Err(_) => (cur, ()) };
+    let (after_comments, _) = match skip_comments_and_whitespace(cur) { Ok(t) => t, Err(_) => (cur, ()) };
+    let consumed_len = cur.len().saturating_sub(after_comments.len());
+    let consumed_trivia = &cur[..consumed_len];
         let cur_ptr = cur.as_ptr() as usize;
         let leading_ptr = cur_ptr.saturating_sub(pending_whitespace_bytes);
         pending_whitespace_bytes = 0;
@@ -362,6 +364,9 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
                 cur = rest;
             }
             Err(_) => {
+                if !consumed_trivia.is_empty() {
+                    SourceRegistry::append_document_trailing(consumed_trivia);
+                }
                 // Failed to parse a node; consume one physical line from original cursor to avoid infinite loop
                 if let Some(pos) = cur.find('\n') { cur = &cur[pos+1..]; } else { break; }
             }
