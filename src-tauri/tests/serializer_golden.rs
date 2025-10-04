@@ -26,7 +26,11 @@ struct FixtureMetrics {
 fn collect_fixtures() -> Vec<PathBuf> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixture_root = manifest_dir.join("tests/fixtures/serializer");
-    assert!(fixture_root.exists(), "Fixture directory missing: {:?}", fixture_root);
+    assert!(
+        fixture_root.exists(),
+        "Fixture directory missing: {:?}",
+        fixture_root
+    );
     let mut fixtures = Vec::new();
     let mut stack = vec![fixture_root];
     while let Some(dir) = stack.pop() {
@@ -126,9 +130,7 @@ fn first_diff(original: &str, regenerated: &str) -> String {
             let regen_slice = &regenerated.as_bytes()[idx..regenerated.len().min(idx + 40)];
             format!(
                 "first mismatch at byte {}\n  original: {:?}\n  regen:    {:?}",
-                idx,
-                orig_slice,
-                regen_slice
+                idx, orig_slice, regen_slice
             )
         }
     }
@@ -138,7 +140,10 @@ fn dump_regenerated_fixture(name: &str, content: &str) {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let dump_dir = manifest_dir.join("target/serializer-golden-failures");
     if fs::create_dir_all(&dump_dir).is_err() {
-        eprintln!("[serializer-golden] failed to create dump directory at {:?}", dump_dir);
+        eprintln!(
+            "[serializer-golden] failed to create dump directory at {:?}",
+            dump_dir
+        );
         return;
     }
     let dump_path = dump_dir.join(name);
@@ -159,7 +164,11 @@ fn serializer_round_trips_golden_fixtures() {
     );
 
     for fixture in fixtures {
-    let name = fixture.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>").to_string();
+        let name = fixture
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("<unknown>")
+            .to_string();
         let source = fs::read_to_string(&fixture).expect("read fixture");
         assert!(
             !source.is_empty(),

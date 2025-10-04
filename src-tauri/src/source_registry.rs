@@ -1,19 +1,22 @@
-use std::collections::HashMap;
-use std::sync::{atomic::{AtomicU64, Ordering}, LazyLock, RwLock};
 #[cfg(test)]
 use parking_lot::ReentrantMutex;
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    LazyLock, RwLock,
+};
 
 use crate::types::NodeSourceSnapshot;
 
 static DOCUMENT_TRAILING: LazyLock<RwLock<String>> = LazyLock::new(|| RwLock::new(String::new()));
-static SNAPSHOT_REGISTRY: LazyLock<RwLock<HashMap<String, NodeSourceSnapshot>>> = LazyLock::new(|| {
-    RwLock::new(HashMap::new())
-});
+static SNAPSHOT_REGISTRY: LazyLock<RwLock<HashMap<String, NodeSourceSnapshot>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 static REGISTRY_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(test)]
-pub static REGISTRY_TEST_MUTEX: LazyLock<ReentrantMutex<()>> = LazyLock::new(|| ReentrantMutex::new(()));
+pub static REGISTRY_TEST_MUTEX: LazyLock<ReentrantMutex<()>> =
+    LazyLock::new(|| ReentrantMutex::new(()));
 
 /// Global registry that retains source snapshots for nodes across parse/serialize cycles.
 ///
@@ -27,7 +30,9 @@ impl SourceRegistry {
     /// Clear all registered snapshots and reset the identifier counter. A fresh parse should
     /// call this before registering new entries so stale snapshots do not leak between documents.
     pub fn reset() {
-        let mut guard = SNAPSHOT_REGISTRY.write().expect("snapshot registry poisoned");
+        let mut guard = SNAPSHOT_REGISTRY
+            .write()
+            .expect("snapshot registry poisoned");
         guard.clear();
         REGISTRY_COUNTER.store(1, Ordering::Relaxed);
         Self::reset_document_trailing();
@@ -39,25 +44,33 @@ impl SourceRegistry {
     pub fn register(snapshot: &NodeSourceSnapshot) -> String {
         let id = REGISTRY_COUNTER.fetch_add(1, Ordering::Relaxed);
         let key = format!("ns{}", id);
-        let mut guard = SNAPSHOT_REGISTRY.write().expect("snapshot registry poisoned");
+        let mut guard = SNAPSHOT_REGISTRY
+            .write()
+            .expect("snapshot registry poisoned");
         guard.insert(key.clone(), snapshot.clone());
         key
     }
 
     /// Retrieve a previously registered snapshot by identifier.
     pub fn get(id: &str) -> Option<NodeSourceSnapshot> {
-        let guard = SNAPSHOT_REGISTRY.read().expect("snapshot registry poisoned");
+        let guard = SNAPSHOT_REGISTRY
+            .read()
+            .expect("snapshot registry poisoned");
         guard.get(id).cloned()
     }
 
     /// Returns the number of snapshots currently cached. Mostly useful for tests.
     pub fn len() -> usize {
-        let guard = SNAPSHOT_REGISTRY.read().expect("snapshot registry poisoned");
+        let guard = SNAPSHOT_REGISTRY
+            .read()
+            .expect("snapshot registry poisoned");
         guard.len()
     }
 
     pub fn reset_document_trailing() {
-        let mut guard = DOCUMENT_TRAILING.write().expect("snapshot registry poisoned");
+        let mut guard = DOCUMENT_TRAILING
+            .write()
+            .expect("snapshot registry poisoned");
         guard.clear();
     }
 
@@ -65,12 +78,16 @@ impl SourceRegistry {
         if chunk.is_empty() {
             return;
         }
-        let mut guard = DOCUMENT_TRAILING.write().expect("snapshot registry poisoned");
+        let mut guard = DOCUMENT_TRAILING
+            .write()
+            .expect("snapshot registry poisoned");
         guard.push_str(chunk);
     }
 
     pub fn take_document_trailing() -> String {
-        let mut guard = DOCUMENT_TRAILING.write().expect("snapshot registry poisoned");
+        let mut guard = DOCUMENT_TRAILING
+            .write()
+            .expect("snapshot registry poisoned");
         std::mem::take(&mut *guard)
     }
 }

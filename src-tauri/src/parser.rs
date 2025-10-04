@@ -1,15 +1,7 @@
 use crate::source_registry::SourceRegistry;
 use crate::types::{
-    OverseerNode,
-    OverseerValue,
-    Color,
-    CssSize,
-    BorderStyle,
-    NodeSourceSnapshot,
-    NodeHeaderSnapshot,
-    NodeBodySnapshot,
-    SourceSlice,
-    SnapshotOrigin,
+    BorderStyle, Color, CssSize, NodeBodySnapshot, NodeHeaderSnapshot, NodeSourceSnapshot,
+    OverseerNode, OverseerValue, SnapshotOrigin, SourceSlice,
 };
 use nom::{
     branch::alt,
@@ -160,14 +152,24 @@ fn assign_snapshot(
     if end_ptr < start_ptr {
         return;
     }
-    let Some(ctx) = current_parser_context() else { return; };
+    let Some(ctx) = current_parser_context() else {
+        return;
+    };
     if start_ptr < ctx.base_ptr || end_ptr > ctx.base_ptr + ctx.len {
         return;
     }
     let span_start = start_ptr - ctx.base_ptr;
     let span_end = end_ptr - ctx.base_ptr;
-    let leading_start = if leading_ptr < start_ptr { leading_ptr - ctx.base_ptr } else { span_start };
-    let leading_end = if leading_ptr < start_ptr { span_start } else { span_start };
+    let leading_start = if leading_ptr < start_ptr {
+        leading_ptr - ctx.base_ptr
+    } else {
+        span_start
+    };
+    let leading_end = if leading_ptr < start_ptr {
+        span_start
+    } else {
+        span_start
+    };
     let leading_span = if leading_start < leading_end {
         Some((leading_start, leading_end))
     } else {
@@ -184,24 +186,42 @@ fn assign_snapshot(
 
     let header_start = span_start;
     let mut header_end = to_offset(meta.header_end_ptr);
-    if header_end < header_start { header_end = header_start; }
-    if header_end > span_end { header_end = span_end; }
+    if header_end < header_start {
+        header_end = header_start;
+    }
+    if header_end > span_end {
+        header_end = span_end;
+    }
 
     let body_span = if meta.body_end_ptr > meta.body_start_ptr {
         let mut start = to_offset(meta.body_start_ptr);
         let mut end = to_offset(meta.body_end_ptr);
-        if start < span_start { start = span_start; }
-        if end > span_end { end = span_end; }
-        if end > start { Some((start, end)) } else { None }
+        if start < span_start {
+            start = span_start;
+        }
+        if end > span_end {
+            end = span_end;
+        }
+        if end > start {
+            Some((start, end))
+        } else {
+            None
+        }
     } else {
         None
     };
 
     let trailing_span = if end_ptr > meta.trailing_start_ptr {
         let mut start = to_offset(meta.trailing_start_ptr);
-        if start < span_start { start = span_start; }
+        if start < span_start {
+            start = span_start;
+        }
         let end = span_end;
-        if end > start { Some((start, end)) } else { None }
+        if end > start {
+            Some((start, end))
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -228,16 +248,17 @@ fn assign_snapshot(
     } else {
         None
     };
-    let indent_from_full_text = full_text
-        .lines()
-        .next()
-        .and_then(|line| {
-            let indent: String = line
-                .chars()
-                .take_while(|c| *c == ' ' || *c == '\t')
-                .collect();
-            if indent.is_empty() { None } else { Some(indent) }
-        });
+    let indent_from_full_text = full_text.lines().next().and_then(|line| {
+        let indent: String = line
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+        if indent.is_empty() {
+            None
+        } else {
+            Some(indent)
+        }
+    });
     let indent_from_leading = {
         let tail = leading_trivia
             .rsplit_once('\n')
@@ -247,7 +268,11 @@ fn assign_snapshot(
             .chars()
             .take_while(|c| *c == ' ' || *c == '\t')
             .collect();
-        if indent.is_empty() { None } else { Some(indent) }
+        if indent.is_empty() {
+            None
+        } else {
+            Some(indent)
+        }
     };
     let indent_unit = indent_from_full_text.or(indent_from_leading);
 
@@ -256,40 +281,51 @@ fn assign_snapshot(
     hasher.write(full_text.as_bytes());
     let fingerprint = hasher.finish();
 
-        let make_slice = |span: Option<(usize, usize)>| -> Option<SourceSlice> {
-            span.and_then(|(s_ptr, e_ptr)| {
-                if e_ptr <= s_ptr { return None; }
-                let start = to_offset(s_ptr);
-                let end = to_offset(e_ptr);
-                if end <= start { return None; }
-                let text = slice_from_offsets(ctx, start, end);
-                Some(SourceSlice { span: (start, end), text })
+    let make_slice = |span: Option<(usize, usize)>| -> Option<SourceSlice> {
+        span.and_then(|(s_ptr, e_ptr)| {
+            if e_ptr <= s_ptr {
+                return None;
+            }
+            let start = to_offset(s_ptr);
+            let end = to_offset(e_ptr);
+            if end <= start {
+                return None;
+            }
+            let text = slice_from_offsets(ctx, start, end);
+            Some(SourceSlice {
+                span: (start, end),
+                text,
             })
-        };
+        })
+    };
 
-        let header_trailing = meta
-            .header_gap_span
-            .and_then(|(s_ptr, e_ptr)| {
-                if e_ptr <= s_ptr { return None; }
-                let start = to_offset(s_ptr);
-                let end = to_offset(e_ptr);
-                if end <= start { return None; }
-                Some(slice_from_offsets(ctx, start, end))
-            })
-            .unwrap_or_default();
+    let header_trailing = meta
+        .header_gap_span
+        .and_then(|(s_ptr, e_ptr)| {
+            if e_ptr <= s_ptr {
+                return None;
+            }
+            let start = to_offset(s_ptr);
+            let end = to_offset(e_ptr);
+            if end <= start {
+                return None;
+            }
+            Some(slice_from_offsets(ctx, start, end))
+        })
+        .unwrap_or_default();
 
-        let mut header_snapshot = NodeHeaderSnapshot::default();
-        header_snapshot.template = make_slice(meta.template_span);
-        header_snapshot.type_token = make_slice(meta.type_span);
-        header_snapshot.name = make_slice(meta.name_span);
-        header_snapshot.parameters = make_slice(meta.params_span);
-        header_snapshot.assignment_operator = make_slice(meta.assignment_span);
-        header_snapshot.trailing = header_trailing;
+    let mut header_snapshot = NodeHeaderSnapshot::default();
+    header_snapshot.template = make_slice(meta.template_span);
+    header_snapshot.type_token = make_slice(meta.type_span);
+    header_snapshot.name = make_slice(meta.name_span);
+    header_snapshot.parameters = make_slice(meta.params_span);
+    header_snapshot.assignment_operator = make_slice(meta.assignment_span);
+    header_snapshot.trailing = header_trailing;
 
-        let mut body_snapshot = NodeBodySnapshot::default();
-        body_snapshot.value = make_slice(meta.value_span);
-        body_snapshot.child_envelope.open = make_slice(meta.block_open_span);
-        body_snapshot.child_envelope.close = make_slice(meta.block_close_span);
+    let mut body_snapshot = NodeBodySnapshot::default();
+    body_snapshot.value = make_slice(meta.value_span);
+    body_snapshot.child_envelope.open = make_slice(meta.block_open_span);
+    body_snapshot.child_envelope.close = make_slice(meta.block_close_span);
 
     let snapshot = NodeSourceSnapshot {
         span: (span_start, span_end),
@@ -299,20 +335,24 @@ fn assign_snapshot(
         trailing_span,
         full_text,
         leading_trivia,
-            header: header_snapshot,
-            body: body_snapshot,
+        header: header_snapshot,
+        body: body_snapshot,
         trailing_trivia,
         indent_unit,
         newline,
         fingerprint,
-            origin: SnapshotOrigin::Parsed,
+        origin: SnapshotOrigin::Parsed,
     };
     node.source_id = Some(SourceRegistry::register(&snapshot));
     node.source_snapshot = Some(snapshot);
     node.source_fingerprint = Some(fingerprint);
 }
 
-fn finalize_parsed_node(mut parsed: ParsedNode, leading_ptr: usize, start_ptr: usize) -> OverseerNode {
+fn finalize_parsed_node(
+    mut parsed: ParsedNode,
+    leading_ptr: usize,
+    start_ptr: usize,
+) -> OverseerNode {
     assign_snapshot(&mut parsed.node, leading_ptr, start_ptr, &parsed.snapshot);
     parsed.node
 }
@@ -333,18 +373,23 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
     let mut pending_whitespace_bytes: usize = 0;
     loop {
         // Skip EOF / pure whitespace remainder
-        if cur.trim().is_empty() { break; }
+        if cur.trim().is_empty() {
+            break;
+        }
 
-    let (after_comments, _) = match skip_comments_and_whitespace(cur) { Ok(t) => t, Err(_) => (cur, ()) };
-    let consumed_len = cur.len().saturating_sub(after_comments.len());
-    let consumed_trivia = &cur[..consumed_len];
+        let (after_comments, _) = match skip_comments_and_whitespace(cur) {
+            Ok(t) => t,
+            Err(_) => (cur, ()),
+        };
+        let consumed_len = cur.len().saturating_sub(after_comments.len());
+        let consumed_trivia = &cur[..consumed_len];
         let cur_ptr = cur.as_ptr() as usize;
         let leading_ptr = cur_ptr.saturating_sub(pending_whitespace_bytes);
         pending_whitespace_bytes = 0;
         // Attempt parse at after_comments
         match parse_node_with_meta(after_comments) {
             Ok((rest, parsed)) => {
-                    let trailing_whitespace_bytes = parsed.snapshot.trailing_whitespace_bytes;
+                let trailing_whitespace_bytes = parsed.snapshot.trailing_whitespace_bytes;
                 let node_start_ptr = after_comments.as_ptr() as usize;
                 let mut node = finalize_parsed_node(parsed, leading_ptr, node_start_ptr);
                 let mut leading_trivia_blanks = node
@@ -353,14 +398,16 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
                     .map(|snap| count_blank_lines_in_trivia(&snap.leading_trivia))
                     .unwrap_or(0);
                 if let Some(snap) = node.source_snapshot.as_ref() {
-                    let trimmed_start = snap.leading_trivia.trim_start_matches(|c| c == '\r' || c == '\n');
+                    let trimmed_start = snap
+                        .leading_trivia
+                        .trim_start_matches(|c| c == '\r' || c == '\n');
                     if trimmed_start.trim_start().starts_with("//") && leading_trivia_blanks > 0 {
                         leading_trivia_blanks = leading_trivia_blanks.saturating_sub(1);
                     }
                 }
                 node.leading_blank_lines = leading_trivia_blanks;
                 nodes.push(node);
-                    pending_whitespace_bytes = trailing_whitespace_bytes;
+                pending_whitespace_bytes = trailing_whitespace_bytes;
                 cur = rest;
             }
             Err(_) => {
@@ -368,7 +415,11 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
                     SourceRegistry::append_document_trailing(consumed_trivia);
                 }
                 // Failed to parse a node; consume one physical line from original cursor to avoid infinite loop
-                if let Some(pos) = cur.find('\n') { cur = &cur[pos+1..]; } else { break; }
+                if let Some(pos) = cur.find('\n') {
+                    cur = &cur[pos + 1..];
+                } else {
+                    break;
+                }
             }
         }
     }
@@ -386,25 +437,44 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
     fn enhance_authored_dash(nodes: &mut [OverseerNode]) {
         for n in nodes.iter_mut() {
             // Recurse first so child context is available
-            if !n.children.is_empty() { enhance_authored_dash(&mut n.children); }
+            if !n.children.is_empty() {
+                enhance_authored_dash(&mut n.children);
+            }
             // Nothing special at this node level beyond recursion; heuristic operates at each block among siblings
-            if n.children.len() > 0 { continue; }
+            if n.children.len() > 0 {
+                continue;
+            }
         }
         // Second pass per sibling group: we need sibling context, so operate on the slice passed in.
         let mut any_dash = false;
-        for c in nodes.iter() { if c.authored_dash { any_dash = true; break; } }
+        for c in nodes.iter() {
+            if c.authored_dash {
+                any_dash = true;
+                break;
+            }
+        }
         if any_dash {
             for c in nodes.iter_mut() {
-                if c.authored_dash { continue; }
-                if !c.children.is_empty() { continue; }
+                if c.authored_dash {
+                    continue;
+                }
+                if !c.children.is_empty() {
+                    continue;
+                }
                 // Count non-internal, non-value params
                 let mut extra_params = 0usize;
                 for (k, _v) in c.parameters.iter() {
                     let ks = k.as_str();
-                    if ks == "value" { continue; }
-                    if ks.starts_with('_') { continue; }
+                    if ks == "value" {
+                        continue;
+                    }
+                    if ks.starts_with('_') {
+                        continue;
+                    }
                     extra_params += 1;
-                    if extra_params > 0 { break; }
+                    if extra_params > 0 {
+                        break;
+                    }
                 }
                 if extra_params == 0 && c.parameters.contains_key("value") {
                     // Candidate simple value override lacking explicit dash token; mark it to allow concise emission later
@@ -432,10 +502,7 @@ fn skip_comments_and_whitespace(input: &str) -> IResult<&str, ()> {
 /// Skip single line comment // comment
 fn skip_single_line_comment(input: &str) -> IResult<&str, ()> {
     use nom::bytes::complete::is_not;
-    map(
-        preceded(tag("//"), is_not("\r\n")),
-        |_| (),
-    )(input)
+    map(preceded(tag("//"), is_not("\r\n")), |_| ())(input)
 }
 
 /// Skip multi-line comment /* comment */
@@ -453,11 +520,20 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     // Only skip lines that start with '=' and are not part of a value assignment after a type or identifier
     let trimmed = input.trim_start();
     if trimmed.starts_with('=') {
-        debug_parser!("[PARSER] Skipping invalid node start: {}", trimmed.chars().take(40).collect::<String>());
-        return Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+        debug_parser!(
+            "[PARSER] Skipping invalid node start: {}",
+            trimmed.chars().take(40).collect::<String>()
+        );
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
     }
     // Debug: print the input being parsed (disabled by default)
-    debug_parser!("[PARSER] input: {}", input.chars().take(80).collect::<String>());
+    debug_parser!(
+        "[PARSER] input: {}",
+        input.chars().take(80).collect::<String>()
+    );
 
     let mut cur = input;
     let mut template_span = None;
@@ -475,7 +551,8 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     let (next, (template_val_opt, node_type_opt)) = match alt((
         map(parse_template_value, |p| (Some(p), None)),
         map(parse_node_type, |t| (None, Some(t.to_string()))),
-    ))(cur) {
+    ))(cur)
+    {
         Ok(res) => res,
         Err(e) => {
             if !cur.trim().is_empty() {
@@ -512,7 +589,10 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     let (next, _) = multispace0(cur)?;
     cur = next;
 
-    debug_parser!("[PARSER] Before parsing parameters, input: {}", cur.chars().take(50).collect::<String>());
+    debug_parser!(
+        "[PARSER] Before parsing parameters, input: {}",
+        cur.chars().take(50).collect::<String>()
+    );
     let params_start_ptr = cur.as_ptr() as usize;
     let (after_params, parameters_with_order) = opt(parse_parameters)(cur)?;
     cur = after_params;
@@ -520,7 +600,10 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
         let params_end_ptr = cur.as_ptr() as usize;
         params_span = Some((params_start_ptr, params_end_ptr));
     }
-    debug_parser!("[PARSER] After parsing parameters, input: {}", cur.chars().take(50).collect::<String>());
+    debug_parser!(
+        "[PARSER] After parsing parameters, input: {}",
+        cur.chars().take(50).collect::<String>()
+    );
 
     let header_end_ptr = cur.as_ptr() as usize;
     let (next, _) = multispace0(cur)?;
@@ -531,7 +614,10 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     cur = next;
 
     // Parse body
-    debug_parser!("[PARSER] Before parsing body, input: {}", cur.chars().take(50).collect::<String>());
+    debug_parser!(
+        "[PARSER] Before parsing body, input: {}",
+        cur.chars().take(50).collect::<String>()
+    );
     let body_start_ptr = cur.as_ptr() as usize;
     let body_kind = if let Ok((after_assign, capture)) = parse_value_assignment_capture(cur) {
         cur = after_assign;
@@ -547,7 +633,10 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     };
     let body_end_ptr = cur.as_ptr() as usize;
     let trailing_start_ptr = body_end_ptr;
-    debug_parser!("[PARSER] After parsing body, input: {}", cur.chars().take(50).collect::<String>());
+    debug_parser!(
+        "[PARSER] After parsing body, input: {}",
+        cur.chars().take(50).collect::<String>()
+    );
     let (next, _) = multispace0(cur)?;
     let trailing_end_ptr = next.as_ptr() as usize;
     let consumed_len = cur.len() - next.len();
@@ -578,7 +667,11 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     }
 
     let template_path = template_value.as_ref().and_then(|val| {
-        if let OverseerValue::Template(t) = val { Some(t.clone()) } else { None }
+        if let OverseerValue::Template(t) = val {
+            Some(t.clone())
+        } else {
+            None
+        }
     });
 
     let final_node_type = if let Some(nt) = node_type_value.clone() {
@@ -608,31 +701,38 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
         node.raw_value_literal = Some(raw);
     }
 
-    debug_parser!("[PARSER] Parsed node: type='{}', name='{}'", node.node_type, node.name);
+    debug_parser!(
+        "[PARSER] Parsed node: type='{}', name='{}'",
+        node.node_type,
+        node.name
+    );
     if !node.parameters.is_empty() {
         debug_parser!("[PARSER]   Parameters: {:?}", node.parameters);
     }
 
-    Ok((cur, ParsedNode {
-        node,
-        snapshot: ParsedNodeSnapshotData {
-            template_span,
-            type_span,
-            name_span,
-            params_span,
-            header_gap_span,
-            value_span,
-            assignment_span,
-            block_open_span,
-            block_close_span,
-            header_end_ptr,
-            body_start_ptr,
-            body_end_ptr,
-            trailing_start_ptr,
-            trailing_end_ptr,
-            trailing_whitespace_bytes,
+    Ok((
+        cur,
+        ParsedNode {
+            node,
+            snapshot: ParsedNodeSnapshotData {
+                template_span,
+                type_span,
+                name_span,
+                params_span,
+                header_gap_span,
+                value_span,
+                assignment_span,
+                block_open_span,
+                block_close_span,
+                header_end_ptr,
+                body_start_ptr,
+                body_end_ptr,
+                trailing_start_ptr,
+                trailing_end_ptr,
+                trailing_whitespace_bytes,
+            },
         },
-    }))
+    ))
 }
 
 #[cfg(test)]
@@ -647,7 +747,10 @@ fn parse_node_type(input: &str) -> IResult<&str, &str> {
 
 /// Parse a template path like <../Task>
 fn parse_template_value(input: &str) -> IResult<&str, OverseerValue> {
-    map(delimited(char('<'), take_until(">"), char('>')), |s: &str| OverseerValue::Template(s.to_string()))(input)
+    map(
+        delimited(char('<'), take_until(">"), char('>')),
+        |s: &str| OverseerValue::Template(s.to_string()),
+    )(input)
 }
 
 /// Parse node parameters like (param=value, param2=value2) returning (map, order)
@@ -664,7 +767,10 @@ fn parse_parameters(input: &str) -> IResult<&str, (HashMap<String, OverseerValue
         |params: Vec<(String, OverseerValue)>| {
             let mut map = HashMap::new();
             let mut order = Vec::new();
-            for (k,v) in params { order.push(k.clone()); map.insert(k,v); }
+            for (k, v) in params {
+                order.push(k.clone());
+                map.insert(k, v);
+            }
             (map, order)
         },
     )(input)
@@ -675,7 +781,10 @@ fn parse_parameter(input: &str) -> IResult<&str, (String, OverseerValue)> {
     map(
         pair(
             parse_identifier,
-            preceded(pair(multispace0, char('=')), preceded(multispace0, parse_value)),
+            preceded(
+                pair(multispace0, char('=')),
+                preceded(multispace0, parse_value),
+            ),
         ),
         |(key, value)| (key.to_string(), value),
     )(input)
@@ -691,22 +800,28 @@ fn parse_value_assignment_capture(input: &str) -> IResult<&str, ValueAssignmentC
 
     if let Ok((after_value, (value, raw_literal))) = parse_number_value_with_raw(after_gap) {
         let value_end_ptr = after_value.as_ptr() as usize;
-        return Ok((after_value, ValueAssignmentCapture {
-            value,
-            raw_literal,
-            assignment_span: (equals_token_start, value_start_ptr),
-            value_span: (value_start_ptr, value_end_ptr),
-        }));
+        return Ok((
+            after_value,
+            ValueAssignmentCapture {
+                value,
+                raw_literal,
+                assignment_span: (equals_token_start, value_start_ptr),
+                value_span: (value_start_ptr, value_end_ptr),
+            },
+        ));
     }
 
     let (after_value, value) = parse_value(after_gap)?;
     let value_end_ptr = after_value.as_ptr() as usize;
-    Ok((after_value, ValueAssignmentCapture {
-        value,
-        raw_literal: None,
-        assignment_span: (equals_token_start, value_start_ptr),
-        value_span: (value_start_ptr, value_end_ptr),
-    }))
+    Ok((
+        after_value,
+        ValueAssignmentCapture {
+            value,
+            raw_literal: None,
+            assignment_span: (equals_token_start, value_start_ptr),
+            value_span: (value_start_ptr, value_end_ptr),
+        },
+    ))
 }
 
 fn parse_number_value_with_raw(input: &str) -> IResult<&str, (OverseerValue, Option<String>)> {
@@ -718,8 +833,10 @@ fn parse_number_value_with_raw(input: &str) -> IResult<&str, (OverseerValue, Opt
         OverseerValue::Float(_f) => {
             if consumed.contains('.') && consumed.ends_with('0') {
                 Some(consumed.to_string())
-            } else { None }
-        },
+            } else {
+                None
+            }
+        }
         _ => None,
     };
     Ok((remaining, (val, raw)))
@@ -731,13 +848,23 @@ fn parse_direct_value_capture(input: &str) -> IResult<&str, DirectValueCapture> 
     let (remaining, value) = parse_value(input)?;
     let trimmed_remaining = remaining.trim_start();
     if let Some(next) = trimmed_remaining.chars().next() {
-        let is_comment = next == '/' && (trimmed_remaining.starts_with("//") || trimmed_remaining.starts_with("/*"));
+        let is_comment = next == '/'
+            && (trimmed_remaining.starts_with("//") || trimmed_remaining.starts_with("/*"));
         if !is_comment {
-            return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )));
         }
     }
     let end_ptr = remaining.as_ptr() as usize;
-    Ok((remaining, DirectValueCapture { value, span: (start_ptr, end_ptr) }))
+    Ok((
+        remaining,
+        DirectValueCapture {
+            value,
+            span: (start_ptr, end_ptr),
+        },
+    ))
 }
 
 /// Parse a block { ... } capturing brace spans
@@ -750,7 +877,10 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
     let mut pending_whitespace_bytes: usize = 0;
 
     loop {
-    let (after_comments, _) = match skip_comments_and_whitespace(cursor) { Ok(t) => t, Err(_) => (cursor, ()) };
+        let (after_comments, _) = match skip_comments_and_whitespace(cursor) {
+            Ok(t) => t,
+            Err(_) => (cursor, ()),
+        };
         let cursor_ptr = cursor.as_ptr() as usize;
         let leading_ptr = cursor_ptr.saturating_sub(pending_whitespace_bytes);
         pending_whitespace_bytes = 0;
@@ -762,11 +892,14 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
             }
             let close_start_ptr = after_comments.as_ptr() as usize;
             let close_end_ptr = rest.as_ptr() as usize;
-            return Ok((rest, BlockCapture {
-                children,
-                open_span: (open_start_ptr, open_end_ptr),
-                close_span: (close_start_ptr, close_end_ptr),
-            }));
+            return Ok((
+                rest,
+                BlockCapture {
+                    children,
+                    open_span: (open_start_ptr, open_end_ptr),
+                    close_span: (close_start_ptr, close_end_ptr),
+                },
+            ));
         }
 
         match parse_node_with_meta(after_comments) {
@@ -779,7 +912,9 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
                     .map(|snap| count_blank_lines_in_trivia(&snap.leading_trivia))
                     .unwrap_or(0);
                 if let Some(snap) = node.source_snapshot.as_ref() {
-                    let trimmed_start = snap.leading_trivia.trim_start_matches(|c| c == '\r' || c == '\n');
+                    let trimmed_start = snap
+                        .leading_trivia
+                        .trim_start_matches(|c| c == '\r' || c == '\n');
                     if trimmed_start.trim_start().starts_with("//") && leading_trivia_blanks > 0 {
                         leading_trivia_blanks = leading_trivia_blanks.saturating_sub(1);
                     }
@@ -798,7 +933,10 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
         }
     }
 
-    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char)))
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Char,
+    )))
 }
 
 /// Parse different types of values
@@ -848,7 +986,10 @@ fn parse_formula_value(input: &str) -> IResult<&str, OverseerValue> {
     }
 
     // If we reach here, no matching ')'
-    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char)))
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Char,
+    )))
 }
 
 /// Parse quoted strings
@@ -864,26 +1005,30 @@ fn parse_number_value(input: &str) -> IResult<&str, OverseerValue> {
     // Recognize a number pattern first to avoid ambiguity between int and float.
     // This is more robust than alt((double, i64)) because i64 could partially
     // parse a float, and double could parse an integer as a float.
-    let (remaining, number_str) = recognize(
+    let (remaining, number_str) = recognize(pair(
+        opt(char('-')),
         pair(
-            opt(char('-')),
-            pair(
-                nom::character::complete::digit1,
-                opt(preceded(char('.'), nom::character::complete::digit1))
-            )
-        )
-    )(input)?;
+            nom::character::complete::digit1,
+            opt(preceded(char('.'), nom::character::complete::digit1)),
+        ),
+    ))(input)?;
 
     // If the recognized string contains a '.', it's a float. Otherwise, it's an integer.
     if number_str.contains('.') {
         match number_str.parse::<f64>() {
             Ok(f) => Ok((remaining, OverseerValue::Float(f))),
-            Err(_) => Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Float)))
+            Err(_) => Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Float,
+            ))),
         }
     } else {
         match number_str.parse::<i64>() {
             Ok(i) => Ok((remaining, OverseerValue::Integer(i))),
-            Err(_) => Err(nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Digit)))
+            Err(_) => Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Digit,
+            ))),
         }
     }
 }
@@ -903,30 +1048,20 @@ fn parse_unquoted_string_value(input: &str) -> IResult<&str, OverseerValue> {
 
 /// Parse color values in various formats
 fn parse_color_value(input: &str) -> IResult<&str, OverseerValue> {
-    alt((
-        parse_hex_color,
-        parse_rgb_color,
-        parse_named_color,
-    ))(input)
+    alt((parse_hex_color, parse_rgb_color, parse_named_color))(input)
 }
 
 /// Parse hex color like #FF0000 or #ff0000
 fn parse_hex_color(input: &str) -> IResult<&str, OverseerValue> {
     use nom::character::complete::hex_digit1;
-    map(
-        preceded(
-            char('#'), 
-            recognize(hex_digit1)
-        ),
-        |hex: &str| {
-            if hex.len() == 3 || hex.len() == 6 {
-                OverseerValue::Color(Color::Hex(format!("#{}", hex)))
-            } else {
-                // Invalid hex color, treat as string
-                OverseerValue::String(format!("#{}", hex))
-            }
+    map(preceded(char('#'), recognize(hex_digit1)), |hex: &str| {
+        if hex.len() == 3 || hex.len() == 6 {
+            OverseerValue::Color(Color::Hex(format!("#{}", hex)))
+        } else {
+            // Invalid hex color, treat as string
+            OverseerValue::String(format!("#{}", hex))
         }
-    )(input)
+    })(input)
 }
 
 /// Parse RGB color like rgb(0.2, 0.8, 0.5)
@@ -937,12 +1072,18 @@ fn parse_rgb_color(input: &str) -> IResult<&str, OverseerValue> {
             tag("rgb("),
             tuple((
                 preceded(multispace0, float),
-                preceded(preceded(multispace0, char(',')), preceded(multispace0, float)),
-                preceded(preceded(multispace0, char(',')), preceded(multispace0, float)),
+                preceded(
+                    preceded(multispace0, char(',')),
+                    preceded(multispace0, float),
+                ),
+                preceded(
+                    preceded(multispace0, char(',')),
+                    preceded(multispace0, float),
+                ),
             )),
             preceded(multispace0, char(')')),
         ),
-        |(r, g, b)| OverseerValue::Color(Color::Rgb(r, g, b))
+        |(r, g, b)| OverseerValue::Color(Color::Rgb(r, g, b)),
     )(input)
 }
 
@@ -951,26 +1092,47 @@ fn parse_named_color(input: &str) -> IResult<&str, OverseerValue> {
     map(
         alt((
             // Primary colors
-            alt((tag("red"), tag("green"), tag("blue"), tag("yellow"), tag("orange"))),
-            // Secondary colors  
-            alt((tag("purple"), tag("pink"), tag("brown"), tag("black"), tag("white"))),
+            alt((
+                tag("red"),
+                tag("green"),
+                tag("blue"),
+                tag("yellow"),
+                tag("orange"),
+            )),
+            // Secondary colors
+            alt((
+                tag("purple"),
+                tag("pink"),
+                tag("brown"),
+                tag("black"),
+                tag("white"),
+            )),
             // Tertiary colors
-            alt((tag("gray"), tag("grey"), tag("cyan"), tag("magenta"), tag("lime"))),
+            alt((
+                tag("gray"),
+                tag("grey"),
+                tag("cyan"),
+                tag("magenta"),
+                tag("lime"),
+            )),
             // Additional colors
-            alt((tag("maroon"), tag("navy"), tag("olive"), tag("teal"), tag("silver"))),
+            alt((
+                tag("maroon"),
+                tag("navy"),
+                tag("olive"),
+                tag("teal"),
+                tag("silver"),
+            )),
             // Final colors
-            alt((tag("aqua"), tag("fuchsia"), tag("transparent")))
+            alt((tag("aqua"), tag("fuchsia"), tag("transparent"))),
         )),
-        |color: &str| OverseerValue::Color(Color::Named(color.to_string()))
+        |color: &str| OverseerValue::Color(Color::Named(color.to_string())),
     )(input)
 }
 
 /// Parse CSS size values with units
 fn parse_css_size_value(input: &str) -> IResult<&str, OverseerValue> {
-    alt((
-        parse_css_size_with_unit,
-        parse_css_size_keywords,
-    ))(input)
+    alt((parse_css_size_with_unit, parse_css_size_keywords))(input)
 }
 
 /// Parse CSS size with unit like 16px, 1.2em, 50%
@@ -978,16 +1140,14 @@ fn parse_css_size_with_unit(input: &str) -> IResult<&str, OverseerValue> {
     // Use our own number parsing that matches the existing behavior
     map(
         pair(
-            recognize(
+            recognize(pair(
+                opt(char('-')),
                 pair(
-                    opt(char('-')),
-                    pair(
-                        nom::character::complete::digit1,
-                        opt(preceded(char('.'), nom::character::complete::digit1))
-                    )
-                )
-            ),
-            parse_css_unit
+                    nom::character::complete::digit1,
+                    opt(preceded(char('.'), nom::character::complete::digit1)),
+                ),
+            )),
+            parse_css_unit,
         ),
         |(number_str, unit)| {
             let value = number_str.parse::<f32>().unwrap_or(0.0);
@@ -1001,42 +1161,45 @@ fn parse_css_size_with_unit(input: &str) -> IResult<&str, OverseerValue> {
                 _ => return OverseerValue::String(format!("{}{}", value, unit)), // Invalid unit, treat as string
             };
             OverseerValue::CssSize(size)
-        }
+        },
     )(input)
 }
 
 /// Parse CSS unit suffixes
 fn parse_css_unit(input: &str) -> IResult<&str, &str> {
     alt((
-        tag("px"), tag("em"), tag("rem"), tag("vh"), tag("vw"), tag("%")
+        tag("px"),
+        tag("em"),
+        tag("rem"),
+        tag("vh"),
+        tag("vw"),
+        tag("%"),
     ))(input)
 }
 
 /// Parse CSS size keywords like auto, fit-content
 fn parse_css_size_keywords(input: &str) -> IResult<&str, OverseerValue> {
-    map(
-        alt((
-            tag("auto"),
-            tag("fit-content"),
-        )),
-        |keyword: &str| {
-            let size = match keyword {
-                "auto" => CssSize::Auto,
-                "fit-content" => CssSize::FitContent,
-                _ => return OverseerValue::String(keyword.to_string()),
-            };
-            OverseerValue::CssSize(size)
-        }
-    )(input)
+    map(alt((tag("auto"), tag("fit-content"))), |keyword: &str| {
+        let size = match keyword {
+            "auto" => CssSize::Auto,
+            "fit-content" => CssSize::FitContent,
+            _ => return OverseerValue::String(keyword.to_string()),
+        };
+        OverseerValue::CssSize(size)
+    })(input)
 }
 
 /// Parse border style values
 fn parse_border_style_value(input: &str) -> IResult<&str, OverseerValue> {
     alt((
         // Parse "none"
-        map(tag("none"), |_| OverseerValue::BorderStyle(BorderStyle::None)),
+        map(tag("none"), |_| {
+            OverseerValue::BorderStyle(BorderStyle::None)
+        }),
         // Parse "default"
-        map(tag("default"), |_| OverseerValue::BorderStyle(BorderStyle::Default)),
+        map(tag("default"), |_| {
+            OverseerValue::BorderStyle(BorderStyle::Default)
+        }),
         // Parse "solid thickness color" format
         map(
             tuple((
@@ -1054,7 +1217,7 @@ fn parse_border_style_value(input: &str) -> IResult<&str, OverseerValue> {
                     _ => Color::Named("black".to_string()), // fallback
                 };
                 OverseerValue::BorderStyle(BorderStyle::Solid(thickness_size, border_color))
-            }
+            },
         ),
         // Parse "dashed thickness color" format
         map(
@@ -1073,7 +1236,7 @@ fn parse_border_style_value(input: &str) -> IResult<&str, OverseerValue> {
                     _ => Color::Named("black".to_string()), // fallback
                 };
                 OverseerValue::BorderStyle(BorderStyle::Dashed(thickness_size, border_color))
-            }
+            },
         ),
         // Parse "dotted thickness color" format
         map(
@@ -1092,32 +1255,30 @@ fn parse_border_style_value(input: &str) -> IResult<&str, OverseerValue> {
                     _ => Color::Named("black".to_string()), // fallback
                 };
                 OverseerValue::BorderStyle(BorderStyle::Dotted(thickness_size, border_color))
-            }
+            },
         ),
     ))(input)
 }
 
 /// Parse identifiers (variable names, node types, etc.)
 fn parse_identifier(input: &str) -> IResult<&str, &str> {
-    recognize(
-        pair(
-            alt((alpha1, tag("_"))),
-            many0(alt((alphanumeric1, tag("_"), tag("."), tag("/"), tag("-")))),
-        ),
-    )(input)
+    recognize(pair(
+        alt((alpha1, tag("_"))),
+        many0(alt((alphanumeric1, tag("_"), tag("."), tag("/"), tag("-")))),
+    ))(input)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::SourceRegistry;
+    use super::*;
 
     #[test]
     fn test_parse_simple_node() {
         let input = r#"string Name = "TestValue""#;
         let result = parse_node(input);
         assert!(result.is_ok());
-        
+
         let (remaining, node) = result.unwrap();
         assert_eq!(remaining, "");
         assert_eq!(node.node_type, "string");
@@ -1127,7 +1288,7 @@ mod tests {
             Some(&OverseerValue::String("TestValue".to_string()))
         );
     }
-    
+
     #[test]
     fn test_parse_node_with_block() {
         let input = r#"div Task { string name = "My Task" }"#;
@@ -1172,7 +1333,10 @@ mod tests {
         assert_eq!(node.node_type, "TaskTemplate");
         assert_eq!(node.name, "my_task");
         assert_eq!(node.template, Some("../TaskTemplate".to_string()));
-        assert_eq!(node.parameters.get("priority"), Some(&OverseerValue::Integer(5)));
+        assert_eq!(
+            node.parameters.get("priority"),
+            Some(&OverseerValue::Integer(5))
+        );
     }
 
     #[test]
@@ -1184,9 +1348,18 @@ mod tests {
         assert_eq!(remaining, "");
         assert_eq!(node.node_type, "string");
         assert_eq!(node.name, "title");
-        assert_eq!(node.parameters.get("margin-top"), Some(&OverseerValue::Integer(10)));
-        assert_eq!(node.parameters.get("margin-left"), Some(&OverseerValue::Integer(5)));
-        assert_eq!(node.parameters.get("value"), Some(&OverseerValue::String("Test Value".to_string())));
+        assert_eq!(
+            node.parameters.get("margin-top"),
+            Some(&OverseerValue::Integer(10))
+        );
+        assert_eq!(
+            node.parameters.get("margin-left"),
+            Some(&OverseerValue::Integer(5))
+        );
+        assert_eq!(
+            node.parameters.get("value"),
+            Some(&OverseerValue::String("Test Value".to_string()))
+        );
     }
 
     #[test]
@@ -1198,8 +1371,14 @@ mod tests {
         assert_eq!(remaining, "");
         assert_eq!(node.node_type, "div");
         assert_eq!(node.name, "Container");
-        assert_eq!(node.parameters.get("layout"), Some(&OverseerValue::String("horizontal".to_string())));
-        assert_eq!(node.parameters.get("spacing"), Some(&OverseerValue::Integer(15)));
+        assert_eq!(
+            node.parameters.get("layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
+        assert_eq!(
+            node.parameters.get("spacing"),
+            Some(&OverseerValue::Integer(15))
+        );
         assert_eq!(node.children.len(), 1);
         assert_eq!(node.children[0].node_type, "string");
         assert_eq!(node.children[0].name, "field");
@@ -1216,20 +1395,35 @@ mod tests {
         assert_eq!(remaining, "");
         assert_eq!(node.node_type, "div");
         assert_eq!(node.name, "Card");
-        assert_eq!(node.parameters.get("layout"), Some(&OverseerValue::String("vertical".to_string())));
-        assert_eq!(node.parameters.get("spacing"), Some(&OverseerValue::Integer(8)));
-        assert_eq!(node.parameters.get("margin-bottom"), Some(&OverseerValue::Integer(12)));
+        assert_eq!(
+            node.parameters.get("layout"),
+            Some(&OverseerValue::String("vertical".to_string()))
+        );
+        assert_eq!(
+            node.parameters.get("spacing"),
+            Some(&OverseerValue::Integer(8))
+        );
+        assert_eq!(
+            node.parameters.get("margin-bottom"),
+            Some(&OverseerValue::Integer(12))
+        );
         assert_eq!(node.children.len(), 1);
         let child = &node.children[0];
         assert_eq!(child.node_type, "string");
         assert_eq!(child.name, "title");
-        assert_eq!(child.parameters.get("margin-top"), Some(&OverseerValue::Integer(4)));
-        assert_eq!(child.parameters.get("value"), Some(&OverseerValue::String("Card Title".to_string())));
+        assert_eq!(
+            child.parameters.get("margin-top"),
+            Some(&OverseerValue::Integer(4))
+        );
+        assert_eq!(
+            child.parameters.get("value"),
+            Some(&OverseerValue::String("Card Title".to_string()))
+        );
     }
 
     #[test]
     fn parse_document_captures_source_snapshots() {
-    let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
+        let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
         let src = concat!(
             "div Root {\n",
             "    string child = \"Value\"\n",
@@ -1240,61 +1434,116 @@ mod tests {
             "string next = \"Other\"\n",
         );
         let (remaining, mut nodes) = parse_document(src).expect("document should parse");
-        assert!(remaining.trim().is_empty(), "expected all input consumed, got '{remaining}'");
+        assert!(
+            remaining.trim().is_empty(),
+            "expected all input consumed, got '{remaining}'"
+        );
         assert_eq!(nodes.len(), 2, "expected two top-level nodes");
 
         let root = nodes.remove(0);
-        let root_snapshot = root.source_snapshot.as_ref().expect("root should have snapshot");
-        assert_eq!(root_snapshot.span.0, 0, "root span should begin at start of document");
+        let root_snapshot = root
+            .source_snapshot
+            .as_ref()
+            .expect("root should have snapshot");
+        assert_eq!(
+            root_snapshot.span.0, 0,
+            "root span should begin at start of document"
+        );
         assert!(root_snapshot.full_text.starts_with("div Root {"));
         assert!(root_snapshot.full_text.contains("string child = \"Value\""));
         assert!(root_snapshot.leading_trivia.is_empty());
         assert!(root_snapshot.indent_unit.is_none());
         assert!(root_snapshot.leading_span.is_none());
-    assert_eq!(root_snapshot.header_span.0, root_snapshot.span.0);
-    assert!(root_snapshot.header_span.1 <= root_snapshot.span.1);
-    assert!(root_snapshot.body_span.is_some());
-    assert!(root_snapshot.trailing_span.is_some());
-    assert!(root_snapshot.trailing_trivia.contains('\n'));
+        assert_eq!(root_snapshot.header_span.0, root_snapshot.span.0);
+        assert!(root_snapshot.header_span.1 <= root_snapshot.span.1);
+        assert!(root_snapshot.body_span.is_some());
+        assert!(root_snapshot.trailing_span.is_some());
+        assert!(root_snapshot.trailing_trivia.contains('\n'));
         let root_id = root.source_id.as_ref().expect("root should have source id");
-        let fetched_root = SourceRegistry::get(root_id).expect("root id should resolve in registry");
+        let fetched_root =
+            SourceRegistry::get(root_id).expect("root id should resolve in registry");
         assert_eq!(fetched_root.full_text, root_snapshot.full_text);
 
         let child = root.children.get(0).expect("root should have child");
-        let child_snapshot = child.source_snapshot.as_ref().expect("child should have snapshot");
+        let child_snapshot = child
+            .source_snapshot
+            .as_ref()
+            .expect("child should have snapshot");
         assert_eq!(child_snapshot.leading_trivia, "\n    ");
         assert_eq!(child_snapshot.indent_unit.as_deref(), Some("    "));
-        assert_eq!(child_snapshot.full_text.trim_end(), "string child = \"Value\"");
-        assert_eq!(child_snapshot.span.0, src.find("string child").expect("child text present"));
-        let child_leading_span = child_snapshot.leading_span.expect("child should record leading span");
-        assert_eq!(child_leading_span.1 - child_leading_span.0, child_snapshot.leading_trivia.len());
-    let child_body_span = child_snapshot.body_span.expect("child should have body span recorded");
-    assert!(child_body_span.1 > child_body_span.0);
-    assert!(child_snapshot.trailing_span.is_some());
-        let child_id = child.source_id.as_ref().expect("child should have source id");
+        assert_eq!(
+            child_snapshot.full_text.trim_end(),
+            "string child = \"Value\""
+        );
+        assert_eq!(
+            child_snapshot.span.0,
+            src.find("string child").expect("child text present")
+        );
+        let child_leading_span = child_snapshot
+            .leading_span
+            .expect("child should record leading span");
+        assert_eq!(
+            child_leading_span.1 - child_leading_span.0,
+            child_snapshot.leading_trivia.len()
+        );
+        let child_body_span = child_snapshot
+            .body_span
+            .expect("child should have body span recorded");
+        assert!(child_body_span.1 > child_body_span.0);
+        assert!(child_snapshot.trailing_span.is_some());
+        let child_id = child
+            .source_id
+            .as_ref()
+            .expect("child should have source id");
         assert_ne!(child_id, root_id, "child and root should have distinct ids");
-        let fetched_child = SourceRegistry::get(child_id).expect("child id should resolve in registry");
+        let fetched_child =
+            SourceRegistry::get(child_id).expect("child id should resolve in registry");
         assert_eq!(fetched_child.full_text, child_snapshot.full_text);
 
         let next = nodes.into_iter().next().expect("expected second node");
-    assert_eq!(next.leading_blank_lines, 2, "blank lines between nodes should be recorded");
-        let next_snapshot = next.source_snapshot.as_ref().expect("second node should have snapshot");
-        assert!(next_snapshot.full_text.starts_with("string next = \"Other\""));
+        assert_eq!(
+            next.leading_blank_lines, 2,
+            "blank lines between nodes should be recorded"
+        );
+        let next_snapshot = next
+            .source_snapshot
+            .as_ref()
+            .expect("second node should have snapshot");
+        assert!(next_snapshot
+            .full_text
+            .starts_with("string next = \"Other\""));
         assert!(next_snapshot.leading_trivia.starts_with("\n"));
-        assert!(next_snapshot.leading_trivia.contains("// comment about next"));
+        assert!(next_snapshot
+            .leading_trivia
+            .contains("// comment about next"));
         assert!(next_snapshot.indent_unit.is_none());
-        assert_eq!(next_snapshot.span.0, src.find("string next").expect("second node text present"));
-        let next_leading_span = next_snapshot.leading_span.expect("second node should record leading span");
-        assert_eq!(next_leading_span.1 - next_leading_span.0, next_snapshot.leading_trivia.len());
-    assert_eq!(next_snapshot.header_span.0, next_snapshot.span.0);
-    assert!(next_snapshot.body_span.is_some());
-    assert!(next_snapshot.trailing_trivia.ends_with('\n'));
-        let next_id = next.source_id.as_ref().expect("second node should have source id");
-        let fetched_next = SourceRegistry::get(next_id).expect("second node id should resolve in registry");
+        assert_eq!(
+            next_snapshot.span.0,
+            src.find("string next").expect("second node text present")
+        );
+        let next_leading_span = next_snapshot
+            .leading_span
+            .expect("second node should record leading span");
+        assert_eq!(
+            next_leading_span.1 - next_leading_span.0,
+            next_snapshot.leading_trivia.len()
+        );
+        assert_eq!(next_snapshot.header_span.0, next_snapshot.span.0);
+        assert!(next_snapshot.body_span.is_some());
+        assert!(next_snapshot.trailing_trivia.ends_with('\n'));
+        let next_id = next
+            .source_id
+            .as_ref()
+            .expect("second node should have source id");
+        let fetched_next =
+            SourceRegistry::get(next_id).expect("second node id should resolve in registry");
         assert_eq!(fetched_next.full_text, next_snapshot.full_text);
 
-
-        assert_eq!(SourceRegistry::len(), 3, "registry should track all parsed nodes in sample");
+        assert_eq!(
+            SourceRegistry::len(),
+            3,
+            "registry should track all parsed nodes in sample"
+        );
 
         SourceRegistry::reset();
     }
@@ -1306,68 +1555,116 @@ mod tests {
         assert!(result.is_ok());
         let (remaining, node) = result.unwrap();
         assert_eq!(remaining, "");
-        assert_eq!(node.parameters.get("visible"), Some(&OverseerValue::Boolean(true)));
-        assert_eq!(node.parameters.get("opacity"), Some(&OverseerValue::Float(0.8)));
-        assert_eq!(node.parameters.get("count"), Some(&OverseerValue::Integer(42)));
+        assert_eq!(
+            node.parameters.get("visible"),
+            Some(&OverseerValue::Boolean(true))
+        );
+        assert_eq!(
+            node.parameters.get("opacity"),
+            Some(&OverseerValue::Float(0.8))
+        );
+        assert_eq!(
+            node.parameters.get("count"),
+            Some(&OverseerValue::Integer(42))
+        );
     }
 
     #[test]
     fn test_parse_color_values() {
         // Test hex colors
         let result = parse_value("#FF0000");
-        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Hex("#FF0000".to_string())))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::Color(Color::Hex("#FF0000".to_string()))))
+        );
+
         let result = parse_value("#abc");
-        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Hex("#abc".to_string())))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::Color(Color::Hex("#abc".to_string()))))
+        );
+
         // Test named colors
         let result = parse_value("red");
-        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Named("red".to_string())))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::Color(Color::Named("red".to_string()))))
+        );
+
         let result = parse_value("transparent");
-        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Named("transparent".to_string())))));
-        
+        assert_eq!(
+            result,
+            Ok((
+                "",
+                OverseerValue::Color(Color::Named("transparent".to_string()))
+            ))
+        );
+
         // Test RGB colors
         let result = parse_value("rgb(0.2, 0.8, 0.5)");
-        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Rgb(0.2, 0.8, 0.5)))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::Color(Color::Rgb(0.2, 0.8, 0.5))))
+        );
+
         let result = parse_value("rgb(1.0, 0.0, 0.5)");
-        assert_eq!(result, Ok(("", OverseerValue::Color(Color::Rgb(1.0, 0.0, 0.5)))));
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::Color(Color::Rgb(1.0, 0.0, 0.5))))
+        );
     }
-    
+
     #[test]
     fn test_parse_css_size_values() {
         // Test pixels
         let result = parse_value("16px");
-        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Pixels(16.0)))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::CssSize(CssSize::Pixels(16.0))))
+        );
+
         let result = parse_value("10.5px");
-        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Pixels(10.5)))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::CssSize(CssSize::Pixels(10.5))))
+        );
+
         // Test percentages
         let result = parse_value("120%");
-        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Percentage(120.0)))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::CssSize(CssSize::Percentage(120.0))))
+        );
+
         // Test em/rem
         let result = parse_value("1.2em");
         assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Em(1.2)))));
-        
+
         let result = parse_value("2rem");
         assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Rem(2.0)))));
-        
+
         // Test viewport units
         let result = parse_value("50vw");
-        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::ViewportWidth(50.0)))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::CssSize(CssSize::ViewportWidth(50.0))))
+        );
+
         let result = parse_value("100vh");
-        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::ViewportHeight(100.0)))));
-        
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::CssSize(CssSize::ViewportHeight(100.0))))
+        );
+
         // Test keywords
         let result = parse_value("auto");
         assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Auto))));
-        
+
         let result = parse_value("fit-content");
-        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::FitContent))));
+        assert_eq!(
+            result,
+            Ok(("", OverseerValue::CssSize(CssSize::FitContent)))
+        );
     }
 
     #[test]
@@ -1377,14 +1674,26 @@ mod tests {
         }"#;
         let result = parse_node(input);
         assert!(result.is_ok());
-        
+
         let (_, node) = result.unwrap();
         assert_eq!(node.node_type, "div");
         assert_eq!(node.name, "Container");
-        assert_eq!(node.parameters.get("background-color"), Some(&OverseerValue::Color(Color::Hex("#FF0000".to_string()))));
-        assert_eq!(node.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
-        assert_eq!(node.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
-        assert_eq!(node.parameters.get("width"), Some(&OverseerValue::CssSize(CssSize::Percentage(50.0))));
+        assert_eq!(
+            node.parameters.get("background-color"),
+            Some(&OverseerValue::Color(Color::Hex("#FF0000".to_string())))
+        );
+        assert_eq!(
+            node.parameters.get("font-color"),
+            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
+        );
+        assert_eq!(
+            node.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
+        );
+        assert_eq!(
+            node.parameters.get("width"),
+            Some(&OverseerValue::CssSize(CssSize::Percentage(50.0)))
+        );
     }
 
     #[test]
@@ -1392,15 +1701,24 @@ mod tests {
         // Test with parameter syntax matching existing working tests
         let input = r#"div Container (markdown=true, font-size=18px) {
         }"#;
-        
+
         let result = parse_node(input);
-        assert!(result.is_ok(), "Failed to parse node with markdown parameter: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Failed to parse node with markdown parameter: {:?}",
+            result.err()
+        );
+
         let (_, node) = result.unwrap();
         assert_eq!(node.node_type, "div");
         assert_eq!(node.name, "Container");
-        assert_eq!(node.parameters.get("markdown"), Some(&OverseerValue::Boolean(true)));
-        assert_eq!(node.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(18.0))));
+        assert_eq!(
+            node.parameters.get("markdown"),
+            Some(&OverseerValue::Boolean(true))
+        );
+        assert_eq!(
+            node.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(18.0)))
+        );
     }
-
 }

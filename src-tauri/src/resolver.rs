@@ -1,6 +1,6 @@
+use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
 #[allow(unused_imports)]
-use crate::types::{OverseerNode, OverseerValue, Color, CssSize, NodeSourceSnapshot};
-use crate::formula_evaluator::{FormulaEvaluator, EvaluationContext};
+use crate::types::{Color, CssSize, NodeSourceSnapshot, OverseerNode, OverseerValue};
 use std::collections::HashMap;
 
 // Debug logging macro for resolver
@@ -17,11 +17,19 @@ fn find_template_by_name(nodes: &[OverseerNode], template_name: &str) -> Option<
     for node in nodes {
         // Any node can be a template if its name matches
         if node.name == template_name {
-            debug_resolver!("[RESOLVER] Found template: {} (type: {}) with {} children", node.name, node.node_type, node.children.len());
+            debug_resolver!(
+                "[RESOLVER] Found template: {} (type: {}) with {} children",
+                node.name,
+                node.node_type,
+                node.children.len()
+            );
             #[cfg(feature = "debug-resolver")]
             {
                 for child in &node.children {
-                    println!("[RESOLVER]   Template field: {} (type: {})", child.name, child.node_type);
+                    println!(
+                        "[RESOLVER]   Template field: {} (type: {})",
+                        child.name, child.node_type
+                    );
                 }
             }
             return Some(node.clone());
@@ -42,29 +50,36 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
     const MAX_PASSES: usize = 10; // Prevent infinite loops
     let mut pass = 0;
     let mut made_progress = true;
-    
+
     while made_progress && pass < MAX_PASSES {
         made_progress = false;
         pass += 1;
         debug_resolver!("[RESOLVER] Template resolution pass {}", pass);
-        
+
         // Create a snapshot of nodes for template lookup (immutable reference)
         let nodes_snapshot = nodes.clone(); // We need this for template lookup
-        
+
         // Try to resolve templates in this pass
         for node in nodes.iter_mut() {
             if resolve_node_templates(node, &nodes_snapshot, &mut made_progress) {
                 made_progress = true;
             }
         }
-        
-        debug_resolver!("[RESOLVER] Pass {} complete, made_progress: {}", pass, made_progress);
+
+        debug_resolver!(
+            "[RESOLVER] Pass {} complete, made_progress: {}",
+            pass,
+            made_progress
+        );
     }
-    
+
     if pass >= MAX_PASSES {
         debug_resolver!("[RESOLVER] Warning: Maximum template resolution passes reached. Some templates may have circular dependencies.");
     } else {
-        debug_resolver!("[RESOLVER] Template resolution completed in {} passes", pass);
+        debug_resolver!(
+            "[RESOLVER] Template resolution completed in {} passes",
+            pass
+        );
     }
 }
 
@@ -72,13 +87,13 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
 pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     // Multi-pass template resolution to handle template dependencies
     resolve_templates_multipass(nodes);
-    
+
     // After template resolution, resolve layout parameters
     resolve_layout_parameters(nodes, None);
-    
+
     // After layout resolution, resolve parameter inheritance
     resolve_parameter_inheritance(nodes, &HashMap::new());
-    
+
     // After parameter inheritance, evaluate formulas (multi-pass so aggregates whose inputs appear later update)
     evaluate_formulas_in_document_multi_pass(nodes);
 
@@ -93,20 +108,27 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
 }
 
 /// Selective resolution that only processes specific field paths
-pub fn resolve_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
-    debug_resolver!("🎯 Selective resolution for {} fields: {:?}", field_paths.len(), field_paths);
-    
+pub fn resolve_specific_fields(
+    nodes: &mut Vec<OverseerNode>,
+    field_paths: &std::collections::HashSet<String>,
+) {
+    debug_resolver!(
+        "🎯 Selective resolution for {} fields: {:?}",
+        field_paths.len(),
+        field_paths
+    );
+
     // For selective updates, we only need to:
     // 1. Re-evaluate formulas for the specific fields
     // 2. Re-compute charts that depend on those fields
     // 3. Skip template resolution, layout, and parameter inheritance (those don't change)
-    
+
     // Only evaluate formulas for the specific field paths
     evaluate_formulas_for_specific_fields(nodes, field_paths);
-    
+
     // Only recompute charts that contain references to the changed fields
     compute_chart_series_for_specific_fields(nodes, field_paths);
-    
+
     debug_resolver!("✅ Selective resolution completed");
 }
 
@@ -115,7 +137,9 @@ fn initialize_and_validate_mount_nodes(nodes: &mut Vec<OverseerNode>) {
     let len = nodes.len();
     for i in 0..len {
         let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-        unsafe { initialize_and_validate_mount_nodes_rec(node_ptr); }
+        unsafe {
+            initialize_and_validate_mount_nodes_rec(node_ptr);
+        }
     }
 }
 
@@ -125,17 +149,28 @@ unsafe fn initialize_and_validate_mount_nodes_rec(node_ptr: *mut OverseerNode) {
     if node.node_type == "mount" {
         // Default: unloaded (do not clobber if already set by actions)
         if !node.parameters.contains_key("_mount_status") {
-            node.parameters.insert("_mount_status".to_string(), OverseerValue::String("unloaded".to_string()));
+            node.parameters.insert(
+                "_mount_status".to_string(),
+                OverseerValue::String("unloaded".to_string()),
+            );
         }
         // Validate required 'source' parameter presence
         let has_source = node.parameters.contains_key("source");
         if !has_source {
-            node.parameters.insert("_mount_status".to_string(), OverseerValue::String("error".to_string()));
-            node.parameters.insert("_mount_error".to_string(), OverseerValue::String("mount: missing required 'source' parameter".to_string()));
+            node.parameters.insert(
+                "_mount_status".to_string(),
+                OverseerValue::String("error".to_string()),
+            );
+            node.parameters.insert(
+                "_mount_error".to_string(),
+                OverseerValue::String("mount: missing required 'source' parameter".to_string()),
+            );
         }
         // Default lazy=true if not provided; set as computed shadow so renderers can read via either path
-        if !node.parameters.contains_key("lazy") && !node.parameters.contains_key("_computed_lazy") {
-            node.parameters.insert("_computed_lazy".to_string(), OverseerValue::Boolean(true));
+        if !node.parameters.contains_key("lazy") && !node.parameters.contains_key("_computed_lazy")
+        {
+            node.parameters
+                .insert("_computed_lazy".to_string(), OverseerValue::Boolean(true));
         }
     }
     for idx in 0..node.children.len() {
@@ -151,7 +186,14 @@ fn compute_chart_series(nodes: &mut Vec<OverseerNode>) {
     for i in 0..len {
         let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
         let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-        unsafe { recursively_compute_chart_series(node_ptr, std::ptr::null(), &mut current_path, &snapshot); }
+        unsafe {
+            recursively_compute_chart_series(
+                node_ptr,
+                std::ptr::null(),
+                &mut current_path,
+                &snapshot,
+            );
+        }
     }
 }
 
@@ -179,15 +221,20 @@ unsafe fn recursively_compute_chart_series(
             let ctx = EvaluationContext::new(current_path.clone(), document_root);
 
             // Resolve source: support plain path string OR a processed list via method chain
-            enum SourceItems<'a> { FromPath(Vec<String>, &'a OverseerNode), FromList(Vec<String>, Vec<&'a OverseerNode>) }
+            enum SourceItems<'a> {
+                FromPath(Vec<String>, &'a OverseerNode),
+                FromList(Vec<String>, Vec<&'a OverseerNode>),
+            }
             let source_items: Option<SourceItems> = match plot.parameters.get("source") {
-                Some(OverseerValue::String(s)) => {
-                    resolve_path_from(document_root, current_path, s).map(|(p, n)| SourceItems::FromPath(p, n))
-                }
+                Some(OverseerValue::String(s)) => resolve_path_from(document_root, current_path, s)
+                    .map(|(p, n)| SourceItems::FromPath(p, n)),
                 Some(OverseerValue::Formula(f)) => {
                     // Try to evaluate to a string path first
                     match FormulaEvaluator::evaluate_formula(f, &ctx) {
-                        Ok(OverseerValue::String(s)) => resolve_path_from(document_root, current_path, &s).map(|(p, n)| SourceItems::FromPath(p, n)),
+                        Ok(OverseerValue::String(s)) => {
+                            resolve_path_from(document_root, current_path, &s)
+                                .map(|(p, n)| SourceItems::FromPath(p, n))
+                        }
                         _ => {
                             // Fall back: treat the formula as a list-source expression
                             match FormulaEvaluator::evaluate_list_source_nodes(f, &ctx) {
@@ -202,8 +249,14 @@ unsafe fn recursively_compute_chart_series(
 
             if let Some(source_items) = source_items {
                 // Prepare item iteration and path seeds
-                let (source_path_vec, items, source_ref_opt): (Vec<String>, Vec<&OverseerNode>, Option<&OverseerNode>) = match source_items {
-                    SourceItems::FromPath(p, n) => (p.clone(), n.get_accessible_children(), Some(n)),
+                let (source_path_vec, items, source_ref_opt): (
+                    Vec<String>,
+                    Vec<&OverseerNode>,
+                    Option<&OverseerNode>,
+                ) = match source_items {
+                    SourceItems::FromPath(p, n) => {
+                        (p.clone(), n.get_accessible_children(), Some(n))
+                    }
                     SourceItems::FromList(p, list) => (p, list, None),
                 };
                 let mut series: Vec<(f64, f64)> = Vec::new();
@@ -215,13 +268,17 @@ unsafe fn recursively_compute_chart_series(
                         OverseerValue::String(s) => Some(s.as_str()),
                         _ => None,
                     }
-                } else { None };
+                } else {
+                    None
+                };
                 let y_src = match plot.parameters.get("y") {
                     Some(OverseerValue::Formula(s)) => Some(s.as_str()),
                     Some(OverseerValue::String(s)) => Some(s.as_str()),
                     _ => None,
                 };
-                if x_src.is_none() || y_src.is_none() { continue; }
+                if x_src.is_none() || y_src.is_none() {
+                    continue;
+                }
                 let x_src = x_src.unwrap();
                 let y_src = y_src.unwrap();
 
@@ -229,7 +286,12 @@ unsafe fn recursively_compute_chart_series(
                     // Build item path for context
                     let mut item_path = source_path_vec.clone();
                     item_path.push(item.name.clone());
-                    let ctx = EvaluationContext::new_with_current_and_parent(item, source_ref_opt, item_path, document_root);
+                    let ctx = EvaluationContext::new_with_current_and_parent(
+                        item,
+                        source_ref_opt,
+                        item_path,
+                        document_root,
+                    );
 
                     let x_val = FormulaEvaluator::evaluate_lambda_on_item(x_src, &ctx, item).ok();
                     let y_val = FormulaEvaluator::evaluate_lambda_on_item(y_src, &ctx, item).ok();
@@ -248,16 +310,23 @@ unsafe fn recursively_compute_chart_series(
 
                 // Store series as JSON string
                 let json = series_to_json(&series);
-                plot.parameters.insert("_computed_series".to_string(), OverseerValue::String(json));
+                plot.parameters
+                    .insert("_computed_series".to_string(), OverseerValue::String(json));
             }
         }
 
         // Store computed bounds on the chart
-        if let (Some(xmin), Some(xmax), Some(ymin), Some(ymax)) = (global_min_x, global_max_x, global_min_y, global_max_y) {
-            node.parameters.insert("_computed_x_min".to_string(), OverseerValue::Float(xmin));
-            node.parameters.insert("_computed_x_max".to_string(), OverseerValue::Float(xmax));
-            node.parameters.insert("_computed_y_min".to_string(), OverseerValue::Float(ymin));
-            node.parameters.insert("_computed_y_max".to_string(), OverseerValue::Float(ymax));
+        if let (Some(xmin), Some(xmax), Some(ymin), Some(ymax)) =
+            (global_min_x, global_max_x, global_min_y, global_max_y)
+        {
+            node.parameters
+                .insert("_computed_x_min".to_string(), OverseerValue::Float(xmin));
+            node.parameters
+                .insert("_computed_x_max".to_string(), OverseerValue::Float(xmax));
+            node.parameters
+                .insert("_computed_y_min".to_string(), OverseerValue::Float(ymin));
+            node.parameters
+                .insert("_computed_y_max".to_string(), OverseerValue::Float(ymax));
         }
     }
 
@@ -268,7 +337,8 @@ unsafe fn recursively_compute_chart_series(
         {
             let child_ref = &*child_ptr;
             let name = child_ref.name.clone();
-            let k = node.children
+            let k = node
+                .children
                 .iter()
                 .take(idx)
                 .filter(|c| c.name == name)
@@ -279,7 +349,12 @@ unsafe fn recursively_compute_chart_series(
                 current_path.push(name);
             }
         }
-        recursively_compute_chart_series(child_ptr, node as *const OverseerNode, current_path, document_root);
+        recursively_compute_chart_series(
+            child_ptr,
+            node as *const OverseerNode,
+            current_path,
+            document_root,
+        );
         current_path.pop();
     }
 
@@ -291,7 +366,9 @@ unsafe fn recursively_compute_chart_series(
             // Accept numeric-looking strings directly
             OverseerValue::String(s) => {
                 // Try plain number first
-                if let Ok(n) = s.parse::<f64>() { return Some(n); }
+                if let Ok(n) = s.parse::<f64>() {
+                    return Some(n);
+                }
                 // Try a variety of time string forms
                 parse_time_string_to_epoch_ms(&s)
             }
@@ -321,34 +398,43 @@ unsafe fn recursively_compute_chart_series(
             let mut patched = txt.replace('T', " ");
             // If there's a trailing 'Z' with a space format, drop it and treat as UTC naive
             let had_z = patched.ends_with('Z');
-            if had_z { patched = patched.trim_end_matches('Z').trim_end().to_string(); }
+            if had_z {
+                patched = patched.trim_end_matches('Z').trim_end().to_string();
+            }
             // Try with fractional seconds first
-            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S%.f") {
-                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S%.f")
+            {
+                let dt =
+                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
                 return Some(dt.timestamp_millis() as f64);
             }
             // Then without fractional
             if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S") {
-                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                let dt =
+                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
                 return Some(dt.timestamp_millis() as f64);
             }
         }
         // 3) No timezone with 'T': treat as UTC
         {
             let patched = txt;
-            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(patched, "%Y-%m-%dT%H:%M:%S%.f") {
-                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(patched, "%Y-%m-%dT%H:%M:%S%.f")
+            {
+                let dt =
+                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
                 return Some(dt.timestamp_millis() as f64);
             }
             if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(patched, "%Y-%m-%dT%H:%M:%S") {
-                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                let dt =
+                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
                 return Some(dt.timestamp_millis() as f64);
             }
         }
         // 4) Date-only -> start of day UTC
         if let Ok(nd) = chrono::NaiveDate::parse_from_str(txt, "%Y-%m-%d") {
             if let Some(ndt) = nd.and_hms_opt(0, 0, 0) {
-                let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+                let dt =
+                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
                 return Some(dt.timestamp_millis() as f64);
             }
         }
@@ -358,7 +444,9 @@ unsafe fn recursively_compute_chart_series(
     fn series_to_json(series: &Vec<(f64, f64)>) -> String {
         let mut s = String::from("[");
         for (i, (x, y)) in series.iter().enumerate() {
-            if i > 0 { s.push(','); }
+            if i > 0 {
+                s.push(',');
+            }
             s.push_str(&format!("[{},{}]", x, y));
         }
         s.push(']');
@@ -370,16 +458,18 @@ unsafe fn recursively_compute_chart_series(
 /// Supports:
 /// - Absolute paths starting with '/': resolved from root ("/Root/Child")
 /// - Relative paths with optional leading '../'
-    fn resolve_path_from<'a>(
+fn resolve_path_from<'a>(
     document_root: &'a [OverseerNode],
     current_path: &[String],
     path: &str,
 ) -> Option<(Vec<String>, &'a OverseerNode)> {
     // Build starting path
-        let segments: Vec<&str> = path.split('/').collect();
+    let segments: Vec<&str> = path.split('/').collect();
     if path.starts_with('/') {
         // Absolute: first segment is empty, skip it and start from root
-        if segments.len() < 2 { return None; }
+        if segments.len() < 2 {
+            return None;
+        }
         let mut out: Vec<String> = Vec::new();
         // First real segment must match a root node
         let first = segments[1];
@@ -387,21 +477,33 @@ unsafe fn recursively_compute_chart_series(
         out.push(first.to_string());
         let mut current = root;
         for seg in &segments[2..] {
-            if seg.is_empty() { continue; }
-            if let Some(next) = current.get_accessible_children().into_iter().find(|c| c.name == *seg) {
+            if seg.is_empty() {
+                continue;
+            }
+            if let Some(next) = current
+                .get_accessible_children()
+                .into_iter()
+                .find(|c| c.name == *seg)
+            {
                 out.push(seg.to_string());
                 current = next;
-            } else { return None; }
+            } else {
+                return None;
+            }
         }
         return Some((out, current));
     } else {
         // Relative: start from current_path, apply '../' hops, then descend
         let mut base: Vec<String> = current_path.to_vec();
         // Remove current node (we want to resolve from the chart node's parent for sibling lookup)
-        if !base.is_empty() { base.pop(); }
+        if !base.is_empty() {
+            base.pop();
+        }
         let mut idx = 0usize;
         while idx < segments.len() && segments[idx] == ".." {
-            if base.is_empty() { return None; }
+            if base.is_empty() {
+                return None;
+            }
             base.pop();
             idx += 1;
         }
@@ -409,71 +511,125 @@ unsafe fn recursively_compute_chart_series(
         let mut current = resolve_path_vec_to_node(document_root, &base)?;
         let mut out = base;
         for seg in &segments[idx..] {
-            if seg.is_empty() { continue; }
-            if let Some(next) = current.get_accessible_children().into_iter().find(|c| c.name == *seg) {
+            if seg.is_empty() {
+                continue;
+            }
+            if let Some(next) = current
+                .get_accessible_children()
+                .into_iter()
+                .find(|c| c.name == *seg)
+            {
                 out.push(seg.to_string());
                 current = next;
-            } else { return None; }
+            } else {
+                return None;
+            }
         }
         return Some((out, current));
     }
 }
 
-fn resolve_path_vec_to_node<'a>(root: &'a [OverseerNode], segments: &[String]) -> Option<&'a OverseerNode> {
-    if segments.is_empty() { return None; }
+fn resolve_path_vec_to_node<'a>(
+    root: &'a [OverseerNode],
+    segments: &[String],
+) -> Option<&'a OverseerNode> {
+    if segments.is_empty() {
+        return None;
+    }
     let mut current = root.iter().find(|n| n.name == segments[0])?;
     for seg in &segments[1..] {
-        if let Some(next) = current.get_accessible_children().into_iter().find(|c| c.name == *seg) {
+        if let Some(next) = current
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == *seg)
+        {
             current = next;
-        } else { return None; }
+        } else {
+            return None;
+        }
     }
     Some(current)
 }
 
 /// Resolves templates for a single node and its children.
 /// Returns true if any progress was made in this pass.
-fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], made_progress: &mut bool) -> bool {
+fn resolve_node_templates(
+    node: &mut OverseerNode,
+    all_nodes: &[OverseerNode],
+    made_progress: &mut bool,
+) -> bool {
     let mut local_progress = false;
-    
-    debug_resolver!("[RESOLVER] Resolving node: {} (type: {})", node.name, node.node_type);
-    
+
+    debug_resolver!(
+        "[RESOLVER] Resolving node: {} (type: {})",
+        node.name,
+        node.node_type
+    );
+
     // Check if the current node is a list that uses a template or simple type.
     if node.node_type == "list" {
         if let Some(entry_value) = node.parameters.get("entry") {
             match entry_value {
                 OverseerValue::Template(template_path) => {
-                    debug_resolver!("[RESOLVER] List {} uses template: {}", node.name, template_path);
+                    debug_resolver!(
+                        "[RESOLVER] List {} uses template: {}",
+                        node.name,
+                        template_path
+                    );
                     // Simplified path resolution: allow both <../Task> and <Task>
-                    let template_name = template_path.trim_start_matches("../").split('/').last().unwrap_or("");
+                    let template_name = template_path
+                        .trim_start_matches("../")
+                        .split('/')
+                        .last()
+                        .unwrap_or("");
                     debug_resolver!("[RESOLVER] Resolved template name: {}", template_name);
 
                     if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
-                        debug_resolver!("[RESOLVER] Found template node for {}, processing {} children", template_name, node.children.len());
+                        debug_resolver!(
+                            "[RESOLVER] Found template node for {}, processing {} children",
+                            template_name,
+                            node.children.len()
+                        );
                         let mut resolved_children = Vec::new();
                         for (idx, list_item) in node.children.iter().enumerate() {
-                            debug_resolver!("[RESOLVER]   Processing list item {}: {} (type: {})", idx, list_item.name, list_item.node_type);
+                            debug_resolver!(
+                                "[RESOLVER]   Processing list item {}: {} (type: {})",
+                                idx,
+                                list_item.name,
+                                list_item.node_type
+                            );
                             // Handle both old "list_item" type and new "-" type (after parse_list_item removal)
                             if list_item.node_type == "list_item" || list_item.node_type == "-" {
                                 if !list_item.children.is_empty() {
-                                    debug_resolver!("[RESOLVER]     Complex list item with {} children", list_item.children.len());
+                                    debug_resolver!(
+                                        "[RESOLVER]     Complex list item with {} children",
+                                        list_item.children.len()
+                                    );
                                     // Complex list item: create a node of the template's type
                                     let mut resolved_item = OverseerNode {
                                         name: {
                                             let n = list_item.name.clone();
-                                            if n.is_empty() || n == "-" { format!("{}__{}", template_node.name, idx + 1) } else { n }
+                                            if n.is_empty() || n == "-" {
+                                                format!("{}__{}", template_node.name, idx + 1)
+                                            } else {
+                                                n
+                                            }
                                         },
                                         node_type: template_node.name.clone(),
                                         template: None,
                                         parameters: {
                                             // Start with template parameters as base, but mark them as template-derived
                                             let mut merged_params = HashMap::new();
-                                            
+
                                             // Add template parameters with _template_ prefix to mark their origin
                                             for (key, value) in &template_node.parameters {
-                                                merged_params.insert(format!("_template_{}", key), value.clone());
+                                                merged_params.insert(
+                                                    format!("_template_{}", key),
+                                                    value.clone(),
+                                                );
                                                 merged_params.insert(key.clone(), value.clone());
                                             }
-                                            
+
                                             // List item parameters override template parameters
                                             for (key, value) in &list_item.parameters {
                                                 merged_params.insert(key.clone(), value.clone());
@@ -482,13 +638,22 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                                 merged_params.remove(&marker);
                                             }
                                             // Record original type of this template instance (e.g., div)
-                                            merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
+                                            merged_params.insert(
+                                                "_original_type".to_string(),
+                                                OverseerValue::String(
+                                                    template_node.node_type.clone(),
+                                                ),
+                                            );
                                             // Mark this node as coming from a template so serializer can suppress inherited children
-                                            merged_params.insert("_from_template".to_string(), OverseerValue::Boolean(true));
+                                            merged_params.insert(
+                                                "_from_template".to_string(),
+                                                OverseerValue::Boolean(true),
+                                            );
                                             merged_params
                                         },
                                         children: template_node.children.clone(),
-                                        is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                        is_hierarchy_transparent: template_node
+                                            .is_hierarchy_transparent,
                                         param_order: Vec::new(),
                                         raw_value_literal: None,
                                         authored_dash: false,
@@ -503,15 +668,26 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         let (indent_unit, newline) = node
                                             .source_snapshot
                                             .as_ref()
-                                            .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                                            .map(|snap| {
+                                                (snap.indent_unit.clone(), snap.newline.clone())
+                                            })
                                             .unwrap_or((None, None));
-                                        resolved_item.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                                        resolved_item.synthesize_snapshot_with_style_recursive(
+                                            indent_unit,
+                                            newline,
+                                        );
                                     }
                                     // Mark all cloned children as template-derived so serializer can omit them unless overridden
-                                    for (c_idx, child) in resolved_item.children.iter_mut().enumerate() {
+                                    for (c_idx, child) in
+                                        resolved_item.children.iter_mut().enumerate()
+                                    {
                                         mark_template_child_recursive(child);
                                         // Ensure override markers are clean on fresh clones; only true overrides will set these later
-                                        if child.parameters.remove("_explicit_child_override").is_some() {
+                                        if child
+                                            .parameters
+                                            .remove("_explicit_child_override")
+                                            .is_some()
+                                        {
                                             debug_resolver!("[RESOLVER] cleaned _explicit_child_override on clone child '{}')", child.name);
                                         }
                                         if child.parameters.remove("_override_present").is_some() {
@@ -525,22 +701,36 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         .iter()
                                         .map(|o| (o.name.clone(), o))
                                         .collect();
-                                    debug_resolver!("[RESOLVER]     Override fields: {:?}", overrides.keys().collect::<Vec<_>>());
+                                    debug_resolver!(
+                                        "[RESOLVER]     Override fields: {:?}",
+                                        overrides.keys().collect::<Vec<_>>()
+                                    );
                                     merge_node(&mut resolved_item, &overrides);
                                     // After merging, recursively propagate authored_dash, explicit markers, and ordering from override tree
-                                    fn propagate_override_metadata(src: &OverseerNode, dst: &mut OverseerNode) {
+                                    fn propagate_override_metadata(
+                                        src: &OverseerNode,
+                                        dst: &mut OverseerNode,
+                                    ) {
                                         // Only act if names match (root call ensures this for children)
-                                        if src.name == dst.name || src.name.is_empty() { /* proceed */ }
+                                        if src.name == dst.name || src.name.is_empty() { /* proceed */
+                                        }
                                         // If source was dash-authored and has a simple value override, mark destination
-                                        if src.authored_dash && src.parameters.contains_key("value") {
+                                        if src.authored_dash && src.parameters.contains_key("value")
+                                        {
                                             dst.authored_dash = true;
                                         }
                                         // If source provides an explicit value override (has 'value' param and no non-internal extra params) mark explicit flags
                                         if src.parameters.contains_key("value") {
                                             // Remove template value marker so serializer treats it as explicit
                                             dst.parameters.remove("_template_value");
-                                            dst.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                                            dst.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
+                                            dst.parameters.insert(
+                                                "_explicit_child_override".to_string(),
+                                                OverseerValue::Boolean(true),
+                                            );
+                                            dst.parameters.insert(
+                                                "_override_present".to_string(),
+                                                OverseerValue::Boolean(true),
+                                            );
                                         }
                                         // Preserve authored ordering index if present and destination not yet set or we want override precedence
                                         if let Some(idx) = src.child_original_index {
@@ -549,55 +739,99 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         // Recurse for children: build map by name for dst
                                         if !src.children.is_empty() {
                                             for child_src in &src.children {
-                                                if let Some(child_dst) = dst.children.iter_mut().find(|c| c.name == child_src.name) {
-                                                    propagate_override_metadata(child_src, child_dst);
+                                                if let Some(child_dst) = dst
+                                                    .children
+                                                    .iter_mut()
+                                                    .find(|c| c.name == child_src.name)
+                                                {
+                                                    propagate_override_metadata(
+                                                        child_src, child_dst,
+                                                    );
                                                 }
                                             }
                                         }
                                     }
                                     for ov in list_item.children.iter() {
-                                        if let Some(dst_child) = resolved_item.children.iter_mut().find(|c| c.name == ov.name) {
+                                        if let Some(dst_child) = resolved_item
+                                            .children
+                                            .iter_mut()
+                                            .find(|c| c.name == ov.name)
+                                        {
                                             propagate_override_metadata(ov, dst_child);
                                         }
                                     }
-                                    
+
                                     // Mark template-derived styling parameters for all field children
                                     for child in resolved_item.children.iter_mut() {
                                         // For field children, mark common styling parameters as template-derived
-                                        let styling_params = ["width", "margin", "spacing", "padding", 
-                                                            "margin-top", "margin-bottom", "margin-left", "margin-right",
-                                                            "padding-top", "padding-bottom", "padding-left", "padding-right",
-                                                            "color", "font-color", "background-color", "font-size"];
-                                        
+                                        let styling_params = [
+                                            "width",
+                                            "margin",
+                                            "spacing",
+                                            "padding",
+                                            "margin-top",
+                                            "margin-bottom",
+                                            "margin-left",
+                                            "margin-right",
+                                            "padding-top",
+                                            "padding-bottom",
+                                            "padding-left",
+                                            "padding-right",
+                                            "color",
+                                            "font-color",
+                                            "background-color",
+                                            "font-size",
+                                        ];
+
                                         for param in styling_params.iter() {
                                             if let Some(value) = child.parameters.get(*param) {
                                                 // Mark this parameter as template-derived
-                                                child.parameters.insert(format!("_template_{}", param), value.clone());
+                                                child.parameters.insert(
+                                                    format!("_template_{}", param),
+                                                    value.clone(),
+                                                );
                                             }
                                         }
                                     }
                                     // Recursively infer '-' types based on template structure
-                                    infer_dash_types_from_template(&mut resolved_item, &template_node);
+                                    infer_dash_types_from_template(
+                                        &mut resolved_item,
+                                        &template_node,
+                                    );
                                     resolved_children.push(resolved_item);
                                 } else if let Some(val) = list_item.parameters.get("value") {
-                                    debug_resolver!("[RESOLVER]     Simple value list item: {:?}", val);
+                                    debug_resolver!(
+                                        "[RESOLVER]     Simple value list item: {:?}",
+                                        val
+                                    );
                                     // Simple value: create a node of the template's type, with value
-                    let mut resolved_item = OverseerNode {
+                                    let mut resolved_item = OverseerNode {
                                         name: {
                                             let n = list_item.name.clone();
-                                            if n.is_empty() || n == "-" { format!("{}__{}", template_node.name, idx + 1) } else { n }
+                                            if n.is_empty() || n == "-" {
+                                                format!("{}__{}", template_node.name, idx + 1)
+                                            } else {
+                                                n
+                                            }
                                         },
                                         node_type: template_node.name.clone(),
                                         template: None,
                                         parameters: {
-                                            // Start with template parameters as base  
-                        let mut merged_params = template_node.parameters.clone();
-                        merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
+                                            // Start with template parameters as base
+                                            let mut merged_params =
+                                                template_node.parameters.clone();
+                                            merged_params.insert(
+                                                "_original_type".to_string(),
+                                                OverseerValue::String(
+                                                    template_node.node_type.clone(),
+                                                ),
+                                            );
                                             merged_params.insert("value".to_string(), val.clone());
                                             merged_params
                                         },
                                         children: Vec::new(),
-                                        is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                        is_hierarchy_transparent: template_node
+                                            .is_hierarchy_transparent,
                                         param_order: Vec::new(),
                                         raw_value_literal: None,
                                         authored_dash: false,
@@ -612,9 +846,14 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         let (indent_unit, newline) = node
                                             .source_snapshot
                                             .as_ref()
-                                            .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                                            .map(|snap| {
+                                                (snap.indent_unit.clone(), snap.newline.clone())
+                                            })
                                             .unwrap_or((None, None));
-                                        resolved_item.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                                        resolved_item.synthesize_snapshot_with_style_recursive(
+                                            indent_unit,
+                                            newline,
+                                        );
                                     }
                                     resolved_children.push(resolved_item);
                                 } else {
@@ -624,22 +863,39 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                         let mut resolved_item = OverseerNode {
                                             name: {
                                                 let n = list_item.name.clone();
-                                                if n.is_empty() || n == "-" { format!("{}__{}", template_node.name, idx + 1) } else { n }
+                                                if n.is_empty() || n == "-" {
+                                                    format!("{}__{}", template_node.name, idx + 1)
+                                                } else {
+                                                    n
+                                                }
                                             },
                                             node_type: template_node.name.clone(),
                                             template: None,
                                             parameters: {
                                                 let mut merged_params = HashMap::new();
                                                 for (key, value) in &template_node.parameters {
-                                                    merged_params.insert(format!("_template_{}", key), value.clone());
-                                                    merged_params.insert(key.clone(), value.clone());
+                                                    merged_params.insert(
+                                                        format!("_template_{}", key),
+                                                        value.clone(),
+                                                    );
+                                                    merged_params
+                                                        .insert(key.clone(), value.clone());
                                                 }
-                                                merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
-                                                merged_params.insert("_from_template".to_string(), OverseerValue::Boolean(true));
+                                                merged_params.insert(
+                                                    "_original_type".to_string(),
+                                                    OverseerValue::String(
+                                                        template_node.node_type.clone(),
+                                                    ),
+                                                );
+                                                merged_params.insert(
+                                                    "_from_template".to_string(),
+                                                    OverseerValue::Boolean(true),
+                                                );
                                                 merged_params
                                             },
                                             children: template_node.children.clone(),
-                                            is_hierarchy_transparent: template_node.is_hierarchy_transparent,
+                                            is_hierarchy_transparent: template_node
+                                                .is_hierarchy_transparent,
                                             param_order: Vec::new(),
                                             raw_value_literal: None,
                                             authored_dash: false,
@@ -654,24 +910,42 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                             let (indent_unit, newline) = node
                                                 .source_snapshot
                                                 .as_ref()
-                                                .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                                                .map(|snap| {
+                                                    (snap.indent_unit.clone(), snap.newline.clone())
+                                                })
                                                 .unwrap_or((None, None));
-                                            resolved_item.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                                            resolved_item.synthesize_snapshot_with_style_recursive(
+                                                indent_unit,
+                                                newline,
+                                            );
                                         }
                                         for child in resolved_item.children.iter_mut() {
                                             mark_template_child_recursive(child);
-                                            if child.parameters.remove("_explicit_child_override").is_some() {
+                                            if child
+                                                .parameters
+                                                .remove("_explicit_child_override")
+                                                .is_some()
+                                            {
                                                 debug_resolver!("[RESOLVER] cleaned _explicit_child_override on clone child '{}')", child.name);
                                             }
-                                            if child.parameters.remove("_override_present").is_some() {
+                                            if child
+                                                .parameters
+                                                .remove("_override_present")
+                                                .is_some()
+                                            {
                                                 debug_resolver!("[RESOLVER] cleaned _override_present on clone child '{}')", child.name);
                                             }
                                         }
                                         // Recursively infer '-' types based on template structure
-                                        infer_dash_types_from_template(&mut resolved_item, &template_node);
+                                        infer_dash_types_from_template(
+                                            &mut resolved_item,
+                                            &template_node,
+                                        );
                                         resolved_children.push(resolved_item);
                                     } else {
-                                        debug_resolver!("[RESOLVER]     Fallback: cloning list item as-is");
+                                        debug_resolver!(
+                                            "[RESOLVER]     Fallback: cloning list item as-is"
+                                        );
                                         // Fallback: just clone
                                         resolved_children.push(list_item.clone());
                                     }
@@ -682,22 +956,42 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                 resolved_children.push(list_item.clone());
                             }
                         }
-                        debug_resolver!("[RESOLVER] List resolution complete, {} -> {} children", node.children.len(), resolved_children.len());
+                        debug_resolver!(
+                            "[RESOLVER] List resolution complete, {} -> {} children",
+                            node.children.len(),
+                            resolved_children.len()
+                        );
                         node.children = resolved_children;
                         local_progress = true;
                     } else {
-                        debug_resolver!("[RESOLVER] Warning: Template not found: {}", template_name);
+                        debug_resolver!(
+                            "[RESOLVER] Warning: Template not found: {}",
+                            template_name
+                        );
                         // Template not found - might be resolved in a later pass
                     }
-                },
+                }
                 OverseerValue::String(type_name) => {
-                    debug_resolver!("[RESOLVER] List {} uses simple type: {}", node.name, type_name);
+                    debug_resolver!(
+                        "[RESOLVER] List {} uses simple type: {}",
+                        node.name,
+                        type_name
+                    );
                     // Handle simple type entries like entry=string
                     let mut resolved_children = Vec::new();
                     for (_i, list_item) in node.children.iter().enumerate() {
-                        debug_resolver!("[RESOLVER]   Processing simple type list item {}: {} (type: {})", _i, list_item.name, list_item.node_type);
+                        debug_resolver!(
+                            "[RESOLVER]   Processing simple type list item {}: {} (type: {})",
+                            _i,
+                            list_item.name,
+                            list_item.node_type
+                        );
                         if let Some(val) = list_item.parameters.get("value") {
-                            debug_resolver!("[RESOLVER]     Converting to {} with value: {:?}", type_name, val);
+                            debug_resolver!(
+                                "[RESOLVER]     Converting to {} with value: {:?}",
+                                type_name,
+                                val
+                            );
                             // Create a node of the specified simple type
                             let mut resolved_item = OverseerNode {
                                 name: list_item.name.clone(),
@@ -715,25 +1009,40 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                                 source_id: None,
                                 source_fingerprint: None,
                             };
-                            resolved_item.parameters.insert("value".to_string(), val.clone());
+                            resolved_item
+                                .parameters
+                                .insert("value".to_string(), val.clone());
                             let (indent_unit, newline) = node
                                 .source_snapshot
                                 .as_ref()
                                 .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
                                 .unwrap_or((None, None));
-                            resolved_item.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                            resolved_item
+                                .synthesize_snapshot_with_style_recursive(indent_unit, newline);
                             resolved_children.push(resolved_item);
                         } else {
-                            debug_resolver!("[RESOLVER]     No value found, keeping as-is: {} (type: {})", list_item.name, list_item.node_type);
+                            debug_resolver!(
+                                "[RESOLVER]     No value found, keeping as-is: {} (type: {})",
+                                list_item.name,
+                                list_item.node_type
+                            );
                             resolved_children.push(list_item.clone());
                         }
                     }
-                    debug_resolver!("[RESOLVER] Simple type list resolution complete, {} -> {} children", node.children.len(), resolved_children.len());
+                    debug_resolver!(
+                        "[RESOLVER] Simple type list resolution complete, {} -> {} children",
+                        node.children.len(),
+                        resolved_children.len()
+                    );
                     node.children = resolved_children;
                     local_progress = true;
-                },
+                }
                 _ => {
-                    debug_resolver!("[RESOLVER] List {} has unsupported entry parameter type: {:?}", node.name, entry_value);
+                    debug_resolver!(
+                        "[RESOLVER] List {} has unsupported entry parameter type: {:?}",
+                        node.name,
+                        entry_value
+                    );
                 }
             }
         } else {
@@ -744,12 +1053,21 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
     // If this node is a direct template instance (e.g., <Colorful> Instance { ... }),
     // clone the template's parameters and children, then merge overrides from the instance.
     if let Some(template_path) = &node.template.clone() {
-        debug_resolver!("[RESOLVER] Node {} has template: {}", node.name, template_path);
-        let template_name = template_path.trim_start_matches("../").split('/').last().unwrap_or("");
+        debug_resolver!(
+            "[RESOLVER] Node {} has template: {}",
+            node.name,
+            template_path
+        );
+        let template_name = template_path
+            .trim_start_matches("../")
+            .split('/')
+            .last()
+            .unwrap_or("");
         if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
             debug_resolver!(
                 "[RESOLVER] Instantiating template {} for instance {}",
-                template_name, node.name
+                template_name,
+                node.name
             );
 
             // Start with a clone of the template's declared component name as type (e.g., "Task"),
@@ -772,11 +1090,17 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
             }
 
             // Annotate with original type of template (e.g., div) so renderer can treat it as container
-            merged_params.insert("_original_type".to_string(), OverseerValue::String(template_node.node_type.clone()));
+            merged_params.insert(
+                "_original_type".to_string(),
+                OverseerValue::String(template_node.node_type.clone()),
+            );
             // Mark this node as coming from a template so serializer can suppress inherited children
             merged_params.insert("_from_template".to_string(), OverseerValue::Boolean(true));
             // Preserve the original template path for serialization (<T> I { ... })
-            merged_params.insert("_template_origin".to_string(), OverseerValue::Template(template_path.clone()));
+            merged_params.insert(
+                "_template_origin".to_string(),
+                OverseerValue::Template(template_path.clone()),
+            );
 
             node.parameters = merged_params;
             // Clone template children and then merge overrides from the instance, just like list entries
@@ -794,11 +1118,21 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                     child.synthesize_snapshot_with_style_recursive(indent_unit, newline);
                 }
                 // Ensure override markers are clean on fresh clones; only true overrides will set these later
-                if child.parameters.remove("_explicit_child_override").is_some() {
-                    debug_resolver!("[RESOLVER] cleaned _explicit_child_override on inst child '{}')", child.name);
+                if child
+                    .parameters
+                    .remove("_explicit_child_override")
+                    .is_some()
+                {
+                    debug_resolver!(
+                        "[RESOLVER] cleaned _explicit_child_override on inst child '{}')",
+                        child.name
+                    );
                 }
                 if child.parameters.remove("_override_present").is_some() {
-                    debug_resolver!("[RESOLVER] cleaned _override_present on inst child '{}')", child.name);
+                    debug_resolver!(
+                        "[RESOLVER] cleaned _override_present on inst child '{}')",
+                        child.name
+                    );
                 }
             }
             if !instance_children.is_empty() {
@@ -807,9 +1141,16 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
                     .map(|o| (o.name.clone(), o))
                     .collect();
                 let override_names: Vec<String> = overrides.keys().cloned().collect();
-                debug_resolver!("[RESOLVER] instance '{}' overrides: {:?}", node.name, override_names);
+                debug_resolver!(
+                    "[RESOLVER] instance '{}' overrides: {:?}",
+                    node.name,
+                    override_names
+                );
                 // Record explicit override names on the instance for serializer to consult
-                node.parameters.insert("_explicit_overrides".to_string(), OverseerValue::String(override_names.join(",")));
+                node.parameters.insert(
+                    "_explicit_overrides".to_string(),
+                    OverseerValue::String(override_names.join(",")),
+                );
                 merge_node(node, &overrides);
             }
 
@@ -822,7 +1163,10 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
 
             local_progress = true;
         } else {
-            debug_resolver!("[RESOLVER] Warning: Template not found for node: {}", template_name);
+            debug_resolver!(
+                "[RESOLVER] Warning: Template not found for node: {}",
+                template_name
+            );
         }
     }
 
@@ -832,8 +1176,13 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
             local_progress = true;
         }
     }
-    
-    debug_resolver!("[RESOLVER] Finished resolving node: {} (final type: {}) - progress: {}", node.name, node.node_type, local_progress);
+
+    debug_resolver!(
+        "[RESOLVER] Finished resolving node: {} (final type: {}) - progress: {}",
+        node.name,
+        node.node_type,
+        local_progress
+    );
     local_progress
 }
 
@@ -841,15 +1190,18 @@ fn resolve_node_templates(node: &mut OverseerNode, all_nodes: &[OverseerNode], m
 fn infer_dash_types_from_template(instance: &mut OverseerNode, template: &OverseerNode) {
     // For each child in instance, find matching template child by name
     for child in instance.children.iter_mut() {
-    if let Some(t_child) = template.children.iter().find(|t| t.name == child.name) {
+        if let Some(t_child) = template.children.iter().find(|t| t.name == child.name) {
             if child.node_type == "-" {
                 debug_resolver!(
                     "[RESOLVER]     Resolving '-' type for {}: {} -> {}",
-                    child.name, child.node_type, t_child.node_type
+                    child.name,
+                    child.node_type,
+                    t_child.node_type
                 );
-                child
-                    .parameters
-                    .insert("_original_type".to_string(), OverseerValue::String(child.node_type.clone()));
+                child.parameters.insert(
+                    "_original_type".to_string(),
+                    OverseerValue::String(child.node_type.clone()),
+                );
                 child.node_type = t_child.node_type.clone();
             }
             // Recurse for grandchildren
@@ -875,17 +1227,28 @@ fn resolve_layout_parameters(nodes: &mut Vec<OverseerNode>, parent_layout: Optio
 
         if is_container {
             let effective_layout = calculate_effective_layout(node, parent_layout);
-            
+
             // Store the calculated layout in parameters for the renderer to use
-            node.parameters.insert("_effective_layout".to_string(), OverseerValue::String(effective_layout.clone()));
+            node.parameters.insert(
+                "_effective_layout".to_string(),
+                OverseerValue::String(effective_layout.clone()),
+            );
 
             // Optional alignment across the secondary axis: near|center|far
             if let Some(OverseerValue::String(align)) = node.parameters.get("alignment") {
-                let a = match align.as_str() { "near"|"center"|"far" => align.clone(), _ => "near".to_string() };
-                node.parameters.insert("_effective_alignment".to_string(), OverseerValue::String(a));
+                let a = match align.as_str() {
+                    "near" | "center" | "far" => align.clone(),
+                    _ => "near".to_string(),
+                };
+                node.parameters
+                    .insert("_effective_alignment".to_string(), OverseerValue::String(a));
             }
-            debug_resolver!("[RESOLVER] Node {} effective layout: {}", node.name, effective_layout);
-            
+            debug_resolver!(
+                "[RESOLVER] Node {} effective layout: {}",
+                node.name,
+                effective_layout
+            );
+
             // Recursively resolve children with this node's effective layout
             if !node.children.is_empty() {
                 resolve_layout_parameters(&mut node.children, Some(&effective_layout));
@@ -909,21 +1272,24 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
                 "horizontal" => return "horizontal".to_string(),
                 "inherit" => {
                     return parent_layout.unwrap_or("vertical").to_string();
-                },
+                }
                 "opposite" => {
                     return match parent_layout.unwrap_or("vertical") {
                         "vertical" => "horizontal".to_string(),
                         "horizontal" => "vertical".to_string(),
                         _ => "horizontal".to_string(), // Default opposite of vertical
                     };
-                },
+                }
                 _ => {
-                    debug_resolver!("[RESOLVER] Unknown layout value: {}, defaulting to opposite", layout_value);
+                    debug_resolver!(
+                        "[RESOLVER] Unknown layout value: {}, defaulting to opposite",
+                        layout_value
+                    );
                 }
             }
         }
     }
-    
+
     // Default behavior: opposite to parent (or horizontal if no parent)
     match parent_layout.unwrap_or("vertical") {
         "vertical" => "horizontal".to_string(),
@@ -931,34 +1297,42 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
         _ => "horizontal".to_string(),
     }
 }
-                                
-fn resolve_parameter_inheritance(nodes: &mut Vec<OverseerNode>, parent_params: &HashMap<String, OverseerValue>) {
+
+fn resolve_parameter_inheritance(
+    nodes: &mut Vec<OverseerNode>,
+    parent_params: &HashMap<String, OverseerValue>,
+) {
     for node in nodes.iter_mut() {
         // List of inheritable styling parameters
-        let inheritable_params = [
-            "background-color", "font-color", "font-size"
-        ];
-        
+        let inheritable_params = ["background-color", "font-color", "font-size"];
+
         // Inherit each styling parameter from parent if not explicitly set
         for param_name in &inheritable_params {
             if !node.parameters.contains_key(*param_name) {
                 if let Some(parent_value) = parent_params.get(*param_name) {
-                    debug_resolver!("[RESOLVER] Inheriting {} = {:?} for node {}", param_name, parent_value, node.name);
-                    node.parameters.insert(param_name.to_string(), parent_value.clone());
+                    debug_resolver!(
+                        "[RESOLVER] Inheriting {} = {:?} for node {}",
+                        param_name,
+                        parent_value,
+                        node.name
+                    );
+                    node.parameters
+                        .insert(param_name.to_string(), parent_value.clone());
                     // Mark as template-derived so serializer will not persist inherited styling
-                    node.parameters.insert(format!("_template_{}", param_name), parent_value.clone());
+                    node.parameters
+                        .insert(format!("_template_{}", param_name), parent_value.clone());
                 }
             }
         }
-        
+
         // Build inherited parameters map for children (including this node's parameters)
         let mut inherited_params = parent_params.clone();
-    for (key, value) in &node.parameters {
+        for (key, value) in &node.parameters {
             if inheritable_params.contains(&key.as_str()) {
                 inherited_params.insert(key.clone(), value.clone());
             }
         }
-        
+
         // Recursively resolve children with inherited parameters
         if !node.children.is_empty() {
             resolve_parameter_inheritance(&mut node.children, &inherited_params);
@@ -975,7 +1349,7 @@ fn find_accessible_child_path(node: &OverseerNode, target_name: &str) -> Option<
             return Some(vec![i]);
         }
         if child.is_hierarchy_transparent {
-                    if let Some(mut subpath) = find_accessible_child_path(child, target_name) {
+            if let Some(mut subpath) = find_accessible_child_path(child, target_name) {
                 let mut path = vec![i];
                 path.append(&mut subpath);
                 return Some(path);
@@ -986,7 +1360,10 @@ fn find_accessible_child_path(node: &OverseerNode, target_name: &str) -> Option<
 }
 
 /// Helper: get a mutable reference to a child using an index path
-fn get_child_mut_by_path<'a>(node: &'a mut OverseerNode, path: &[usize]) -> Option<&'a mut OverseerNode> {
+fn get_child_mut_by_path<'a>(
+    node: &'a mut OverseerNode,
+    path: &[usize],
+) -> Option<&'a mut OverseerNode> {
     if path.is_empty() {
         return None;
     }
@@ -1009,113 +1386,204 @@ fn get_child_mut_by_path<'a>(node: &'a mut OverseerNode, path: &[usize]) -> Opti
     None
 }
 
+fn adopt_source_metadata(target: &mut OverseerNode, source: &OverseerNode) {
+    if let Some(snapshot) = source.source_snapshot.clone() {
+        target.source_snapshot = Some(snapshot);
+    }
+    if let Some(source_id) = source.source_id.clone() {
+        target.source_id = Some(source_id);
+    }
+    if let Some(fp) = source.source_fingerprint {
+        target.source_fingerprint = Some(fp);
+    }
+    if source.leading_blank_lines > 0 {
+        target.leading_blank_lines = source.leading_blank_lines;
+    }
+    if !source.param_order.is_empty() {
+        target.param_order = source.param_order.clone();
+    }
+    if source.authored_dash {
+        target.authored_dash = true;
+    }
+    if let Some(idx) = source.child_original_index {
+        target.child_original_index = Some(idx);
+    }
+}
+
 fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &OverseerNode>) {
-    debug_resolver!("[RESOLVER] Merging overrides into template with {} fields (transparent-aware)", template.children.len());
+    debug_resolver!(
+        "[RESOLVER] Merging overrides into template with {} fields (transparent-aware)",
+        template.children.len()
+    );
 
     // Apply each override by locating the target field path in the template via transparent-aware lookup
     for (ov_name, override_field) in overrides.iter() {
         if let Some(path) = find_accessible_child_path(template, ov_name) {
             if let Some(template_field) = get_child_mut_by_path(template, &path) {
-            debug_resolver!(
-                "[RESOLVER]   Merging field: {} (template type: {}, override type: {})",
-                template_field.name, template_field.node_type, override_field.node_type
-            );
+                debug_resolver!(
+                    "[RESOLVER]   Merging field: {} (template type: {}, override type: {})",
+                    template_field.name,
+                    template_field.node_type,
+                    override_field.node_type
+                );
 
-            // Override a simple value (e.g., name = "...")
-            if let Some(val) = override_field.parameters.get("value") {
-                debug_resolver!("[RESOLVER]     Setting value: {:?}", val);
-                // Always set the value from the explicit override
-                template_field
-                    .parameters
-                    .insert("value".to_string(), val.clone());
-                // Preserve original raw numeric/text literal formatting if present on override
-                if override_field.raw_value_literal.is_some() {
-                    template_field.raw_value_literal = override_field.raw_value_literal.clone();
-                }
-                // Treat presence in source as an explicit override even if equal to template default
-                template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
-                template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                debug_resolver!("[RESOLVER] set explicit override (value) on '{}'", template_field.name);
-                // Remove template marker for value if present so serializers won't treat it as inherited
-                if template_field.parameters.contains_key("_template_value") {
-                    template_field.parameters.remove("_template_value");
-                }
-                // Propagate authored dash provenance so serializer can retain concise form
-                if override_field.authored_dash { template_field.authored_dash = true; }
-                // Preserve original sibling ordering if override carried an index (use existing if already set)
-                if template_field.child_original_index.is_none() && override_field.child_original_index.is_some() {
-                    template_field.child_original_index = override_field.child_original_index;
-                }
-            }
+                adopt_source_metadata(template_field, override_field);
 
-            // If this field is a list, handle entry inheritance and recursive merge
-            if template_field.node_type == "list" {
-                // If override does not specify entry, inherit from template
-                if !override_field.parameters.contains_key("entry") {
-                    if let Some(entry) = template_field.parameters.get("entry") {
+                // Override a simple value (e.g., name = "...")
+                if let Some(val) = override_field.parameters.get("value") {
+                    debug_resolver!("[RESOLVER]     Setting value: {:?}", val);
+                    // Always set the value from the explicit override
+                    template_field
+                        .parameters
+                        .insert("value".to_string(), val.clone());
+                    // Preserve original raw numeric/text literal formatting if present on override
+                    if override_field.raw_value_literal.is_some() {
+                        template_field.raw_value_literal = override_field.raw_value_literal.clone();
+                    }
+                    // Treat presence in source as an explicit override even if equal to template default
+                    template_field.parameters.insert(
+                        "_override_present".to_string(),
+                        OverseerValue::Boolean(true),
+                    );
+                    template_field.parameters.insert(
+                        "_explicit_child_override".to_string(),
+                        OverseerValue::Boolean(true),
+                    );
+                    debug_resolver!(
+                        "[RESOLVER] set explicit override (value) on '{}'",
+                        template_field.name
+                    );
+                    // Remove template marker for value if present so serializers won't treat it as inherited
+                    if template_field.parameters.contains_key("_template_value") {
+                        template_field.parameters.remove("_template_value");
+                    }
+                    // Propagate authored dash provenance so serializer can retain concise form
+                    if override_field.authored_dash {
+                        template_field.authored_dash = true;
+                    }
+                    // Preserve original sibling ordering if override carried an index (use existing if already set)
+                    if template_field.child_original_index.is_none()
+                        && override_field.child_original_index.is_some()
+                    {
+                        template_field.child_original_index = override_field.child_original_index;
+                    }
+                }
+
+                // If this field is a list, handle entry inheritance and recursive merge
+                if template_field.node_type == "list" {
+                    // If override does not specify entry, inherit from template
+                    if !override_field.parameters.contains_key("entry") {
+                        if let Some(entry) = template_field.parameters.get("entry") {
+                            template_field
+                                .parameters
+                                .insert("entry".to_string(), entry.clone());
+                        }
+                    } else if let Some(entry) = override_field.parameters.get("entry") {
+                        // If override specifies entry, use it
                         template_field
                             .parameters
                             .insert("entry".to_string(), entry.clone());
                     }
-                } else if let Some(entry) = override_field.parameters.get("entry") {
-                    // If override specifies entry, use it
-                    template_field
-                        .parameters
-                        .insert("entry".to_string(), entry.clone());
-                }
-                // Recursively resolve/merge children for nested lists
-                if !override_field.children.is_empty() {
-                    template_field.children = override_field.children.clone();
-                    template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
-                    template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                    debug_resolver!("[RESOLVER] set explicit override (list children) on '{}'", template_field.name);
-                }
-                // Preserve dash-authored style from the override for list containers too,
-                // so the serializer can emit "- name { ... }" instead of "list name { ... }" when authored that way.
-                if override_field.authored_dash {
-                    template_field.authored_dash = true;
-                }
-            } else if !override_field.children.is_empty() {
-                // For non-list container nodes, deep-merge override children by name
-                // rather than replacing the entire children array. This preserves defaults
-                // for siblings that are not explicitly overridden.
-                let override_order: Vec<String> = override_field.children.iter().map(|c| c.name.clone()).collect();
-                let mut child_overrides: HashMap<String, &OverseerNode> = HashMap::new();
-                for ch in &override_field.children { child_overrides.insert(ch.name.clone(), ch); }
-                if !child_overrides.is_empty() {
-                    // Mark the container as having explicit child overrides
-                    template_field.parameters.insert("_override_present".to_string(), OverseerValue::Boolean(true));
-                    template_field.parameters.insert("_explicit_child_override".to_string(), OverseerValue::Boolean(true));
-                    debug_resolver!("[RESOLVER] deep-merging {} child override(s) into container '{}'", child_overrides.len(), template_field.name);
-                    // Recursively merge into this container field
-                    merge_node(template_field, &child_overrides);
-                    // If the override container itself was dash-authored, propagate to template_field
-                    if override_field.authored_dash { template_field.authored_dash = true; }
-                    if template_field.child_original_index.is_none() && override_field.child_original_index.is_some() {
-                        template_field.child_original_index = override_field.child_original_index;
+                    // Recursively resolve/merge children for nested lists
+                    if !override_field.children.is_empty() {
+                        template_field.children = override_field.children.clone();
+                        template_field.parameters.insert(
+                            "_override_present".to_string(),
+                            OverseerValue::Boolean(true),
+                        );
+                        template_field.parameters.insert(
+                            "_explicit_child_override".to_string(),
+                            OverseerValue::Boolean(true),
+                        );
+                        debug_resolver!(
+                            "[RESOLVER] set explicit override (list children) on '{}'",
+                            template_field.name
+                        );
                     }
-                    // Apply ordering & dash provenance to overridden children
-                    if !override_order.is_empty() {
-                        for (seq, name) in override_order.iter().enumerate() {
-                            if let Some(ch) = template_field.children.iter_mut().find(|c| c.name == *name) {
-                                if child_overrides.get(name).map(|o| o.authored_dash).unwrap_or(false) {
-                                    ch.authored_dash = true;
+                    // Preserve dash-authored style from the override for list containers too,
+                    // so the serializer can emit "- name { ... }" instead of "list name { ... }" when authored that way.
+                    if override_field.authored_dash {
+                        template_field.authored_dash = true;
+                    }
+                } else if !override_field.children.is_empty() {
+                    // For non-list container nodes, deep-merge override children by name
+                    // rather than replacing the entire children array. This preserves defaults
+                    // for siblings that are not explicitly overridden.
+                    let override_order: Vec<String> = override_field
+                        .children
+                        .iter()
+                        .map(|c| c.name.clone())
+                        .collect();
+                    let mut child_overrides: HashMap<String, &OverseerNode> = HashMap::new();
+                    for ch in &override_field.children {
+                        child_overrides.insert(ch.name.clone(), ch);
+                    }
+                    if !child_overrides.is_empty() {
+                        // Mark the container as having explicit child overrides
+                        template_field.parameters.insert(
+                            "_override_present".to_string(),
+                            OverseerValue::Boolean(true),
+                        );
+                        template_field.parameters.insert(
+                            "_explicit_child_override".to_string(),
+                            OverseerValue::Boolean(true),
+                        );
+                        debug_resolver!(
+                            "[RESOLVER] deep-merging {} child override(s) into container '{}'",
+                            child_overrides.len(),
+                            template_field.name
+                        );
+                        // Recursively merge into this container field
+                        merge_node(template_field, &child_overrides);
+                        // If the override container itself was dash-authored, propagate to template_field
+                        if override_field.authored_dash {
+                            template_field.authored_dash = true;
+                        }
+                        if template_field.child_original_index.is_none()
+                            && override_field.child_original_index.is_some()
+                        {
+                            template_field.child_original_index =
+                                override_field.child_original_index;
+                        }
+                        // Apply ordering & dash provenance to overridden children
+                        if !override_order.is_empty() {
+                            for (seq, name) in override_order.iter().enumerate() {
+                                if let Some(ch) =
+                                    template_field.children.iter_mut().find(|c| c.name == *name)
+                                {
+                                    if child_overrides
+                                        .get(name)
+                                        .map(|o| o.authored_dash)
+                                        .unwrap_or(false)
+                                    {
+                                        ch.authored_dash = true;
+                                    }
+                                    ch.child_original_index = Some(seq);
                                 }
-                                ch.child_original_index = Some(seq);
+                            }
+                            // Push non-overridden children after overridden ones, preserving existing order among them
+                            let mut next_idx = override_order.len();
+                            for ch in template_field.children.iter_mut() {
+                                if override_order.iter().any(|n| n == &ch.name) {
+                                    continue;
+                                }
+                                if ch.child_original_index.is_none() {
+                                    ch.child_original_index = Some(next_idx);
+                                    next_idx += 1;
+                                } else {
+                                    ch.child_original_index = Some(
+                                        ch.child_original_index.unwrap() + override_order.len(),
+                                    );
+                                }
                             }
                         }
-                        // Push non-overridden children after overridden ones, preserving existing order among them
-                        let mut next_idx = override_order.len();
-                        for ch in template_field.children.iter_mut() {
-                            if override_order.iter().any(|n| n == &ch.name) { continue; }
-                            if ch.child_original_index.is_none() { ch.child_original_index = Some(next_idx); next_idx += 1; }
-                            else { ch.child_original_index = Some(ch.child_original_index.unwrap() + override_order.len()); }
-                        }
+                    } else {
+                        debug_resolver!(
+                            "[RESOLVER]     No child overrides to merge for '{}'",
+                            template_field.name
+                        );
                     }
-                } else {
-                    debug_resolver!("[RESOLVER]     No child overrides to merge for '{}'", template_field.name);
                 }
-            }
             // Ensure node_type is preserved from template (do not overwrite)
             } else {
                 debug_resolver!(
@@ -1136,18 +1604,22 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
 fn mark_template_child_recursive(node: &mut OverseerNode) {
     if let Some(existing_snapshot) = node.source_snapshot.clone() {
         let fingerprint = existing_snapshot.fingerprint;
-        node.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(&existing_snapshot));
+        node.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(
+            &existing_snapshot,
+        ));
         node.source_fingerprint = Some(fingerprint);
     } else {
         node.source_fingerprint = None;
     }
     node.source_id = None;
     // Mark a simple flag to indicate this whole node is from a template
-    node.parameters.insert("_template_node".to_string(), OverseerValue::Boolean(true));
+    node.parameters
+        .insert("_template_node".to_string(), OverseerValue::Boolean(true));
     // For all existing parameters, add a _template_ marker so serializer excludes them by default
     let keys: Vec<String> = node.parameters.keys().cloned().collect();
     for k in keys {
-        if !k.starts_with("_") { // avoid internal keys
+        if !k.starts_with("_") {
+            // avoid internal keys
             if let Some(v) = node.parameters.get(&k).cloned() {
                 node.parameters.insert(format!("_template_{}", k), v);
             }
@@ -1158,16 +1630,25 @@ fn mark_template_child_recursive(node: &mut OverseerNode) {
     }
 }
 
-
-fn collect_all_node_paths(nodes: &[OverseerNode], prefix: &mut Vec<String>, acc: &mut std::collections::HashSet<String>) {
+fn collect_all_node_paths(
+    nodes: &[OverseerNode],
+    prefix: &mut Vec<String>,
+    acc: &mut std::collections::HashSet<String>,
+) {
     for (idx, n) in nodes.iter().enumerate() {
         let name = n.name.clone();
         // Disambiguate duplicate siblings with ordinal like main#1
         let k = nodes.iter().take(idx).filter(|c| c.name == name).count();
-        let seg = if k > 0 { format!("{}#{}", name, k) } else { name };
+        let seg = if k > 0 {
+            format!("{}#{}", name, k)
+        } else {
+            name
+        };
         prefix.push(seg);
         acc.insert(prefix.join("/"));
-        if !n.children.is_empty() { collect_all_node_paths(&n.children, prefix, acc); }
+        if !n.children.is_empty() {
+            collect_all_node_paths(&n.children, prefix, acc);
+        }
         prefix.pop();
     }
 }
@@ -1196,18 +1677,34 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
                     std::ptr::null(),
                     &mut current_path,
                     &snapshot,
-                    &all_paths
-                ) { progress = true; }
+                    &all_paths,
+                ) {
+                    progress = true;
+                }
             }
         }
-        debug_resolver!("[RESOLVER] Multi-pass formula evaluation pass {} progress={} ({} total paths)", pass, progress, all_paths.len());
+        debug_resolver!(
+            "[RESOLVER] Multi-pass formula evaluation pass {} progress={} ({} total paths)",
+            pass,
+            progress,
+            all_paths.len()
+        );
     }
-    debug_resolver!("[RESOLVER] Multi-pass formula evaluation completed in {} pass(es)", pass);
+    debug_resolver!(
+        "[RESOLVER] Multi-pass formula evaluation completed in {} pass(es)",
+        pass
+    );
 }
 
 /// Selective formula evaluation that only processes specific field paths
-fn evaluate_formulas_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
-    debug_resolver!("[RESOLVER] Starting selective formula evaluation for {} fields (multi-pass)", field_paths.len());
+fn evaluate_formulas_for_specific_fields(
+    nodes: &mut Vec<OverseerNode>,
+    field_paths: &std::collections::HashSet<String>,
+) {
+    debug_resolver!(
+        "[RESOLVER] Starting selective formula evaluation for {} fields (multi-pass)",
+        field_paths.len()
+    );
     debug_resolver!("[RESOLVER] Field paths target set: {:?}", field_paths);
     // We run multiple lightweight passes because dependents may require upstream values to be
     // recomputed earlier in the same selective cycle (e.g. A -> C -> total aggregate). A single
@@ -1231,32 +1728,52 @@ fn evaluate_formulas_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_pa
                     std::ptr::null(),
                     &mut current_path,
                     &snapshot,
-                    field_paths
-                ) { progress = true; }
+                    field_paths,
+                ) {
+                    progress = true;
+                }
             }
         }
-        if !progress { debug_resolver!("[RESOLVER] No changes in pass {}, stopping", pass); }
+        if !progress {
+            debug_resolver!("[RESOLVER] No changes in pass {}, stopping", pass);
+        }
     }
-    debug_resolver!("[RESOLVER] Selective formula evaluation completed in {} pass(es)", pass);
+    debug_resolver!(
+        "[RESOLVER] Selective formula evaluation completed in {} pass(es)",
+        pass
+    );
 }
 
 /// Selective chart computation that only processes charts affected by specific field changes
-fn compute_chart_series_for_specific_fields(nodes: &mut Vec<OverseerNode>, field_paths: &std::collections::HashSet<String>) {
-    debug_resolver!("[RESOLVER] Selective chart computation for changed fields: {:?}", field_paths);
-    
+fn compute_chart_series_for_specific_fields(
+    nodes: &mut Vec<OverseerNode>,
+    field_paths: &std::collections::HashSet<String>,
+) {
+    debug_resolver!(
+        "[RESOLVER] Selective chart computation for changed fields: {:?}",
+        field_paths
+    );
+
     // Analyze if any charts actually depend on the changed field paths
     let charts_need_update = charts_depend_on_fields(nodes, field_paths);
-    
+
     if charts_need_update {
-    debug_resolver!("[RESOLVER] Charts depend on changed fields, performing selective chart recomputation");
+        debug_resolver!(
+            "[RESOLVER] Charts depend on changed fields, performing selective chart recomputation"
+        );
         compute_chart_series(nodes);
     } else {
-    debug_resolver!("[RESOLVER] No charts depend on changed fields, skipping chart computation");
+        debug_resolver!(
+            "[RESOLVER] No charts depend on changed fields, skipping chart computation"
+        );
     }
 }
 
 /// Check if any charts in the document depend on the specified field paths
-fn charts_depend_on_fields(nodes: &[OverseerNode], field_paths: &std::collections::HashSet<String>) -> bool {
+fn charts_depend_on_fields(
+    nodes: &[OverseerNode],
+    field_paths: &std::collections::HashSet<String>,
+) -> bool {
     for node in nodes {
         if chart_node_depends_on_fields(node, field_paths, "") {
             return true;
@@ -1290,8 +1807,12 @@ mod tests_inheritance_bug7 {
         // Find the instance node
         fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
             for n in nodes {
-                if n.name == name { return Some(n); }
-                if let Some(f) = find(&n.children, name) { return Some(f); }
+                if n.name == name {
+                    return Some(n);
+                }
+                if let Some(f) = find(&n.children, name) {
+                    return Some(f);
+                }
             }
             None
         }
@@ -1299,14 +1820,29 @@ mod tests_inheritance_bug7 {
 
         // Expect parent-level parameters copied from template (and marked _from_template)
         assert_eq!(inst.node_type, "Colorful");
-        assert!(matches!(inst.parameters.get("_from_template"), Some(OverseerValue::Boolean(true))));
-        assert!(matches!(inst.parameters.get("background-color"), Some(OverseerValue::Color(_))));
-        assert!(matches!(inst.parameters.get("font-color"), Some(OverseerValue::Color(_))));
+        assert!(matches!(
+            inst.parameters.get("_from_template"),
+            Some(OverseerValue::Boolean(true))
+        ));
+        assert!(matches!(
+            inst.parameters.get("background-color"),
+            Some(OverseerValue::Color(_))
+        ));
+        assert!(matches!(
+            inst.parameters.get("font-color"),
+            Some(OverseerValue::Color(_))
+        ));
 
         // And child inherited (Title) exists
-        let title = inst.children.iter().find(|c| c.name == "Title").expect("title child");
+        let title = inst
+            .children
+            .iter()
+            .find(|c| c.name == "Title")
+            .expect("title child");
         assert_eq!(title.node_type, "string");
-        assert!(matches!(title.parameters.get("value"), Some(OverseerValue::String(v)) if v == "Hello"));
+        assert!(
+            matches!(title.parameters.get("value"), Some(OverseerValue::String(v)) if v == "Hello")
+        );
     }
 }
 
@@ -1341,69 +1877,114 @@ mod tests_aggregate_inherited_fields_persistence {
             let mut found: Option<&OverseerNode> = None;
             for seg in path.split('/') {
                 found = cur.iter().find(|n| n.name == seg);
-                if let Some(f) = found { cur = &f.children; } else { return None; }
+                if let Some(f) = found {
+                    cur = &f.children;
+                } else {
+                    return None;
+                }
             }
             found
         }
 
         // Local helper to get mutable node by slash path
-        fn find_node_by_path_mut<'a>(nodes: &'a mut [OverseerNode], path: &str) -> Option<&'a mut OverseerNode> {
+        fn find_node_by_path_mut<'a>(
+            nodes: &'a mut [OverseerNode],
+            path: &str,
+        ) -> Option<&'a mut OverseerNode> {
             let parts: Vec<&str> = path.split('/').collect();
             let mut current: &mut [OverseerNode] = nodes;
             for (i, part) in parts.iter().enumerate() {
                 let idx_opt = current.iter().position(|n| n.name == *part);
                 if let Some(idx) = idx_opt {
-                    if i == parts.len()-1 { return Some(&mut current[idx]); }
+                    if i == parts.len() - 1 {
+                        return Some(&mut current[idx]);
+                    }
                     let next: *mut Vec<OverseerNode> = &mut current[idx].children as *mut _;
                     // Safety: we only hold one mutable reference path at a time
-                    unsafe { current = &mut *next; }
-                } else { return None; }
+                    unsafe {
+                        current = &mut *next;
+                    }
+                } else {
+                    return None;
+                }
             }
             None
         }
 
         // Confirm initial total formula intact and computed shadow present
         let total = find(&nodes, "main/total").unwrap();
-        assert!(matches!(total.parameters.get("value"), Some(OverseerValue::Formula(s)) if s.contains("map(|x| x/C).sum()")));
-    let _initial_total_val = total.parameters.get("_computed_value").cloned();
+        assert!(
+            matches!(total.parameters.get("value"), Some(OverseerValue::Formula(s)) if s.contains("map(|x| x/C).sum()"))
+        );
+        let _initial_total_val = total.parameters.get("_computed_value").cloned();
 
         // Simulate first selective edit: change A from 2 -> 5
         {
             let a_path = "main/L/T__1/A";
             if let Some(a_node) = find_node_by_path_mut(&mut nodes, a_path) {
-                a_node.parameters.insert("value".to_string(), OverseerValue::Integer(5));
+                a_node
+                    .parameters
+                    .insert("value".to_string(), OverseerValue::Integer(5));
             }
             let mut dep = crate::dependency_tracker::DependencyGraph::new();
             dep.build_from_document(&nodes).unwrap();
             let mut to_update: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for c in dep.calculate_update_cascade(&format!("{}/value", a_path)) { to_update.insert(c); }
-            if !to_update.is_empty() { resolve_specific_fields(&mut nodes, &to_update); }
+            for c in dep.calculate_update_cascade(&format!("{}/value", a_path)) {
+                to_update.insert(c);
+            }
+            if !to_update.is_empty() {
+                resolve_specific_fields(&mut nodes, &to_update);
+            }
         }
 
         let total_after_first = find(&nodes, "main/total").unwrap();
-        assert!(matches!(total_after_first.parameters.get("value"), Some(OverseerValue::Formula(_))), "Formula should persist after first edit");
-    let _after_first_val = total_after_first.parameters.get("_computed_value").cloned();
-    // NOTE: We expect this to change after selective propagation fix; current focus is persistence, so we don't assert difference yet.
+        assert!(
+            matches!(
+                total_after_first.parameters.get("value"),
+                Some(OverseerValue::Formula(_))
+            ),
+            "Formula should persist after first edit"
+        );
+        let _after_first_val = total_after_first.parameters.get("_computed_value").cloned();
+        // NOTE: We expect this to change after selective propagation fix; current focus is persistence, so we don't assert difference yet.
 
         // Second selective edit: change B 3 -> 4
         {
             let b_path = "main/L/T__1/B";
             if let Some(b_node) = find_node_by_path_mut(&mut nodes, b_path) {
-                b_node.parameters.insert("value".to_string(), OverseerValue::Integer(4));
+                b_node
+                    .parameters
+                    .insert("value".to_string(), OverseerValue::Integer(4));
             }
             let mut dep = crate::dependency_tracker::DependencyGraph::new();
             dep.build_from_document(&nodes).unwrap();
             let mut to_update: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for c in dep.calculate_update_cascade(&format!("{}/value", b_path)) { to_update.insert(c); }
-            if !to_update.is_empty() { resolve_specific_fields(&mut nodes, &to_update); }
+            for c in dep.calculate_update_cascade(&format!("{}/value", b_path)) {
+                to_update.insert(c);
+            }
+            if !to_update.is_empty() {
+                resolve_specific_fields(&mut nodes, &to_update);
+            }
         }
 
         let total_after_second = find(&nodes, "main/total").unwrap();
-        assert!(matches!(total_after_second.parameters.get("value"), Some(OverseerValue::Formula(_))), "Formula should persist after second edit");
-    let _after_second_val = total_after_second.parameters.get("_computed_value").cloned();
-    // Similarly, skip asserting change pending selective propagation bug resolution.
-    // Ensure still formula after two edits
-    assert!(matches!(total_after_second.parameters.get("value"), Some(OverseerValue::Formula(_))));
+        assert!(
+            matches!(
+                total_after_second.parameters.get("value"),
+                Some(OverseerValue::Formula(_))
+            ),
+            "Formula should persist after second edit"
+        );
+        let _after_second_val = total_after_second
+            .parameters
+            .get("_computed_value")
+            .cloned();
+        // Similarly, skip asserting change pending selective propagation bug resolution.
+        // Ensure still formula after two edits
+        assert!(matches!(
+            total_after_second.parameters.get("value"),
+            Some(OverseerValue::Formula(_))
+        ));
     }
 }
 
@@ -1440,23 +2021,49 @@ mod tests_nested_named_container_defaults_in_list_items {
         resolve_document(&mut nodes);
 
         // Find Intake list item (resolved MealRecord)
-        let root = nodes.iter().find(|n| n.name == "Root").expect("root present");
-        let intake = root.children.iter().find(|n| n.name == "Intake").expect("intake present");
+        let root = nodes
+            .iter()
+            .find(|n| n.name == "Root")
+            .expect("root present");
+        let intake = root
+            .children
+            .iter()
+            .find(|n| n.name == "Intake")
+            .expect("intake present");
         assert_eq!(intake.node_type, "list");
         assert_eq!(intake.children.len(), 1);
         let item = &intake.children[0];
         assert_eq!(item.node_type, "MealRecord");
 
         // Access per_item fields
-        let per_item = item.children.iter().find(|c| c.name == "per_item").expect("per_item present");
+        let per_item = item
+            .children
+            .iter()
+            .find(|c| c.name == "per_item")
+            .expect("per_item present");
         // calories should be overridden
-        let calories = per_item.children.iter().find(|c| c.name == "calories").expect("calories present");
-        assert!(matches!(calories.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 250.0).abs() < 1e-6));
+        let calories = per_item
+            .children
+            .iter()
+            .find(|c| c.name == "calories")
+            .expect("calories present");
+        assert!(
+            matches!(calories.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 250.0).abs() < 1e-6)
+        );
         // weight should remain from template default (100.0)
-        let weight = per_item.children.iter().find(|c| c.name == "weight").expect("weight present");
-        assert!(matches!(weight.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 100.0).abs() < 1e-6));
+        let weight = per_item
+            .children
+            .iter()
+            .find(|c| c.name == "weight")
+            .expect("weight present");
+        assert!(
+            matches!(weight.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 100.0).abs() < 1e-6)
+        );
         // And weight should still be marked as template-derived (has _template_value)
-        assert!(weight.parameters.contains_key("_template_value"), "weight should keep template marker since it wasn't overridden");
+        assert!(
+            weight.parameters.contains_key("_template_value"),
+            "weight should keep template marker since it wasn't overridden"
+        );
     }
 
     // Multiple overrides in the same named container should not drop other defaults
@@ -1497,11 +2104,19 @@ mod tests_nested_named_container_defaults_in_list_items {
         let b = group.children.iter().find(|c| c.name == "b").unwrap();
         let c = group.children.iter().find(|c| c.name == "c").unwrap();
         let label = group.children.iter().find(|c| c.name == "label").unwrap();
-        assert!(matches!(a.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 10.0).abs() < 1e-6));
-        assert!(matches!(c.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 30.0).abs() < 1e-6));
-        assert!(matches!(label.parameters.get("value"), Some(OverseerValue::String(v)) if v == "over"));
+        assert!(
+            matches!(a.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 10.0).abs() < 1e-6)
+        );
+        assert!(
+            matches!(c.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 30.0).abs() < 1e-6)
+        );
+        assert!(
+            matches!(label.parameters.get("value"), Some(OverseerValue::String(v)) if v == "over")
+        );
         // Non-overridden 'b' should remain default and carry template marker
-        assert!(matches!(b.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 2.0).abs() < 1e-6));
+        assert!(
+            matches!(b.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 2.0).abs() < 1e-6)
+        );
         assert!(b.parameters.contains_key("_template_value"));
     }
 
@@ -1545,76 +2160,110 @@ mod tests_nested_named_container_defaults_in_list_items {
         let y = inner.children.iter().find(|c| c.name == "y").unwrap();
         let z = outer.children.iter().find(|c| c.name == "z").unwrap();
         // Override applied
-        assert!(matches!(x.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 10.0).abs() < 1e-6));
+        assert!(
+            matches!(x.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 10.0).abs() < 1e-6)
+        );
         // Sibling default preserved with template marker
-        assert!(matches!(y.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 2.0).abs() < 1e-6));
+        assert!(
+            matches!(y.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 2.0).abs() < 1e-6)
+        );
         assert!(y.parameters.contains_key("_template_value"));
         // Unaffected cousin at outer level should remain default
-        assert!(matches!(z.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 3.0).abs() < 1e-6));
+        assert!(
+            matches!(z.parameters.get("value"), Some(OverseerValue::Float(f)) if (*f - 3.0).abs() < 1e-6)
+        );
         assert!(z.parameters.contains_key("_template_value"));
     }
 }
 
 /// Recursively check if a chart node or its children depend on the specified field paths
-fn chart_node_depends_on_fields(node: &OverseerNode, field_paths: &std::collections::HashSet<String>, current_path: &str) -> bool {
-    let node_path = if current_path.is_empty() { 
-        node.name.clone() 
-    } else { 
-        format!("{}/{}", current_path, node.name) 
+fn chart_node_depends_on_fields(
+    node: &OverseerNode,
+    field_paths: &std::collections::HashSet<String>,
+    current_path: &str,
+) -> bool {
+    let node_path = if current_path.is_empty() {
+        node.name.clone()
+    } else {
+        format!("{}/{}", current_path, node.name)
     };
-    
+
     // Check if this is a chart with plots
     if node.node_type == "chart" {
         for child in &node.children {
             if child.node_type == "plot" {
                 if plot_depends_on_fields(child, field_paths, &node_path) {
-                    debug_resolver!("[RESOLVER] Chart plot '{}' depends on changed fields", format!("{}/{}", node_path, child.name));
+                    debug_resolver!(
+                        "[RESOLVER] Chart plot '{}' depends on changed fields",
+                        format!("{}/{}", node_path, child.name)
+                    );
                     return true;
                 }
             }
         }
     }
-    
+
     // Recursively check children
     for child in &node.children {
         if chart_node_depends_on_fields(child, field_paths, &node_path) {
             return true;
         }
     }
-    
+
     false
 }
 
 /// Check if a specific plot depends on any of the changed field paths
-fn plot_depends_on_fields(plot: &OverseerNode, field_paths: &std::collections::HashSet<String>, _chart_path: &str) -> bool {
+fn plot_depends_on_fields(
+    plot: &OverseerNode,
+    field_paths: &std::collections::HashSet<String>,
+    _chart_path: &str,
+) -> bool {
     use crate::types::OverseerValue;
-    
+
     // Check the 'source' parameter to see what data the plot references
     if let Some(OverseerValue::String(source_path)) = plot.parameters.get("source") {
-    debug_resolver!("[RESOLVER] Checking if plot source '{}' intersects with changed fields: {:?}", source_path, field_paths);
-        
+        debug_resolver!(
+            "[RESOLVER] Checking if plot source '{}' intersects with changed fields: {:?}",
+            source_path,
+            field_paths
+        );
+
         // If the source path (like "/data") intersects with any changed field paths
         for field_path in field_paths {
             // Check if the changed field could affect the plot's data source
             let source_clean = source_path.trim_start_matches('/');
-            
+
             // Direct path match (e.g., field "data" affects source "/data")
             if field_path == source_clean || field_path.starts_with(&format!("{}/", source_clean)) {
-                debug_resolver!("[RESOLVER] Plot source '{}' directly affected by field change '{}'", source_path, field_path);
+                debug_resolver!(
+                    "[RESOLVER] Plot source '{}' directly affected by field change '{}'",
+                    source_path,
+                    field_path
+                );
                 return true;
             }
-            
+
             // Reverse check: source affects field (e.g., source "/data" affects field "data/item")
-            if source_clean.starts_with(field_path) || source_clean.starts_with(&format!("{}/", field_path)) {
-                debug_resolver!("[RESOLVER] Plot source '{}' contains changed field '{}'", source_path, field_path);
+            if source_clean.starts_with(field_path)
+                || source_clean.starts_with(&format!("{}/", field_path))
+            {
+                debug_resolver!(
+                    "[RESOLVER] Plot source '{}' contains changed field '{}'",
+                    source_path,
+                    field_path
+                );
                 return true;
             }
         }
     }
-    
+
     // For now, assume plot formulas (x, y parameters) only depend on lambda variables and source data
     // They typically don't depend on external fields like 'a' or 'b'
-    debug_resolver!("[RESOLVER] Plot '{}' does not depend on changed fields", format!("{}/{}", _chart_path, plot.name));
+    debug_resolver!(
+        "[RESOLVER] Plot '{}' does not depend on changed fields",
+        format!("{}/{}", _chart_path, plot.name)
+    );
     false
 }
 
@@ -1628,7 +2277,11 @@ unsafe fn recursively_evaluate_node_formulas(
     document_root: &[OverseerNode],
 ) {
     let node: &mut OverseerNode = &mut *node_ptr;
-    let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() { None } else { Some(&*_parent_ptr) };
+    let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() {
+        None
+    } else {
+        Some(&*_parent_ptr)
+    };
     // Skip evaluating formulas for nodes inside action handler blocks (on click/timeout)
     if let Some(p) = _parent_ref {
         if p.node_type == "on" {
@@ -1654,19 +2307,36 @@ unsafe fn recursively_evaluate_node_formulas(
     // Run up to 2 passes so values depending on other same-node formulas can pick up computed shadows.
     for _ in 0..2 {
         // Create a fresh context each pass; its immutable borrow ends before we mutate parameters
-        let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
+        let context = EvaluationContext::new_with_current_and_parent(
+            node,
+            _parent_ref,
+            current_path.to_vec(),
+            document_root,
+        );
         let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
         // Compute fallback first if declared
         if let Some(fb) = node.parameters.get("fallback").cloned() {
             let fb_val = match fb {
-                OverseerValue::Formula(f) => FormulaEvaluator::evaluate_formula(f.as_str(), &context).unwrap_or(OverseerValue::Null),
+                OverseerValue::Formula(f) => {
+                    FormulaEvaluator::evaluate_formula(f.as_str(), &context)
+                        .unwrap_or(OverseerValue::Null)
+                }
                 other => other,
             };
             computed_params.push(("_computed_fallback".to_string(), fb_val));
         }
         for (key, formula_src) in &formula_pairs {
-            debug_resolver!("[RESOLVER] Evaluating formula in {}.{}: {}", node.name, key, formula_src);
-            let shadow_key = if key == "value" { "_computed_value".to_string() } else { format!("_computed_{}", key) };
+            debug_resolver!(
+                "[RESOLVER] Evaluating formula in {}.{}: {}",
+                node.name,
+                key,
+                formula_src
+            );
+            let shadow_key = if key == "value" {
+                "_computed_value".to_string()
+            } else {
+                format!("_computed_{}", key)
+            };
             match FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context) {
                 Ok(result) => {
                     debug_resolver!("[RESOLVER] Formula result: {:?}", result);
@@ -1674,7 +2344,10 @@ unsafe fn recursively_evaluate_node_formulas(
                 }
                 Err(_err) => {
                     debug_resolver!("[RESOLVER] Formula error at {}.{}", node.name, key);
-                    computed_params.push((shadow_key, OverseerValue::String("invalid formula error".to_string())));
+                    computed_params.push((
+                        shadow_key,
+                        OverseerValue::String("invalid formula error".to_string()),
+                    ));
                 }
             }
         }
@@ -1683,15 +2356,15 @@ unsafe fn recursively_evaluate_node_formulas(
         // Merge computed shadow params into node.parameters (do not overwrite originals).
         // Insert after each pass so subsequent passes can read newly available _computed_* values.
         for (k, v) in computed_params {
-                // Never overwrite original formula in 'value' with computed primitive; store only in shadow key
-                if k == "_computed_value" {
-                    node.parameters.insert(k, v);
-                } else {
-                    node.parameters.insert(k, v);
-                }
+            // Never overwrite original formula in 'value' with computed primitive; store only in shadow key
+            if k == "_computed_value" {
+                node.parameters.insert(k, v);
+            } else {
+                node.parameters.insert(k, v);
+            }
         }
     }
-    
+
     // Recursively evaluate formulas in children
     let child_len = node.children.len();
     for idx in 0..child_len {
@@ -1700,10 +2373,24 @@ unsafe fn recursively_evaluate_node_formulas(
         {
             let child_ref = &*child_ptr;
             let name = child_ref.name.clone();
-            let k = node.children.iter().take(idx).filter(|c| c.name == name).count();
-            if k > 0 { current_path.push(format!("{}#{}", name, k)); } else { current_path.push(name); }
+            let k = node
+                .children
+                .iter()
+                .take(idx)
+                .filter(|c| c.name == name)
+                .count();
+            if k > 0 {
+                current_path.push(format!("{}#{}", name, k));
+            } else {
+                current_path.push(name);
+            }
         }
-        recursively_evaluate_node_formulas(child_ptr, node as *const OverseerNode, current_path, document_root);
+        recursively_evaluate_node_formulas(
+            child_ptr,
+            node as *const OverseerNode,
+            current_path,
+            document_root,
+        );
         current_path.pop();
     }
 }
@@ -1719,29 +2406,51 @@ unsafe fn recursively_evaluate_node_formulas_selective(
     // Track whether any _computed_* param mutated in this subtree so caller can record progress
     let mut subtree_changed = false;
     let node: &mut OverseerNode = &mut *node_ptr;
-    let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() { None } else { Some(&*_parent_ptr) };
-    
+    let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() {
+        None
+    } else {
+        Some(&*_parent_ptr)
+    };
+
     // Skip evaluating formulas for nodes inside action handler blocks
     if let Some(p) = _parent_ref {
         if p.node_type == "on" {
             return false; // Skip action handler blocks entirely
         }
     }
-    
+
     // Check if this node's path is in the fields we need to update
     let current_path_str = current_path.join("/");
     // Normalization experiment: build alternate path stripping empty name segments for matching
-    let normalized_no_empty: String = current_path.iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("/");
-    let should_evaluate_this_node = field_paths.contains(&current_path_str) || 
-        field_paths.iter().any(|path| path.starts_with(&current_path_str)) ||
-        (!normalized_no_empty.is_empty() && (field_paths.contains(&normalized_no_empty) || field_paths.iter().any(|p| p.starts_with(&normalized_no_empty))));
+    let normalized_no_empty: String = current_path
+        .iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("/");
+    let should_evaluate_this_node = field_paths.contains(&current_path_str)
+        || field_paths
+            .iter()
+            .any(|path| path.starts_with(&current_path_str))
+        || (!normalized_no_empty.is_empty()
+            && (field_paths.contains(&normalized_no_empty)
+                || field_paths
+                    .iter()
+                    .any(|p| p.starts_with(&normalized_no_empty))));
     if should_evaluate_this_node {
-        debug_resolver!("[RESOLVER] selective match path='{}' normalized='{}'", current_path_str, normalized_no_empty);
+        debug_resolver!(
+            "[RESOLVER] selective match path='{}' normalized='{}'",
+            current_path_str,
+            normalized_no_empty
+        );
     }
-    
+
     if should_evaluate_this_node {
-    debug_resolver!("🔄 Selectively evaluating formulas for node at path: {}", current_path_str);
-        
+        debug_resolver!(
+            "🔄 Selectively evaluating formulas for node at path: {}",
+            current_path_str
+        );
+
         // Same formula evaluation logic as the main function
         let formula_pairs: Vec<(String, String)> = node
             .parameters
@@ -1754,19 +2463,36 @@ unsafe fn recursively_evaluate_node_formulas_selective(
 
         // Run up to 2 passes for intra-node dependencies
         for _ in 0..2 {
-            let context = EvaluationContext::new_with_current_and_parent(node, _parent_ref, current_path.to_vec(), document_root);
+            let context = EvaluationContext::new_with_current_and_parent(
+                node,
+                _parent_ref,
+                current_path.to_vec(),
+                document_root,
+            );
             let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
             // Compute fallback first (parity with full evaluator) so dependents can read _computed_fallback immediately
             if let Some(fb) = node.parameters.get("fallback").cloned() {
                 let fb_val = match fb {
-                    OverseerValue::Formula(f) => FormulaEvaluator::evaluate_formula(f.as_str(), &context).unwrap_or(OverseerValue::Null),
+                    OverseerValue::Formula(f) => {
+                        FormulaEvaluator::evaluate_formula(f.as_str(), &context)
+                            .unwrap_or(OverseerValue::Null)
+                    }
                     other => other,
                 };
                 computed_params.push(("_computed_fallback".to_string(), fb_val));
             }
             for (key, formula_src) in &formula_pairs {
-                debug_resolver!("[RESOLVER] Selectively evaluating formula in {}.{}: {}", node.name, key, formula_src);
-                let shadow_key = if key == "value" { "_computed_value".to_string() } else { format!("_computed_{}", key) };
+                debug_resolver!(
+                    "[RESOLVER] Selectively evaluating formula in {}.{}: {}",
+                    node.name,
+                    key,
+                    formula_src
+                );
+                let shadow_key = if key == "value" {
+                    "_computed_value".to_string()
+                } else {
+                    format!("_computed_{}", key)
+                };
                 match FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context) {
                     Ok(result) => {
                         debug_resolver!("[RESOLVER] Formula result: {:?}", result);
@@ -1774,7 +2500,10 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                     }
                     Err(_err) => {
                         debug_resolver!("[RESOLVER] Formula error at {}.{}", node.name, key);
-                        computed_params.push((shadow_key, OverseerValue::String("invalid formula error".to_string())));
+                        computed_params.push((
+                            shadow_key,
+                            OverseerValue::String("invalid formula error".to_string()),
+                        ));
                     }
                 }
             }
@@ -1785,12 +2514,14 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                     Some(existing) => existing != &v,
                     None => true,
                 };
-                if changed { subtree_changed = true; }
+                if changed {
+                    subtree_changed = true;
+                }
                 node.parameters.insert(k, v); // k could be _computed_value or _computed_paramName
             }
         }
     }
-    
+
     // Always recurse into children to check their paths
     let child_len = node.children.len();
     for idx in 0..child_len {
@@ -1798,10 +2529,25 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         {
             let child_ref = &*child_ptr;
             let name = child_ref.name.clone();
-            let k = node.children.iter().take(idx).filter(|c| c.name == name).count();
-            if k > 0 { current_path.push(format!("{}#{}", name, k)); } else { current_path.push(name); }
+            let k = node
+                .children
+                .iter()
+                .take(idx)
+                .filter(|c| c.name == name)
+                .count();
+            if k > 0 {
+                current_path.push(format!("{}#{}", name, k));
+            } else {
+                current_path.push(name);
+            }
         }
-        if recursively_evaluate_node_formulas_selective(child_ptr, node as *const OverseerNode, current_path, document_root, field_paths) {
+        if recursively_evaluate_node_formulas_selective(
+            child_ptr,
+            node as *const OverseerNode,
+            current_path,
+            document_root,
+            field_paths,
+        ) {
             subtree_changed = true;
         }
         current_path.pop();
@@ -1818,7 +2564,9 @@ fn compute_list_ui_sort_keys(nodes: &mut Vec<OverseerNode>) {
     for i in 0..len {
         let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
         let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-        unsafe { recursively_compute_sort_keys(node_ptr, std::ptr::null(), &mut current_path, &snapshot); }
+        unsafe {
+            recursively_compute_sort_keys(node_ptr, std::ptr::null(), &mut current_path, &snapshot);
+        }
     }
 }
 
@@ -1828,8 +2576,8 @@ unsafe fn recursively_compute_sort_keys(
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
 ) {
-    use crate::types::OverseerValue;
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
+    use crate::types::OverseerValue;
 
     let node: &mut OverseerNode = &mut *node_ptr;
 
@@ -1846,7 +2594,12 @@ unsafe fn recursively_compute_sort_keys(
                     // Build context for evaluating against the child; bind as current and provide parent
                     let mut path = current_path.clone();
                     path.push(child.name.clone());
-                    let ctx = EvaluationContext::new_with_current_and_parent(child, Some(&*node_ptr), path, document_root);
+                    let ctx = EvaluationContext::new_with_current_and_parent(
+                        child,
+                        Some(&*node_ptr),
+                        path,
+                        document_root,
+                    );
                     let key = FormulaEvaluator::evaluate_lambda_on_item(sort_src, &ctx, child)
                         .unwrap_or(OverseerValue::Integer(idx as i64));
                     // Store as internal UI-only key
@@ -1862,15 +2615,24 @@ unsafe fn recursively_compute_sort_keys(
         {
             let child_ref = &*child_ptr;
             let name = child_ref.name.clone();
-            let k = node.children
+            let k = node
+                .children
                 .iter()
                 .take(c)
                 .filter(|c| c.name == name)
                 .count();
-            if k > 0 { current_path.push(format!("{}#{}", name, k)); }
-            else { current_path.push(name); }
+            if k > 0 {
+                current_path.push(format!("{}#{}", name, k));
+            } else {
+                current_path.push(name);
+            }
         }
-        recursively_compute_sort_keys(child_ptr, node as *const OverseerNode, current_path, document_root);
+        recursively_compute_sort_keys(
+            child_ptr,
+            node as *const OverseerNode,
+            current_path,
+            document_root,
+        );
         current_path.pop();
     }
 }
@@ -1888,15 +2650,24 @@ mod tests {
         }"#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
-        
+
         let container = &nodes[0];
-        assert_eq!(container.parameters.get("_effective_layout"), Some(&OverseerValue::String("vertical".to_string())));
-        
+        assert_eq!(
+            container.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("vertical".to_string()))
+        );
+
         // Children should alternate to horizontal
         let child1 = &container.children[0];
         let child2 = &container.children[1];
-        assert_eq!(child1.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
-        assert_eq!(child2.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
+        assert_eq!(
+            child1.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
+        assert_eq!(
+            child2.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
     }
 
     #[test]
@@ -1907,15 +2678,24 @@ mod tests {
         }"#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
-        
+
         let container = &nodes[0];
-        assert_eq!(container.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
-        
+        assert_eq!(
+            container.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
+
         // Children should alternate to vertical
         let child1 = &container.children[0];
         let child2 = &container.children[1];
-        assert_eq!(child1.parameters.get("_effective_layout"), Some(&OverseerValue::String("vertical".to_string())));
-        assert_eq!(child2.parameters.get("_effective_layout"), Some(&OverseerValue::String("vertical".to_string())));
+        assert_eq!(
+            child1.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("vertical".to_string()))
+        );
+        assert_eq!(
+            child2.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("vertical".to_string()))
+        );
     }
 
     #[test]
@@ -1927,14 +2707,23 @@ mod tests {
         }"#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
-        
+
         let outer = &nodes[0];
         let inner = &outer.children[0];
         let child = &inner.children[0];
-        
-        assert_eq!(outer.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
-        assert_eq!(inner.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
-        assert_eq!(child.parameters.get("_effective_layout"), Some(&OverseerValue::String("vertical".to_string())));
+
+        assert_eq!(
+            outer.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
+        assert_eq!(
+            inner.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
+        assert_eq!(
+            child.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("vertical".to_string()))
+        );
     }
 
     #[test]
@@ -1946,14 +2735,23 @@ mod tests {
         }"#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
-        
+
         let outer = &nodes[0];
         let inner = &outer.children[0];
         let child = &inner.children[0];
-        
-        assert_eq!(outer.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
-        assert_eq!(inner.parameters.get("_effective_layout"), Some(&OverseerValue::String("vertical".to_string())));
-        assert_eq!(child.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
+
+        assert_eq!(
+            outer.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
+        assert_eq!(
+            inner.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("vertical".to_string()))
+        );
+        assert_eq!(
+            child.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
     }
 
     #[test]
@@ -1965,15 +2763,24 @@ mod tests {
         }"#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
-        
+
         let outer = &nodes[0];
         let inner = &outer.children[0];
         let child = &inner.children[0];
-        
+
         // Default should be horizontal for root, then alternate
-        assert_eq!(outer.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
-        assert_eq!(inner.parameters.get("_effective_layout"), Some(&OverseerValue::String("vertical".to_string())));
-        assert_eq!(child.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
+        assert_eq!(
+            outer.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
+        assert_eq!(
+            inner.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("vertical".to_string()))
+        );
+        assert_eq!(
+            child.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
     }
 
     #[test]
@@ -1990,35 +2797,49 @@ mod tests {
         "#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
-        
+
         // After resolution, we should still have both nodes (template and instance)
         // But hidden templates may be filtered out in actual rendering, not in tests
-    debug_resolver!("Number of nodes after resolution: {}", nodes.len());
-    for (_i, _node) in nodes.iter().enumerate() {
+        debug_resolver!("Number of nodes after resolution: {}", nodes.len());
+        for (_i, _node) in nodes.iter().enumerate() {
             debug_resolver!("Node {}: {} (type: {})", i, node.name, node.node_type);
         }
-        
+
         // Find the resolved task (it should be the second node, or the only non-hidden one)
         let resolved_task = if nodes.len() == 2 {
             &nodes[1] // Both template and instance present
         } else {
             &nodes[0] // Only instance present (template filtered out)
         };
-        
-    debug_resolver!("Resolved task children: {}", resolved_task.children.len());
-    for (_i, _child) in resolved_task.children.iter().enumerate() {
+
+        debug_resolver!("Resolved task children: {}", resolved_task.children.len());
+        for (_i, _child) in resolved_task.children.iter().enumerate() {
             debug_resolver!("  Child {}: {} (type: {})", i, child.name, child.node_type);
         }
-        
-    assert_eq!(resolved_task.node_type, "Task");
-    // New behavior: copy all template fields, then merge overrides
-    assert_eq!(resolved_task.children.len(), 2);
-    // description should be overridden
-    let description = resolved_task.get_accessible_children().into_iter().find(|c| c.name == "description").unwrap();
-    assert_eq!(description.parameters.get("value"), Some(&OverseerValue::String("My custom task".to_string())));
-    // checkbox should be present with default value from template
-    let complete = resolved_task.get_accessible_children().into_iter().find(|c| c.name == "complete").unwrap();
-    assert_eq!(complete.parameters.get("value"), Some(&OverseerValue::Boolean(false)));
+
+        assert_eq!(resolved_task.node_type, "Task");
+        // New behavior: copy all template fields, then merge overrides
+        assert_eq!(resolved_task.children.len(), 2);
+        // description should be overridden
+        let description = resolved_task
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "description")
+            .unwrap();
+        assert_eq!(
+            description.parameters.get("value"),
+            Some(&OverseerValue::String("My custom task".to_string()))
+        );
+        // checkbox should be present with default value from template
+        let complete = resolved_task
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "complete")
+            .unwrap();
+        assert_eq!(
+            complete.parameters.get("value"),
+            Some(&OverseerValue::Boolean(false))
+        );
     }
 
     #[test]
@@ -2048,22 +2869,47 @@ mod tests {
         resolve_document(&mut nodes);
 
         // Find BugList list entry
-        let bug_list = nodes.iter().find(|n| n.name == "BugList").expect("list present");
+        let bug_list = nodes
+            .iter()
+            .find(|n| n.name == "BugList")
+            .expect("list present");
         assert_eq!(bug_list.node_type, "list");
         assert_eq!(bug_list.children.len(), 1);
         let item = &bug_list.children[0];
         // After resolution, list entry should be of type Bug with fields accessible (transparent unnamed div)
         assert_eq!(item.node_type, "Bug");
         // Fetch children in a transparent-aware way and verify overrides
-    let children = item.get_accessible_children();
-    let desc = children.iter().copied().find(|c| c.name == "description").expect("description field");
-        assert_eq!(desc.parameters.get("value"), Some(&OverseerValue::String("override text".to_string())));
-    let sp = children.iter().copied().find(|c| c.name == "storypoints").expect("storypoints field");
+        let children = item.get_accessible_children();
+        let desc = children
+            .iter()
+            .copied()
+            .find(|c| c.name == "description")
+            .expect("description field");
+        assert_eq!(
+            desc.parameters.get("value"),
+            Some(&OverseerValue::String("override text".to_string()))
+        );
+        let sp = children
+            .iter()
+            .copied()
+            .find(|c| c.name == "storypoints")
+            .expect("storypoints field");
         assert_eq!(sp.parameters.get("value"), Some(&OverseerValue::Integer(5)));
-    let pr = children.iter().copied().find(|c| c.name == "priority").expect("priority field");
+        let pr = children
+            .iter()
+            .copied()
+            .find(|c| c.name == "priority")
+            .expect("priority field");
         assert_eq!(pr.parameters.get("value"), Some(&OverseerValue::Integer(2)));
-    let fx = children.iter().copied().find(|c| c.name == "fixed").expect("fixed field");
-        assert_eq!(fx.parameters.get("value"), Some(&OverseerValue::Boolean(true)));
+        let fx = children
+            .iter()
+            .copied()
+            .find(|c| c.name == "fixed")
+            .expect("fixed field");
+        assert_eq!(
+            fx.parameters.get("value"),
+            Some(&OverseerValue::Boolean(true))
+        );
 
         // Serialize and reparse to simulate a round-trip; overrides should persist
         let ser = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes).unwrap();
@@ -2071,15 +2917,43 @@ mod tests {
         resolve_document(&mut nodes2);
         let bug_list2 = nodes2.iter().find(|n| n.name == "BugList").unwrap();
         let item2 = &bug_list2.children[0];
-    let ch2 = item2.get_accessible_children();
-    let f_desc = ch2.iter().copied().find(|c| c.name == "description").expect("desc2");
-    assert_eq!(f_desc.parameters.get("value"), Some(&OverseerValue::String("override text".to_string())));
-    let f_sp = ch2.iter().copied().find(|c| c.name == "storypoints").expect("sp2");
-    assert_eq!(f_sp.parameters.get("value"), Some(&OverseerValue::Integer(5)));
-    let f_pr = ch2.iter().copied().find(|c| c.name == "priority").expect("pr2");
-    assert_eq!(f_pr.parameters.get("value"), Some(&OverseerValue::Integer(2)));
-    let f_fx = ch2.iter().copied().find(|c| c.name == "fixed").expect("fx2");
-    assert_eq!(f_fx.parameters.get("value"), Some(&OverseerValue::Boolean(true)));
+        let ch2 = item2.get_accessible_children();
+        let f_desc = ch2
+            .iter()
+            .copied()
+            .find(|c| c.name == "description")
+            .expect("desc2");
+        assert_eq!(
+            f_desc.parameters.get("value"),
+            Some(&OverseerValue::String("override text".to_string()))
+        );
+        let f_sp = ch2
+            .iter()
+            .copied()
+            .find(|c| c.name == "storypoints")
+            .expect("sp2");
+        assert_eq!(
+            f_sp.parameters.get("value"),
+            Some(&OverseerValue::Integer(5))
+        );
+        let f_pr = ch2
+            .iter()
+            .copied()
+            .find(|c| c.name == "priority")
+            .expect("pr2");
+        assert_eq!(
+            f_pr.parameters.get("value"),
+            Some(&OverseerValue::Integer(2))
+        );
+        let f_fx = ch2
+            .iter()
+            .copied()
+            .find(|c| c.name == "fixed")
+            .expect("fx2");
+        assert_eq!(
+            f_fx.parameters.get("value"),
+            Some(&OverseerValue::Boolean(true))
+        );
     }
 
     #[test]
@@ -2100,9 +2974,16 @@ mod tests {
 
         // Find the instance 'my_task' under Outer
         let outer = &nodes[0];
-        let instance = outer.children.iter().find(|c| c.name == "my_task").expect("instance present");
+        let instance = outer
+            .children
+            .iter()
+            .find(|c| c.name == "my_task")
+            .expect("instance present");
         // Because parent layout is vertical, effective layout for children should be horizontal
-        assert_eq!(instance.parameters.get("_effective_layout"), Some(&OverseerValue::String("horizontal".to_string())));
+        assert_eq!(
+            instance.parameters.get("_effective_layout"),
+            Some(&OverseerValue::String("horizontal".to_string()))
+        );
     }
 
     #[test]
@@ -2115,27 +2996,51 @@ mod tests {
         }"#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
-        
+
         let container = &nodes[0];
         let inner = &container.children[0];
         let field = &inner.children[0];
         let direct = &container.children[1];
-        
+
         // Container should have its own styling
-        assert_eq!(container.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
-        assert_eq!(container.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
-        
+        assert_eq!(
+            container.parameters.get("font-color"),
+            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
+        );
+        assert_eq!(
+            container.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
+        );
+
         // Inner div should inherit styling parameters
-        assert_eq!(inner.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
-        assert_eq!(inner.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
-        
+        assert_eq!(
+            inner.parameters.get("font-color"),
+            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
+        );
+        assert_eq!(
+            inner.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
+        );
+
         // Field should inherit from both container and inner
-        assert_eq!(field.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
-        assert_eq!(field.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
-        
+        assert_eq!(
+            field.parameters.get("font-color"),
+            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
+        );
+        assert_eq!(
+            field.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
+        );
+
         // Direct child should inherit from container
-        assert_eq!(direct.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
-        assert_eq!(direct.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
+        assert_eq!(
+            direct.parameters.get("font-color"),
+            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
+        );
+        assert_eq!(
+            direct.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
+        );
     }
 
     #[test]
@@ -2147,23 +3052,41 @@ mod tests {
         }"#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
-        
+
         let container = &nodes[0];
         let child1 = &container.children[0];
         let child2 = &container.children[1];
         let child3 = &container.children[2];
-        
+
         // Child1 should inherit both parameters
-        assert_eq!(child1.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
-        assert_eq!(child1.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
-        
+        assert_eq!(
+            child1.parameters.get("font-color"),
+            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
+        );
+        assert_eq!(
+            child1.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
+        );
+
         // Child2 should override color but inherit size
-        assert_eq!(child2.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("red".to_string()))));
-        assert_eq!(child2.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(16.0))));
-        
+        assert_eq!(
+            child2.parameters.get("font-color"),
+            Some(&OverseerValue::Color(Color::Named("red".to_string())))
+        );
+        assert_eq!(
+            child2.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
+        );
+
         // Child3 should override size but inherit color
-        assert_eq!(child3.parameters.get("font-color"), Some(&OverseerValue::Color(Color::Named("blue".to_string()))));
-        assert_eq!(child3.parameters.get("font-size"), Some(&OverseerValue::CssSize(CssSize::Pixels(20.0))));
+        assert_eq!(
+            child3.parameters.get("font-color"),
+            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
+        );
+        assert_eq!(
+            child3.parameters.get("font-size"),
+            Some(&OverseerValue::CssSize(CssSize::Pixels(20.0)))
+        );
     }
 
     #[test]
@@ -2181,14 +3104,17 @@ mod tests {
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
         let out = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
-    // Expect concise override retained and inherited field omitted in the instance
-    assert!(out.contains("<T> I {"));
-    assert!(out.contains("- A = 3"));
-    // Template block contains int B; instance should not add another occurrence
-    let count_int_b = out.matches("int B").count();
-    assert_eq!(count_int_b, 1, "should not serialize inherited B inside instance");
-    // Ensure the instance did not expand to concrete type assignment
-    assert!(!out.contains("int A = 3"));
+        // Expect concise override retained and inherited field omitted in the instance
+        assert!(out.contains("<T> I {"));
+        assert!(out.contains("- A = 3"));
+        // Template block contains int B; instance should not add another occurrence
+        let count_int_b = out.matches("int B").count();
+        assert_eq!(
+            count_int_b, 1,
+            "should not serialize inherited B inside instance"
+        );
+        // Ensure the instance did not expand to concrete type assignment
+        assert!(!out.contains("int A = 3"));
     }
 
     #[test]
@@ -2208,10 +3134,16 @@ mod tests {
         let out = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
         // The explicit override of B should be preserved as a concise override
         assert!(out.contains("<T> I {"));
-        assert!(out.contains("- B = 2"), "explicit override equal to default must persist");
+        assert!(
+            out.contains("- B = 2"),
+            "explicit override equal to default must persist"
+        );
         // And it should not expand to a full field or duplicate the template field
         let count_int_b = out.matches("int B").count();
-        assert_eq!(count_int_b, 1, "template field 'int B' should not be duplicated inside instance");
+        assert_eq!(
+            count_int_b, 1,
+            "template field 'int B' should not be duplicated inside instance"
+        );
     }
 
     #[test]
@@ -2233,8 +3165,14 @@ mod tests {
         let out = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
         // C should only appear in the template block, not inside the instance
         let count_int_c = out.matches("int C").count();
-        assert_eq!(count_int_c, 1, "inherited C must not be serialized inside instance");
-        assert!(!out.contains("- C = 3"), "concise override for C must not appear since C was not overridden");
+        assert_eq!(
+            count_int_c, 1,
+            "inherited C must not be serialized inside instance"
+        );
+        assert!(
+            !out.contains("- C = 3"),
+            "concise override for C must not appear since C was not overridden"
+        );
     }
 
     #[test]
@@ -2258,7 +3196,10 @@ mod tests {
         assert!(out.contains("div Exercise (background-color=#ffcccc)"));
         // Children should not have background-color persisted
         let child_bc_mentions = out.matches("background-color").count();
-        assert_eq!(child_bc_mentions, 1, "inherited background-color should not be serialized on children");
+        assert_eq!(
+            child_bc_mentions, 1,
+            "inherited background-color should not be serialized on children"
+        );
     }
 
     #[test]
@@ -2294,13 +3235,30 @@ mod tests {
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
         let root = &nodes[0];
-        let m1 = root.get_accessible_children().into_iter().find(|c| c.name == "M1").unwrap();
-        let m2 = root.get_accessible_children().into_iter().find(|c| c.name == "M2").unwrap();
+        let m1 = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "M1")
+            .unwrap();
+        let m2 = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "M2")
+            .unwrap();
         // M1: has source -> status defaults to 'unloaded'; lazy defaults true via _computed_lazy
-        assert_eq!(m1.parameters.get("_mount_status"), Some(&OverseerValue::String("unloaded".to_string())));
-        assert_eq!(m1.parameters.get("_computed_lazy"), Some(&OverseerValue::Boolean(true)));
+        assert_eq!(
+            m1.parameters.get("_mount_status"),
+            Some(&OverseerValue::String("unloaded".to_string()))
+        );
+        assert_eq!(
+            m1.parameters.get("_computed_lazy"),
+            Some(&OverseerValue::Boolean(true))
+        );
         // M2: missing source -> error status and _mount_error present
-        assert_eq!(m2.parameters.get("_mount_status"), Some(&OverseerValue::String("error".to_string())));
+        assert_eq!(
+            m2.parameters.get("_mount_status"),
+            Some(&OverseerValue::String("error".to_string()))
+        );
         assert!(m2.parameters.get("_mount_error").is_some());
     }
 
@@ -2314,15 +3272,22 @@ mod tests {
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
         let root = &nodes[0];
-        let n = root.get_accessible_children().into_iter().find(|c| c.name == "n").unwrap();
+        let n = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.name == "n")
+            .unwrap();
         // Phase 1 stub returns empty list, so count is 0
-        assert_eq!(n.parameters.get("_computed_value"), Some(&OverseerValue::Integer(0)));
+        assert_eq!(
+            n.parameters.get("_computed_value"),
+            Some(&OverseerValue::Integer(0))
+        );
     }
 
     #[test]
     fn test_parent_bg_depends_on_child_formula_computes_on_load() {
         // Parent background-color references a child field that itself is a formula.
-    let input = r##"
+        let input = r##"
         div Parent (background-color=$(score > 0 ? "inherit" : "#000000ff")) {
             int score = $(1)
         }
@@ -2330,8 +3295,15 @@ mod tests {
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
         let parent = &nodes[0];
-        let bg = parent.parameters.get("_computed_background-color").cloned().expect("bg computed");
-        match bg { OverseerValue::String(_) | OverseerValue::Color(_) => {}, other => panic!("unexpected bg: {:?}", other) }
+        let bg = parent
+            .parameters
+            .get("_computed_background-color")
+            .cloned()
+            .expect("bg computed");
+        match bg {
+            OverseerValue::String(_) | OverseerValue::Color(_) => {}
+            other => panic!("unexpected bg: {:?}", other),
+        }
     }
 
     #[test]
@@ -2350,12 +3322,28 @@ mod tests {
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
         let root = &nodes[0];
-        let chart = root.get_accessible_children().into_iter().find(|c| c.node_type == "chart").unwrap();
+        let chart = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.node_type == "chart")
+            .unwrap();
         // Bounds should exist
-        assert!(matches!(chart.parameters.get("_computed_x_min"), Some(OverseerValue::Float(1.0))));
-        assert!(matches!(chart.parameters.get("_computed_x_max"), Some(OverseerValue::Float(2.0))));
-        assert!(matches!(chart.parameters.get("_computed_y_min"), Some(OverseerValue::Float(2.0))));
-        assert!(matches!(chart.parameters.get("_computed_y_max"), Some(OverseerValue::Float(3.0))));
+        assert!(matches!(
+            chart.parameters.get("_computed_x_min"),
+            Some(OverseerValue::Float(1.0))
+        ));
+        assert!(matches!(
+            chart.parameters.get("_computed_x_max"),
+            Some(OverseerValue::Float(2.0))
+        ));
+        assert!(matches!(
+            chart.parameters.get("_computed_y_min"),
+            Some(OverseerValue::Float(2.0))
+        ));
+        assert!(matches!(
+            chart.parameters.get("_computed_y_max"),
+            Some(OverseerValue::Float(3.0))
+        ));
         // Plot series should be computed
         let plot = chart.children.iter().find(|c| c.name == "P1").unwrap();
         let series = plot.parameters.get("_computed_series").cloned().unwrap();
@@ -2384,13 +3372,27 @@ mod tests {
         let mut nodes = crate::parser::parse_document(input).unwrap().1;
         super::resolve_document(&mut nodes);
         let root = &nodes[0];
-        let chart = root.get_accessible_children().into_iter().find(|c| c.node_type == "chart").unwrap();
+        let chart = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.node_type == "chart")
+            .unwrap();
         // Bounds must be computed and increasing in x
-        let xmin = match chart.parameters.get("_computed_x_min") { Some(crate::types::OverseerValue::Float(f)) => *f, _ => -1.0 };
-        let xmax = match chart.parameters.get("_computed_x_max") { Some(crate::types::OverseerValue::Float(f)) => *f, _ => -1.0 };
+        let xmin = match chart.parameters.get("_computed_x_min") {
+            Some(crate::types::OverseerValue::Float(f)) => *f,
+            _ => -1.0,
+        };
+        let xmax = match chart.parameters.get("_computed_x_max") {
+            Some(crate::types::OverseerValue::Float(f)) => *f,
+            _ => -1.0,
+        };
         assert!(xmax > xmin);
         // Plot should have _computed_series
-        let plot = chart.children.iter().find(|c| c.node_type == "plot").unwrap();
+        let plot = chart
+            .children
+            .iter()
+            .find(|c| c.node_type == "plot")
+            .unwrap();
         let ser = plot.parameters.get("_computed_series");
         assert!(matches!(ser, Some(crate::types::OverseerValue::String(_))));
     }
@@ -2413,14 +3415,22 @@ mod tests {
         let mut nodes = crate::parser::parse_document(input).unwrap().1;
         super::resolve_document(&mut nodes);
         let root = &nodes[0];
-        let chart = root.get_accessible_children().into_iter().find(|c| c.node_type == "chart").unwrap();
+        let chart = root
+            .get_accessible_children()
+            .into_iter()
+            .find(|c| c.node_type == "chart")
+            .unwrap();
         // Bounds must be computed
         assert!(chart.parameters.get("_computed_x_min").is_some());
         assert!(chart.parameters.get("_computed_x_max").is_some());
         assert!(chart.parameters.get("_computed_y_min").is_some());
         assert!(chart.parameters.get("_computed_y_max").is_some());
         // Plot should have _computed_series with two points (reps 18 and 22)
-        let plot = chart.children.iter().find(|c| c.node_type == "plot").unwrap();
+        let plot = chart
+            .children
+            .iter()
+            .find(|c| c.node_type == "plot")
+            .unwrap();
         if let Some(OverseerValue::String(s)) = plot.parameters.get("_computed_series") {
             // Count occurrences of opening bracket '[' minus 1 for the array start, or parse
             let series: Vec<(f64, f64)> = serde_json::from_str(s).expect("valid series json");
@@ -2432,10 +3442,10 @@ mod tests {
 
     // Note: additional integration tests for templated list items can be added once renderer/runtime semantics are finalized.
 
-        #[test]
-        fn test_formulas_inside_on_blocks_are_skipped_on_resolve() {
-                // Ensure formulas within action payloads aren't evaluated during resolve (avoids recursion/crash)
-                let input = r#"
+    #[test]
+    fn test_formulas_inside_on_blocks_are_skipped_on_resolve() {
+        // Ensure formulas within action payloads aren't evaluated during resolve (avoids recursion/crash)
+        let input = r#"
 div Root {
     string input = "Hello"
     list L (entry=string) { }
@@ -2446,22 +3456,33 @@ div Root {
     }
 }
 "#;
-                let mut nodes = crate::parser::parse_document(input).unwrap().1;
-                // Just resolving should not evaluate the formula inside on click block
-                resolve_document(&mut nodes);
-                // Find the on click node under Create and ensure its child parameter is still a Formula (no _computed_value)
-                let root = &nodes[0];
-                let btn = root.children.iter().find(|c| c.name == "Create").expect("Create button present");
-                let on_click = btn.children.iter().find(|c| c.node_type == "on" && c.name == "click").expect("on click present");
-                // Under on click, there's an append action with a child override node having value as Formula
-                let append = on_click.children.first().expect("append action present");
-                assert_eq!(append.node_type, "append");
-                let ov = append.children.first().expect("override child present");
-                // It should keep a Formula for 'value' and not have a computed shadow
-                match ov.parameters.get("value") {
-                        Some(OverseerValue::Formula(_)) => {},
-                        other => panic!("expected raw Formula in action payload, got {:?}", other),
-                }
-                assert!(ov.parameters.get("_computed_value").is_none(), "no computed shadow should be created under on-blocks");
+        let mut nodes = crate::parser::parse_document(input).unwrap().1;
+        // Just resolving should not evaluate the formula inside on click block
+        resolve_document(&mut nodes);
+        // Find the on click node under Create and ensure its child parameter is still a Formula (no _computed_value)
+        let root = &nodes[0];
+        let btn = root
+            .children
+            .iter()
+            .find(|c| c.name == "Create")
+            .expect("Create button present");
+        let on_click = btn
+            .children
+            .iter()
+            .find(|c| c.node_type == "on" && c.name == "click")
+            .expect("on click present");
+        // Under on click, there's an append action with a child override node having value as Formula
+        let append = on_click.children.first().expect("append action present");
+        assert_eq!(append.node_type, "append");
+        let ov = append.children.first().expect("override child present");
+        // It should keep a Formula for 'value' and not have a computed shadow
+        match ov.parameters.get("value") {
+            Some(OverseerValue::Formula(_)) => {}
+            other => panic!("expected raw Formula in action payload, got {:?}", other),
         }
+        assert!(
+            ov.parameters.get("_computed_value").is_none(),
+            "no computed shadow should be created under on-blocks"
+        );
+    }
 }

@@ -1,17 +1,8 @@
-use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
 
 use crate::source_registry::SourceRegistry;
 use crate::types::*;
-
-// Debug logging macro for serializer (module scope). Reuse existing 'debug-resolver' feature to avoid adding new Cargo feature.
-macro_rules! debug_serializer {
-    ($($arg:tt)*) => {
-        #[cfg(feature = "debug-resolver")]
-        eprintln!($($arg)*);
-    };
-}
 
 #[allow(dead_code)]
 pub struct FileOperations;
@@ -78,7 +69,9 @@ impl FileOperations {
 
     pub fn validate_file_path(path: &str) -> Result<()> {
         if path.is_empty() {
-            return Err(OverseerError::IoError("File path cannot be empty".to_string()));
+            return Err(OverseerError::IoError(
+                "File path cannot be empty".to_string(),
+            ));
         }
 
         // Check for invalid characters (Windows specific)
@@ -147,22 +140,52 @@ impl FileOperations {
         }
 
         if normalized.chars().all(|c| c == '\n') {
-            let existing_blank_run = output
-                .chars()
-                .rev()
-                .take_while(|&ch| ch == '\n')
-                .count();
+            let existing_blank_run = output.chars().rev().take_while(|&ch| ch == '\n').count();
             let desired_blank_run = normalized.len();
             if desired_blank_run <= existing_blank_run {
                 return;
             }
             let additional = desired_blank_run - existing_blank_run;
             normalized = "\n".repeat(additional);
-        } else if output.ends_with('\n') && normalized.starts_with('\n') && normalized.trim().is_empty() {
+        } else if output.ends_with('\n')
+            && normalized.starts_with('\n')
+            && normalized.trim().is_empty()
+        {
             normalized.remove(0);
         }
 
         output.push_str(&normalized);
+    }
+
+    fn drop_trailing_whitespace_line(buffer: &mut String) {
+        loop {
+            if buffer.is_empty() {
+                return;
+            }
+
+            let mut end = buffer.len();
+            while end > 0 && buffer.as_bytes()[end - 1] == b'\n' {
+                end -= 1;
+            }
+
+            if end == 0 {
+                buffer.clear();
+                return;
+            }
+
+            let line_start = buffer[..end]
+                .rfind('\n')
+                .map(|pos| pos + 1)
+                .unwrap_or(0);
+            let line = &buffer[line_start..end];
+
+            if line.trim().is_empty() {
+                buffer.truncate(line_start);
+                continue;
+            }
+
+            break;
+        }
     }
 
     fn emit_trailing_trivia(snapshot: &Option<NodeSourceSnapshot>, output: &mut String) {
@@ -198,7 +221,10 @@ impl FileOperations {
         let span_start = snapshot.span.0;
         let rel_start = body_start.saturating_sub(span_start);
         let rel_end = body_end.saturating_sub(span_start);
-        if rel_start >= snapshot.full_text.len() || rel_end > snapshot.full_text.len() || rel_start >= rel_end {
+        if rel_start >= snapshot.full_text.len()
+            || rel_end > snapshot.full_text.len()
+            || rel_start >= rel_end
+        {
             return None;
         }
         let slice = &snapshot.full_text[rel_start..rel_end];
@@ -229,13 +255,15 @@ impl FileOperations {
         if let Some(snapshot) = node.source_snapshot.clone() {
             return Some(snapshot);
         }
-        node.source_id
-            .as_deref()
-            .and_then(SourceRegistry::get)
+        node.source_id.as_deref().and_then(SourceRegistry::get)
     }
 
     fn detect_formatting(nodes: &[OverseerNode]) -> FormattingPreferences {
-        fn visit(nodes: &[OverseerNode], indent: &mut Option<String>, newline: &mut Option<String>) {
+        fn visit(
+            nodes: &[OverseerNode],
+            indent: &mut Option<String>,
+            newline: &mut Option<String>,
+        ) {
             for node in nodes {
                 if indent.is_some() && newline.is_some() {
                     return;
@@ -292,37 +320,69 @@ impl FileOperations {
         fallback_indent_unit: &str,
     ) -> Result<()> {
         let snapshot = Self::snapshot_for(node);
-        let fallback_indent_unit = if fallback_indent_unit.is_empty() { "    " } else { fallback_indent_unit };
+        let fallback_indent_unit = if fallback_indent_unit.is_empty() {
+            "    "
+        } else {
+            fallback_indent_unit
+        };
+
+        let inline_patched = if let Some(snap) = snapshot.as_ref() {
+            if matches!(snap.origin, SnapshotOrigin::Parsed) {
+                Self::try_inline_patch_snapshot(node, snap)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let (Some(snap), Some(patched_text)) = (snapshot.as_ref(), inline_patched.as_ref()) {
+            if !snap.leading_trivia.is_empty() {
+                Self::push_trivia(output, &snap.leading_trivia);
+            }
+            if patched_text.contains('\r') {
+                let normalized = patched_text.replace("\r\n", "\n");
+                output.push_str(&normalized);
+            } else {
+                output.push_str(patched_text);
+            }
+            return Ok(());
+        }
 
         if let (Some(snap), Some(fingerprint)) = (snapshot.as_ref(), node.source_fingerprint) {
             if matches!(snap.origin, SnapshotOrigin::Parsed) && fingerprint == snap.fingerprint {
-                if !snap.leading_trivia.is_empty() {
-                    Self::push_trivia(output, &snap.leading_trivia);
+                if Self::children_match_snapshots(node) {
+                    if !snap.leading_trivia.is_empty() {
+                        Self::push_trivia(output, &snap.leading_trivia);
+                    }
+                    if snap.full_text.contains('\r') {
+                        let normalized = snap.full_text.replace("\r\n", "\n");
+                        output.push_str(&normalized);
+                    } else {
+                        output.push_str(&snap.full_text);
+                    }
+                    return Ok(());
                 }
-                if snap.full_text.contains('\r') {
-                    let normalized = snap.full_text.replace("\r\n", "\n");
-                    output.push_str(&normalized);
-                } else {
-                    output.push_str(&snap.full_text);
-                }
-                return Ok(());
             }
         }
 
-        let allow_snapshot_trivia = !Self::should_skip_trailing_trivia(node);
+    let allow_snapshot_trivia = !in_list_body && !Self::should_skip_trailing_trivia(node);
 
         let mut emitted_leading_trivia = false;
         if allow_snapshot_trivia {
             if let Some(snap) = snapshot.as_ref() {
-            if !snap.leading_trivia.is_empty() {
-                Self::push_trivia(output, &snap.leading_trivia);
-                emitted_leading_trivia = true;
+                if !snap.leading_trivia.is_empty() {
+                    Self::push_trivia(output, &snap.leading_trivia);
+                    emitted_leading_trivia = true;
+                }
             }
-        }
         }
 
         if !emitted_leading_trivia {
             let mut blank_lines_to_emit = node.leading_blank_lines;
+            if in_list_body {
+                blank_lines_to_emit = 0;
+            }
             if !output.is_empty() {
                 if indent_level == 0 {
                     blank_lines_to_emit = 0;
@@ -334,6 +394,9 @@ impl FileOperations {
                 output.push('\n');
             }
             if !output.is_empty() && !output.ends_with('\n') {
+                    while output.ends_with(' ') || output.ends_with('\t') {
+                        output.pop();
+                    }
                 output.push('\n');
             }
         }
@@ -349,7 +412,10 @@ impl FileOperations {
         }
 
         // Handle list-style items which start with '-'
-        if in_list_body || node.node_type == "list_item" || (indent_level > 0 && node.node_type == "-") {
+        if in_list_body
+            || node.node_type == "list_item"
+            || (indent_level > 0 && node.node_type == "-")
+        {
             // Special handling for real list bodies vs non-list contexts
             if in_list_body {
                 // Determine if this is a simple primitive list item (only when not template-derived)
@@ -358,11 +424,11 @@ impl FileOperations {
                         node.parameters.get("_from_template"),
                         Some(OverseerValue::Boolean(true))
                     );
-        if let Some(value) = node.parameters.get("value") {
+                if let Some(value) = node.parameters.get("value") {
                     // Only emit as simple value when NOT a template instance (true primitive lists)
                     if !is_template_instance {
-            output.push_str("- ");
-            output.push_str(&Self::serialize_value_with_node(node, value));
+                        output.push_str("- ");
+                        output.push_str(&Self::serialize_value_with_node(node, value));
                         output.push('\n');
                         Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                         return Ok(());
@@ -390,16 +456,19 @@ impl FileOperations {
                 // NOTE: Do not use this list to filter which overrides to persist. Users can introduce
                 // new overrides at runtime (e.g., by editing a field), and this list may be stale.
                 // We keep parsing it for potential future use, but we won't gate emission on it.
-                let _explicit_names_ignored: Option<Vec<String>> = if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
-                    let v: Vec<String> = list
-                        .split(',')
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                        .collect();
-                    Some(v)
-                } else {
-                    None
-                };
+                let _explicit_names_ignored: Option<Vec<String>> =
+                    if let Some(OverseerValue::String(list)) =
+                        node.parameters.get("_explicit_overrides")
+                    {
+                        let v: Vec<String> = list
+                            .split(',')
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .collect();
+                        Some(v)
+                    } else {
+                        None
+                    };
                 for child in &node.children {
                     let child_snapshot = Self::snapshot_for(child);
                     let child_indent = child_snapshot
@@ -410,10 +479,8 @@ impl FileOperations {
                         child.parameters.get("_template_node"),
                         Some(OverseerValue::Boolean(true))
                     );
-                    let has_template_param_markers = child
-                        .parameters
-                        .keys()
-                        .any(|k| k.starts_with("_template_"));
+                    let has_template_param_markers =
+                        child.parameters.keys().any(|k| k.starts_with("_template_"));
                     let is_template_child = is_template_child_flag || has_template_param_markers;
                     let has_explicit_override = matches!(
                         child.parameters.get("_explicit_child_override"),
@@ -424,7 +491,10 @@ impl FileOperations {
 
                     // Special-case: if this child is a transparent wrapper and any of its descendants
                     // were explicitly overridden, emit those descendant overrides concisely here and skip the wrapper.
-                    if suppress_template_children && is_template_child && child.is_hierarchy_transparent {
+                    if suppress_template_children
+                        && is_template_child
+                        && child.is_hierarchy_transparent
+                    {
                         // Collect descendant value-only overrides that should be emitted concisely.
                         // Criteria:
                         //  - value present AND no non-internal, non-value params AND no children
@@ -442,7 +512,9 @@ impl FileOperations {
                                     .iter()
                                     .filter(|(k, _)| {
                                         let ks = k.as_str();
-                                        if ks.starts_with('_') || ks == "value" { return false; }
+                                        if ks.starts_with('_') || ks == "value" {
+                                            return false;
+                                        }
                                         // Ignore template-derived params (have a corresponding _template_ marker)
                                         let marker = format!("_template_{}", ks);
                                         !node.parameters.contains_key(&marker)
@@ -456,10 +528,11 @@ impl FileOperations {
                                         Some(OverseerValue::Boolean(true))
                                     );
                                     let val = node.parameters.get("value").unwrap();
-                                    let differs_from_template = match node.parameters.get("_template_value") {
-                                        Some(tv) => tv != val,
-                                        None => false,
-                                    };
+                                    let differs_from_template =
+                                        match node.parameters.get("_template_value") {
+                                            Some(tv) => tv != val,
+                                            None => false,
+                                        };
                                     if explicit || differs_from_template {
                                         out.push((node.name.as_str(), val));
                                     }
@@ -472,8 +545,13 @@ impl FileOperations {
                         }
                         let mut desc_overrides: Vec<(&str, &OverseerValue)> = Vec::new();
                         // Always collect any explicit descendant value overrides; do not filter by instance list.
-                        collect_descendant_value_overrides(child, &_explicit_names_ignored, &mut desc_overrides);
+                        collect_descendant_value_overrides(
+                            child,
+                            &_explicit_names_ignored,
+                            &mut desc_overrides,
+                        );
                         if !desc_overrides.is_empty() {
+                            Self::drop_trailing_whitespace_line(output);
                             if !output.ends_with('\n') {
                                 output.push('\n');
                             }
@@ -499,20 +577,25 @@ impl FileOperations {
                             .iter()
                             .filter(|(k, _)| {
                                 let ks = k.as_str();
-                                if ks.starts_with('_') || ks == "value" { return false; }
+                                if ks.starts_with('_') || ks == "value" {
+                                    return false;
+                                }
                                 let marker = format!("_template_{}", ks);
                                 !child.parameters.contains_key(&marker)
                             })
                             .count();
-                        let only_value_override =
-                            has_value && non_internal_non_value_params == 0 && child.children.is_empty();
+                        let only_value_override = has_value
+                            && non_internal_non_value_params == 0
+                            && child.children.is_empty();
                         if only_value_override {
                             let val = child.parameters.get("value").unwrap();
-                            let differs_from_template = match child.parameters.get("_template_value") {
-                                Some(tv) => tv != val,
-                                None => false,
-                            };
+                            let differs_from_template =
+                                match child.parameters.get("_template_value") {
+                                    Some(tv) => tv != val,
+                                    None => false,
+                                };
                             if has_explicit_override || differs_from_template {
+                                Self::drop_trailing_whitespace_line(output);
                                 if !output.ends_with('\n') {
                                     output.push('\n');
                                 }
@@ -528,7 +611,13 @@ impl FileOperations {
                     }
                     // Fallback: serialize child normally inside the block (not as list body)
                     // so field lines and nested blocks render correctly.
-                    Self::serialize_node_context(child, output, indent_level + 1, false, fallback_indent_unit)?;
+                    Self::serialize_node_context(
+                        child,
+                        output,
+                        indent_level + 1,
+                        false,
+                        fallback_indent_unit,
+                    )?;
                 }
                 if node.children.is_empty() {
                     if let Some(body_text) = snapshot
@@ -560,7 +649,13 @@ impl FileOperations {
                     output.push_str(&node.name);
                     output.push_str(" {\n");
                     for child in &node.children {
-                        Self::serialize_node_context(child, output, indent_level + 1, false, fallback_indent_unit)?;
+                        Self::serialize_node_context(
+                            child,
+                            output,
+                            indent_level + 1,
+                            false,
+                            fallback_indent_unit,
+                        )?;
                     }
                     output.push_str(&format!("{}}}\n", indent));
                     Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
@@ -591,11 +686,15 @@ impl FileOperations {
                 // Handle node type or template path
                 if let Some(template_path) = &node.template {
                     output.push_str(&format!("<{}>", template_path));
-                } else if let Some(OverseerValue::Template(tpl)) = node.parameters.get("_template_origin") {
+                } else if let Some(OverseerValue::Template(tpl)) =
+                    node.parameters.get("_template_origin")
+                {
                     output.push_str(&format!("<{}>", tpl));
                 } else {
                     // Check if this node had its type resolved and restore original
-                    if let Some(OverseerValue::String(original_type)) = node.parameters.get("_original_type") {
+                    if let Some(OverseerValue::String(original_type)) =
+                        node.parameters.get("_original_type")
+                    {
                         if original_type == "-" {
                             output.push('-');
                         } else {
@@ -603,7 +702,9 @@ impl FileOperations {
                         }
                     } else {
                         // Use "-" for type-inferred nodes, otherwise use the actual type
-                        if node.node_type == "-" || (node.name == "-" && node.node_type != "list_item") {
+                        if node.node_type == "-"
+                            || (node.name == "-" && node.node_type != "list_item")
+                        {
                             output.push('-');
                         } else {
                             output.push_str(&node.node_type);
@@ -624,54 +725,20 @@ impl FileOperations {
         }
 
         // Handle parameters (excluding the special 'value' parameter for fields)
-        let regular_params: HashMap<String, OverseerValue> = node
-            .parameters
-            .iter()
-            .filter(|(k, _)| {
-                let key = k.as_str();
-                // Always exclude 'value' parameter and internal computed parameters (except _template_ markers)
-                if key == "value" || key == "_original_type" || (key.starts_with('_') && !key.starts_with("_template_")) {
-                    return false;
-                }
-
-                // If this is a _template_ marker, exclude it from output (but don't filter other params based on it)
-                if key.starts_with("_template_") {
-                    return false;
-                }
-
-                // Check if this is a template-derived parameter by looking for corresponding _template_ marker
-                let template_marker = format!("_template_{}", key);
-                let is_template_derived = node.parameters.contains_key(&template_marker);
-
-                if is_template_derived {
-                    // This parameter came from template resolution - don't save it
-                    false
-                } else {
-                    // This is an original user-specified parameter - save it
-                    true
-                }
-            })
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let regular_params = Self::collect_serializable_params(node);
         if !regular_params.is_empty() {
             output.push_str(" (");
-            // Emit parameters in a deterministic order to avoid random reordering in saves
-            let keys: Vec<&String> = regular_params.keys().collect();
-            let mut keys_sorted = keys.clone();
-            keys_sorted.sort();
-            let params_str: Vec<String> = keys_sorted
-                .into_iter()
-                .map(|k| {
-                    let v = regular_params.get(k).unwrap();
+            let params_str: Vec<String> = regular_params
+                .iter()
+                .map(|(k, v)| {
                     let value_str = if k.as_str() == "entry" {
-                        // Special handling for entry parameters - they should be type names, not quoted strings
                         match v {
-                            OverseerValue::String(s) => s.clone(), // Don't quote type names
+                            OverseerValue::String(s) => s.clone(),
                             OverseerValue::Template(t) => format!("<{}>", t),
-                            _ => Self::serialize_value_with_node(node, &v),
+                            other => Self::serialize_value_with_node(node, other),
                         }
                     } else {
-                        Self::serialize_value_with_node(node, &v)
+                        Self::serialize_value_with_node(node, v)
                     };
                     format!("{}={}", k, value_str)
                 })
@@ -682,7 +749,10 @@ impl FileOperations {
 
         // Handle body (value assignment, block, or nothing)
         if let Some(value) = node.parameters.get("value") {
-            output.push_str(&format!(" = {}\n", Self::serialize_value_with_node(node, value)));
+            output.push_str(&format!(
+                " = {}\n",
+                Self::serialize_value_with_node(node, value)
+            ));
         } else if node.children.is_empty() {
             if let Some(body_text) = snapshot
                 .as_ref()
@@ -692,7 +762,225 @@ impl FileOperations {
             }
             output.push('\n');
         } else {
-            output.push_str(" {");
+            let mut header_trailing = if let Some(snap) = snapshot.as_ref() {
+                let trailing = if !snap.header.trailing.is_empty() {
+                    if snap.header.trailing.contains("\r\n") {
+                        snap.header.trailing.replace("\r\n", "\n")
+                    } else {
+                        snap.header.trailing.clone()
+                    }
+                } else {
+                    let header_start = snap.header_span.0.saturating_sub(snap.span.0);
+                    let header_end = snap.header_span.1.saturating_sub(snap.span.0);
+                    if header_end <= snap.full_text.len() && header_start < header_end {
+                        let header_text = &snap.full_text[header_start..header_end];
+                        let mut whitespace_start = header_text.len();
+                        for (idx, ch) in header_text.char_indices().rev() {
+                            if ch.is_whitespace() {
+                                whitespace_start = idx;
+                            } else {
+                                break;
+                            }
+                        }
+                        if whitespace_start < header_text.len() {
+                            let whitespace = &header_text[whitespace_start..];
+                            if whitespace.contains("\r\n") {
+                                whitespace.replace("\r\n", "\n")
+                            } else {
+                                whitespace.to_string()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    }
+                };
+                if trailing.is_empty() {
+                    " ".to_string()
+                } else {
+                    trailing
+                }
+            } else {
+                " ".to_string()
+            };
+            if !node.children.is_empty() {
+                let trimmed = header_trailing.trim_start();
+                if trimmed.starts_with('}') {
+                    header_trailing = " ".to_string();
+                }
+            }
+            output.push_str(&header_trailing);
+
+            let open_fragment = snapshot
+                .as_ref()
+                .and_then(|snap| snap.body.child_envelope.open.as_ref())
+                .map(|slice| {
+                    if slice.text.contains("\r\n") {
+                        slice.text.replace("\r\n", "\n")
+                    } else {
+                        slice.text.clone()
+                    }
+                })
+                .unwrap_or_else(|| "{".to_string());
+            let open_fragment_text = open_fragment;
+            let open_fragment_start = output.len();
+            output.push_str(&open_fragment_text);
+            let mut open_fragment_adjusted = false;
+            let mut ensure_open_fragment_multiline = |output: &mut String| {
+                if !open_fragment_adjusted {
+                    output.truncate(open_fragment_start);
+                    let mut adjusted = open_fragment_text.replace("\r\n", "\n");
+                    if let Some(pos) = adjusted.rfind('{') {
+                        adjusted.truncate(pos + 1);
+                    } else {
+                        adjusted.clear();
+                        adjusted.push('{');
+                    }
+                    adjusted.push('\n');
+                    output.push_str(&adjusted);
+                    open_fragment_adjusted = true;
+                } else if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+            };
+            let mut inline_consumed_children: usize = 0;
+            let mut open_fragment_needs_multiline = false;
+            let trim_trailing_whitespace = |buffer: &mut String| {
+                while buffer.ends_with(' ') || buffer.ends_with('\t') {
+                    buffer.pop();
+                }
+                if buffer.ends_with('\n') {
+                    buffer.pop();
+                    while buffer.ends_with(' ') || buffer.ends_with('\t') {
+                        buffer.pop();
+                    }
+                    buffer.push('\n');
+                }
+                loop {
+                    if !buffer.ends_with('\n') {
+                        break;
+                    }
+                    let mut idx = buffer.len();
+                    if idx == 0 {
+                        break;
+                    }
+                    idx -= 1; // point to newline character
+                    if idx == 0 {
+                        break;
+                    }
+                    let mut scan = idx;
+                    let mut only_ws = true;
+                    while scan > 0 {
+                        scan -= 1;
+                        let ch = buffer.as_bytes()[scan] as char;
+                        if ch == '\n' {
+                            break;
+                        }
+                        if !ch.is_whitespace() {
+                            only_ws = false;
+                            break;
+                        }
+                    }
+                    if only_ws {
+                        buffer.truncate(scan + 1);
+                    } else {
+                        break;
+                    }
+                }
+            };
+            if let Some(snap) = snapshot.as_ref() {
+                if let Some(open_slice) = snap.body.child_envelope.open.as_ref() {
+                    let open_end = open_slice.span.1.saturating_sub(snap.span.0);
+                    if open_end < snap.full_text.len() {
+                        let remainder = &snap.full_text[open_end..];
+                        if let Some(newline_idx) = remainder.find('\n') {
+                            if newline_idx > 0 {
+                                let inline_segment = &remainder[..newline_idx];
+                                if inline_segment.chars().any(|c| !c.is_whitespace()) {
+                                    let inline_start_abs = snap.span.0 + open_end;
+                                    let inline_end_abs = (inline_start_abs + newline_idx + 1)
+                                        .min(snap.span.0 + snap.full_text.len());
+
+                                    let mut inline_child_records: Vec<(usize, NodeSourceSnapshot)> = Vec::new();
+                                    for (idx, child) in node.children.iter().enumerate() {
+                                        if let Some(child_snap) = Self::snapshot_for(child) {
+                                            let start = child_snap.span.0;
+                                            if start >= inline_end_abs {
+                                                break;
+                                            }
+                                            let end = child_snap.span.1;
+                                            if start >= inline_start_abs && end <= inline_end_abs {
+                                                inline_child_records.push((idx, child_snap));
+                                            } else {
+                                                break;
+                                            }
+                                        } else {
+                                            inline_child_records.clear();
+                                            break;
+                                        }
+                                    }
+
+                                    if inline_child_records.is_empty() {
+                                        let trimmed_inline = inline_segment.trim();
+                                        let has_structural_children = !node.children.is_empty();
+                                        let should_skip_inline = has_structural_children
+                                            && trimmed_inline.starts_with('}')
+                                            && trimmed_inline
+                                                .chars()
+                                                .all(|c| c == '}' || c.is_whitespace());
+                                        if has_structural_children {
+                                            open_fragment_needs_multiline = true;
+                                        } else if !should_skip_inline {
+                                            let normalized = inline_segment.replace("\r\n", "\n");
+                                            output.push_str(&normalized);
+                                            if !output.ends_with('\n') {
+                                                output.push('\n');
+                                            }
+                                        } else {
+                                            open_fragment_needs_multiline = true;
+                                        }
+                                    } else {
+                                        let any_changed = inline_child_records.iter().any(|(idx, child_snap)| {
+                                            match node.children[*idx].source_fingerprint {
+                                                Some(fp) => fp != child_snap.fingerprint,
+                                                None => true,
+                                            }
+                                        });
+
+                                        let mut consumed_inline_children = false;
+                                        if any_changed {
+                                            if let Some(patched) = Self::reconstruct_inline_segment(
+                                                node,
+                                                snap,
+                                                inline_start_abs,
+                                                inline_end_abs,
+                                                &inline_child_records,
+                                            ) {
+                                                output.push_str(&patched);
+                                                consumed_inline_children = true;
+                                            } else {
+                                                open_fragment_needs_multiline = true;
+                                            }
+                                        } else {
+                                            let normalized = inline_segment.replace("\r\n", "\n");
+                                            output.push_str(&normalized);
+                                            consumed_inline_children = true;
+                                        }
+
+                                        if consumed_inline_children {
+                                            if !output.ends_with('\n') {
+                                                output.push('\n');
+                                            }
+                                            inline_consumed_children = inline_child_records.len();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Children under a list node are list-body items (render as '-')
             let children_in_list_body = node.node_type == "list";
             // Suppress template-derived children for any node that originated from a template (standalone instances or list entries)
@@ -702,7 +990,9 @@ impl FileOperations {
                     Some(OverseerValue::Boolean(true))
                 );
             // Pre-parse explicit override names list on the instance (if present)
-            let explicit_names: Option<Vec<String>> = if let Some(OverseerValue::String(list)) = node.parameters.get("_explicit_overrides") {
+            let explicit_names: Option<Vec<String>> = if let Some(OverseerValue::String(list)) =
+                node.parameters.get("_explicit_overrides")
+            {
                 let v: Vec<String> = list
                     .split(',')
                     .filter(|s| !s.is_empty())
@@ -712,7 +1002,17 @@ impl FileOperations {
             } else {
                 None
             };
+            let mut inline_consumed = inline_consumed_children;
             for child in &node.children {
+                if inline_consumed > 0 {
+                    inline_consumed -= 1;
+                    continue;
+                }
+                if open_fragment_needs_multiline {
+                    ensure_open_fragment_multiline(output);
+                    open_fragment_needs_multiline = false;
+                    trim_trailing_whitespace(output);
+                }
                 let child_snapshot = Self::snapshot_for(child);
                 let child_indent = child_snapshot
                     .as_ref()
@@ -723,7 +1023,8 @@ impl FileOperations {
                     child.parameters.get("_template_node"),
                     Some(OverseerValue::Boolean(true))
                 );
-                let has_template_param_markers = child.parameters.keys().any(|k| k.starts_with("_template_"));
+                let has_template_param_markers =
+                    child.parameters.keys().any(|k| k.starts_with("_template_"));
                 let is_template_child = is_template_child_flag || has_template_param_markers;
                 // Only treat as includeable if it was explicitly overridden by the source, not just equal/diff logic
                 let has_explicit_override = matches!(
@@ -742,7 +1043,8 @@ impl FileOperations {
 
                 // Special-case: if child is a transparent wrapper and any of its descendants were explicitly overridden,
                 // emit those descendant overrides concisely here and skip the wrapper itself.
-                if suppress_template_children && is_template_child && child.is_hierarchy_transparent {
+                if suppress_template_children && is_template_child && child.is_hierarchy_transparent
+                {
                     fn collect_descendant_value_overrides<'a>(
                         node: &'a OverseerNode,
                         name_filter: &Option<Vec<String>>,
@@ -766,11 +1068,16 @@ impl FileOperations {
                                     !ks.starts_with('_') && ks != "value"
                                 })
                                 .count();
-                            let only_value_override =
-                                has_value && non_internal_non_value_params == 0 && node.children.is_empty();
-                            let has_template_value_marker = node.parameters.contains_key("_template_value");
+                            let only_value_override = has_value
+                                && non_internal_non_value_params == 0
+                                && node.children.is_empty();
+                            let has_template_value_marker =
+                                node.parameters.contains_key("_template_value");
                             if only_value_override && !has_template_value_marker {
-                                out.push((node.name.as_str(), node.parameters.get("value").unwrap()));
+                                out.push((
+                                    node.name.as_str(),
+                                    node.parameters.get("value").unwrap(),
+                                ));
                             }
                         }
                         for ch in &node.children {
@@ -780,25 +1087,32 @@ impl FileOperations {
                     let mut desc_overrides: Vec<(&str, &OverseerValue)> = Vec::new();
                     collect_descendant_value_overrides(child, &explicit_names, &mut desc_overrides);
                     if !desc_overrides.is_empty() {
+                        trim_trailing_whitespace(output);
                         if !output.ends_with('\n') {
                             output.push('\n');
                         }
-            for (n, v) in desc_overrides {
+                        for (n, v) in desc_overrides {
                             output.push_str(&format!(
                                 "{}- {} = {}\n",
                                 child_indent,
                                 n,
-                Self::serialize_value_with_node(child, v)
+                                Self::serialize_value_with_node(child, v)
                             ));
                         }
                         continue;
                     }
                 }
-                if suppress_template_children && is_template_child && (!has_explicit_override || !listed_in_instance_overrides) {
+                if suppress_template_children
+                    && is_template_child
+                    && (!has_explicit_override || !listed_in_instance_overrides)
+                {
                     continue;
                 }
                 // For template instances/clones, if a child was overridden with only a simple value, prefer the concise "- name = value" form
-                if suppress_template_children && has_explicit_override && listed_in_instance_overrides {
+                if suppress_template_children
+                    && has_explicit_override
+                    && listed_in_instance_overrides
+                {
                     let has_value = child.parameters.contains_key("value");
                     let non_internal_non_value_params = child
                         .parameters
@@ -806,27 +1120,24 @@ impl FileOperations {
                         .filter(|(k, _)| {
                             let ks = k.as_str();
                             // allow 'value' only; ignore internal keys starting with '_'
-                            if ks.starts_with('_') || ks == "value" { return false; }
+                            if ks.starts_with('_') || ks == "value" {
+                                return false;
+                            }
                             // also ignore params that are template-derived (paired _template_param exists)
                             let marker = format!("_template_{}", ks);
                             !child.parameters.contains_key(&marker)
                         })
                         .count();
-                    let only_value_override = has_value && non_internal_non_value_params == 0 && child.children.is_empty();
+                    let only_value_override = has_value
+                        && non_internal_non_value_params == 0
+                        && child.children.is_empty();
                     // Guard: only treat as an explicit value override if the template value marker was removed.
-                    let has_template_value_marker = child.parameters.contains_key("_template_value");
+                    let has_template_value_marker =
+                        child.parameters.contains_key("_template_value");
                     if only_value_override && !has_template_value_marker {
-                        debug_serializer!(
-                            "[SER] concise emit: name='{}' explicit={} tmpl_marker_removed={} suppress={} is_templ_child={} non_val_params={} has_val={}",
-                            child.name,
-                            has_explicit_override,
-                            !has_template_value_marker,
-                            suppress_template_children,
-                            is_template_child,
-                            non_internal_non_value_params,
-                            has_value
-                        );
                         let val = child.parameters.get("value").unwrap();
+                        Self::drop_trailing_whitespace_line(output);
+                        trim_trailing_whitespace(output);
                         if !output.ends_with('\n') {
                             output.push('\n');
                         }
@@ -839,14 +1150,539 @@ impl FileOperations {
                         continue;
                     }
                 }
-                Self::serialize_node_context(child, output, indent_level + 1, children_in_list_body, fallback_indent_unit)?;
+                Self::serialize_node_context(
+                    child,
+                    output,
+                    indent_level + 1,
+                    children_in_list_body,
+                    fallback_indent_unit,
+                )?;
+                trim_trailing_whitespace(output);
             }
-            output.push_str(&format!("{}}}\n", indent));
+
+            let close_fragment = snapshot
+                .as_ref()
+                .and_then(|snap| snap.body.child_envelope.close.as_ref())
+                .map(|slice| {
+                    if slice.text.contains("\r\n") {
+                        slice.text.replace("\r\n", "\n")
+                    } else {
+                        slice.text.clone()
+                    }
+                })
+                .unwrap_or_else(|| format!("{}}}", indent));
+            let close_needs_indent = close_fragment
+                .chars()
+                .next()
+                .map(|c| !c.is_whitespace())
+                .unwrap_or(false);
+            if output.ends_with('\n') && close_needs_indent {
+                output.push_str(&indent);
+            }
+            output.push_str(&close_fragment);
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
         }
 
-    Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
+        Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
 
         Ok(())
+    }
+
+    fn try_inline_patch_snapshot(
+        node: &OverseerNode,
+        snapshot: &NodeSourceSnapshot,
+    ) -> Option<String> {
+        for (idx, child) in node.children.iter().enumerate() {
+            if let Some(original_idx) = child.child_original_index {
+                if original_idx != idx {
+                    return None;
+                }
+            } else if child.source_fingerprint.is_none() {
+                return None;
+            }
+        }
+
+        let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+        let mut any_changed = false;
+        let mut text_search_offset: usize = 0;
+
+        for (idx, child) in node.children.iter().enumerate() {
+            let child_snap = match Self::snapshot_for(child) {
+                Some(s) => s,
+                None => {
+                    return None;
+                }
+            };
+            let child_changed = match child.source_fingerprint {
+                Some(fp) => {
+                    if fp != child_snap.fingerprint {
+                        true
+                    } else {
+                        !Self::children_match_snapshots(child)
+                    }
+                }
+                None => true,
+            };
+            if !child_changed {
+                continue;
+            }
+
+            let span_result = if child_snap.span.0 == 0 && child_snap.span.1 == 0 {
+                match Self::locate_child_span_by_text(snapshot, &child_snap.full_text, text_search_offset) {
+                    Some((start, end)) => (start, end),
+                    None => {
+                        if matches!(child_snap.origin, SnapshotOrigin::Synthetic(_)) {
+                            return None;
+                        }
+                        return None;
+                    }
+                }
+            } else {
+                let start = match child_snap.span.0.checked_sub(snapshot.span.0) {
+                    Some(val) => val,
+                    None => {
+                        return None;
+                    }
+                };
+                let end = match child_snap.span.1.checked_sub(snapshot.span.0) {
+                    Some(val) => val,
+                    None => {
+                        return None;
+                    }
+                };
+                (start, end)
+            };
+            let (rel_start, rel_end) = match span_result {
+                (start, end) => (start, end),
+            };
+            if rel_start >= rel_end || rel_end > snapshot.full_text.len() {
+                return None;
+            }
+
+            if let Some(replacement_text) =
+                Self::rebuild_child_with_updated_value(&node.children[idx], &child_snap)
+            {
+                replacements.push((rel_start, rel_end, replacement_text));
+                text_search_offset = rel_end.max(text_search_offset);
+                any_changed = true;
+                continue;
+            }
+
+            let rendered = if let Some(simple) = Self::serialize_inline_simple_field(&node.children[idx]) {
+                simple
+            } else if let Some(patched_child) = Self::try_inline_patch_snapshot(&node.children[idx], &child_snap) {
+                patched_child
+            } else {
+                return None;
+            };
+            let original_segment = &snapshot.full_text[rel_start..rel_end];
+            let mut leading_end = 0;
+            for (byte_idx, ch) in original_segment.char_indices() {
+                if ch.is_whitespace() {
+                    leading_end = byte_idx + ch.len_utf8();
+                    continue;
+                }
+                break;
+            }
+            let leading = &original_segment[..leading_end];
+
+            let mut tail_start = original_segment.len();
+            for (byte_idx, ch) in original_segment.char_indices().rev() {
+                if !ch.is_whitespace() {
+                    tail_start = byte_idx + ch.len_utf8();
+                    break;
+                }
+            }
+            let trailing = &original_segment[tail_start..];
+
+            let mut replacement = rendered;
+            let mut replacement_leading_trim = 0;
+            for (byte_idx, ch) in replacement.char_indices() {
+                if ch.is_whitespace() {
+                    replacement_leading_trim = byte_idx + ch.len_utf8();
+                    continue;
+                }
+                break;
+            }
+            if replacement_leading_trim > 0 {
+                replacement.drain(..replacement_leading_trim);
+            }
+
+            let trimmed_len = replacement
+                .trim_end_matches(|c: char| c.is_whitespace())
+                .len();
+            replacement.truncate(trimmed_len);
+
+            if !leading.is_empty() {
+                replacement.insert_str(0, leading);
+            }
+            if !trailing.is_empty() {
+                replacement.push_str(trailing);
+            }
+            replacements.push((rel_start, rel_end, replacement));
+            text_search_offset = rel_end.max(text_search_offset);
+            any_changed = true;
+        }
+
+        if !any_changed || replacements.is_empty() {
+            return None;
+        }
+
+        replacements.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut patched_text = snapshot.full_text.clone();
+        for (start, end, replacement) in replacements {
+            if replacement.contains('\n') && snapshot.full_text[start..end].contains("\r\n") {
+                let normalized = replacement.replace('\n', "\r\n");
+                patched_text.replace_range(start..end, &normalized);
+            } else {
+                patched_text.replace_range(start..end, &replacement);
+            }
+        }
+        Some(patched_text)
+    }
+
+    fn locate_child_span_by_text(
+        snapshot: &NodeSourceSnapshot,
+        child_text: &str,
+        search_start: usize,
+    ) -> Option<(usize, usize)> {
+        if child_text.is_empty() {
+            return None;
+        }
+        if search_start > snapshot.full_text.len() {
+            return None;
+        }
+        let haystack = &snapshot.full_text[search_start..];
+        match haystack.find(child_text) {
+            Some(pos) => {
+                let abs_start = search_start + pos;
+                let abs_end = abs_start + child_text.len();
+                Some((abs_start, abs_end))
+            }
+            None => None,
+        }
+    }
+
+    fn collect_descendant_inline_replacements(
+        parent_snapshot: &NodeSourceSnapshot,
+        node: &OverseerNode,
+        replacements: &mut Vec<(usize, usize, String)>,
+    ) -> Option<usize> {
+        let mut max_end: Option<usize> = None;
+        for child in &node.children {
+            Self::collect_descendant_inline_replacements_inner(
+                parent_snapshot,
+                child,
+                replacements,
+                &mut max_end,
+            );
+        }
+        max_end
+    }
+
+    fn collect_descendant_inline_replacements_inner(
+        parent_snapshot: &NodeSourceSnapshot,
+        node: &OverseerNode,
+        replacements: &mut Vec<(usize, usize, String)>,
+        max_end: &mut Option<usize>,
+    ) {
+        let Some(node_snap) = Self::snapshot_for(node) else {
+            return;
+        };
+
+        let changed = match node.source_fingerprint {
+            Some(fp) => fp != node_snap.fingerprint,
+            None => true,
+        };
+
+        let has_real_span = node_snap.span.1 > node_snap.span.0;
+        let within_parent = node_snap.span.0 >= parent_snapshot.span.0
+            && node_snap.span.1 <= parent_snapshot.span.1;
+
+        if changed && has_real_span && within_parent {
+            let parent_start = parent_snapshot.span.0;
+            let Some(rel_start) = node_snap.span.0.checked_sub(parent_start) else {
+                return;
+            };
+            let Some(rel_end) = node_snap.span.1.checked_sub(parent_start) else {
+                return;
+            };
+            if rel_start >= rel_end || rel_end > parent_snapshot.full_text.len() {
+                return;
+            }
+
+            let rendered = if let Some(simple) = Self::serialize_inline_simple_field(node) {
+                Some(simple)
+            } else {
+                Self::try_inline_patch_snapshot(node, &node_snap)
+            };
+
+            if let Some(mut replacement_body) = rendered {
+                let original_segment = &parent_snapshot.full_text[rel_start..rel_end];
+
+                let mut leading_end = 0;
+                for (byte_idx, ch) in original_segment.char_indices() {
+                    if ch.is_whitespace() {
+                        leading_end = byte_idx + ch.len_utf8();
+                        continue;
+                    }
+                    break;
+                }
+                let leading = &original_segment[..leading_end];
+
+                let mut tail_start = original_segment.len();
+                for (byte_idx, ch) in original_segment.char_indices().rev() {
+                    if !ch.is_whitespace() {
+                        tail_start = byte_idx + ch.len_utf8();
+                        break;
+                    }
+                }
+                let trailing = &original_segment[tail_start..];
+
+                let mut replacement_leading_trim = 0;
+                for (byte_idx, ch) in replacement_body.char_indices() {
+                    if ch.is_whitespace() {
+                        replacement_leading_trim = byte_idx + ch.len_utf8();
+                        continue;
+                    }
+                    break;
+                }
+                if replacement_leading_trim > 0 {
+                    replacement_body.drain(..replacement_leading_trim);
+                }
+
+                let trimmed_len = replacement_body
+                    .trim_end_matches(|c: char| c.is_whitespace())
+                    .len();
+                replacement_body.truncate(trimmed_len);
+
+                if !leading.is_empty() {
+                    replacement_body.insert_str(0, leading);
+                }
+                if !trailing.is_empty() {
+                    replacement_body.push_str(trailing);
+                }
+
+                replacements.push((rel_start, rel_end, replacement_body));
+                let current_max = max_end.unwrap_or(0);
+                *max_end = Some(current_max.max(rel_end));
+                return; // Do not recurse into children once this node is replaced
+            }
+
+        }
+
+        for child in &node.children {
+            Self::collect_descendant_inline_replacements_inner(
+                parent_snapshot,
+                child,
+                replacements,
+                max_end,
+            );
+        }
+    }
+
+    fn children_match_snapshots(node: &OverseerNode) -> bool {
+        node.children.iter().all(|child| {
+            if let Some(child_snap) = Self::snapshot_for(child) {
+                match child.source_fingerprint {
+                    Some(fp) if fp == child_snap.fingerprint => Self::children_match_snapshots(child),
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        })
+    }
+
+    fn collect_serializable_params(node: &OverseerNode) -> Vec<(&String, &OverseerValue)> {
+        let mut params: Vec<(&String, &OverseerValue)> = Vec::new();
+        for (key, value) in &node.parameters {
+            let key_str = key.as_str();
+            if key_str == "value"
+                || key_str == "_original_type"
+                || (key_str.starts_with('_') && !key_str.starts_with("_template_"))
+            {
+                continue;
+            }
+            if key_str.starts_with("_template_") {
+                continue;
+            }
+
+            let template_marker = format!("_template_{}", key_str);
+            if node.parameters.contains_key(&template_marker) {
+                continue;
+            }
+
+            params.push((key, value))
+        }
+        params.sort_by(|a, b| a.0.cmp(&b.0));
+        params
+    }
+
+    fn serialize_inline_simple_field(node: &OverseerNode) -> Option<String> {
+        if !node.children.is_empty() {
+            return None;
+        }
+
+        if let Some(snapshot) = Self::snapshot_for(node) {
+            if let Some(body_text) = Self::snapshot_block_inner(&snapshot) {
+                if !body_text.trim().is_empty() {
+                    return None;
+                }
+            }
+        }
+
+        if let Some(value) = node.parameters.get("value") {
+            let is_template_override = matches!(
+                node.parameters.get("_template_node"),
+                Some(OverseerValue::Boolean(true))
+            ) || matches!(
+                node.parameters.get("_explicit_child_override"),
+                Some(OverseerValue::Boolean(true))
+            ) || node.parameters.contains_key("_template_value");
+
+            if is_template_override && !node.name.is_empty() && node.name != "-" {
+                let rendered_value = Self::serialize_value_with_node(node, value);
+                return Some(format!("- {} = {}", node.name, rendered_value));
+            }
+        }
+
+        let mut out = String::new();
+        if let Some(template_path) = &node.template {
+            out.push_str(&format!("<{}>", template_path));
+        } else if let Some(OverseerValue::Template(tpl)) = node.parameters.get("_template_origin")
+        {
+            out.push_str(&format!("<{}>", tpl));
+        } else if let Some(OverseerValue::String(original_type)) =
+            node.parameters.get("_original_type")
+        {
+            if original_type == "-" {
+                out.push('-');
+            } else {
+                out.push_str(original_type);
+            }
+        } else if node.node_type == "-"
+            || (node.name == "-" && node.node_type != "list_item")
+        {
+            out.push('-');
+        } else {
+            out.push_str(&node.node_type);
+        }
+
+        if !node.name.is_empty() && node.name != "-" {
+            let auto_defaulted = node.name == node.node_type;
+            if !auto_defaulted {
+                out.push(' ');
+                out.push_str(&node.name);
+            }
+        }
+
+        let regular_params = Self::collect_serializable_params(node);
+        if !regular_params.is_empty() {
+            out.push_str(" (");
+            let params_str: Vec<String> = regular_params
+                .iter()
+                .map(|(k, v)| {
+                    let value_str = if k.as_str() == "entry" {
+                        match v {
+                            OverseerValue::String(s) => s.clone(),
+                            OverseerValue::Template(t) => format!("<{}>", t),
+                            other => Self::serialize_value_with_node(node, other),
+                        }
+                    } else {
+                        Self::serialize_value_with_node(node, v)
+                    };
+                    format!("{}={}", k, value_str)
+                })
+                .collect();
+            out.push_str(&params_str.join(", "));
+            out.push(')');
+        }
+
+        if let Some(val) = node.parameters.get("value") {
+            out.push_str(" = ");
+            out.push_str(&Self::serialize_value_with_node(node, val));
+        }
+
+        Some(out)
+    }
+
+    fn rebuild_child_with_updated_value(
+        node: &OverseerNode,
+        snapshot: &NodeSourceSnapshot,
+    ) -> Option<String> {
+        let value_slice = snapshot.body.value.as_ref()?;
+        let value_param = node.parameters.get("value")?;
+
+        let rel_start = value_slice.span.0.checked_sub(snapshot.span.0)?;
+        let rel_end = value_slice.span.1.checked_sub(snapshot.span.0)?;
+        if rel_start >= rel_end {
+            return None;
+        }
+
+        if rel_end > snapshot.full_text.len() {
+            return None;
+        }
+
+        let mut updated_text = snapshot.full_text.clone();
+        if rel_end > updated_text.len() {
+            return None;
+        }
+
+        let new_value = Self::serialize_value_with_node(node, value_param);
+        updated_text.replace_range(rel_start..rel_end, &new_value);
+
+        Some(updated_text)
+    }
+
+    fn reconstruct_inline_segment(
+        node: &OverseerNode,
+        snapshot: &NodeSourceSnapshot,
+        inline_start_abs: usize,
+        inline_end_abs: usize,
+        inline_child_records: &[(usize, NodeSourceSnapshot)],
+    ) -> Option<String> {
+        if inline_child_records.is_empty() {
+            return None;
+        }
+
+        let doc_start = snapshot.span.0;
+        if inline_start_abs < doc_start || inline_end_abs > doc_start + snapshot.full_text.len() {
+            return None;
+        }
+        let mut cursor = inline_start_abs - doc_start;
+        let inline_end_rel = inline_end_abs - doc_start;
+        let mut result = String::new();
+
+        for (idx, child_snapshot) in inline_child_records {
+            let child_rel_start = child_snapshot.span.0.checked_sub(doc_start)?;
+            let child_rel_end = child_snapshot.span.1.checked_sub(doc_start)?;
+            if child_rel_end > inline_end_rel || child_rel_start < cursor {
+                return None;
+            }
+
+            if child_rel_start > snapshot.full_text.len() || child_rel_end > snapshot.full_text.len()
+            {
+                return None;
+            }
+
+            let prefix = &snapshot.full_text[cursor..child_rel_start];
+            result.push_str(&prefix.replace("\r\n", "\n"));
+
+            let child_render = Self::serialize_inline_simple_field(&node.children[*idx])?;
+            result.push_str(&child_render);
+
+            cursor = child_rel_end;
+        }
+
+        if cursor <= inline_end_rel && inline_end_rel <= snapshot.full_text.len() {
+            let suffix = &snapshot.full_text[cursor..inline_end_rel];
+            result.push_str(&suffix.replace("\r\n", "\n"));
+        }
+
+        Some(result)
     }
 
     fn serialize_value(value: &OverseerValue) -> String {
@@ -948,7 +1784,9 @@ impl FileOperations {
         // If this node indicates day precision, collapse Timestamp values to date-only.
         // We check both the node's own precision param and the common convention of field name 'date'.
         let day_precision = match node.parameters.get("precision") {
-            Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("day") || s.eq_ignore_ascii_case("days"),
+            Some(OverseerValue::String(s)) => {
+                s.eq_ignore_ascii_case("day") || s.eq_ignore_ascii_case("days")
+            }
             _ => false,
         };
 
@@ -1023,7 +1861,9 @@ div T {
             .iter_mut()
             .find(|child| child.name == "B")
             .expect("field B not found");
-    field_b.parameters.insert("value".to_string(), OverseerValue::Integer(42));
+        field_b
+            .parameters
+            .insert("value".to_string(), OverseerValue::Integer(42));
         field_b.source_fingerprint = None;
 
         let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
@@ -1066,11 +1906,13 @@ list L(entry=<T>) {
         let entry = list_l.children.first_mut().expect("entry not found");
         entry.source_fingerprint = None;
         if let Some(field_b) = entry.children.iter_mut().find(|child| child.name == "B") {
-            field_b.parameters.insert("value".to_string(), OverseerValue::Integer(5));
+            field_b
+                .parameters
+                .insert("value".to_string(), OverseerValue::Integer(5));
             field_b.source_fingerprint = None;
         }
 
-        let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+    let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
         assert!(output.contains("// List as an example of correct behavior:"));
         assert!(output.contains("list L (entry=<T>)"));
         assert!(output.contains("- B = 5"));
@@ -1097,7 +1939,9 @@ list L(entry=<T>) {
         entry.source_fingerprint = None;
 
         let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
-        assert!(output.contains("// Should inherit BaseTemplate parameters through ExtendedTemplate"));
+        assert!(
+            output.contains("// Should inherit BaseTemplate parameters through ExtendedTemplate")
+        );
         assert!(output.contains("Entry1"));
     }
 
@@ -1119,12 +1963,16 @@ list L(entry=<T>) {
             .expect("chart not found");
         chart.source_fingerprint = None;
         if let Some(plot) = chart.children.iter_mut().find(|child| child.name == "P1") {
-            plot.parameters.insert("color".to_string(), OverseerValue::String("#00ff00".to_string()));
+            plot.parameters.insert(
+                "color".to_string(),
+                OverseerValue::String("#00ff00".to_string()),
+            );
             plot.source_fingerprint = None;
         }
 
         let output = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
-        assert!(output.contains("// P3: cumulative average over all exercises per day for each point's day"));
+        assert!(output
+            .contains("// P3: cumulative average over all exercises per day for each point's day"));
         assert!(output.contains("color=\"#00ff00\""));
     }
 }
@@ -1169,14 +2017,33 @@ list L(entry=<A>) {
         crate::resolver::resolve_document(&mut nodes2);
 
         // Find list L, then its first entry, then accessible child 'field_b'
-        let list = nodes2.iter().find(|n| n.node_type == "list" && n.name == "L").expect("list L not found");
-        assert!(!list.children.is_empty(), "list L has no children after roundtrip: {}", serialized);
+        let list = nodes2
+            .iter()
+            .find(|n| n.node_type == "list" && n.name == "L")
+            .expect("list L not found");
+        assert!(
+            !list.children.is_empty(),
+            "list L has no children after roundtrip: {}",
+            serialized
+        );
         let entry = &list.children[0];
         // After resolution, list entries are template-instantiated using the template name as node_type (A) and auto name like A__1
         let children = entry.get_accessible_children();
-        let field_b = children.into_iter().find(|c| c.name == "field_b").expect("field_b not accessible in entry after roundtrip");
-        let val = field_b.parameters.get("value").cloned().expect("field_b has no value after roundtrip");
-        assert_eq!(val, OverseerValue::Integer(20), "field_b value mismatch: {:?}", val);
+        let field_b = children
+            .into_iter()
+            .find(|c| c.name == "field_b")
+            .expect("field_b not accessible in entry after roundtrip");
+        let val = field_b
+            .parameters
+            .get("value")
+            .cloned()
+            .expect("field_b has no value after roundtrip");
+        assert_eq!(
+            val,
+            OverseerValue::Integer(20),
+            "field_b value mismatch: {:?}",
+            val
+        );
     }
 }
 
@@ -1195,19 +2062,28 @@ mod tests_serialization_formatting {
 
     #[test]
     fn serializer_preserves_indent_and_newlines_via_registry() {
-    let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
+        let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
         let original = "tab Root {\r\n  string title = \"Hi\"\r\n\r\n  div Group {\r\n    int value = 1\r\n  }\r\n}\r\n";
 
         let (_rem, mut nodes) = crate::parser::parse_document(original).expect("parse");
         crate::resolver::resolve_document(&mut nodes);
 
-    let root = nodes.first().expect("root node");
-    assert_eq!(root.children.len(), 2, "expected two children under root");
-    assert_eq!(root.children[0].leading_blank_lines, 1, "parser encodes one newline before first child");
-    assert_eq!(root.children[1].leading_blank_lines, 2, "parser encodes newline plus blank spacer before second child");
-    let group = &root.children[1];
-    assert_eq!(group.children.len(), 1, "group should have one child");
-    assert_eq!(group.children[0].leading_blank_lines, 1, "nested child records only the structural newline");
+        let root = nodes.first().expect("root node");
+        assert_eq!(root.children.len(), 2, "expected two children under root");
+        assert_eq!(
+            root.children[0].leading_blank_lines, 1,
+            "parser encodes one newline before first child"
+        );
+        assert_eq!(
+            root.children[1].leading_blank_lines, 2,
+            "parser encodes newline plus blank spacer before second child"
+        );
+        let group = &root.children[1];
+        assert_eq!(group.children.len(), 1, "group should have one child");
+        assert_eq!(
+            group.children[0].leading_blank_lines, 1,
+            "nested child records only the structural newline"
+        );
 
         strip_snapshots(&mut nodes);
 

@@ -17,9 +17,17 @@ pub struct IndexCache {
 
 #[allow(dead_code)]
 impl IndexCache {
-    pub fn new() -> Self { Self { entries: HashMap::new() } }
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
 
-    pub fn get(&self, key: &str) -> Option<&FileIndexEntry> { self.entries.get(key) }
+    pub fn get(&self, key: &str) -> Option<&FileIndexEntry> {
+        self.entries.get(key)
+    }
 
-    pub fn upsert(&mut self, key: String, entry: FileIndexEntry) { self.entries.insert(key, entry); }
+    pub fn upsert(&mut self, key: String, entry: FileIndexEntry) {
+        self.entries.insert(key, entry);
+    }
 }

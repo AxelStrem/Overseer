@@ -1,5 +1,5 @@
+use crate::types::{OverseerError, OverseerNode, OverseerValue};
 use std::collections::{HashMap, HashSet};
-use crate::types::{OverseerNode, OverseerValue, OverseerError};
 // use crate::formula_evaluator::FormulaEvaluator; // not used in this module
 
 /// Information about a timer node
@@ -28,17 +28,17 @@ pub struct DependencyGraph {
     /// Maps field path to list of dependent field paths
     /// Example: "task_list/total_count" -> ["summary/completed_ratio", "dashboard/progress"]
     dependencies: HashMap<String, Vec<String>>,
-    
+
     /// Reverse mapping: dependent field -> fields it depends on
     /// Example: "summary/completed_ratio" -> ["task_list/total_count", "task_list/completed_count"]
     dependents: HashMap<String, Vec<String>>,
-    
+
     /// Timer nodes and their state
     timers: HashMap<String, TimerInfo>,
-    
+
     /// Template instance relationships: instance_path -> template_path
     template_instances: HashMap<String, String>,
-    
+
     /// Cache of formula dependencies to avoid re-parsing
     formula_cache: HashMap<String, Vec<String>>,
 }
@@ -65,13 +65,21 @@ impl DependencyGraph {
     /// Build the dependency graph by analyzing the document
     pub fn build_from_document(&mut self, nodes: &[OverseerNode]) -> Result<(), OverseerError> {
         self.clear();
-        
-        debug_dep!("🔍 Building dependency graph from {} top-level nodes", nodes.len());
-    for (_i, _node) in nodes.iter().enumerate() {
-            debug_dep!("🔍 Analyzing top-level node {}: '{}' type='{}' params={:?}", 
-                     i, node.name, node.node_type, node.parameters.keys().collect::<Vec<_>>());
+
+        debug_dep!(
+            "🔍 Building dependency graph from {} top-level nodes",
+            nodes.len()
+        );
+        for (_i, _node) in nodes.iter().enumerate() {
+            debug_dep!(
+                "🔍 Analyzing top-level node {}: '{}' type='{}' params={:?}",
+                i,
+                node.name,
+                node.node_type,
+                node.parameters.keys().collect::<Vec<_>>()
+            );
         }
-        
+
         // Walk the document tree and extract dependencies
         for node in nodes {
             self.analyze_node(node, &mut Vec::new())?;
@@ -85,17 +93,26 @@ impl DependencyGraph {
         let mut aggregate_links: Vec<(String, String)> = Vec::new(); // (dependent, synthetic)
         for (dependency, dependents) in self.dependencies.clone().into_iter() {
             if dependency.starts_with("__agg__:") {
-                for d in dependents { aggregate_links.push((d.clone(), dependency.clone())); }
+                for d in dependents {
+                    aggregate_links.push((d.clone(), dependency.clone()));
+                }
             }
         }
         if !aggregate_links.is_empty() {
             // Helper closure to find node by name path (transparent unaware; relies on actual stored names)
-            fn find_node_mut<'a>(roots: &'a [OverseerNode], path: &str) -> Option<&'a OverseerNode> {
+            fn find_node_mut<'a>(
+                roots: &'a [OverseerNode],
+                path: &str,
+            ) -> Option<&'a OverseerNode> {
                 let mut cur_slice: &[OverseerNode] = roots;
                 let mut found: Option<&OverseerNode> = None;
                 for seg in path.split('/') {
                     found = cur_slice.iter().find(|n| n.name == seg);
-                    if let Some(f) = found { cur_slice = &f.children; } else { return None; }
+                    if let Some(f) = found {
+                        cur_slice = &f.children;
+                    } else {
+                        return None;
+                    }
                 }
                 found
             }
@@ -107,7 +124,7 @@ impl DependencyGraph {
                     if parts.len() >= 2 {
                         let field_ident = parts.last().unwrap().to_string();
                         // list path may include context segments; we attempt to find the list node directly
-                        let list_path = parts[..parts.len()-1].join("/");
+                        let list_path = parts[..parts.len() - 1].join("/");
                         if let Some(list_node) = find_node_mut(nodes, &list_path) {
                             // For each item child of list, locate target field (traverse transparency) and add dependency
                             for item in &list_node.children {
@@ -127,7 +144,9 @@ impl DependencyGraph {
                                         self.add_dependency(dependent.clone(), field_value_path);
                                         break; // found for this item
                                     }
-                                    if ch.is_hierarchy_transparent { queue.extend(&ch.children); }
+                                    if ch.is_hierarchy_transparent {
+                                        queue.extend(&ch.children);
+                                    }
                                 }
                             }
                         }
@@ -136,10 +155,13 @@ impl DependencyGraph {
                 // Remove synthetic mapping (optional: skip for now - leaving it won't hurt but might cause redundant lookups)
             }
         }
-        
-    debug_dep!("🔍 Dependency graph built. Dependencies: {:?}", self.dependencies);
-    debug_dep!("🔍 Dependents: {:?}", self.dependents);
-        
+
+        debug_dep!(
+            "🔍 Dependency graph built. Dependencies: {:?}",
+            self.dependencies
+        );
+        debug_dep!("🔍 Dependents: {:?}", self.dependents);
+
         Ok(())
     }
 
@@ -155,19 +177,24 @@ impl DependencyGraph {
     /// Add a dependency relationship
     pub fn add_dependency(&mut self, dependent: String, dependency: String) {
         // Add to forward mapping
-        self.dependencies.entry(dependency.clone())
+        self.dependencies
+            .entry(dependency.clone())
             .or_insert_with(Vec::new)
             .push(dependent.clone());
-        
+
         // Add to reverse mapping
-        self.dependents.entry(dependent)
+        self.dependents
+            .entry(dependent)
             .or_insert_with(Vec::new)
             .push(dependency);
     }
 
     /// Get all fields that depend on the given field
     pub fn get_dependents(&self, field_path: &str) -> Vec<String> {
-        self.dependencies.get(field_path).cloned().unwrap_or_default()
+        self.dependencies
+            .get(field_path)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Get all fields that the given field depends on
@@ -221,12 +248,21 @@ impl DependencyGraph {
     }
 
     /// Private: Recursively analyze a node for dependencies
-    fn analyze_node(&mut self, node: &OverseerNode, path: &mut Vec<String>) -> Result<(), OverseerError> {
+    fn analyze_node(
+        &mut self,
+        node: &OverseerNode,
+        path: &mut Vec<String>,
+    ) -> Result<(), OverseerError> {
         path.push(node.name.clone());
         let node_path = path.join("/");
-        
-    debug_dep!("🔍 Analyzing node: '{}' at path '{}' type='{}' params={:?}", 
-         node.name, node_path, node.node_type, node.parameters.keys().collect::<Vec<_>>());
+
+        debug_dep!(
+            "🔍 Analyzing node: '{}' at path '{}' type='{}' params={:?}",
+            node.name,
+            node_path,
+            node.node_type,
+            node.parameters.keys().collect::<Vec<_>>()
+        );
 
         // Check if this is a timer node
         if node.node_type == "timer" {
@@ -236,23 +272,28 @@ impl DependencyGraph {
         // Check for template instances
         if node.template.is_some() {
             if let Some(template_path) = &node.template {
-                self.template_instances.insert(node_path.clone(), template_path.clone());
+                self.template_instances
+                    .insert(node_path.clone(), template_path.clone());
             }
         }
 
-    // Analyze parameters for formula dependencies
+        // Analyze parameters for formula dependencies
         for (param_name, value) in &node.parameters {
             let param_path = format!("{}/{}", node_path, param_name);
-            
+
             debug_dep!("🔍   Parameter '{}' = {:?}", param_name, value);
-            
+
             if let OverseerValue::Formula(formula) = value {
                 debug_dep!("🔍   Found formula in '{}': '{}'", param_path, formula);
                 // Extract dependencies from this formula
                 let dependencies = self.extract_formula_dependencies(formula, &node_path)?;
                 debug_dep!("🔍   Dependencies for '{}': {:?}", param_path, dependencies);
                 for dep in dependencies {
-                    debug_dep!("🔍   Adding dependency: '{}' depends on '{}'", param_path, dep);
+                    debug_dep!(
+                        "🔍   Adding dependency: '{}' depends on '{}'",
+                        param_path,
+                        dep
+                    );
                     self.add_dependency(param_path.clone(), dep);
                 }
             }
@@ -261,11 +302,23 @@ impl DependencyGraph {
         // Also analyze fallback formulas, which affect a node's effective value when value is Null
         if let Some(OverseerValue::Formula(formula)) = node.parameters.get("fallback") {
             let param_path = format!("{}/{}", node_path, "fallback");
-            debug_dep!("🔍   Found fallback formula in '{}': '{}'", param_path, formula);
+            debug_dep!(
+                "🔍   Found fallback formula in '{}': '{}'",
+                param_path,
+                formula
+            );
             let dependencies = self.extract_formula_dependencies(formula, &node_path)?;
-            debug_dep!("🔍   Fallback dependencies for '{}': {:?}", param_path, dependencies);
+            debug_dep!(
+                "🔍   Fallback dependencies for '{}': {:?}",
+                param_path,
+                dependencies
+            );
             for dep in dependencies {
-                debug_dep!("🔍   Adding dependency: '{}' depends on '{}'", param_path, dep);
+                debug_dep!(
+                    "🔍   Adding dependency: '{}' depends on '{}'",
+                    param_path,
+                    dep
+                );
                 self.add_dependency(param_path.clone(), dep);
             }
             // Additionally, the node's value depends on its fallback when value is Null; map value dependency to fallback
@@ -283,21 +336,29 @@ impl DependencyGraph {
     }
 
     /// Analyze a timer node to extract timing information
-    fn analyze_timer_node(&mut self, _node: &OverseerNode, path: &str) -> Result<(), OverseerError> {
-    let timer_info = TimerInfo {
+    fn analyze_timer_node(
+        &mut self,
+        _node: &OverseerNode,
+        path: &str,
+    ) -> Result<(), OverseerError> {
+        let timer_info = TimerInfo {
             node_path: path.to_string(),
-            next_due: None, // Will be calculated by timer system
+            next_due: None,    // Will be calculated by timer system
             interval_ms: None, // Extract from node parameters if available
             last_fired: None,
             active: true,
         };
-        
+
         self.add_timer(path.to_string(), timer_info);
         Ok(())
     }
 
     /// Extract field dependencies from a formula string
-    fn extract_formula_dependencies(&mut self, formula: &str, context_path: &str) -> Result<Vec<String>, OverseerError> {
+    fn extract_formula_dependencies(
+        &mut self,
+        formula: &str,
+        context_path: &str,
+    ) -> Result<Vec<String>, OverseerError> {
         // Check cache first
         let cache_key = format!("{}:{}", context_path, formula);
         if let Some(cached) = self.formula_cache.get(&cache_key) {
@@ -305,11 +366,11 @@ impl DependencyGraph {
         }
 
         let mut dependencies = Vec::new();
-        
+
         // Parse the formula to extract path references
         // This is a simplified implementation - in reality we'd use the full formula parser
         // For now, look for patterns like "/path/field", "../field", "field"
-        
+
         let path_patterns = self.extract_path_references(formula);
         for pattern in path_patterns {
             let resolved_path = self.resolve_path_reference(&pattern, context_path);
@@ -318,7 +379,12 @@ impl DependencyGraph {
 
         // SPECIAL CASES: Detect aggregate patterns so we can later expand them into item-field dependencies.
         // 1) Simple pattern: <listIdent>.sum(<fieldIdent>)  e.g. L.sum(C)
-        if let Some(agg_caps) = regex::Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\.sum\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$").unwrap().captures(formula) {
+        if let Some(agg_caps) = regex::Regex::new(
+            r"^\s*([A-Za-z_][A-Za-z0-9_]*)\.sum\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$",
+        )
+        .unwrap()
+        .captures(formula)
+        {
             let list_ident = agg_caps.get(1).unwrap().as_str();
             let field_ident = agg_caps.get(2).unwrap().as_str();
             let list_path = self.resolve_path_reference(list_ident, context_path);
@@ -341,7 +407,7 @@ impl DependencyGraph {
 
         // Cache the result (including any synthetic additions)
         self.formula_cache.insert(cache_key, dependencies.clone());
-        
+
         Ok(dependencies)
     }
 
@@ -351,11 +417,15 @@ impl DependencyGraph {
         let mut references: Vec<String> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         let mut path_segments: HashSet<String> = HashSet::new();
-        
-    debug_dep!("🔍   Extracting path references from formula: '{}'", formula);
-        
+
+        debug_dep!(
+            "🔍   Extracting path references from formula: '{}'",
+            formula
+        );
+
         // 1) Absolute paths like "/root/field_b" (one or more segments)
-        let abs_re = regex::Regex::new(r"/[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*)*").unwrap();
+        let abs_re =
+            regex::Regex::new(r"/[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*)*").unwrap();
         for m in abs_re.find_iter(formula) {
             let p = m.as_str().to_string();
             if seen.insert(p.clone()) {
@@ -367,9 +437,11 @@ impl DependencyGraph {
                 references.push(p);
             }
         }
-        
+
         // 2) Relative-up paths like "../sibling" or "../../x/y"
-        let rel_up_re = regex::Regex::new(r"(?:\.\./)+[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*)*").unwrap();
+        let rel_up_re =
+            regex::Regex::new(r"(?:\.\./)+[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*)*")
+                .unwrap();
         for m in rel_up_re.find_iter(formula) {
             let p = m.as_str().to_string();
             if seen.insert(p.clone()) {
@@ -377,32 +449,36 @@ impl DependencyGraph {
                 // Track segments after the ../ prefixes
                 let after = p.trim_start_matches("../");
                 for seg in after.split('/') {
-                    if !seg.is_empty() { path_segments.insert(seg.to_string()); }
+                    if !seg.is_empty() {
+                        path_segments.insert(seg.to_string());
+                    }
                 }
                 references.push(p);
             }
         }
-        
+
         // 3) Bare identifiers (e.g., field_a) that are not keywords and not already captured as part of paths
         let ident_re = regex::Regex::new(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b").unwrap();
         for mat in ident_re.find_iter(formula) {
             let token = mat.as_str();
-            if self.is_formula_keyword(token) { 
+            if self.is_formula_keyword(token) {
                 debug_dep!("🔍     Skipping keyword: '{}'", token);
                 continue;
             }
             // Skip if the token is already part of a captured path (as a segment)
-            if path_segments.contains(token) { continue; }
+            if path_segments.contains(token) {
+                continue;
+            }
             if seen.insert(token.to_string()) {
                 debug_dep!("🔍     Found bare field reference: '{}'", token);
                 references.push(token.to_string());
             }
         }
-        
-    debug_dep!("🔍   Extracted references: {:?}", references);
+
+        debug_dep!("🔍   Extracted references: {:?}", references);
         references
     }
-    
+
     /// Check if a token is a formula keyword that should be ignored
     fn is_formula_keyword(&self, token: &str) -> bool {
         match token {
@@ -424,8 +500,12 @@ impl DependencyGraph {
 
     /// Resolve a path reference relative to the current context
     fn resolve_path_reference(&self, path_ref: &str, context_path: &str) -> String {
-    debug_dep!("🔍     Resolving path reference '{}' in context '{}'", path_ref, context_path);
-        
+        debug_dep!(
+            "🔍     Resolving path reference '{}' in context '{}'",
+            path_ref,
+            context_path
+        );
+
         if path_ref.starts_with('/') {
             // Absolute path from root
             let resolved = path_ref.trim_start_matches('/').to_string();
@@ -435,7 +515,7 @@ impl DependencyGraph {
             // Relative path going up
             let context_parts: Vec<&str> = context_path.split('/').collect();
             let mut resolved_parts = context_parts;
-            
+
             let mut remaining = path_ref;
             while remaining.starts_with("../") {
                 if !resolved_parts.is_empty() {
@@ -443,11 +523,11 @@ impl DependencyGraph {
                 }
                 remaining = &remaining[3..];
             }
-            
+
             if !remaining.is_empty() {
                 resolved_parts.push(remaining);
             }
-            
+
             let resolved = resolved_parts.join("/");
             debug_dep!("🔍     Relative path resolved to: '{}'", resolved);
             resolved
@@ -461,12 +541,18 @@ impl DependencyGraph {
             }
             if let Some((parent, _last)) = context_path.rsplit_once('/') {
                 let resolved = format!("{}/{}", parent, path_ref);
-                debug_dep!("🔍     Bare identifier resolved to sibling path: '{}'", resolved);
+                debug_dep!(
+                    "🔍     Bare identifier resolved to sibling path: '{}'",
+                    resolved
+                );
                 resolved
             } else {
                 // Single-segment context (top-level node): sibling is another top-level
                 let resolved = path_ref.to_string();
-                debug_dep!("🔍     Bare identifier under top-level resolved to: '{}'", resolved);
+                debug_dep!(
+                    "🔍     Bare identifier under top-level resolved to: '{}'",
+                    resolved
+                );
                 resolved
             }
         }
@@ -481,17 +567,17 @@ mod tests {
     #[test]
     fn test_dependency_tracking() {
         let mut graph = DependencyGraph::new();
-        
+
         // Add some dependencies
         graph.add_dependency("field_a".to_string(), "field_b".to_string());
         graph.add_dependency("field_c".to_string(), "field_b".to_string());
         graph.add_dependency("field_c".to_string(), "field_a".to_string());
-        
+
         // Test getting dependents
         let dependents = graph.get_dependents("field_b");
         assert!(dependents.contains(&"field_a".to_string()));
         assert!(dependents.contains(&"field_c".to_string()));
-        
+
         // Test cascade calculation
         let cascade = graph.calculate_update_cascade("field_b");
         assert!(cascade.contains(&"field_a".to_string()));
@@ -501,24 +587,33 @@ mod tests {
     #[test]
     fn test_path_resolution() {
         let graph = DependencyGraph::new();
-        
+
         // Test absolute path
-        assert_eq!(graph.resolve_path_reference("/root/field", "context/path"), "root/field");
-        
+        assert_eq!(
+            graph.resolve_path_reference("/root/field", "context/path"),
+            "root/field"
+        );
+
         // Test relative path up
-        assert_eq!(graph.resolve_path_reference("../sibling", "context/path"), "context/sibling");
-        
+        assert_eq!(
+            graph.resolve_path_reference("../sibling", "context/path"),
+            "context/sibling"
+        );
+
         // Test bare identifier resolves to sibling scope (parent of context)
-        assert_eq!(graph.resolve_path_reference("child", "context/path"), "context/child");
+        assert_eq!(
+            graph.resolve_path_reference("child", "context/path"),
+            "context/child"
+        );
     }
 
     #[test]
     fn test_path_extraction() {
         let graph = DependencyGraph::new();
-        
+
         let formula = "$(field_a + /root/field_b + ../sibling)";
         let paths = graph.extract_path_references(formula);
-        
+
         assert!(paths.iter().any(|p| p.contains("field_a")));
         assert!(paths.iter().any(|p| p.contains("/root/field_b")));
         assert!(paths.iter().any(|p| p.contains("../sibling")));
@@ -532,11 +627,16 @@ mod tests {
         let mut item = OverseerNode::new_with_type("T".to_string(), Some("T__1".to_string()));
         let mut wrap = OverseerNode::new_with_type("div".to_string(), None); // unnamed transparent div
         let mut a = OverseerNode::new_with_type("int".to_string(), Some("A".to_string()));
-        a.parameters.insert("value".to_string(), OverseerValue::Integer(1));
+        a.parameters
+            .insert("value".to_string(), OverseerValue::Integer(1));
         let mut b = OverseerNode::new_with_type("int".to_string(), Some("B".to_string()));
-        b.parameters.insert("value".to_string(), OverseerValue::Integer(2));
+        b.parameters
+            .insert("value".to_string(), OverseerValue::Integer(2));
         let mut c = OverseerNode::new_with_type("int".to_string(), Some("C".to_string()));
-        c.parameters.insert("value".to_string(), OverseerValue::Formula("A*B".to_string()));
+        c.parameters.insert(
+            "value".to_string(),
+            OverseerValue::Formula("A*B".to_string()),
+        );
 
         wrap.children.push(a);
         item.children.push(wrap);
@@ -555,8 +655,14 @@ mod tests {
         let dependent = "Root/L/T__1/C/value";
         let dependents_of_a = graph.get_dependents(dep_a);
         let dependents_of_b = graph.get_dependents(dep_b);
-        assert!(dependents_of_a.contains(&dependent.to_string()), "C/value should depend on A");
-        assert!(dependents_of_b.contains(&dependent.to_string()), "C/value should depend on B");
+        assert!(
+            dependents_of_a.contains(&dependent.to_string()),
+            "C/value should depend on A"
+        );
+        assert!(
+            dependents_of_b.contains(&dependent.to_string()),
+            "C/value should depend on B"
+        );
     }
 
     #[test]
@@ -568,17 +674,25 @@ mod tests {
         // }
         let mut root = OverseerNode::new_with_type("tab".to_string(), Some("Root".to_string()));
         let mut total = OverseerNode::new_with_type("int".to_string(), Some("total".to_string()));
-        total.parameters.insert("value".to_string(), OverseerValue::Formula("L.map(|x| x/C).sum()".to_string()));
+        total.parameters.insert(
+            "value".to_string(),
+            OverseerValue::Formula("L.map(|x| x/C).sum()".to_string()),
+        );
 
         let mut list = OverseerNode::new_with_type("list".to_string(), Some("L".to_string()));
         // single item
         let mut item = OverseerNode::new_with_type("T".to_string(), Some("T__1".to_string()));
         let mut a = OverseerNode::new_with_type("int".to_string(), Some("A".to_string()));
-        a.parameters.insert("value".to_string(), OverseerValue::Integer(1));
+        a.parameters
+            .insert("value".to_string(), OverseerValue::Integer(1));
         let mut b = OverseerNode::new_with_type("int".to_string(), Some("B".to_string()));
-        b.parameters.insert("value".to_string(), OverseerValue::Integer(2));
+        b.parameters
+            .insert("value".to_string(), OverseerValue::Integer(2));
         let mut c = OverseerNode::new_with_type("int".to_string(), Some("C".to_string()));
-        c.parameters.insert("value".to_string(), OverseerValue::Formula("A*B".to_string()));
+        c.parameters.insert(
+            "value".to_string(),
+            OverseerValue::Formula("A*B".to_string()),
+        );
         item.children.push(a);
         item.children.push(b);
         item.children.push(c);
@@ -595,6 +709,9 @@ mod tests {
         let c_value = "Root/L/T__1/C/value";
         let total_value = "Root/total/value";
         let dependents_of_c = graph.get_dependents(c_value);
-        assert!(dependents_of_c.contains(&total_value.to_string()), "total/value should depend on C/value via aggregate expansion");
+        assert!(
+            dependents_of_c.contains(&total_value.to_string()),
+            "total/value should depend on C/value via aggregate expansion"
+        );
     }
 }

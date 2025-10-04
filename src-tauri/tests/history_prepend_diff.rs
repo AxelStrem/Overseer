@@ -81,12 +81,20 @@ fn prepend_duplicate_list_entry_preserves_existing_indentation() {
 
     let orig_blocks = extract_blocks(original);
     let regen_blocks = extract_blocks(&regenerated);
-    assert_eq!(orig_blocks.len() + 1, regen_blocks.len(), "Expected exactly one new block added");
+    assert_eq!(
+        orig_blocks.len() + 1,
+        regen_blocks.len(),
+        "Expected exactly one new block added"
+    );
     for (orig, regen_block) in orig_blocks.iter().zip(regen_blocks.iter().skip(1)) {
         for (ol, rl) in orig.iter().zip(regen_block.iter()) {
             let o_ws = ol.chars().take_while(|c| c.is_whitespace()).count();
             let r_ws = rl.chars().take_while(|c| c.is_whitespace()).count();
-            assert_eq!(o_ws, r_ws, "Indentation changed for line:\nORIG: '{}'\nREGEN: '{}'\nRegenerated doc:\n{}", ol, rl, regenerated);
+            assert_eq!(
+                o_ws, r_ws,
+                "Indentation changed for line:\nORIG: '{}'\nREGEN: '{}'\nRegenerated doc:\n{}",
+                ol, rl, regenerated
+            );
         }
     }
 }
