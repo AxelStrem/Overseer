@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::Path;
 use tokio::fs;
 
@@ -157,6 +158,59 @@ impl FileOperations {
         output.push_str(&normalized);
     }
 
+    fn emit_leading_trivia(
+        output: &mut String,
+        trivia: &str,
+        node: &OverseerNode,
+        allow: bool,
+        indent_level: usize,
+        in_list_body: bool,
+    ) -> bool {
+        if !allow || trivia.is_empty() {
+            return false;
+        }
+
+        let mut allowed_blank_lines = node.leading_blank_lines as usize;
+        let trivia_is_whitespace = trivia.trim().is_empty();
+        if in_list_body {
+            allowed_blank_lines = 0;
+        } else if !output.is_empty() {
+            if indent_level == 0 {
+                allowed_blank_lines = 0;
+            } else if trivia_is_whitespace {
+                allowed_blank_lines = allowed_blank_lines.saturating_sub(1);
+            }
+        }
+
+        let leading = trivia.to_string();
+        let existing_run = output.chars().rev().take_while(|&ch| ch == '\n').count();
+        let desired_total_newlines = if output.is_empty() {
+            allowed_blank_lines
+        } else {
+            allowed_blank_lines + 1
+        };
+        let allowed_prefix = desired_total_newlines.saturating_sub(existing_run);
+
+        let mut prefix_bytes = 0;
+        for ch in leading.chars() {
+            match ch {
+                '\n' | '\r' => {
+                    prefix_bytes += ch.len_utf8();
+                }
+                _ => break,
+            }
+        }
+
+        let rest = leading[prefix_bytes..].replace("\r\n", "\n");
+
+        for _ in 0..allowed_prefix {
+            output.push('\n');
+        }
+
+        Self::push_trivia(output, &rest);
+        true
+    }
+
     fn drop_trailing_whitespace_line(buffer: &mut String) {
         loop {
             if buffer.is_empty() {
@@ -309,7 +363,15 @@ impl FileOperations {
         indent_level: usize,
         indent_unit: &str,
     ) -> Result<()> {
-        Self::serialize_node_context(node, output, indent_level, false, indent_unit)
+        Self::serialize_node_context(
+            node,
+            output,
+            indent_level,
+            false,
+            indent_unit,
+            None,
+            false,
+        )
     }
 
     fn serialize_node_context(
@@ -318,6 +380,8 @@ impl FileOperations {
         indent_level: usize,
         in_list_body: bool,
         fallback_indent_unit: &str,
+        list_indent_hint: Option<usize>,
+        force_emit_template_children: bool,
     ) -> Result<()> {
         let snapshot = Self::snapshot_for(node);
         let fallback_indent_unit = if fallback_indent_unit.is_empty() {
@@ -336,9 +400,52 @@ impl FileOperations {
             None
         };
 
+        let leading_whitespace_only = snapshot
+            .as_ref()
+            .map(|snap| !snap.leading_trivia.is_empty() && snap.leading_trivia.trim().is_empty())
+            .unwrap_or(false);
+        let allow_snapshot_trivia = if in_list_body {
+            leading_whitespace_only
+        } else {
+            true
+        };
+
+        if force_emit_template_children {
+            if let Some(snap) = snapshot.as_ref() {
+                if matches!(snap.origin, SnapshotOrigin::Parsed)
+                    && Self::children_match_snapshots(node)
+                {
+                    if !snap.leading_trivia.is_empty() {
+                        Self::emit_leading_trivia(
+                            output,
+                            &snap.leading_trivia,
+                            node,
+                            allow_snapshot_trivia,
+                            indent_level,
+                            in_list_body,
+                        );
+                    }
+                    if snap.full_text.contains('\r') {
+                        let normalized = snap.full_text.replace("\r\n", "\n");
+                        output.push_str(&normalized);
+                    } else {
+                        output.push_str(&snap.full_text);
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
         if let (Some(snap), Some(patched_text)) = (snapshot.as_ref(), inline_patched.as_ref()) {
             if !snap.leading_trivia.is_empty() {
-                Self::push_trivia(output, &snap.leading_trivia);
+                Self::emit_leading_trivia(
+                    output,
+                    &snap.leading_trivia,
+                    node,
+                    allow_snapshot_trivia,
+                    indent_level,
+                    in_list_body,
+                );
             }
             if patched_text.contains('\r') {
                 let normalized = patched_text.replace("\r\n", "\n");
@@ -352,9 +459,14 @@ impl FileOperations {
         if let (Some(snap), Some(fingerprint)) = (snapshot.as_ref(), node.source_fingerprint) {
             if matches!(snap.origin, SnapshotOrigin::Parsed) && fingerprint == snap.fingerprint {
                 if Self::children_match_snapshots(node) {
-                    if !snap.leading_trivia.is_empty() {
-                        Self::push_trivia(output, &snap.leading_trivia);
-                    }
+                    Self::emit_leading_trivia(
+                        output,
+                        &snap.leading_trivia,
+                        node,
+                        allow_snapshot_trivia,
+                        indent_level,
+                        in_list_body,
+                    );
                     if snap.full_text.contains('\r') {
                         let normalized = snap.full_text.replace("\r\n", "\n");
                         output.push_str(&normalized);
@@ -366,15 +478,18 @@ impl FileOperations {
             }
         }
 
-    let allow_snapshot_trivia = !in_list_body && !Self::should_skip_trailing_trivia(node);
-
         let mut emitted_leading_trivia = false;
-        if allow_snapshot_trivia {
-            if let Some(snap) = snapshot.as_ref() {
-                if !snap.leading_trivia.is_empty() {
-                    Self::push_trivia(output, &snap.leading_trivia);
-                    emitted_leading_trivia = true;
-                }
+        if let Some(snap) = snapshot.as_ref() {
+            if Self::emit_leading_trivia(
+                output,
+                &snap.leading_trivia,
+                node,
+                allow_snapshot_trivia,
+                indent_level,
+                in_list_body,
+            )
+            {
+                emitted_leading_trivia = true;
             }
         }
 
@@ -401,10 +516,12 @@ impl FileOperations {
             }
         }
 
-        let indent = snapshot
+        let snapshot_indent = snapshot
             .as_ref()
             .and_then(|snap| snap.indent_unit.clone())
-            .filter(|ind| !ind.is_empty())
+            .filter(|ind| !ind.is_empty());
+        let indent = snapshot_indent
+            .clone()
             .unwrap_or_else(|| fallback_indent_unit.repeat(indent_level));
         let needs_indent = !emitted_leading_trivia || output.ends_with('\n') || output.is_empty();
         if needs_indent {
@@ -412,12 +529,49 @@ impl FileOperations {
         }
 
         // Handle list-style items which start with '-'
-        if in_list_body
+    if in_list_body
             || node.node_type == "list_item"
             || (indent_level > 0 && node.node_type == "-")
         {
             // Special handling for real list bodies vs non-list contexts
             if in_list_body {
+                let mut required_indent = snapshot.as_ref().and_then(|snap| {
+                    let text = if snap.full_text.contains("\r\n") {
+                        snap.full_text.replace("\r\n", "\n")
+                    } else {
+                        snap.full_text.clone()
+                    };
+                    for line in text.lines() {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        if let Some(dash_idx) = line.find('-') {
+                            let prefix = &line[..dash_idx];
+                            if prefix.chars().all(|c| c == ' ') {
+                                return Some(prefix.len());
+                            }
+                        }
+                        break;
+                    }
+                    None
+                });
+                if let Some(hint) = list_indent_hint {
+                    required_indent = Some(required_indent.map(|val| val.max(hint)).unwrap_or(hint));
+                }
+                if let Some(required_indent) = required_indent {
+                    let line_start = output.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
+                    let current_slice = &output[line_start..];
+                    let current_spaces = current_slice.chars().take_while(|c| *c == ' ').count();
+                    if current_spaces < required_indent {
+                        output.push_str(&" ".repeat(required_indent - current_spaces));
+                    } else if current_spaces > required_indent {
+                        let mut to_remove = current_spaces - required_indent;
+                        while to_remove > 0 && output.ends_with(' ') {
+                            output.pop();
+                            to_remove -= 1;
+                        }
+                    }
+                }
                 // Determine if this is a simple primitive list item (only when not template-derived)
                 let is_template_instance = node.template.is_some()
                     || matches!(
@@ -451,7 +605,15 @@ impl FileOperations {
                     || matches!(
                         node.parameters.get("_from_template"),
                         Some(OverseerValue::Boolean(true))
-                    );
+                    )
+                    || matches!(
+                        node.parameters.get("_template_node"),
+                        Some(OverseerValue::Boolean(true))
+                    )
+                    || node
+                        .parameters
+                        .keys()
+                        .any(|k| k.starts_with("_template_"));
                 // Pre-parse explicit override names list on the instance (if present)
                 // NOTE: Do not use this list to filter which overrides to persist. Users can introduce
                 // new overrides at runtime (e.g., by editing a field), and this list may be stale.
@@ -617,6 +779,8 @@ impl FileOperations {
                         indent_level + 1,
                         false,
                         fallback_indent_unit,
+                        None,
+                        false,
                     )?;
                 }
                 if node.children.is_empty() {
@@ -627,7 +791,14 @@ impl FileOperations {
                         Self::push_trivia(output, &body_text);
                     }
                 }
-                output.push_str(&format!("{}}}\n", indent));
+                while output.ends_with(' ') || output.ends_with('\t') {
+                    output.pop();
+                }
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str(&indent);
+                output.push_str("}\n");
                 Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                 return Ok(());
             } else {
@@ -655,6 +826,8 @@ impl FileOperations {
                             indent_level + 1,
                             false,
                             fallback_indent_unit,
+                            None,
+                            false,
                         )?;
                     }
                     output.push_str(&format!("{}}}\n", indent));
@@ -983,12 +1156,46 @@ impl FileOperations {
             }
             // Children under a list node are list-body items (render as '-')
             let children_in_list_body = node.node_type == "list";
+            let mut list_indent_hints: VecDeque<usize> = VecDeque::new();
+            let mut last_list_indent_hint: Option<usize> = None;
+            if children_in_list_body {
+                if let Some(snap) = snapshot.as_ref() {
+                    if let Some(body_text) = Self::snapshot_block_inner(snap) {
+                        let mut depth: i32 = 0;
+                        for line in body_text.lines() {
+                            if line.trim().is_empty() {
+                                continue;
+                            }
+                            let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
+                            let content = &line[leading_spaces..];
+                            if depth == 0 && content.starts_with("- {") {
+                                list_indent_hints.push_back(leading_spaces);
+                            }
+                            let open_count = content.chars().filter(|c| *c == '{').count() as i32;
+                            let close_count = content.chars().filter(|c| *c == '}').count() as i32;
+                            depth += open_count;
+                            depth -= close_count;
+                            if depth < 0 {
+                                depth = 0;
+                            }
+                        }
+                    }
+                }
+            }
             // Suppress template-derived children for any node that originated from a template (standalone instances or list entries)
             let suppress_template_children = node.template.is_some()
                 || matches!(
                     node.parameters.get("_from_template"),
                     Some(OverseerValue::Boolean(true))
-                );
+                )
+                || matches!(
+                    node.parameters.get("_template_node"),
+                    Some(OverseerValue::Boolean(true))
+                )
+                || node
+                    .parameters
+                    .keys()
+                    .any(|k| k.starts_with("_template_"));
             // Pre-parse explicit override names list on the instance (if present)
             let explicit_names: Option<Vec<String>> = if let Some(OverseerValue::String(list)) =
                 node.parameters.get("_explicit_overrides")
@@ -1040,6 +1247,11 @@ impl FileOperations {
                         }
                     }
                 }
+                let is_template_list_entry = node.node_type == "list"
+                    && matches!(
+                        node.parameters.get("entry"),
+                        Some(OverseerValue::Template(entry_type)) if entry_type == &child.node_type
+                    );
 
                 // Special-case: if child is a transparent wrapper and any of its descendants were explicitly overridden,
                 // emit those descendant overrides concisely here and skip the wrapper itself.
@@ -1104,6 +1316,7 @@ impl FileOperations {
                 }
                 if suppress_template_children
                     && is_template_child
+                    && !is_template_list_entry
                     && (!has_explicit_override || !listed_in_instance_overrides)
                 {
                     continue;
@@ -1150,12 +1363,24 @@ impl FileOperations {
                         continue;
                     }
                 }
+                let current_list_hint = if children_in_list_body {
+                    if let Some(hint) = list_indent_hints.pop_front() {
+                        last_list_indent_hint = Some(hint);
+                        Some(hint)
+                    } else {
+                        last_list_indent_hint
+                    }
+                } else {
+                    None
+                };
                 Self::serialize_node_context(
                     child,
                     output,
                     indent_level + 1,
                     children_in_list_body,
                     fallback_indent_unit,
+                    current_list_hint,
+                    is_template_list_entry,
                 )?;
                 trim_trailing_whitespace(output);
             }
