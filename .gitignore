@@ -43,3 +43,6 @@ Thumbs.db
 
 # Backup files
 *.backup
+
+.npm-cache/
+.cache/

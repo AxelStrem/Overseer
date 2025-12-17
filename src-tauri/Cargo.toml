@@ -49,3 +49,8 @@ debug-parser = []
 debug-resolver = []
 debug-evaluator = []
 debug-deps = []
+
+[patch.crates-io]
+# Override to WebKitGTK 0.19.x which uses libsoup3 and JavaScriptCoreGTK 4.1
+webkit2gtk = { git = "https://github.com/gtk-rs/webkit2gtk-rs", tag = "0.19.2" }
+webkit2gtk-sys = { git = "https://github.com/gtk-rs/webkit2gtk-rs", tag = "0.19.2" }
