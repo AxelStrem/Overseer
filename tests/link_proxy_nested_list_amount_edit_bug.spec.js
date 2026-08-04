@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -101,7 +101,7 @@ describe('Expected: edit of amount under unnamed wrapper in linked list item upd
   beforeEach(() => setupDOM())
 
   it('SelectedWeightRecord -> intake[0] -> amount edit reflects new value', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     let currentDoc = buildWeightTrackerDoc()
     let lastSerialized = null

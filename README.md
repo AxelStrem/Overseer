@@ -27,8 +27,8 @@ Overseer is a cross-platform desktop application that helps you manage personal 
 
 1. **Clone the repository:**
    ```powershell
-   git clone https://github.com/yourusername/overseer.git
-   cd overseer
+   git clone https://github.com/AxelStrem/Overseer.git
+   cd Overseer
    ```
 
 2. **Install dependencies:**
@@ -182,17 +182,26 @@ npm run tauri:dev:debug
 
 ```
 overseer/
-├── src/                    # Frontend (JavaScript/HTML/CSS)
-├── src-tauri/             # Backend (Rust)
-│   ├── src/
-│   │   ├── parser.rs      # DSL parser
-│   │   ├── resolver.rs    # Logic resolution
-│   │   ├── types.rs       # Data structures
-│   │   └── main.rs        # Tauri app entry
-├── examples/              # Example .os files
-├── docs/                  # Documentation
-└── package.json          # Node.js dependencies
+├── src/            # Frontend: renderer, app shell, styles
+├── src-tauri/      # Backend: the language core and file I/O
+├── tests/          # Frontend specs (Vitest + jsdom)
+├── examples/       # Example and personal .os documents
+└── feature-plans/  # Design docs for individual subsystems
 ```
+
+A document flows through the backend in one direction:
+
+**parse** (`parser.rs` — text to AST, retaining each node's source span and
+surrounding trivia) → **resolve** (`resolver.rs` — parameter inheritance, layout,
+template instantiation) → **evaluate** (`formula_evaluator.rs` with
+`dependency_tracker.rs` deciding what actually needs recomputing) → **serialize**
+(`file_ops.rs`).
+
+The serializer is a *patcher*, not a generator: it replays each node's original
+source text unless that node's fingerprint changed, so an edit to one field
+rewrites one line and leaves the rest of the file — comments, spacing, parameter
+order — byte-identical. Keeping that property is the reason for most of the
+complexity in the parse and serialize stages.
 
 ## 📚 Documentation
 
@@ -203,26 +212,21 @@ overseer/
 
 ## 🎯 Current Status
 
-**✅ Completed:**
-- Core file operations and UI
-- Advanced layout system (horizontal/vertical/spacing/margins)
-- Complete styling system (colors, fonts, borders, sizing)
-- Grid layouts with fixed sizing
-- Markdown text formatting with editor
-- Parameter inheritance
-- Live file watching
-- Action system with buttons, timers, and triggers
-- Chart visualization with Chart.js integration
+Overseer is usable for real personal tracking — the documents under `examples/`
+are live data, not demos. The DSL, styling, layout, formulas, actions and charts
+all work; the parser, resolver and serializer are the mature parts of the system.
 
-**🚧 In Progress:**
-- Interactive field editing improvements
-- List CRUD operations (add/remove/reorder)
-- Formula system with `$(...)` syntax
+Progress is tracked in the project's own format rather than restated here:
 
-**📋 Planned:**
-- Multi-file references
-- Advanced UI components
-- Performance optimizations
+- [DEVELOPMENT_PLAN.os](DEVELOPMENT_PLAN.os) — phases and their tasks, each with
+  `complete` and `tested` flags. This is the authoritative roadmap.
+- [KNOWN_BUGS.os](KNOWN_BUGS.os) — open bugs and requested features. Entries with
+  `fixed = false` are the live ones.
+- [feature-plans/](feature-plans/) — design and progress notes per subsystem.
+
+Broadly: **multi-file support** (imports, mounts, cross-file queries) is designed
+in `feature-plans/MULTI_DOCUMENT_SUPPORT_PLAN.md` but not yet implemented, and
+advanced UI components and performance work are still open.
 
 ## 🤝 Contributing
 

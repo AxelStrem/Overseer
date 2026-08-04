@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
 
 function findElementByPath(pathArray){
@@ -84,7 +84,7 @@ describe('Dynamic link via Prev/Next shows phantom for missing dates', () => {
   beforeEach(() => setupDOM())
 
   it('navigates to a missing date and shows phantom with matching date', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
 
     let currentDoc = buildDoc()

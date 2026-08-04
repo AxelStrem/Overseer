@@ -30,7 +30,7 @@ function setupDOM() {
 }
 
 // Stub Tauri invoke to avoid noisy errors in jsdom
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn(() => Promise.resolve(null)) }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.resolve(null)) }))
 
 import { OverseerApp } from '../src/main.js'
 

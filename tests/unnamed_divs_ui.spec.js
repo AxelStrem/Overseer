@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -165,7 +165,7 @@ describe('unnamed wrapper + label + list UI updates', () => {
   beforeEach(() => setupDOM())
 
   it('A under unnamed wrapper with label inside list: editing A updates C', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     let currentDoc = buildDoc_withUnnamedWrapperAndLabel()
 
     // Backend stubs: recompute C for both full and selective paths (post-fix behavior)
@@ -195,7 +195,7 @@ describe('unnamed wrapper + label + list UI updates', () => {
   })
 
   it('No unnamed wrapper: editing A updates C (expected PASS even before fix)', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     let currentDoc = buildDoc_withoutUnnamedWrapper()
 
     invoke.mockImplementation((cmd, args) => {
@@ -223,7 +223,7 @@ describe('unnamed wrapper + label + list UI updates', () => {
   })
 
   it('Unnamed wrapper but no label: editing A updates C (expected PASS even before fix)', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     let currentDoc = buildDoc_withoutLabel()
 
     invoke.mockImplementation((cmd, args) => {

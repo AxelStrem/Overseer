@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerRenderer } from '../src/renderer.js'
 import { OverseerApp } from '../src/main.js'
@@ -49,7 +49,7 @@ describe('Link proxy rendering', () => {
   it('renders target subtree inside link container and routes edits', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     // Backend stubs: initial parse returns document as-is
     invoke.mockImplementation((cmd, args) => {
@@ -115,7 +115,7 @@ describe('Link proxy rendering', () => {
   it('supports switching link targets by changing link parameter', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'serialize_overseer_nodes') {
@@ -167,7 +167,7 @@ describe('Link proxy rendering', () => {
   it('links to list items including ordinal selection and edits through proxy', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'serialize_overseer_nodes') { currentDoc = deepClone(args.nodes); return Promise.resolve('DOC') }
@@ -224,7 +224,7 @@ describe('Link proxy rendering', () => {
   it('switches link via Set action on link parameter (action-driven)', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'serialize_overseer_nodes') { currentDoc = deepClone(args.nodes); return Promise.resolve('DOC') }
@@ -278,7 +278,7 @@ describe('Link proxy rendering', () => {
   it('supports relative link paths resolved from the link container', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'serialize_overseer_nodes') { currentDoc = deepClone(args.nodes); return Promise.resolve('DOC') }
@@ -314,7 +314,7 @@ describe('Link proxy rendering', () => {
   it('guards against link cycles without crashing', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'serialize_overseer_nodes') { currentDoc = deepClone(args.nodes); return Promise.resolve('DOC') }

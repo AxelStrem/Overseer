@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Default capability for Overseer windows: core APIs and dialog plugin dialogs.",
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "dialog:default"
+  ]
+}

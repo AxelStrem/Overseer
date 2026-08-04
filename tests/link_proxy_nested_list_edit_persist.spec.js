@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -48,7 +48,7 @@ describe('Edit persistence inside a nested list under link proxy', () => {
   it('keeps edited value after selective update without reverting', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     // Backend stubs: round-trip the current in-memory document
     invoke.mockImplementation((cmd, args) => {

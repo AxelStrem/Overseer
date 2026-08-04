@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { bootstrapMinimalDom } from './helpers/dom'
 
 // Utility: find the visual display element for a field by trailing name in data-path
@@ -24,7 +24,7 @@ describe('mutable=guarded does not persist after save', () => {
   it('edit C (guarded) then save -> serialized content keeps original C', async () => {
   // Reset module registry and configure the tauri invoke mock BEFORE importing the app
   await vi.resetModules()
-  const { invoke } = await import('@tauri-apps/api/tauri')
+  const { invoke } = await import('@tauri-apps/api/core')
 
     // Simulate a document equivalent to examples/basic/mutability_test.os
     // int A (mutable=true) = 55

@@ -8,7 +8,7 @@ const DEBUG_MODE = (() => {
 
 // Import marked for markdown rendering
 import { marked } from 'marked';
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 // Import Chart.js for chart visualization
 import {

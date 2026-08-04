@@ -36,15 +36,13 @@ choco install nodejs
 scoop install nodejs
 ```
 
-### 3. Install Tauri CLI
+### 3. Tauri CLI
 
-After installing Rust and Node.js:
+The Tauri CLI ships as a dev dependency, so `npm install` in the project is
+enough — the `npm run tauri:*` scripts use it. A global install is only needed if
+you want to run `tauri` outside the project:
 
 ```bash
-# Install Tauri CLI via Cargo
-cargo install tauri-cli
-
-# Or install via npm
 npm install -g @tauri-apps/cli
 ```
 
@@ -91,36 +89,18 @@ cargo tauri build
 
 **Run tests:**
 ```bash
-# Rust tests
-cargo test
-
-# Frontend tests (if added)
 npm test
 ```
+
+Both the Rust and the frontend suite run from that one command. See
+[TESTING.md](TESTING.md) for what each covers and how to run them separately.
 
 ## Development Workflow
 
 ### 1. File Structure Overview
-```
-Overseer/
-├── src-tauri/           # Rust backend
-│   ├── src/
-│   │   ├── main.rs      # Tauri entry point
-│   │   ├── parser.rs    # DSL parser
-│   │   ├── types.rs     # Data structures
-│   │   ├── evaluator.rs # Formula evaluation
-│   │   └── file_ops.rs  # File operations
-│   ├── Cargo.toml       # Rust dependencies
-│   └── tauri.conf.json  # Tauri configuration
-├── src/                 # Frontend
-│   ├── main.js          # Application logic
-│   ├── renderer.js      # UI rendering
-│   ├── file-manager.js  # File management
-│   └── styles.css       # Styling
-├── index.html           # HTML entry point
-├── package.json         # Node.js dependencies
-└── example.os           # Sample Overseer document
-```
+
+See the project structure section in [README.md](README.md), which also describes
+how a document flows through the backend stages.
 
 ### 2. Making Changes
 
@@ -141,13 +121,16 @@ Overseer/
 
 2. **Open a test file:**
    - Click "Open File" in the application
-   - Navigate to `example.os` in the project root
-   - The file should parse and display the dashboard
+   - Pick any document under `examples/` — `examples/basic/example.os` is a small
+     one, `examples/exercise_tracker/exercise.os` exercises templates, formulas
+     and actions together
+   - The file should parse and render
 
 3. **Test features:**
-   - Tab navigation between "personal_dashboard" and "projects"
+   - Tab navigation, if the document defines tabs
    - Double-click fields to edit them
-   - Check that formulas display calculated values
+   - Check that formulas display calculated values, and that saving leaves the
+     rest of the file untouched (`git diff` should show only your edit)
 
 ## Troubleshooting
 
@@ -201,7 +184,7 @@ Overseer/
 ```json
 {
     "rust-analyzer.cargo.features": "all",
-    "rust-analyzer.checkOnSave.command": "clippy"
+    "rust-analyzer.check.command": "clippy"
 }
 ```
 
@@ -216,19 +199,9 @@ Overseer/
 
 ## Next Steps
 
-### Phase 1: Complete Basic Functionality
-1. ✅ Project setup and structure
-2. 🔄 Complete parser for all syntax features
-3. ⏳ Implement formula evaluation
-4. ⏳ Add CRUD operations for all field types
-5. ⏳ Polish UI and interactions
-
-### Phase 2: Advanced Features
-1. Chart integration with Chart.js
-2. Action/trigger system
-3. Cross-file references
-4. Export/import capabilities
-5. Mobile app development
+The roadmap lives in [DEVELOPMENT_PLAN.os](DEVELOPMENT_PLAN.os) and the open
+defects in [KNOWN_BUGS.os](KNOWN_BUGS.os) — both are Overseer documents, so you
+can open them in the app itself and tick tasks off as you go.
 
 ### Getting Help
 

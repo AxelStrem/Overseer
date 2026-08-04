@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -70,7 +70,7 @@ describe('phantom materialize updates only the new item', () => {
   beforeEach(() => setupDOM())
 
   it('editing weight via SelectedWeightRecord does not change last existing item', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     let currentDoc = buildDoc()
 
     invoke.mockImplementation((cmd, args) => {

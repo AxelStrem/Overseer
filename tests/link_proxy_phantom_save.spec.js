@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerRenderer } from '../src/renderer.js'
 import { OverseerApp } from '../src/main.js'
@@ -49,7 +49,7 @@ describe('Phantom edit then save serializes with required schema', () => {
   it('materializes item, updates list UI, and saves without missing is_hierarchy_transparent', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     // Track last serialized nodes to assert schema
     let lastSerialized = null

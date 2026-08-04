@@ -30,7 +30,7 @@ function setupDOM() {
 // Original file content (keep exactly, including blank lines and indentation)
 const originalContent = `int A (mutable=true) = 55\nint B (mutable=false) = 10\nint C (mutable=\"guarded\") = 11\nint D = 6\n\ndiv dr {\n\n    button Prev (label=\"Update\") {\n        on click {\n            set (path=\"/dr/E\") = 20\n\n        }\n    }\n   \n   int E (mutable=\"guarded\") = 10\n   // comment line\n\n}\n\n`
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -47,7 +47,7 @@ describe('guarded action roundtrip preserves original text including comment pla
   beforeEach(() => setupDOM())
 
   it('clicking Prev updates E in UI but serialized output is identical to original', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
   let currentDoc = null
   let serializedAfterSave = null
   let capturedNodesBeforeSerialize = null

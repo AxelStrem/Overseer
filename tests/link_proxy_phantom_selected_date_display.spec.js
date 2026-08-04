@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -105,7 +105,7 @@ describe('link proxy phantom preview shows selected_date', () => {
   beforeEach(() => setupDOM())
 
   it('displays the selected_date in the phantom preview and updates on change', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     let currentDoc = buildWeightDoc()
 

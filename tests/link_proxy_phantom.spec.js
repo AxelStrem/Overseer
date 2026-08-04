@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerRenderer } from '../src/renderer.js'
 import { OverseerApp } from '../src/main.js'
@@ -49,7 +49,7 @@ describe('Link proxy phantom preview and lazy creation', () => {
   it('renders phantom preview for missing key and creates item on first edit', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'serialize_overseer_nodes') { currentDoc = deepClone(args.nodes); return Promise.resolve('DOC') }

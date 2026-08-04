@@ -1,95 +1,3 @@
-// Disappearing comments on save (low priority)
-// Description: When saving from the app, comments in the original file may be lost.
-// Root cause: The save flow merges comments using the UI-provided regenerated content as
-// the merge source rather than reading the on-disk original. As a result, comment blocks
-// are not available for merging back.
-// Status: Low priority; defer fix. Proposed fix is to have the backend read current
-// on-disk file for the merge source (fallback to UI content if unreadable/new file).
-
-// Known Bugs and Issues Tracker
-// Created: 2025-07-26
-// Purpose: Track bugs and issues found during development
-
-// Disappearing comments on save (low priority)
-// Description: When saving from the app, comments in the original file may be lost.
-// Root cause: The save flow merges comments using the UI-provided regenerated content as
-// the merge source rather than reading the on-disk original. As a result, comment blocks
-// are not available for merging back.
-// Status: Low priority; defer fix. Proposed fix is to have the backend read current
-// on-disk file for the merge source (fallback to UI content if unreadable/new file).
-
-// Known Bugs and Issues Tracker
-// Created: 2025-07-26
-// Purpose: Track bugs and issues found during development
-
-// Disappearing comments on save (low priority)
-// Description: When saving from the app, comments in the original file may be lost.
-// Root cause: The save flow merges comments using the UI-provided regenerated content as
-// the merge source rather than reading the on-disk original. As a result, comment blocks
-// are not available for merging back.
-// Status: Low priority; defer fix. Proposed fix is to have the backend read current
-// on-disk file for the merge source (fallback to UI content if unreadable/new file).
-
-// Known Bugs and Issues Tracker
-// Created: 2025-07-26
-// Purpose: Track bugs and issues found during development
-
-// Disappearing comments on save (low priority)
-// Description: When saving from the app, comments in the original file may be lost.
-// Root cause: The save flow merges comments using the UI-provided regenerated content as
-// the merge source rather than reading the on-disk original. As a result, comment blocks
-// are not available for merging back.
-// Status: Low priority; defer fix. Proposed fix is to have the backend read current
-// on-disk file for the merge source (fallback to UI content if unreadable/new file).
-
-// Known Bugs and Issues Tracker
-// Created: 2025-07-26
-// Purpose: Track bugs and issues found during development
-
-// Disappearing comments on save (low priority)
-// Description: When saving from the app, comments in the original file may be lost.
-// Root cause: The save flow merges comments using the UI-provided regenerated content as
-// the merge source rather than reading the on-disk original. As a result, comment blocks
-// are not available for merging back.
-// Status: Low priority; defer fix. Proposed fix is to have the backend read current
-// on-disk file for the merge source (fallback to UI content if unreadable/new file).
-
-// Known Bugs and Issues Tracker
-// Created: 2025-07-26
-// Purpose: Track bugs and issues found during development
-
-// Disappearing comments on save (low priority)
-// Description: When saving from the app, comments in the original file may be lost.
-// Root cause: The save flow merges comments using the UI-provided regenerated content as
-// the merge source rather than reading the on-disk original. As a result, comment blocks
-// are not available for merging back.
-// Status: Low priority; defer fix. Proposed fix is to have the backend read current
-// on-disk file for the merge source (fallback to UI content if unreadable/new file).
-
-// Known Bugs and Issues Tracker
-// Created: 2025-07-26
-// Purpose: Track bugs and issues found during development
-
-// Disappearing comments on save (low priority)
-// Description: When saving from the app, comments in the original file may be lost.
-// Root cause: The save flow merges comments using the UI-provided regenerated content as
-// the merge source rather than reading the on-disk original. As a result, comment blocks
-// are not available for merging back.
-// Status: Low priority; defer fix. Proposed fix is to have the backend read current
-// on-disk file for the merge source (fallback to UI content if unreadable/new file).
-
-// Known Bugs and Issues Tracker
-// Created: 2025-07-26
-// Purpose: Track bugs and issues found during development
-
-// Disappearing comments on save (low priority)
-// Description: When saving from the app, comments in the original file may be lost.
-// Root cause: The save flow merges comments using the UI-provided regenerated content as
-// the merge source rather than reading the on-disk original. As a result, comment blocks
-// are not available for merging back.
-// Status: Low priority; defer fix. Proposed fix is to have the backend read current
-// on-disk file for the merge source (fallback to UI content if unreadable/new file).
-
 // Known Bugs and Issues Tracker
 // Created: 2025-07-26
 // Purpose: Track bugs and issues found during development
@@ -238,6 +146,18 @@ tab known_bugs (label="Known Bugs") {
             - storypoints = 3
             - fix_date = 22.08
             - fixed = true
+        }
+        - {
+            - id = 17
+            - description = "A standalone comment line containing only the two slash characters is deleted on save, and every comment line above it in the same leading block is relocated to the end of the document. Supersedes the older note about disappearing comments on save, whose stated root cause (the merge_comments path) no longer exists. Repro: src-tauri/tests/comment_trivia.rs, test bare_comment_marker_survives_round_trip, currently marked ignore."
+            - storypoints = 2
+            - fixed = false
+        }
+        - {
+            - id = 18
+            - description = "Editing an amount inside a link-proxied list entry that sits under an unnamed wrapper div does not update the dependent calories and total fields in the UI. Repro: tests/weight_tracker_amount_calories_total_ui_bug.spec.js, currently marked it.skip."
+            - storypoints = 3
+            - fixed = false
         }
     }
 

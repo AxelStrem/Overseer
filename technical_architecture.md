@@ -329,90 +329,19 @@ total = $(sum(expenses.amount))
 average = $(avg(scores[]))
 ```
 
-## Development Phases
+## Development Phases and Status
 
-### Phase 1: Foundation ✅ COMPLETE
-- ✅ Project structure setup with Tauri
-- ✅ Complete parser implementation (nom-based)
-- ✅ File I/O operations with comment preservation
-- ✅ Advanced UI rendering with styling system
-- ✅ Layout system (horizontal/vertical/spacing/margins)
-
-### Phase 2: Advanced Display ✅ COMPLETE
-- ✅ Complete styling system (colors, fonts, borders, sizing)
-- ✅ Grid layouts with fixed sizing and overflow control
-- ✅ Markdown text formatting with dual edit/view modes
-- ✅ Parameter inheritance throughout node hierarchy
-- ✅ Advanced border controls (selective sides, radius)
-
-### Phase 3: Interactive Editing 🔄 IN PROGRESS
-- 🔄 Enhanced field editing with validation
-- 🔄 List CRUD operations (add/remove/reorder)
-- ⏳ Undo/redo functionality
-- ⏳ Drag-and-drop reordering
-
-### Phase 4: Actions & Triggers ✅ COMPLETE
-- ✅ Action system parsing and execution
-- ✅ Interactive elements (buttons, checkboxes, timers)
-- ✅ Conditional triggers and automation
-- ✅ Timer-based scheduled actions
-- ✅ Safe action execution with error handling
-
-### Phase 5: Chart Visualization ✅ COMPLETE
-- ✅ Chart.js integration with proper scaling
-- ✅ Chart/plot DSL syntax support
-- ✅ Data binding from computed series
-- ✅ Interactive features (hover, tooltips, legend)
-- ✅ Responsive design and resize handling
-
-### Phase 6: Formula System 🔄 IN PROGRESS
-- 🔄 Complete formula evaluator with $() syntax
-- ⏳ Built-in functions (math, date, string, list operations)
-- ⏳ Cross-node reference resolution  
-- ⏳ Dynamic recalculation on data changes
-
-### Phase 7: Advanced Features ⏳ PLANNED
-- ⏳ Chart visualization system
-- ⏳ Cross-file references and imports
-- ⏳ Export/import capabilities
-- ⏳ Advanced list operations and aggregations
-
-### Phase 7: User Experience ⏳ PLANNED
-- ⏳ Enhanced keyboard shortcuts
-- ⏳ Themes and customization
-- ⏳ Performance optimizations
-- ⏳ Mobile responsive design
-
-## Current Implementation Status
-
-### ✅ Completed Systems
-1. **Parser**: Complete nom-based parser supporting all syntax
-2. **Resolver**: Parameter inheritance and layout resolution
-3. **Renderer**: Advanced HTML generation with styling
-4. **Layout Engine**: Horizontal/vertical layouts with spacing/margins
-5. **Styling System**: Colors, fonts, borders, sizing with inheritance
-6. **Markdown Support**: Rich text with dual edit/view modes
-7. **File Operations**: Async I/O with comment preservation
-8. **Action System**: Buttons, timers, triggers with safe execution
-9. **Chart System**: Chart.js integration with responsive scaling
-
-### 🔄 In Development
-1. **Interactive Editing**: Enhanced field validation and editing
-2. **List Management**: CRUD operations for dynamic lists
-3. **Formula System**: Basic evaluation engine implementation
-
-### ⏳ Planned Systems
-1. **Actions/Triggers**: User interaction and automation
-2. **Charts**: Data visualization components
-3. **Multi-file Support**: Cross-document references
+Tracked in [DEVELOPMENT_PLAN.os](DEVELOPMENT_PLAN.os), with open defects and
+requested features in [KNOWN_BUGS.os](KNOWN_BUGS.os). Deliberately not restated
+here: this document describes how the system is built, which changes far more
+slowly than what is done.
 
 ## Performance Characteristics
 
-### Current Benchmarks
-- **Parse Time**: ~5ms for typical 1000-line documents
-- **Render Time**: ~20ms for complex layouts with 100+ elements
-- **Memory Usage**: ~50MB for large documents (10,000+ nodes)
-- **File I/O**: Sub-100ms for most document sizes
+The architectural answer to performance is the dependency tracker: an edit
+recomputes the formulas that transitively depend on the changed node, and the
+renderer patches the corresponding DOM subtrees rather than re-rendering the
+document. Full re-evaluation is the fallback path, not the normal one.
 
 ### Optimization Targets
 - **Large Documents**: Support for 50,000+ node documents

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
 
 function setupDOM(){
@@ -45,7 +45,7 @@ function buildDoc() {
 describe('Wrapper+label propagation', () => {
   beforeEach(() => setupDOM())
   it('Editing A under unnamed wrapper with label propagates to C and total', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     let currentDoc = buildDoc()
     // crude mock backend: just echo currentDoc and (pretend) recompute C and total deterministically
     invoke.mockImplementation((cmd, args) => {

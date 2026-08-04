@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 // Debug is opt-in only via ?debug=1; localStorage flag is ignored to avoid accidental noise
 const DEBUG_MODE = (() => {
@@ -16,8 +16,7 @@ try {
         console.log = () => {}
     }
 } catch {}
-import { open, save } from '@tauri-apps/api/dialog'
-import { appWindow } from '@tauri-apps/api/window'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import { OverseerRenderer } from './renderer.js'
 import { FileManager } from './file-manager.js'
 

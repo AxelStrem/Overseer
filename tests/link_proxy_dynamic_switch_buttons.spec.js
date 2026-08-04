@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -65,7 +65,7 @@ describe('Dynamic link switches to existing list item via Prev/Next buttons', ()
   it('navigates to 2025-08-25 and shows Tuesday from History', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     // Backend mock: handle button click events by updating Selected/selected_date
     invoke.mockImplementation((cmd, args) => {

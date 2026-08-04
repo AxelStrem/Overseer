@@ -28,7 +28,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -54,7 +54,7 @@ describe('Round-trip template fidelity (no unintended materialization)', () => {
   beforeEach(() => setupDOM())
 
   it('re-serializing weight_tracker_new without edits yields identical text', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     // We'll capture the last serialized text
     let lastSerializedText = null

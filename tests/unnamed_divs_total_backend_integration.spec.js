@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // the dependent formula C (A*B) and the aggregate total = $(L.map(|x| x/C).sum()).
 // It guards the regression fixed via multi-pass formula evaluation + transparent path setters.
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
 
 function setupDOM(){
@@ -88,7 +88,7 @@ async function editPrimitive(app, pathArr, newVal){
 describe('backend integration: unnamed wrapper aggregate recomputes', () => {
   beforeEach(()=>setupDOM())
   it('editing A then B updates C and total via real backend selective flow', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     let doc = buildDoc()
 
     // Realistic invoke mock: delegate to actual backend logic would require spawning rust; here

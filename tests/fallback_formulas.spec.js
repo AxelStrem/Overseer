@@ -28,7 +28,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerRenderer } from '../src/renderer.js'
 import { OverseerApp } from '../src/main.js'
@@ -50,7 +50,7 @@ describe('Fallback formulas rendering', () => {
   it('renders numeric fallback when value is explicit null', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     // Backend stubs: first full load returns computed fallback=10 for node v
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'serialize_overseer_nodes') return Promise.resolve('DOC')

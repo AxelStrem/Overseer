@@ -3,11 +3,27 @@ use overseer::parser;
 use overseer::resolver;
 use overseer::types::OverseerNode;
 
-fn load_fixture() -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../examples/exercise_tracker/exercise.os");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read fixture {:?}: {}", path, err))
+/// The live example document. It is real user data that changes whenever the app
+/// is used, so only assertions that hold for *any* content may rely on it.
+fn load_live_example() -> String {
+    load_os_file(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../examples/exercise_tracker/exercise.os"),
+    )
+}
+
+/// A frozen fixture, safe to anchor assertions about specific nodes against.
+fn load_frozen_fixture(name: &str) -> String {
+    load_os_file(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name),
+    )
+}
+
+fn load_os_file(path: &std::path::Path) -> String {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("failed to read {:?}: {}", path, err))
 }
 
 fn strip_snapshots(nodes: &mut [OverseerNode]) {
@@ -69,34 +85,47 @@ fn diff_snapshot(a: &str, b: &str) -> String {
     report
 }
 
+/// Every line that differs between two documents, as (line number, before, after).
+/// Only meaningful for edits that preserve the line count; the callers assert that
+/// separately so a length change is reported as its own failure.
+fn changed_lines<'a>(before: &'a str, after: &'a str) -> Vec<(usize, &'a str, &'a str)> {
+    before
+        .lines()
+        .zip(after.lines())
+        .enumerate()
+        .filter(|(_, (b, a))| b != a)
+        .map(|(idx, (b, a))| (idx + 1, b, a))
+        .collect()
+}
+
+fn render_changed_lines(diffs: &[(usize, &str, &str)]) -> String {
+    use std::fmt::Write;
+    let mut report = String::new();
+    for (line, before, after) in diffs.iter().take(20) {
+        writeln!(
+            &mut report,
+            "line {}:\n  before: {:?}\n  after:  {:?}",
+            line, before, after
+        )
+        .unwrap();
+    }
+    if diffs.len() > 20 {
+        writeln!(&mut report, "... and {} more", diffs.len() - 20).unwrap();
+    }
+    report
+}
+
 #[test]
 fn exercise_inline_edit_preserves_local_diff() {
     overseer::source_registry::SourceRegistry::reset();
 
-    let original = load_fixture();
+    let original = load_frozen_fixture("exercise_inline_edit.os");
     let (_rest, mut nodes) = parser::parse_document(&original).expect("document should parse");
     resolver::resolve_document(&mut nodes);
 
-    fn debug_names(nodes: &[OverseerNode], depth: usize) {
-        for node in nodes {
-            println!(
-                "{}node type={} name={}",
-                " ".repeat(depth * 2),
-                node.node_type,
-                node.name
-            );
-            if !node.children.is_empty() {
-                debug_names(&node.children, depth + 1);
-            }
-        }
-    }
-    println!("tree before updates:");
-    debug_names(&nodes, 0);
-
     // Locate the inline plates block under the second list entry and tweak p2.
-    let exercises_list =
-        find_node_mut(&mut nodes, &|node: &OverseerNode| node.name == "Exercises")
-            .expect("Exercises list should exist");
+    let exercises_list = find_node_mut(&mut nodes, &|node: &OverseerNode| node.name == "Exercises")
+        .expect("Exercises list should exist");
     exercises_list.source_fingerprint = None;
     let exercise_entry = exercises_list
         .children
@@ -104,74 +133,38 @@ fn exercise_inline_edit_preserves_local_diff() {
         .find(|child| child.name == "Exercise__2")
         .expect("second exercise entry should exist");
     exercise_entry.source_fingerprint = None;
-    println!(
-        "entry snapshot? {} id {:?}",
-        exercise_entry.source_snapshot.is_some(),
-        exercise_entry.source_id
-    );
-    println!(
-        "entry type={} name={}",
-        exercise_entry.node_type,
-        exercise_entry.name
-    );
     let plates = exercise_entry
         .children
         .iter_mut()
         .find(|child| child.name == "plates")
         .expect("plates block present in exercise entry");
-    println!(
-        "plates snapshot present? {} source_id {:?}",
-        plates.source_snapshot.is_some(),
-        plates.source_id
-    );
-    println!(
-        "plates type={} name={}",
-        plates.node_type,
-        plates.name
-    );
-    println!(
-        "plates params: {:?}",
-        plates
-            .parameters
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
-    );
     plates.source_fingerprint = None;
 
-    let mut updated = false;
-    for child in plates.children.iter_mut() {
-        println!("before serialize child {} value {:?}", child.name, child.parameters.get("value"));
-        if child.name == "p2" {
-            child.parameters
-                .insert("value".to_string(), overseer::types::OverseerValue::Integer(42));
-            child.source_fingerprint = None;
-            child.parameters.insert(
-                "_override_present".to_string(),
-                overseer::types::OverseerValue::Boolean(true),
-            );
-            child.parameters.insert(
-                "_explicit_child_override".to_string(),
-                overseer::types::OverseerValue::Boolean(true),
-            );
-            child.parameters.remove("_template_value");
-            child.authored_dash = true;
-            updated = true;
-            break;
-        }
-    }
-    for child in plates.children.iter() {
-        println!(
-            "after update child {} value {:?} snapshot {:?}",
-            child.name,
-            child.parameters.get("value"),
-            child
-                .source_snapshot
-                .as_ref()
-                .map(|snap| snap.full_text.chars().take(40).collect::<String>())
-        );
-    }
-    assert!(updated, "expected to update plates/p2 override");
+    let target = plates
+        .children
+        .iter_mut()
+        .find(|child| child.name == "p2")
+        .expect("plates/p2 present in exercise entry");
+    let previous_value = target.parameters.get("value").cloned();
+    target
+        .parameters
+        .insert("value".to_string(), overseer::types::OverseerValue::Integer(42));
+    target.source_fingerprint = None;
+    target.parameters.insert(
+        "_override_present".to_string(),
+        overseer::types::OverseerValue::Boolean(true),
+    );
+    target.parameters.insert(
+        "_explicit_child_override".to_string(),
+        overseer::types::OverseerValue::Boolean(true),
+    );
+    target.parameters.remove("_template_value");
+    target.authored_dash = true;
+    assert_ne!(
+        previous_value,
+        Some(overseer::types::OverseerValue::Integer(42)),
+        "fixture already holds the edited value, so the test would assert nothing"
+    );
 
     let entry = plates
         .parameters
@@ -187,30 +180,35 @@ fn exercise_inline_edit_preserves_local_diff() {
     }
 
     let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize nodes");
-    std::fs::write("debug_actual.os", &regenerated).unwrap();
 
-    let expected = original.replacen(
-        "                div plates {                    int p1 = 1\n                    int p2 = 1",
-        "                div plates {                    int p1 = 1\n                    int p2 = 42",
+    // The edit must show up as exactly one changed line, and it must be the one
+    // we edited. Anything else means the serializer reflowed untouched regions.
+    let diffs = changed_lines(&original, &regenerated);
+    assert_eq!(
+        diffs.len(),
         1,
+        "inline edit introduced a non-local diff ({} lines changed):
+{}",
+        diffs.len(),
+        render_changed_lines(&diffs)
     );
-    std::fs::write("debug_expected.os", &expected).unwrap();
-    if regenerated != expected {
-        let diff = diff_snapshot(&expected, &regenerated);
-        panic!(
-            "inline edit introduced non-local diff\n{}\nexpected lines={} regenerated lines= {}",
-            diff,
-            expected.lines().count(),
-            regenerated.lines().count()
-        );
-    }
+    let (_, before, after) = &diffs[0];
+    assert_eq!(before.trim(), "int p2 = 1", "unexpected line was rewritten");
+    assert_eq!(after.trim(), "int p2 = 42", "edit did not land on plates/p2");
+    assert_eq!(
+        original.lines().count(),
+        regenerated.lines().count(),
+        "inline edit changed the document line count"
+    );
 }
 
 #[test]
 fn exercise_round_trip_preserves_text() {
     overseer::source_registry::SourceRegistry::reset();
 
-    let original = load_fixture();
+    // Deliberately the live example: whatever the user's real document grows into,
+    // an untouched parse -> resolve -> serialize must return it byte-for-byte.
+    let original = load_live_example();
     let (_rest, mut nodes) = parser::parse_document(&original).expect("document should parse");
     resolver::resolve_document(&mut nodes);
 

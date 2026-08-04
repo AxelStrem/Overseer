@@ -29,7 +29,7 @@ function setupDOM() {
 }
 
 // Mock tauri before imports for this file scope
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn()
 }))
 
@@ -77,7 +77,7 @@ describe('Formula propagation', () => {
     // Mock tauri invoke to emulate backend
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'serialize_overseer_nodes') return Promise.resolve('DOC')
       if (cmd === 'get_next_timer_due_ms') return Promise.resolve(null)

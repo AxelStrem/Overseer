@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
 
 function setupDOM(){
@@ -97,7 +97,7 @@ describe('Unnamed divs: total aggregate updates after editing A or B', () => {
   beforeEach(() => setupDOM())
 
   it('Editing A updates C and total; editing B also updates total', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     let currentDoc = buildDoc()
     // Seed initial computed values for C (A*B=2) and total (=2) so renderer displays them immediately
     const listNode = currentDoc[0].children.find(n=>n.name==='L')

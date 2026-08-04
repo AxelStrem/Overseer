@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -61,7 +61,7 @@ describe('nested named container defaults inside list item templates', () => {
   beforeEach(() => setupDOM())
 
   it('preserves defaults for sibling fields when overriding one child', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     let currentDoc = buildDoc()
 

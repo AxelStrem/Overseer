@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -124,7 +124,7 @@ describe('UI: editing amount in link-proxy with unnamed wrappers updates calorie
   beforeEach(() => setupDOM())
 
   it.skip('SelectedWeightRecord on 2025-09-09: edit Apple amount to 2 -> UI shows calories=120 and total=120', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     let currentDoc = buildWeightTrackerDoc()
     // Simple helper to recompute derived fields we care about for this test

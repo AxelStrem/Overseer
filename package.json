@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-  "test": "node scripts/run-all-tests.js",
-  "test:js": "vitest run -c tests/vitest.config.mjs",
+    "test": "node scripts/run-all-tests.js",
+    "test:js": "vitest run -c tests/vitest.config.mjs",
     "test:rust": "cd src-tauri && cargo test",
     "test:rust:watch": "cd src-tauri && cargo watch -x test",
     "test:verbose": "cd src-tauri && cargo test -- --nocapture",
@@ -17,22 +17,23 @@
     "tauri:build": "tauri build",
     "prebuild:check": "node -e \"const fs=require('fs'); const path='src-tauri/webview2/Microsoft.WebView2.FixedVersionRuntime.138.0.3351.95.x64'; if(!fs.existsSync(path)) { console.error('❌ WebView2 runtime missing! See WEBVIEW2_SETUP.md'); process.exit(1); } console.log('✅ WebView2 runtime found');\"",
     "tauri:build:release": "npm run prebuild:check && npm run tauri:build",
-  "tauri:dev:debug": "tauri dev --features debug-parser,debug-resolver,debug-evaluator",
-  "tauri:dev:debug-parser": "tauri dev --features debug-parser",
-  "tauri:dev:debug-resolver": "tauri dev --features debug-resolver",
-  "tauri:dev:debug-evaluator": "tauri dev --features debug-evaluator",
-  "tauri:build:debug": "tauri build --features debug-parser,debug-resolver,debug-evaluator"
+    "tauri:dev:debug": "tauri dev --features debug-parser,debug-resolver,debug-evaluator",
+    "tauri:dev:debug-parser": "tauri dev --features debug-parser",
+    "tauri:dev:debug-resolver": "tauri dev --features debug-resolver",
+    "tauri:dev:debug-evaluator": "tauri dev --features debug-evaluator",
+    "tauri:build:debug": "tauri build --features debug-parser,debug-resolver,debug-evaluator"
   },
   "dependencies": {
-    "@tauri-apps/api": "^1.0.0",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
     "chart.js": "^4.0.0",
     "marked": "^9.0.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^1.0.0",
-    "vite": "^7.0.6",
-    "vitest": "^2.0.0",
-    "jsdom": "^24.0.0"
+    "@tauri-apps/cli": "^2.0.0",
+    "jsdom": "^24.0.0",
+    "vite": "^7.3.1",
+    "vitest": "^2.0.0"
   },
   "vitest": {
     "environment": "jsdom"

@@ -56,6 +56,13 @@ When enabled, shows:
 - `[EVAL]` Lambda bindings and method chain steps (map/filter/reduce/aggregates)
 - `[EVAL]` Errors with context
 
+### Dependency Debug (`debug-deps`)
+Traces the dependency tracker in `dependency_tracker.rs` — which nodes a formula
+registers against, and what a change marks dirty. Use it when a value fails to
+update after an edit, or updates more of the document than it should. It has no
+npm script; run `cargo tauri dev --features debug-deps` (or add it to the feature
+list of one of the existing scripts).
+
 ## Technical Implementation
 
 ### Cargo Features
@@ -64,6 +71,7 @@ When enabled, shows:
 debug-parser = []
 debug-resolver = []
 debug-evaluator = []
+debug-deps = []
 ```
 
 ### Debug Macros
@@ -125,13 +133,5 @@ macro_rules! debug_evaluator {
 2. **Selective Debugging**: Enable only the logging you need  
 3. **Clean Production Builds**: No debug output in release builds
 4. **Development Efficiency**: Comprehensive logging for troubleshooting parsing and template resolution issues
-
-## Recent Fixes Applied
-
-This debug system helped identify and fix:
-- ✅ Parser premature type inference issue
-- ✅ Hidden template nodes visibility bug  
-- ✅ Resolver list item recognition failure
-- ✅ Template field merging and type resolution
 
 With debug logging, complex parsing and resolution issues can be quickly diagnosed and resolved.

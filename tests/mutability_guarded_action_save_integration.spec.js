@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -58,7 +58,7 @@ describe('mutable=guarded via action does not persist on save', () => {
   beforeEach(() => setupDOM())
 
   it('button click that changes C (guarded) is UI-only and not saved', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     const originalDoc = buildDoc()
     let currentDoc = deepClone(originalDoc)
 

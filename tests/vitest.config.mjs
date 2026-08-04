@@ -5,7 +5,7 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['tests/**/*.spec.js'],
     globals: true,
-    setupFiles: ['tests/setup-tauri-metadata.js']
+    setupFiles: ['tests/setup-tauri-internals.js']
   },
   // Do not load Vite app config when running tests
   resolve: {

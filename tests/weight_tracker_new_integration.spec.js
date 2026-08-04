@@ -27,7 +27,7 @@ function setupDOM() {
   `
 }
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
 
@@ -82,7 +82,7 @@ describe('weight_tracker_new integration: dynamic link, phantom materialize, and
   beforeEach(() => setupDOM())
 
   it('sets selected_date, edits test_data via SelectedWeightRecord link, verifies History append, and persists through serialization', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
 
     let currentDoc = buildWeightDoc()
     let lastSerialized = null

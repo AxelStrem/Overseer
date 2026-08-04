@@ -1,4 +1,5 @@
 import { JSDOM } from 'jsdom'
+import { installTauriBridge } from './tauri-bridge.js'
 
 export function bootstrapMinimalDom() {
   const html = `<!doctype html>
@@ -23,6 +24,9 @@ export function bootstrapMinimalDom() {
     </body>
   </html>`
   const { window } = new JSDOM(html, { url: 'http://localhost/' })
+  // This replaces the window the global setup ran against, so the IPC bridge
+  // has to come along with it.
+  installTauriBridge(window)
   global.window = window
   global.document = window.document
   return window

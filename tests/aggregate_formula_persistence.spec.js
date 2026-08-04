@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
 
 // Monkey patch renderer methods to avoid needing full DOM render containers
@@ -51,7 +51,7 @@ function buildDoc(){
 
 describe('Aggregate formula persistence', () => {
   it('Edits do not overwrite aggregate formula with literal before and after save', async () => {
-    const { invoke } = await import('@tauri-apps/api/tauri')
+    const { invoke } = await import('@tauri-apps/api/core')
     let currentDoc = buildDoc()
     // Backend mocks: serialize, selective parse returns same doc (resolver would compute _computed_value only)
     invoke.mockImplementation((cmd, args) => {

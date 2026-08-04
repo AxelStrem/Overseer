@@ -1007,6 +1007,7 @@ fn main() {
     );
 
     match tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_overseer_file,
             save_overseer_file,
