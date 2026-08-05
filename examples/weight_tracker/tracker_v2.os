@@ -15,16 +15,17 @@
 // field, which the parser does not support - a body after a field value is read as a
 // sibling node and ends the enclosing block early.
 // -
-// Formatting note: this leading block is deliberately contiguous. A bare "//" line is
-// dropped on save, and a blank line between leading comment blocks is hoisted to the top of
-// the file. See the ignored tests in src-tauri/tests/comment_trivia.rs.
+// Formatting note: this leading block is deliberately contiguous, because a blank line
+// between leading comment blocks is still hoisted to the top of the file on save. Bare "//"
+// separator lines are fine now and used below. See src-tauri/tests/comment_trivia.rs.
 
 tab tracker_v2 (label="Calories", mutable=true) {
 
     // The food catalog, mounted read-only and never shown. Preloaded so handle lookups
     // resolve as soon as the document opens rather than after a manual Load.
-    mount FOODS (hidden=true, lazy=false, mutable=false, source="foods.os/food_catalog/Catalog")
-div (hidden=true) {
+    mount FOODS (hidden=true, lazy=false, mutable=false, source="foods.os/food_catalog/Catalog") { }
+
+    div (hidden=true) {
 
         div MealRecord (layout="vertical", margin=0) {
             string food (label="Food", width=20%) = "apple"
@@ -69,15 +70,15 @@ div (hidden=true) {
 
             list intake (entry=<MealRecord>, layout="vertical")
 
-            // These buttons live inside the day so `../intake` targets whichever day they "are"
-            // rendered for - including the one shown through the selected-day link. An
-            // absolute or keyed path cannot express "the day currently on screen": action
-            // targets do not understand [key=...] selectors, and a link is resolved by "the"
-            // renderer, not by the backend that runs this append.
+            // These buttons live inside the day, so the intake path above targets whichever
+            // day they are rendered for, including the one shown through the selected-day
+            // link. An absolute or keyed path cannot express the day currently on screen:
+            // action targets do not understand key selectors, and a link is resolved by the
+            // renderer rather than by the backend that runs the append.
             //
-            // There are two of them because each writes only its own amount, leaving the other
-            // unset so it derives. A single button would have to decide which of the two draft
-            // values the user meant, and there is no way to ask whether a field is set.
+            // There are two of them because each writes only its own amount, leaving the
+            // other unset so it derives. A single button would have to decide which of the
+            // two draft values was meant, and there is no way to ask whether a field is set.
             button add_by_portions (label="+ Add by portions", margin=0) {
                 on click {
                     append (list="../intake") {

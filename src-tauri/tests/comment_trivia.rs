@@ -46,17 +46,53 @@ fn several_leading_comment_blocks_survive_round_trip() {
     );
 }
 
-/// Known bug: a bare `//` inside a leading comment block is dropped, and every
-/// comment line above it is relocated to the end of the document. Since saving
-/// rewrites the file, this loses and reorders the user's comments silently.
+/// A bare `//` used as a separator must survive a round trip.
 ///
-/// Observed output for the input below:
-///   `// three\ndiv root {\n    int a = 1\n}\n// one\n`
-///
-/// Remove the `#[ignore]` once the trivia handling is fixed.
+/// It used to be dropped, with every comment line above it relocated to the end of the
+/// document, because `skip_single_line_comment` required at least one character after the
+/// slashes and so failed on an empty one.
 #[test]
-#[ignore = "known bug: bare `//` line is dropped and preceding comments move to the document tail"]
 fn bare_comment_marker_survives_round_trip() {
     let source = "// one\n//\n// three\ndiv root {\n    int a = 1\n}\n";
     assert_eq!(round_trip(source), source);
+}
+
+/// The same bare `//` is far more damaging *inside* a block: rather than merely relocating
+/// the comment, the parser reads the text above it as DSL and builds a node per word.
+///
+/// Those nodes are invisible in the source but real in the document. In the calorie tracker
+/// they rendered as a run of empty blocks after every day, and one of them - named `intake`,
+/// from a comment that mentioned that path - shadowed the day's actual intake list, so
+/// `append (list="../intake")` silently targeted the wrong node and the Add buttons appeared
+/// to do nothing.
+///
+/// Same defect, and the reason it mattered: once the comment parser rejected the bare `//`,
+/// nom backtracked and the node parser consumed the comment text instead.
+#[test]
+fn bare_comment_marker_inside_a_block_is_not_parsed_as_nodes() {
+    let source = "div root {\n    div inner {\n        int a = 1\n        // one\n        //\n        // three\n        int b = 2\n    }\n}\n";
+    overseer::source_registry::SourceRegistry::reset();
+    let (_rest, mut nodes) = parser::parse_document(source).expect("document should parse");
+    resolver::resolve_document(&mut nodes);
+
+    fn names(nodes: &[overseer::types::OverseerNode], out: &mut Vec<String>) {
+        for n in nodes {
+            out.push(n.name.clone());
+            names(&n.children, out);
+        }
+    }
+    let mut found = Vec::new();
+    names(&nodes, &mut found);
+
+    let expected = ["root", "inner", "a", "b"];
+    let stray: Vec<&String> = found
+        .iter()
+        .filter(|n| !expected.contains(&n.as_str()))
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "comment text was parsed into {} node(s): {:?}",
+        stray.len(),
+        stray
+    );
 }

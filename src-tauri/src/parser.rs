@@ -504,8 +504,13 @@ fn skip_comments_and_whitespace(input: &str) -> IResult<&str, ()> {
 
 /// Skip single line comment // comment
 fn skip_single_line_comment(input: &str) -> IResult<&str, ()> {
-    use nom::bytes::complete::is_not;
-    map(preceded(tag("//"), is_not("\r\n")), |_| ())(input)
+    use nom::bytes::complete::take_till;
+    // `take_till` rather than `is_not`, because `is_not` demands at least one character and
+    // so rejects a bare `//` used as a separator line. Rejecting it did not merely skip the
+    // line: the failure propagated out of `skip_comments_and_whitespace`, nom backtracked,
+    // and the surrounding comment text was handed to the node parser, which turned it into
+    // one node per word. Those nodes are invisible in the source but real in the document.
+    map(preceded(tag("//"), take_till(|c| c == '\r' || c == '\n')), |_| ())(input)
 }
 
 /// Skip multi-line comment /* comment */

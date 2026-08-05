@@ -173,25 +173,58 @@ fn stating_grams_derives_portions_and_macros() {
     });
 }
 
+/// Totals must equal the sum of the day's records. Asserted against the document's own
+/// contents rather than a remembered number, so logging another food does not break it.
 #[test]
 fn day_totals_sum_the_intake() {
     serialised(|| {
         let nodes = open();
-        let day = day_with(&nodes, "2026-08-04");
+        let history = find(&nodes, &["tracker_v2", "History"]).expect("History");
 
-        // wrap 411 + latte 200 + apple (1 portion of 180 g at 52 kcal/100 g = 93.6)
-        let p = [
-            "tracker_v2",
-            "History",
-            day.as_str(),
-            "totals",
-            "calories",
-        ];
-        close(number(&nodes, &p), 704.6, "day total calories");
+        for day in &history.children {
+            let intake = day
+                .children
+                .iter()
+                .find(|c| c.name == "intake")
+                .expect("intake list");
+            assert!(
+                !intake.children.is_empty(),
+                "{} should have records to sum",
+                day.name
+            );
 
-        let p = ["tracker_v2", "History", day.as_str(), "totals", "sugar"];
-        // wrap 3.9 + latte 12.5 + apple 18.72
-        close(number(&nodes, &p), 35.12, "day total sugar");
+            for macro_name in ["calories", "protein", "sugar", "salt"] {
+                let summed: f64 = intake
+                    .children
+                    .iter()
+                    .map(|meal| {
+                        let p = vec![
+                            "tracker_v2".to_string(),
+                            "History".to_string(),
+                            day.name.clone(),
+                            "intake".to_string(),
+                            meal.name.clone(),
+                            "macros".to_string(),
+                            macro_name.to_string(),
+                        ];
+                        number(&nodes, &as_refs(&p))
+                    })
+                    .sum();
+
+                let total = vec![
+                    "tracker_v2".to_string(),
+                    "History".to_string(),
+                    day.name.clone(),
+                    "totals".to_string(),
+                    macro_name.to_string(),
+                ];
+                close(
+                    number(&nodes, &as_refs(&total)),
+                    summed,
+                    &format!("{} total {}", day.name, macro_name),
+                );
+            }
+        }
     });
 }
 
@@ -438,5 +471,72 @@ fn each_add_button_stores_only_its_own_amount() {
                 );
             }
         }
+    });
+}
+
+/// A day record must contain exactly the fields it declares - nothing else.
+///
+/// A bare `//` line inside a block makes the parser read the surrounding comment text as
+/// DSL, one node per word. Those nodes are invisible in the source but real in the tree:
+/// they render as a run of empty blocks after the day's contents, and one of them is named
+/// `intake` (from a comment mentioning that path), which an `append (list="../intake")` can
+/// resolve to instead of the actual list - so the Add buttons silently do nothing.
+#[test]
+fn a_day_record_has_no_stray_children() {
+    serialised(|| {
+        let nodes = open();
+        let history = find(&nodes, &["tracker_v2", "History"]).expect("History");
+
+        let expected = ["date", "totals", "intake", "add_by_portions", "add_by_grams"];
+        for day in &history.children {
+            let actual: Vec<String> = day.children.iter().map(|c| c.name.clone()).collect();
+            let stray: Vec<&String> = actual
+                .iter()
+                .filter(|n| !expected.contains(&n.as_str()))
+                .collect();
+            assert!(
+                stray.is_empty(),
+                "{} has {} stray children parsed out of comment text: {:?}",
+                day.name,
+                stray.len(),
+                stray
+            );
+            assert_eq!(
+                actual.iter().filter(|n| *n == "intake").count(),
+                1,
+                "{} should have exactly one `intake` child, found {:?}",
+                day.name,
+                actual
+            );
+        }
+    });
+}
+
+/// The template itself must be clean too, since every day is instantiated from it.
+#[test]
+fn the_meal_record_template_has_no_stray_children() {
+    serialised(|| {
+        let nodes = open();
+        let history = find(&nodes, &["tracker_v2", "History"]).expect("History");
+        let day = history.children.first().expect("a day");
+        let intake = day
+            .children
+            .iter()
+            .find(|c| c.name == "intake")
+            .expect("intake list");
+        let meal = intake.children.first().expect("a meal record");
+
+        let expected = ["food", "portion_weight", "portions", "grams", "name", "macros"];
+        let stray: Vec<String> = meal
+            .children
+            .iter()
+            .map(|c| c.name.clone())
+            .filter(|n| !expected.contains(&n.as_str()))
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "meal record has stray children: {:?}",
+            stray
+        );
     });
 }
