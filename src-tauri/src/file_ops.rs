@@ -104,6 +104,28 @@ impl FileOperations {
         FileOperations::write_file(path, &content).await
     }
 
+    /// Trailing trivia of the document that owns these nodes, identified by the first
+    /// source id found among the roots (or, failing that, anywhere in the tree - a document
+    /// whose roots were all rebuilt still has original descendants).
+    fn document_trailing_for(nodes: &[OverseerNode]) -> String {
+        fn first_id(nodes: &[OverseerNode]) -> Option<&str> {
+            for n in nodes {
+                if let Some(id) = n.source_id.as_deref() {
+                    return Some(id);
+                }
+            }
+            for n in nodes {
+                if let Some(id) = first_id(&n.children) {
+                    return Some(id);
+                }
+            }
+            None
+        }
+        first_id(nodes)
+            .map(SourceRegistry::document_trailing_for_id)
+            .unwrap_or_default()
+    }
+
     pub fn serialize_nodes(nodes: &[OverseerNode]) -> Result<String> {
         let mut output = String::new();
         #[cfg(test)]
@@ -115,7 +137,11 @@ impl FileOperations {
             Self::serialize_node(node, &mut output, 0, indent_fallback.as_str())?;
         }
 
-        let trailing = SourceRegistry::take_document_trailing();
+        // Trailing trivia belongs to the document these nodes came from. Taking it from a
+        // process-wide slot appended whichever document was parsed most recently - for a
+        // host with a mount, that is the mounted file, whose closing comments then landed
+        // at the end of the host.
+        let trailing = Self::document_trailing_for(nodes);
         if !trailing.is_empty() {
             Self::push_trivia(&mut output, &trailing);
         }
@@ -389,6 +415,25 @@ impl FileOperations {
         list_indent_hint: Option<usize>,
         force_emit_template_children: bool,
     ) -> Result<()> {
+        // A mount's children belong to another file. Loading one fills them in, which changes
+        // the node's fingerprint, so the snapshot fast path stops replaying the authored
+        // `{ }` and the fallback formatter writes the whole mounted document into the host.
+        // Serializing the declaration with an empty body states the invariant directly:
+        // whatever a mount is currently holding, none of it is this document's text.
+        if node.node_type == "mount" && !node.children.is_empty() {
+            let mut declaration_only = node.clone();
+            declaration_only.children.clear();
+            return Self::serialize_node_context(
+                &declaration_only,
+                output,
+                indent_level,
+                in_list_body,
+                fallback_indent_unit,
+                list_indent_hint,
+                force_emit_template_children,
+            );
+        }
+
         let snapshot = Self::snapshot_for(node);
         let fallback_indent_unit = if fallback_indent_unit.is_empty() {
             "    "

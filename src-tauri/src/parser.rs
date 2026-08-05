@@ -362,7 +362,10 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
     let _ctx_guard = ParserContextGuard::push(input);
     #[cfg(test)]
     let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
-    SourceRegistry::reset();
+    // Snapshots from this parse belong to this document alone. Previously this cleared the
+    // whole registry, which destroyed the snapshots of any other document still live - most
+    // visibly the host document whose mount triggered this very parse.
+    let _scope_guard = SourceRegistry::begin_document();
     // Loop similar to previous many0(parse_node) but augmented to capture the count of
     // contiguous blank (whitespace-only) lines immediately preceding each parsed node.
     // We continue to ignore comment lines for blank-line counting so that stylistic
@@ -1540,9 +1543,9 @@ mod tests {
         assert_eq!(fetched_next.full_text, next_snapshot.full_text);
 
         assert_eq!(
-            SourceRegistry::len(),
+            SourceRegistry::len_for_document(next_id),
             3,
-            "registry should track all parsed nodes in sample"
+            "this document's scope should track all of its parsed nodes"
         );
 
         SourceRegistry::reset();

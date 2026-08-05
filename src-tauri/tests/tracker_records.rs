@@ -274,3 +274,87 @@ fn the_log_button_appends_to_its_own_day() {
         );
     });
 }
+
+/// The scenario that corrupted the document: open it, click Prev day, Next day, log a food,
+/// then save. Every step crosses the IPC boundary, so the serializer works from registry
+/// lookups rather than in-process snapshots - which is where the mounted catalog used to
+/// overwrite the host.
+#[test]
+fn opening_acting_and_saving_leaves_the_document_intact() {
+    serialised(|| {
+        let original = source();
+
+        let mut nodes = open();
+        // Adopting the backend's response drops snapshots and keeps ids, as Tauri does.
+        let across_ipc = |nodes: &Vec<OverseerNode>| -> Vec<OverseerNode> {
+            let json = serde_json::to_string(nodes).expect("to json");
+            serde_json::from_str(&json).expect("from json")
+        };
+        nodes = across_ipc(&nodes);
+
+        for (path, event) in [
+            (vec!["tracker_v2", "Selected", "Prev"], "click"),
+            (vec!["tracker_v2", "Selected", "Next"], "click"),
+        ] {
+            let owned: Vec<String> = path.iter().map(|s| s.to_string()).collect();
+            ActionExecutor::execute_event(&mut nodes, &owned, event).expect("day navigation");
+            nodes = across_ipc(&nodes);
+        }
+
+        let day = day_with(&nodes, "2026-08-04");
+        let log = vec![
+            "tracker_v2".to_string(),
+            "History".to_string(),
+            day,
+            "log".to_string(),
+        ];
+        ActionExecutor::execute_event(&mut nodes, &log, "click").expect("log a food");
+        nodes = across_ipc(&nodes);
+
+        let saved = OverseerFileHandler::serialize_nodes(&nodes).expect("save");
+
+        // None of the mounted catalog may appear in the tracker.
+        for marker in [
+            "Food catalog: the single source",
+            "list Catalog",
+            "- handle = \"potato_salad\"",
+            "div per_100g",
+        ] {
+            assert!(
+                !saved.contains(marker),
+                "the mounted catalog leaked into the tracker ({:?}):\n{}",
+                marker,
+                saved
+            );
+        }
+
+        // The tracker's own structure and comments must survive.
+        assert!(
+            saved.contains("tab tracker_v2 (label=\"Calories\", mutable=true) {"),
+            "the tracker's root node was lost:\n{}",
+            saved
+        );
+        assert!(
+            saved.contains("// Calorie tracker, handle-based records."),
+            "the tracker's own leading comment was lost"
+        );
+        assert!(
+            saved.contains("// The catalogued weight of one portion of this food"),
+            "an interior comment was lost"
+        );
+        assert!(
+            saved.contains("mount FOODS (source=\"foods.os/food_catalog/Catalog\""),
+            "the mount declaration was rewritten"
+        );
+
+        // The only intended change is the logged record, so the document should differ from
+        // its original by an added meal and nothing else.
+        let added_lines = saved.lines().count() as i64 - original.lines().count() as i64;
+        assert!(
+            (0..=6).contains(&added_lines),
+            "expected only a logged record to be added, line count moved by {}:\n{}",
+            added_lines,
+            saved
+        );
+    });
+}

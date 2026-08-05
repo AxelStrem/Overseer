@@ -1,6 +1,7 @@
 #[cfg(test)]
 use parking_lot::ReentrantMutex;
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     LazyLock, RwLock,
@@ -8,86 +9,245 @@ use std::sync::{
 
 use crate::types::NodeSourceSnapshot;
 
-static DOCUMENT_TRAILING: LazyLock<RwLock<String>> = LazyLock::new(|| RwLock::new(String::new()));
-static SNAPSHOT_REGISTRY: LazyLock<RwLock<HashMap<String, NodeSourceSnapshot>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+/// Everything retained for one parse of one document.
+#[derive(Default)]
+struct ScopeData {
+    snapshots: HashMap<u64, NodeSourceSnapshot>,
+    /// Trivia after the last top-level node - comments at the end of that file.
+    trailing: String,
+}
 
-static REGISTRY_COUNTER: AtomicU64 = AtomicU64::new(1);
+static SCOPES: LazyLock<RwLock<HashMap<u64, ScopeData>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+/// Creation order, used to evict the oldest scopes once too many are retained.
+static SCOPE_ORDER: LazyLock<RwLock<VecDeque<u64>>> = LazyLock::new(|| RwLock::new(VecDeque::new()));
+/// Scopes with a parse still in progress somewhere; never evicted.
+static ACTIVE_SCOPES: LazyLock<RwLock<HashSet<u64>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
+
+static SCOPE_COUNTER: AtomicU64 = AtomicU64::new(1);
+static NODE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+thread_local! {
+    /// Scope that `register` and `append_document_trailing` write into. A stack, so a parse
+    /// triggered while another is in progress restores the outer one when it finishes.
+    static CURRENT_SCOPE: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// How many parsed documents to keep snapshots for. A document is re-parsed on every edit,
+/// so this only needs to cover the documents that are live at once - a host plus whatever it
+/// mounts - with room to spare.
+const MAX_RETAINED_SCOPES: usize = 8;
 
 #[cfg(test)]
 pub static REGISTRY_TEST_MUTEX: LazyLock<ReentrantMutex<()>> =
     LazyLock::new(|| ReentrantMutex::new(()));
 
-/// Global registry that retains source snapshots for nodes across parse/serialize cycles.
+/// Registry of source snapshots, partitioned by document.
 ///
-/// Nodes only carry snapshots in-process (they are skipped during serde), so we register
-/// the snapshot and keep an opaque identifier that can travel over the wire. Later stages
-/// (e.g., serializer) can fetch the snapshot by ID to reconstruct original trivia.
+/// Nodes only carry snapshots in-process (they are skipped during serde), so a snapshot is
+/// registered here and the node keeps an opaque id that can travel over the wire. Later
+/// stages - the serializer above all - fetch the snapshot by id to replay original trivia.
+///
+/// Ids are scoped per parse. They have to be: a document that mounts another one has both
+/// live simultaneously, and when the registry was a single flat map keyed by a global
+/// counter, parsing the mounted file re-issued the same ids over the host's entries. Saving
+/// the host then replayed the *mounted* document's text - its comments, its indentation, its
+/// nodes - over the host's own. Scoping also makes concurrent parses independent, which
+/// matters for tests running in one process.
 pub struct SourceRegistry;
+
+/// Marks a parse as in progress. Dropping it restores the previously current scope; the
+/// scope's snapshots outlive it, since serialization happens after the parse has finished.
+pub struct DocumentScope {
+    id: u64,
+}
+
+impl DocumentScope {
+    #[allow(dead_code)]
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
+
+impl Drop for DocumentScope {
+    fn drop(&mut self) {
+        CURRENT_SCOPE.with(|s| {
+            let mut stack = s.borrow_mut();
+            if let Some(pos) = stack.iter().rposition(|x| *x == self.id) {
+                stack.remove(pos);
+            }
+        });
+        if let Ok(mut active) = ACTIVE_SCOPES.write() {
+            active.remove(&self.id);
+        }
+    }
+}
+
+fn format_id(scope: u64, node: u64) -> String {
+    format!("s{}n{}", scope, node)
+}
+
+fn parse_id(id: &str) -> Option<(u64, u64)> {
+    let body = id.strip_prefix('s')?;
+    let (scope, node) = body.split_once('n')?;
+    Some((scope.parse().ok()?, node.parse().ok()?))
+}
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl SourceRegistry {
-    /// Clear all registered snapshots and reset the identifier counter. A fresh parse should
-    /// call this before registering new entries so stale snapshots do not leak between documents.
-    pub fn reset() {
-        let mut guard = SNAPSHOT_REGISTRY
-            .write()
-            .expect("snapshot registry poisoned");
-        guard.clear();
-        REGISTRY_COUNTER.store(1, Ordering::Relaxed);
-        Self::reset_document_trailing();
+    /// Begin a parse. Snapshots registered until the returned guard drops belong to this
+    /// document and cannot be confused with any other's.
+    pub fn begin_document() -> DocumentScope {
+        let id = SCOPE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut scopes) = SCOPES.write() {
+            scopes.insert(id, ScopeData::default());
+        }
+        if let Ok(mut order) = SCOPE_ORDER.write() {
+            order.push_back(id);
+        }
+        if let Ok(mut active) = ACTIVE_SCOPES.write() {
+            active.insert(id);
+        }
+        CURRENT_SCOPE.with(|s| s.borrow_mut().push(id));
+        Self::evict_old_scopes();
+        DocumentScope { id }
     }
 
-    /// Register the provided snapshot and return an opaque identifier that can be stored on
-    /// the node. Callers should ensure `reset` was invoked for the current parse session to
-    /// avoid leaking old snapshots.
+    fn evict_old_scopes() {
+        let Ok(mut order) = SCOPE_ORDER.write() else {
+            return;
+        };
+        let Ok(active) = ACTIVE_SCOPES.read() else {
+            return;
+        };
+        let Ok(mut scopes) = SCOPES.write() else {
+            return;
+        };
+        while order.len() > MAX_RETAINED_SCOPES {
+            // Find the oldest scope that no parse is currently using.
+            let Some(pos) = order.iter().position(|id| !active.contains(id)) else {
+                break;
+            };
+            if let Some(id) = order.remove(pos) {
+                scopes.remove(&id);
+            }
+        }
+    }
+
+    fn current_scope() -> Option<u64> {
+        CURRENT_SCOPE.with(|s| s.borrow().last().copied())
+    }
+
+    /// Register a snapshot in the current document's scope and return its id.
+    ///
+    /// Registering outside any parse still works - the snapshot lands in a scope of its own -
+    /// so a caller that constructs nodes directly is not silently dropped.
     pub fn register(snapshot: &NodeSourceSnapshot) -> String {
-        let id = REGISTRY_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let key = format!("ns{}", id);
-        let mut guard = SNAPSHOT_REGISTRY
-            .write()
-            .expect("snapshot registry poisoned");
-        guard.insert(key.clone(), snapshot.clone());
+        let scope = match Self::current_scope() {
+            Some(s) => s,
+            None => {
+                let guard = Self::begin_document();
+                let id = guard.id;
+                std::mem::forget(guard);
+                if let Ok(mut active) = ACTIVE_SCOPES.write() {
+                    active.remove(&id);
+                }
+                CURRENT_SCOPE.with(|s| {
+                    let mut stack = s.borrow_mut();
+                    if let Some(pos) = stack.iter().rposition(|x| *x == id) {
+                        stack.remove(pos);
+                    }
+                });
+                id
+            }
+        };
+        let node = NODE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let key = format_id(scope, node);
+        if let Ok(mut scopes) = SCOPES.write() {
+            if let Some(data) = scopes.get_mut(&scope) {
+                data.snapshots.insert(node, snapshot.clone());
+            }
+        }
         key
     }
 
-    /// Retrieve a previously registered snapshot by identifier.
+    /// Retrieve a previously registered snapshot by id.
     pub fn get(id: &str) -> Option<NodeSourceSnapshot> {
-        let guard = SNAPSHOT_REGISTRY
-            .read()
-            .expect("snapshot registry poisoned");
-        guard.get(id).cloned()
+        let (scope, node) = parse_id(id)?;
+        let scopes = SCOPES.read().ok()?;
+        scopes.get(&scope)?.snapshots.get(&node).cloned()
     }
 
-    /// Returns the number of snapshots currently cached. Mostly useful for tests.
+    /// Number of snapshots retained across all scopes. Mostly useful for tests.
     pub fn len() -> usize {
-        let guard = SNAPSHOT_REGISTRY
+        SCOPES
             .read()
-            .expect("snapshot registry poisoned");
-        guard.len()
+            .map(|s| s.values().map(|d| d.snapshots.len()).sum())
+            .unwrap_or(0)
+    }
+
+    /// Number of snapshots registered by the parse that produced `id`. This is what a test
+    /// asking "did this document register everything?" actually means - a global count says
+    /// nothing now that several documents are retained at once.
+    pub fn len_for_document(id: &str) -> usize {
+        let Some((scope, _)) = parse_id(id) else {
+            return 0;
+        };
+        SCOPES
+            .read()
+            .ok()
+            .and_then(|s| s.get(&scope).map(|d| d.snapshots.len()))
+            .unwrap_or(0)
+    }
+
+    /// Drop every scope. Only for tests that want a clean slate; normal operation relies on
+    /// scoping plus eviction rather than wholesale clearing, because clearing is exactly what
+    /// used to destroy a host document's snapshots when a mounted file was parsed.
+    pub fn reset() {
+        if let Ok(mut scopes) = SCOPES.write() {
+            scopes.clear();
+        }
+        if let Ok(mut order) = SCOPE_ORDER.write() {
+            order.clear();
+        }
+        if let Ok(mut active) = ACTIVE_SCOPES.write() {
+            active.clear();
+        }
+        CURRENT_SCOPE.with(|s| s.borrow_mut().clear());
     }
 
     pub fn reset_document_trailing() {
-        let mut guard = DOCUMENT_TRAILING
-            .write()
-            .expect("snapshot registry poisoned");
-        guard.clear();
+        if let (Some(scope), Ok(mut scopes)) = (Self::current_scope(), SCOPES.write()) {
+            if let Some(data) = scopes.get_mut(&scope) {
+                data.trailing.clear();
+            }
+        }
     }
 
     pub fn append_document_trailing(chunk: &str) {
         if chunk.is_empty() {
             return;
         }
-        let mut guard = DOCUMENT_TRAILING
-            .write()
-            .expect("snapshot registry poisoned");
-        guard.push_str(chunk);
+        if let (Some(scope), Ok(mut scopes)) = (Self::current_scope(), SCOPES.write()) {
+            if let Some(data) = scopes.get_mut(&scope) {
+                data.trailing.push_str(chunk);
+            }
+        }
     }
 
-    pub fn take_document_trailing() -> String {
-        let mut guard = DOCUMENT_TRAILING
-            .write()
-            .expect("snapshot registry poisoned");
-        std::mem::take(&mut *guard)
+    /// Trailing trivia of the document that owns `id`.
+    ///
+    /// Non-destructive: serializing a document twice must produce the same text both times,
+    /// and the trailing belongs to the scope for as long as the scope is retained.
+    pub fn document_trailing_for_id(id: &str) -> String {
+        let Some((scope, _)) = parse_id(id) else {
+            return String::new();
+        };
+        SCOPES
+            .read()
+            .ok()
+            .and_then(|s| s.get(&scope).map(|d| d.trailing.clone()))
+            .unwrap_or_default()
     }
 }
