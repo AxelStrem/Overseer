@@ -220,7 +220,7 @@ fn records_stay_minimal_on_disk() {
 
 /// Logging must append to the day whose button was pressed, with the drafted values.
 #[test]
-fn the_log_button_appends_to_its_own_day() {
+fn the_add_button_appends_to_its_own_day() {
     serialised(|| {
         let mut nodes = open();
         let day = day_with(&nodes, "2026-08-03");
@@ -239,9 +239,9 @@ fn the_log_button_appends_to_its_own_day() {
             "tracker_v2".to_string(),
             "History".to_string(),
             day.clone(),
-            "log".to_string(),
+            "add_by_portions".to_string(),
         ];
-        ActionExecutor::execute_event(&mut nodes, &path, "click").expect("log click");
+        ActionExecutor::execute_event(&mut nodes, &path, "click").expect("add click");
 
         assert_eq!(
             count(&nodes, &day),
@@ -306,9 +306,9 @@ fn opening_acting_and_saving_leaves_the_document_intact() {
             "tracker_v2".to_string(),
             "History".to_string(),
             day,
-            "log".to_string(),
+            "add_by_portions".to_string(),
         ];
-        ActionExecutor::execute_event(&mut nodes, &log, "click").expect("log a food");
+        ActionExecutor::execute_event(&mut nodes, &log, "click").expect("add a food");
         nodes = across_ipc(&nodes);
 
         let saved = OverseerFileHandler::serialize_nodes(&nodes).expect("save");
@@ -342,8 +342,17 @@ fn opening_acting_and_saving_leaves_the_document_intact() {
             saved.contains("// The catalogued weight of one portion of this food"),
             "an interior comment was lost"
         );
-        assert!(
-            saved.contains("mount FOODS (source=\"foods.os/food_catalog/Catalog\""),
+        // Compare against the authored line rather than a literal, so the assertion tracks
+        // the document instead of a remembered parameter order.
+        let mount_line = |text: &str| {
+            text.lines()
+                .find(|l| l.contains("mount FOODS"))
+                .map(|l| l.to_string())
+                .expect("mount declaration")
+        };
+        assert_eq!(
+            mount_line(&saved),
+            mount_line(&original),
             "the mount declaration was rewritten"
         );
 
@@ -356,5 +365,78 @@ fn opening_acting_and_saving_leaves_the_document_intact() {
             added_lines,
             saved
         );
+    });
+}
+
+/// Each Add button must write only its own amount, leaving the other to derive. If both were
+/// written, the derived one would be pinned to whatever the draft happened to hold.
+#[test]
+fn each_add_button_stores_only_its_own_amount() {
+    serialised(|| {
+        for (button, stored, derived) in [
+            ("add_by_portions", "portions", "grams"),
+            ("add_by_grams", "grams", "portions"),
+        ] {
+            let mut nodes = open();
+            let day = day_with(&nodes, "2026-08-04");
+            let path = vec![
+                "tracker_v2".to_string(),
+                "History".to_string(),
+                day.clone(),
+                button.to_string(),
+            ];
+            ActionExecutor::execute_event(&mut nodes, &path, "click")
+                .unwrap_or_else(|e| panic!("{} click failed: {:?}", button, e));
+
+            let added = find(&nodes, &["tracker_v2", "History", day.as_str(), "intake"])
+                .expect("intake")
+                .children
+                .last()
+                .expect("appended record")
+                .clone();
+
+            let raw = |name: &str| {
+                added
+                    .children
+                    .iter()
+                    .find(|c| c.name == name)
+                    .and_then(|c| c.parameters.get("value").cloned())
+            };
+            assert!(
+                !matches!(raw(stored), None | Some(OverseerValue::Null)),
+                "{}: {} should be stored, got {:?}",
+                button,
+                stored,
+                raw(stored)
+            );
+            assert!(
+                matches!(raw(derived), None | Some(OverseerValue::Null)),
+                "{}: {} should be left to derive, but was stored as {:?}",
+                button,
+                derived,
+                raw(derived)
+            );
+
+            // Both must still read as numbers - the derived one through its fallback.
+            let base = vec![
+                "tracker_v2".to_string(),
+                "History".to_string(),
+                day.clone(),
+                "intake".to_string(),
+                added.name.clone(),
+            ];
+            for field in ["portions", "grams"] {
+                let mut p = base.clone();
+                p.push(field.to_string());
+                let v = number(&nodes, &as_refs(&p));
+                assert!(
+                    v > 0.0,
+                    "{}: {} should resolve to a positive number, got {}",
+                    button,
+                    field,
+                    v
+                );
+            }
+        }
     });
 }

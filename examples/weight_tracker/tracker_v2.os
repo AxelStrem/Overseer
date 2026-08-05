@@ -6,8 +6,14 @@
 // -
 // Amount can be entered either way round. State `portions` and grams are derived; state
 // `grams` and portions are derived. Both are null in the template so whichever one a record
-// states wins - which also means a record must state one of them. The Add button below
-// always sets portions, so a record created through the UI is never left with neither.
+// states wins - which also means a record must state one of them. Each Add button writes
+// only its own amount, so an entry made through the UI always has exactly one.
+// -
+// Editing an existing record sets whichever field you type into, and does not clear the
+// other. Nothing stops a record ending up with both set; the assumption is that you enter
+// one. Clearing the counterpart automatically would need an `on change` handler on the
+// field, which the parser does not support - a body after a field value is read as a
+// sibling node and ends the enclosing block early.
 // -
 // Formatting note: this leading block is deliberately contiguous. A bare "//" line is
 // dropped on save, and a blank line between leading comment blocks is hoisted to the top of
@@ -17,9 +23,8 @@ tab tracker_v2 (label="Calories", mutable=true) {
 
     // The food catalog, mounted read-only and never shown. Preloaded so handle lookups
     // resolve as soon as the document opens rather than after a manual Load.
-    mount FOODS (source="foods.os/food_catalog/Catalog", lazy=false, hidden=true, mutable=false) { }
-
-    div (hidden=true) {
+    mount FOODS (hidden=true, lazy=false, mutable=false, source="foods.os/food_catalog/Catalog")
+div (hidden=true) {
 
         div MealRecord (layout="vertical", margin=0) {
             string food (label="Food", width=20%) = "apple"
@@ -64,28 +69,42 @@ tab tracker_v2 (label="Calories", mutable=true) {
 
             list intake (entry=<MealRecord>, layout="vertical")
 
-            // The button lives inside the day so `../intake` targets whichever day it is
+            // These buttons live inside the day so `../intake` targets whichever day they "are"
             // rendered for - including the one shown through the selected-day link. An
             // absolute or keyed path cannot express "the day currently on screen": action
-            // targets do not understand [key=...] selectors, and a link is resolved by the
+            // targets do not understand [key=...] selectors, and a link is resolved by "the"
             // renderer, not by the backend that runs this append.
-            button log (label="Log the drafted food", margin=0) {
+            //
+            // There are two of them because each writes only its own amount, leaving the other
+            // unset so it derives. A single button would have to decide which of the two draft
+            // values the user meant, and there is no way to ask whether a field is set.
+            button add_by_portions (label="+ Add by portions", margin=0) {
                 on click {
                     append (list="../intake") {
-                        - food = $(/tracker_v2/AddEaten/draft_food)
-                        - portions = $(/tracker_v2/AddEaten/draft_portions)
+                        - food = $(/tracker_v2/NewEntry/draft_food)
+                        - portions = $(/tracker_v2/NewEntry/draft_portions)
+                    }
+                }
+            }
+            button add_by_grams (label="+ Add by weight", margin=0) {
+                on click {
+                    append (list="../intake") {
+                        - food = $(/tracker_v2/NewEntry/draft_food)
+                        - grams = $(/tracker_v2/NewEntry/draft_grams)
                     }
                 }
             }
         }
     }
 
-    // Draft for a new consumed-food entry. Fill it in, then press Log on the day you want
-    // it added to - normally the selected day above.
-    div AddEaten (border-style=solid 1px gray, layout="vertical", margin=8) {
-        text add_header (markdown=true) = "### Log a food"
+    // Draft for a new entry. Fill in the food and whichever amount you know, then press one
+    // of the Add buttons on the day below. Only the amount belonging to the button you press
+    // is stored; the other is derived from the food's portion weight.
+    div NewEntry (border-style=solid 1px gray, layout="vertical", margin=8) {
+        text new_entry_header (markdown=true) = "### New entry"
         string draft_food (label="Food handle") = "apple"
         float draft_portions (label="Portions", precision=2) = 1
+        float draft_grams (label="Weight", suffix=" g", precision=0) = 100
     }
 
     div Selected (layout="vertical") {
@@ -94,7 +113,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 set (path="/tracker_v2/Selected/selected_date") = $(date_add_days(../selected_date, -1))
             }
         }
-        timestamp selected_date (precision="day", mutable="guarded") = $(today())
+        timestamp selected_date (precision="day", mutable="guarded") = "2026-08-04"
         button Next (label="> Next Day") {
             on click {
                 set (path="/tracker_v2/Selected/selected_date") = $(date_add_days(../selected_date, 1))
@@ -117,6 +136,18 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 - {
                     - food = "coffee_latte"
                     - grams = 250
+                }
+                - {
+                    - food = "apple"
+                    - portions = 1
+                }
+                - {
+                    - food = "apple"
+                    - portions = 1
+                }
+                - {
+                    - food = "apple"
+                    - portions = 1
                 }
                 - {
                     - food = "apple"
