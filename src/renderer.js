@@ -4698,11 +4698,87 @@ export class OverseerRenderer {
     }
 
     // Emit an event to the backend action executor for a given node
+    /**
+     * If `element` sits inside a link proxy showing a phantom preview, turn that preview into
+     * a real list entry and return the element's path within it.
+     *
+     * A phantom is a preview of what a list entry *would* look like for a key that has no
+     * entry yet - a day with nothing logged, say. Its rendered paths carry a literal
+     * `<phantom>` segment, which exists only in the DOM: the backend cannot resolve it, so an
+     * action addressed that way fails. Editing a field already materializes first; an event
+     * fired from a button inside the preview has to do the same, or the button does nothing
+     * on exactly the days a user most wants to use it.
+     *
+     * Returns the real path as an array, or null when the element is not in a phantom.
+     */
+    async _materializePhantomForEvent(element) {
+        try {
+            if (!element) return null
+            let container = element
+            while (container && container !== document.body && !container.hasAttribute?.('data-link-phantom')) {
+                container = container.parentElement
+            }
+            if (!container || !container.hasAttribute?.('data-link-phantom')) return null
+
+            const meta = JSON.parse(container.getAttribute('data-link-phantom') || '{}')
+            const containerPathArr = JSON.parse(container.dataset.path || '[]')
+            const elementPathArr = (element.dataset && element.dataset.path)
+                ? JSON.parse(element.dataset.path)
+                : this.buildNodePath(element)
+
+            // Element path is [...containerPath, '<phantom>', ...tail]; keep the tail so the
+            // event lands on the same node inside the newly materialized entry.
+            let metaWithTail = meta
+            const idxAfterPhantom = containerPathArr.length + 1
+            if (elementPathArr[containerPathArr.length] === '<phantom>' && elementPathArr.length > idxAfterPhantom) {
+                const derivedTail = elementPathArr.slice(idxAfterPhantom)
+                const existingTail = Array.isArray(meta.tailSegments) ? meta.tailSegments : []
+                let i = 0
+                while (i < derivedTail.length && i < existingTail.length && derivedTail[i] === existingTail[i]) i++
+                metaWithTail = Object.assign({}, meta, { tailSegments: existingTail.concat(derivedTail.slice(i)) })
+            }
+
+            // Honour the container's phantom-materialize policy, as the edit path does.
+            let position = 'append'
+            try {
+                const containerNode = this.findNodeByPath(window.app.currentDocument, containerPathArr)
+                const policyRaw = this.getParameterValue(containerNode, 'phantom-materialize')
+                const policy = (policyRaw ? String(policyRaw) : 'none').toLowerCase()
+                if (policy.endsWith('on-edit')) {
+                    position = policy.startsWith('prepend') ? 'prepend' : 'append'
+                }
+            } catch(_) { /* default to append */ }
+
+            const realPath = await this._materializePhantomAndComputePath(metaWithTail, { position })
+            if (!realPath) return null
+
+            // The preview is now backed by a real entry, so stop advertising it as a phantom.
+            try {
+                container.removeAttribute('data-link-phantom')
+                if (containerPathArr.length > 0) {
+                    this.rerenderSubtree(window.app.currentDocument, containerPathArr)
+                }
+            } catch(_) { /* best-effort */ }
+
+            return Array.isArray(realPath) ? realPath : String(realPath).split('/')
+        } catch (err) {
+            try { if (DEBUG_MODE) console.warn('[Overseer] phantom materialization for event failed', err) } catch(_) {}
+            return null
+        }
+    }
+
     async emitEvent(node, element, eventName) {
         if (!window.app || !window.app.currentDocument) return
-        const path = (element && element.dataset && element.dataset.path)
+        let path = (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
+
+        // Materialize before reading the document below, so the event runs against a tree
+        // that actually contains the target.
+        if (Array.isArray(path) && path.includes('<phantom>')) {
+            const realPath = await this._materializePhantomForEvent(element)
+            if (realPath) path = realPath
+        }
     try { if (DEBUG_MODE) console.debug('[Overseer] emitEvent', eventName, 'path=', path) } catch(_) {}
         // Guard: ensure nodes is an array (backend expects Vec<OverseerNode> root or serialized map)
         let nodesArg = window.app.currentDocument
