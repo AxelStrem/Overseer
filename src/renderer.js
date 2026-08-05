@@ -151,25 +151,62 @@ export class OverseerRenderer {
     // Resolve effective mutability mode for a node: 'true' | 'false' | 'guarded'
     // Parameter forms supported: boolean true/false, string 'true'|'false'|'inherited'|'guarded'
     // Inheritance walks up parent chain using node.__overseer_path or nearest DOM data-path.
+    _parseMutableMode(v) {
+        if (v === null || v === undefined) return 'inherited'
+        if (typeof v === 'boolean') return v ? 'true' : 'false'
+        const s = String(v).toLowerCase().trim()
+        if (s === 'true') return 'true'
+        if (s === 'false') return 'false'
+        if (s === 'guarded') return 'guarded'
+        if (s === 'inherit' || s === 'inherited') return 'inherited'
+        return 'inherited'
+    }
+
+    _readMutableParam(n) {
+        try {
+            // Prefer computed if available, else raw
+            const comp = this.getParameterValue(n, '_computed_mutable')
+            if (comp !== null && comp !== undefined) return comp
+        } catch(_) { /* ignore */ }
+        try { return this.getParameterValue(n, 'mutable') } catch(_) { return null }
+    }
+
+    /**
+     * Closest explicit `mutable` declared on a DOM ancestor that carries a data-path.
+     *
+     * A link proxy renders its target's subtree inside itself, so the field's canonical
+     * path bypasses the proxy entirely — a `mutable` on the proxy would otherwise never
+     * apply to the fields it displays, even though that container is exactly what the
+     * user sees the field inside. Returns null when nothing explicit is found.
+     */
+    _mutableFromDisplayChain(elementHint, doc) {
+        try {
+            if (!elementHint || !doc) return null
+            let el = elementHint.parentElement
+            let hops = 0
+            while (el && hops < 64) {
+                hops++
+                const raw = el.dataset ? el.dataset.path : null
+                if (raw) {
+                    let p = null
+                    try { p = JSON.parse(raw) } catch(_) { p = null }
+                    if (Array.isArray(p) && p.length > 0) {
+                        const n = this.findNodeByPath(doc, p)
+                        if (n) {
+                            const mode = this._parseMutableMode(this._readMutableParam(n))
+                            if (mode !== 'inherited') return mode
+                        }
+                    }
+                }
+                el = el.parentElement
+            }
+        } catch(_) { /* ignore */ }
+        return null
+    }
+
     getEffectiveMutableMode(node, elementHint = null) {
-        const parseMode = (v) => {
-            if (v === null || v === undefined) return 'inherited'
-            if (typeof v === 'boolean') return v ? 'true' : 'false'
-            const s = String(v).toLowerCase().trim()
-            if (s === 'true') return 'true'
-            if (s === 'false') return 'false'
-            if (s === 'guarded') return 'guarded'
-            if (s === 'inherit' || s === 'inherited') return 'inherited'
-            return 'inherited'
-        }
-        const readMutableParam = (n) => {
-            try {
-                // Prefer computed if available, else raw
-                const comp = this.getParameterValue(n, '_computed_mutable')
-                if (comp !== null && comp !== undefined) return comp
-            } catch(_) { /* ignore */ }
-            try { return this.getParameterValue(n, 'mutable') } catch(_) { return null }
-        }
+        const parseMode = (v) => this._parseMutableMode(v)
+        const readMutableParam = (n) => this._readMutableParam(n)
         // 1) If the node itself declares an explicit mode, honor it immediately (works for phantom previews as well)
         try {
             const selfRaw = readMutableParam(node)
@@ -188,6 +225,9 @@ export class OverseerRenderer {
         try {
             const doc = window?.app?.currentDocument
             if (!Array.isArray(pathArr) || pathArr.length === 0 || !doc) {
+                // Without a resolvable path the displayed chain is the only signal available.
+                const displayMode = this._mutableFromDisplayChain(elementHint, doc)
+                if (displayMode) return displayMode
                 // Fallback to default
                 return this._defaultTopLevelMutable ? 'true' : 'false'
             }
@@ -204,6 +244,11 @@ export class OverseerRenderer {
                 const mode = parseMode(raw)
                 if (mode !== 'inherited') return mode
             }
+            // Nothing explicit along the canonical chain. Fall back to the chain the field
+            // is actually displayed in, which for a link proxy includes the container the
+            // canonical path bypasses.
+            const displayMode = this._mutableFromDisplayChain(elementHint, doc)
+            if (displayMode) return displayMode
             // No explicit setting found: default at top-level
             return this._defaultTopLevelMutable ? 'true' : 'false'
         } catch(_) {
@@ -4702,10 +4747,30 @@ export class OverseerRenderer {
         } catch(errNorm) { try { console.warn('[Overseer] boolean normalization failed', errNorm) } catch(_) {} }
         let updated = null
         try {
-            // Sanitize nodes: deep clone shallowly to strip any live references / accidental arrays in fields
+            // Sanitize nodes: deep clone shallowly to strip any live references / accidental arrays in fields.
+            //
+            // Provenance must survive this. The backend serializer is snapshot-driven: it replays
+            // each node's original source text, looked up in the SourceRegistry by `source_id`
+            // (the snapshot itself is #[serde(skip)] and never crosses the IPC boundary). The
+            // response to this call is adopted as the live document, so anything dropped here is
+            // gone for every later save - taking comments, explicit type keywords and authored
+            // formatting with it, since there is no longer a merge_comments path to rebuild them.
+            const PROVENANCE_KEYS = [
+                'source_id',
+                'source_fingerprint',
+                'param_order',
+                'raw_value_literal',
+                'authored_dash',
+                'child_original_index',
+                'leading_blank_lines',
+                'template',
+            ]
             const sanitizeNode = (n) => {
                 if (!n || typeof n !== 'object') return null
                 const copy = { name: n.name, node_type: n.node_type || n.type, parameters: {}, children: [], is_hierarchy_transparent: !!n.is_hierarchy_transparent }
+                for (const key of PROVENANCE_KEYS) {
+                    if (n[key] !== undefined) copy[key] = n[key]
+                }
                 if (n.parameters && typeof n.parameters === 'object') {
                     for (const [k,v] of Object.entries(n.parameters)) {
                         // Skip transient client-only helpers
@@ -5413,22 +5478,55 @@ export class OverseerRenderer {
      * Find a node in the document by its path array
      */
     findNodeByPath(document, pathArray) {
+        const matchAt = (nodes, baseName, index) => {
+            const matches = nodes.filter(child => child.name === baseName)
+            return index < matches.length ? matches[index] : null
+        }
+
+        // Unnamed wrapper divs are hierarchy-transparent: they contribute no segment to a
+        // rendered path, so resolution has to look through them too. Without this, fields
+        // grouped inside such a wrapper (a common layout idiom) resolve to null, which in
+        // turn makes the mutability walk fall back to the default and blocks editing.
+        const isTransparent = (node) => {
+            if (!node) return false
+            if (node.is_hierarchy_transparent === true) return true
+            const name = String(node.name || '').trim()
+            const type = String(node.node_type || node.type || '').trim()
+            return !name || name.toLowerCase() === type.toLowerCase()
+        }
+
+        const matchThroughTransparent = (nodes, baseName, index) => {
+            const direct = matchAt(nodes, baseName, index)
+            if (direct) return direct
+            // Breadth-first across transparent wrappers only, bounded like the other resolvers.
+            let frontier = nodes.slice()
+            for (let depth = 0; depth < 4 && frontier.length; depth++) {
+                const next = []
+                for (const n of frontier) {
+                    if (!isTransparent(n) || !Array.isArray(n.children)) continue
+                    const candidate = matchAt(n.children, baseName, index)
+                    if (candidate) return candidate
+                    next.push(...n.children)
+                }
+                frontier = next
+            }
+            return null
+        }
+
         let current = { children: document }
-        
+
         for (const pathSegment of pathArray) {
             if (!current.children) return null
-            
+
             // Handle array-style names with ordinals (e.g., "item#1")
-            const [baseName, ordinal] = pathSegment.includes('#') ? 
+            const [baseName, ordinal] = pathSegment.includes('#') ?
                 pathSegment.split('#') : [pathSegment, '0']
-            
-            const matches = current.children.filter(child => child.name === baseName)
-            const index = parseInt(ordinal, 10)
-            
-            if (index >= matches.length) return null
-            current = matches[index]
+
+            const next = matchThroughTransparent(current.children, baseName, parseInt(ordinal, 10))
+            if (!next) return null
+            current = next
         }
-        
+
         return current
     }
 

@@ -83,7 +83,7 @@ function buildWeightTrackerDoc(){
         { name:'Prev', node_type:'button', parameters:{ label:{ String:'< Prev Day' } }, children:[], is_hierarchy_transparent:false },
         { name:'selected_date', node_type:'timestamp', parameters:{ precision:{ String:'day' }, value:{ Timestamp:'2025.09.11' } }, children:[], is_hierarchy_transparent:false },
         { name:'Next', node_type:'button', parameters:{ label:{ String:'> Next Day' } }, children:[], is_hierarchy_transparent:false },
-        { name:'SelectedWeightRecord', node_type:'div', parameters:{ link:{ String:'/weight_minimal/History[key=$(../selected_date)]' }, 'phantom-materialize':{ String:'prepend-on-edit' } }, is_hierarchy_transparent:false, children:[
+        { name:'SelectedWeightRecord', node_type:'div', parameters:{ mutable:{ Boolean:true }, link:{ String:'/weight_minimal/History[key=$(../selected_date)]' }, 'phantom-materialize':{ String:'prepend-on-edit' } }, is_hierarchy_transparent:false, children:[
           // Override: unhide intake in linked record
           { name:'intake', node_type:'list', parameters:{ hidden:{ Boolean:false } }, children:[], is_hierarchy_transparent:false }
         ] },
@@ -123,7 +123,7 @@ function buildWeightTrackerDoc(){
 describe('UI: editing amount in link-proxy with unnamed wrappers updates calories and total correctly', () => {
   beforeEach(() => setupDOM())
 
-  it.skip('SelectedWeightRecord on 2025-09-09: edit Apple amount to 2 -> UI shows calories=120 and total=120', async () => {
+  it('SelectedWeightRecord on 2025-09-09: edit Apple amount to 2 -> UI shows calories=120 and total=120', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
 
     let currentDoc = buildWeightTrackerDoc()
@@ -168,7 +168,12 @@ describe('UI: editing amount in link-proxy with unnamed wrappers updates calorie
         return Promise.resolve(docClone)
       }
       if (cmd === 'execute_overseer_event') return Promise.resolve(deepClone(args.nodes))
-      if (cmd === 'serialize_overseer_nodes') return Promise.resolve('DOC')
+      if (cmd === 'serialize_overseer_nodes') {
+        // The real backend recomputes from the nodes the frontend sends. Capture them,
+        // otherwise the mock recomputes from a stale copy and never sees the edit.
+        currentDoc = deepClone(args.nodes)
+        return Promise.resolve('DOC')
+      }
       if (cmd === 'save_overseer_file') return Promise.resolve(null)
       if (cmd === 'save_overseer_file_with_original') return Promise.resolve(null)
       if (cmd === 'load_overseer_file') return Promise.resolve('')
@@ -180,51 +185,8 @@ describe('UI: editing amount in link-proxy with unnamed wrappers updates calorie
     app.currentDocument = deepClone(currentDoc)
     app.renderer.renderDocument(app.currentDocument)
 
-    // Ensure edits coming from a link with a phantom segment are applied to the backing doc
-  app.renderer.updateNodeValueByPath = (doc, path, value) => {
-      const materializeIfNeeded = () => {
-        if (!path.includes('<phantom>')) return path
-        const linkContainer = document.querySelector('[data-link-phantom]')
-        if (!linkContainer) return path
-        try {
-          const meta = JSON.parse(linkContainer.getAttribute('data-link-phantom')||'{}')
-          const containerPathArr = JSON.parse(linkContainer.dataset.path||'[]')
-          const parts = path.split('/')
-          const idxAfterPhantom = containerPathArr.length + 1
-          if (parts[containerPathArr.length] === '<phantom>' && parts.length > idxAfterPhantom) {
-            const tail = parts.slice(idxAfterPhantom)
-            const metaWithTail = Object.assign({}, meta, { tailSegments: (meta.tailSegments||[]).concat(tail) })
-            return app.renderer._materializePhantomAndComputePath(metaWithTail) || path
-          }
-        } catch(_) {}
-        return path
-      }
-      const realPath = materializeIfNeeded()
-      const find = (nodes, parts) => {
-        let cur = { children: nodes }
-        for (const seg of parts) {
-          const [b,o] = seg.includes('#')?seg.split('#'):[seg,'0']
-          const ms = (cur.children||[]).filter(c=>c.name===b); const idx=parseInt(o,10)
-          if (idx>=ms.length) return null; cur=ms[idx]
-        }
-        return cur
-      }
-      const target = find(doc, realPath.split('/'))
-      if (!target) return false
-      if (!target.parameters) target.parameters = {}
-      // Coerce based on node_type
-      const t = (target.node_type || target.type || '').toLowerCase()
-      if (t === 'int') {
-        const n = parseInt(String(value), 10)
-        target.parameters.value = Number.isFinite(n) ? { Integer: n } : { Null: null }
-      } else if (t === 'float') {
-        const n = parseFloat(String(value))
-        target.parameters.value = Number.isFinite(n) ? { Float: n } : { Null: null }
-      } else {
-        target.parameters.value = { String: String(value) }
-      }
-      return true
-    }
+    // No updateNodeValueByPath override: the real implementation is transparency-aware
+    // and must be what this test exercises.
 
     // Switch selected date to 2025-09-09
     const selectedPath = ['weight_minimal','Selected','selected_date']
@@ -271,10 +233,15 @@ describe('UI: editing amount in link-proxy with unnamed wrappers updates calorie
       await app.reevaluateDocumentSelective(changedPaths, [{ path: amountPathStr, newValue: '2' }])
     }
 
-    // Helper to resolve containers fresh (DOM may be re-rendered)
+    // Helper to resolve containers fresh (DOM may be re-rendered). The link container
+    // itself is replaced by a re-render, so it has to be re-resolved too - reading through
+    // the originally captured element only ever sees the pre-edit values.
+    const resolveLink = () => findByExactPath(['weight_minimal','Selected','SelectedWeightRecord'])
     const resolveCaloriesContainer = () => {
+      const link = resolveLink()
+      if (!link) return null
       let c = null
-      for (const el of Array.from(linkEl.querySelectorAll('[data-path]'))) {
+      for (const el of Array.from(link.querySelectorAll('[data-path]'))) {
         try {
           const p = JSON.parse(el.dataset.path||'[]')
           if (Array.isArray(p) && p[p.length-1] === 'calories' && !p.includes('per_item')) { c = el; break }
@@ -283,8 +250,10 @@ describe('UI: editing amount in link-proxy with unnamed wrappers updates calorie
       return c
     }
     const resolveTotalContainer = () => {
+      const link = resolveLink()
+      if (!link) return null
       let t = null
-      for (const el of Array.from(linkEl.querySelectorAll('[data-path]'))) {
+      for (const el of Array.from(link.querySelectorAll('[data-path]'))) {
         try { const p = JSON.parse(el.dataset.path||'[]'); if (Array.isArray(p) && p[p.length-1] === 'total_calories') { t = el; break } } catch(_){}
       }
       return t
@@ -303,6 +272,11 @@ describe('UI: editing amount in link-proxy with unnamed wrappers updates calorie
       if (caloriesText==='120' && totalText==='120') break
       await new Promise(r => setTimeout(r, 20))
     }
+    const dbgCal = app.renderer.findNodeByPath(app.currentDocument, ['weight_minimal','History','WeightRecord__1','intake','MealRecord__1','calories'])
+    const dbgTot = app.renderer.findNodeByPath(app.currentDocument, ['weight_minimal','History','WeightRecord__1','total_calories'])
+    console.info('[doc] calories=', JSON.stringify(dbgCal && dbgCal.parameters.value), 'computed=', JSON.stringify(dbgCal && dbgCal.parameters._computed_value))
+    console.info('[doc] total=', JSON.stringify(dbgTot && dbgTot.parameters.value))
+    console.info('[dom] caloriesText=', caloriesText, 'totalText=', totalText)
     // Expect UI to show derived values 120/120
     expect(caloriesText).toBe('120')
     expect(totalText).toBe('120')

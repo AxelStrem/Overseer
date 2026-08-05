@@ -153,12 +153,6 @@ tab known_bugs (label="Known Bugs") {
             - storypoints = 2
             - fixed = false
         }
-        - {
-            - id = 18
-            - description = "Editing an amount inside a link-proxied list entry that sits under an unnamed wrapper div does not update the dependent calories and total fields in the UI. Repro: tests/weight_tracker_amount_calories_total_ui_bug.spec.js, currently marked it.skip."
-            - storypoints = 3
-            - fixed = false
-        }
     }
 
      list FeatureList (entry=<Feature>) {

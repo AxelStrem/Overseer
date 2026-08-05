@@ -121,7 +121,13 @@ impl FileOperations {
         }
 
         if prefs.newline == "\r\n" {
-            output = output.replace('\n', "\r\n");
+            // Strip every CR first: snapshot replay emits its source text verbatim, so parts of
+            // `output` already carry CRLF. Expanding every '\n' without stripping would turn
+            // those into "\r\r\n" - a stray CR injected on every replayed line, compounding on
+            // each save. Collapsing only "\r\n" is not enough either, since an already-doubled
+            // "\r\r\n" would survive as "\r\n" and be re-expanded. Removing all CR makes this
+            // idempotent regardless of how a given line was produced.
+            output = output.replace('\r', "").replace('\n', "\r\n");
         }
 
         Ok(output)
