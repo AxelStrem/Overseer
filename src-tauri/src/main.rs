@@ -252,7 +252,12 @@ fn find_node_by_path_mut<'a>(
 
 #[command]
 async fn load_overseer_file(path: String) -> Result<String> {
-    // Set process working directory to the file's parent so relative mount paths (e.g., "exercise.os") resolve
+    // Record the document's directory so a mount's relative source resolves against the
+    // document that declares it.
+    docmgr::manager::DocumentManager::set_current_document(Some(&path));
+    // Also set the process working directory, as earlier versions relied on. This is kept
+    // for compatibility only - resolution no longer depends on it, and it should go once
+    // multiple open documents make a single process-wide directory meaningless.
     if let Ok(p) = std::path::PathBuf::from(&path).canonicalize() {
         if let Some(parent) = p.parent() {
             let _ = std::env::set_current_dir(parent);
@@ -325,6 +330,11 @@ async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
     match parse_document(&content) {
         Ok((_remaining, mut nodes)) => {
             resolver::resolve_document(&mut nodes);
+            // Mounted content is not part of the host document's text, so it has to be
+            // brought in after every parse. Re-resolve afterwards so formulas reading
+            // through a mount see the newly materialized subtree.
+            ActionExecutor::preload_mounts(&mut nodes);
+            resolver::resolve_document(&mut nodes);
             Ok(nodes)
         }
         Err(e) => Err(OverseerError::ParseError(format!("Parse error: {}", e))),
@@ -348,6 +358,10 @@ async fn parse_overseer_content_selective(
 
     match parse_document(&content) {
         Ok((_remaining, mut nodes)) => {
+            // Mounted content never round-trips through the document text, so it is absent
+            // again after every re-parse. Bring it back before resolving, or formulas that
+            // read through a mount would resolve to errors on every edit.
+            ActionExecutor::preload_mounts(&mut nodes);
             // If no specific fields changed, do full resolution
             if changed_fields.is_empty() {
                 #[cfg(feature = "debug-resolver")]

@@ -2046,6 +2046,59 @@ impl ActionExecutor {
         Ok(())
     }
 
+    /// Load every mount that asks to be loaded up front.
+    ///
+    /// Mounted content is never serialized into the host document, so a freshly parsed
+    /// document always comes back with its mounts empty. Any formula reading through a mount
+    /// would fail until the user clicked Load - which makes a mounted lookup table (a food
+    /// catalog, say) unusable as a data source. A mount opts in with `lazy=false` or
+    /// `preload=true`; the default stays lazy, so existing documents are unaffected.
+    ///
+    /// Failures are recorded on the mount as `_mount_status` / `_mount_error` and are never
+    /// propagated: a missing or broken side file must not stop the host document opening.
+    pub fn preload_mounts(nodes: &mut Vec<OverseerNode>) {
+        fn wants_preload(node: &OverseerNode) -> bool {
+            let truthy = |v: Option<&OverseerValue>| match v {
+                Some(OverseerValue::Boolean(b)) => Some(*b),
+                Some(OverseerValue::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+                    "true" | "yes" | "1" => Some(true),
+                    "false" | "no" | "0" => Some(false),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let p = &node.parameters;
+            if truthy(p.get("preload").or_else(|| p.get("_computed_preload"))) == Some(true) {
+                return true;
+            }
+            truthy(p.get("lazy").or_else(|| p.get("_computed_lazy"))) == Some(false)
+        }
+
+        fn collect(nodes: &[OverseerNode], trail: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+            for n in nodes {
+                trail.push(n.name.clone());
+                if n.node_type == "mount" && wants_preload(n) {
+                    let already_loaded = matches!(
+                        n.parameters.get("_mount_status"),
+                        Some(OverseerValue::String(s)) if s == "loaded"
+                    ) && !n.children.is_empty();
+                    if !already_loaded {
+                        out.push(trail.clone());
+                    }
+                }
+                collect(&n.children, trail, out);
+                trail.pop();
+            }
+        }
+
+        let mut targets = Vec::new();
+        collect(nodes, &mut Vec::new(), &mut targets);
+        for path in targets {
+            // Errors are already surfaced on the node itself by the load routine.
+            let _ = Self::execute_event(nodes, &path, "load");
+        }
+    }
+
     fn perform_load_mount_on_owner(
         nodes: &mut Vec<OverseerNode>,
         _owner_ptr: *mut OverseerNode,
@@ -2166,6 +2219,11 @@ impl ActionExecutor {
         // Load source nodes with error capture and status updates
         let mut load_error: Option<String> = None;
         let loaded_roots: Vec<OverseerNode> = if let Some(fp) = file_path_opt {
+            // A mount's source is written relative to the document that declares it, not to
+            // wherever the process happens to be running from.
+            let fp = crate::docmgr::manager::DocumentManager::resolve_from_document(&fp)
+                .to_string_lossy()
+                .to_string();
             match std::fs::read_to_string(&fp) {
                 Ok(content) => match crate::parser::parse_document(&content) {
                     Ok((_rem, mut ext_nodes)) => {
