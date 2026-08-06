@@ -83,11 +83,14 @@ describe('Formula propagation', () => {
       if (cmd === 'get_next_timer_due_ms') return Promise.resolve(null)
       if (cmd === 'scheduler_tick') return Promise.resolve(null)
       if (cmd === 'parse_overseer_content_selective') {
-        // Return a doc with only f updated to 5, g still computed=6 (to emulate partial selective update)
+        // A selective resolve recomputes dependent values, so g is updated here alongside f.
+        // This mock used to leave g stale and let the follow-up full resolve fix it, which is
+        // what the frontend actually did at the time; it no longer makes a second call, and a
+        // backend that returned a partial result would now leave a stale value on screen.
         const doc = deepClone(currentDoc)
         const root = doc[0]
         root.children.find(n => n.name === 'f').parameters.value = { Integer: 5 }
-        // g unchanged here
+        root.children.find(n => n.name === 'g').parameters._computed_value = { Integer: 10 }
         return Promise.resolve(doc)
       }
       if (cmd === 'parse_overseer_content') {

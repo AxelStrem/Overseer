@@ -523,7 +523,75 @@ impl FormulaEvaluator {
     }
 
     /// Evaluate a formula expression string within the given context
+    /// Results cached for the duration of one evaluation pass.
+    ///
+    /// Off by default. The resolver switches it on around a pass, during which every read
+    /// goes through an immutable snapshot of the document; outside that window the document
+    /// is being mutated and a cache would serve stale values. Thread-local because passes
+    /// run on whichever thread the command arrived on.
+    fn with_memo<R>(f: impl FnOnce(&mut Option<std::collections::HashMap<(String, String), OverseerValue>>) -> R) -> R {
+        thread_local! {
+            static MEMO: std::cell::RefCell<
+                Option<std::collections::HashMap<(String, String), OverseerValue>>,
+            > = const { std::cell::RefCell::new(None) };
+        }
+        MEMO.with(|cell| f(&mut cell.borrow_mut()))
+    }
+
+    /// Start caching. Call once per pass; the previous contents are discarded.
+    pub fn begin_pass_memo() {
+        Self::with_memo(|slot| *slot = Some(std::collections::HashMap::new()));
+    }
+
+    /// Stop caching. Anything evaluated after this is computed fresh.
+    pub fn end_pass_memo() {
+        Self::with_memo(|slot| *slot = None);
+    }
+
+    fn memo_lookup(key: &(String, String)) -> Option<OverseerValue> {
+        Self::with_memo(|slot| slot.as_ref().and_then(|m| m.get(key).cloned()))
+    }
+
+    fn memo_store(key: &(String, String), value: OverseerValue) {
+        Self::with_memo(|slot| {
+            if let Some(m) = slot.as_mut() {
+                m.insert(key.clone(), value);
+            }
+        });
+    }
+
     pub fn evaluate_formula(
+        formula: &str,
+        context: &EvaluationContext,
+    ) -> Result<OverseerValue, OverseerError> {
+        // Within an evaluation pass the document is read from an immutable snapshot, so the
+        // same formula at the same path cannot produce two answers. It does get asked
+        // repeatedly though - once for the node that owns it, and again every time another
+        // formula reads through that node - which is how a single aggregate over the history
+        // list came to be evaluated hundreds of times per pass and dominate the cost of an
+        // interaction.
+        //
+        // Lambda bindings are deliberately excluded: inside `filter(|x| ...)` the same text
+        // means something different for each item, and the key would have to capture that.
+        // The expensive formulas are the top-level aggregates, which have no bindings.
+        let memo_key = if context.var_bindings.is_empty() {
+            Some((context.node_path.join("/"), formula.to_string()))
+        } else {
+            None
+        };
+        if let Some(key) = memo_key.as_ref() {
+            if let Some(hit) = Self::memo_lookup(key) {
+                return Ok(hit);
+            }
+        }
+        let outcome = Self::evaluate_formula_uncached(formula, context);
+        if let (Some(key), Ok(value)) = (memo_key, outcome.as_ref()) {
+            Self::memo_store(&key, value.clone());
+        }
+        outcome
+    }
+
+    fn evaluate_formula_uncached(
         formula: &str,
         context: &EvaluationContext,
     ) -> Result<OverseerValue, OverseerError> {

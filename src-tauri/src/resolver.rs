@@ -57,13 +57,26 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
         debug_resolver!("[RESOLVER] Template resolution pass {}", pass);
 
         // Create a snapshot of nodes for template lookup (immutable reference)
+        let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+        let t_clone = std::time::Instant::now();
         let nodes_snapshot = nodes.clone(); // We need this for template lookup
+        let clone_ms = t_clone.elapsed().as_secs_f64() * 1000.0;
+        let t_pass = std::time::Instant::now();
 
         // Try to resolve templates in this pass
         for node in nodes.iter_mut() {
             if resolve_node_templates(node, &nodes_snapshot, &mut made_progress) {
                 made_progress = true;
             }
+        }
+        if profiling {
+            eprintln!(
+                "[PHASE]     tmpl pass {} {:.1} ms (clone {:.1} ms) progress={}",
+                pass,
+                t_pass.elapsed().as_secs_f64() * 1000.0,
+                clone_ms,
+                made_progress
+            );
         }
 
         debug_resolver!(
@@ -84,24 +97,83 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
 }
 
 /// Public entry point to resolve all templates in a document AST.
-pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
-    // Multi-pass template resolution to handle template dependencies
+/// Structural resolution: templates, layout and inheritance, but no formula evaluation.
+///
+/// Callers that only need the tree to have its shape - so that a field belonging to a
+/// template instance exists and can be written to - want this rather than a full resolve.
+/// Evaluating formulas and rebuilding chart series first, only to overwrite the values that
+/// feed them and evaluate again, is work thrown away.
+pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
+    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    let t = std::time::Instant::now();
     resolve_templates_multipass(nodes);
-
-    // After template resolution, resolve layout parameters
+    if profiling {
+        eprintln!("[PHASE]   templates {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
+    let t = std::time::Instant::now();
     resolve_layout_parameters(nodes, None);
-
-    // After layout resolution, resolve parameter inheritance
+    if profiling {
+        eprintln!("[PHASE]   layout {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
+    let t = std::time::Instant::now();
     resolve_parameter_inheritance(nodes, &HashMap::new());
+    if profiling {
+        eprintln!("[PHASE]   inheritance {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
+}
+
+/// Recompute everything derived from values: formulas, chart series and list sort keys.
+///
+/// Writing a value cannot add or remove nodes, so a caller that has already resolved the
+/// document's structure and then written values needs only this. Re-running template
+/// resolution at that point walks and clones the whole tree to arrive at the shape it
+/// already has.
+pub fn resolve_values(nodes: &mut Vec<OverseerNode>) {
+    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+
+    let t = std::time::Instant::now();
+    evaluate_formulas_in_document_multi_pass(nodes);
+    if profiling {
+        eprintln!("[PHASE]   formulas {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    let t = std::time::Instant::now();
+    compute_chart_series(nodes);
+    if profiling {
+        eprintln!("[PHASE]   charts {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    let t = std::time::Instant::now();
+    compute_list_ui_sort_keys(nodes);
+    if profiling {
+        eprintln!("[PHASE]   sortkeys {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
+}
+
+pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
+    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    resolve_structure(nodes);
 
     // After parameter inheritance, evaluate formulas (multi-pass so aggregates whose inputs appear later update)
+    let t = std::time::Instant::now();
     evaluate_formulas_in_document_multi_pass(nodes);
+    if profiling {
+        eprintln!("[PHASE]   formulas {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
 
     // After formulas, compute chart series for charts/plots (MVP)
+    let t = std::time::Instant::now();
     compute_chart_series(nodes);
+    if profiling {
+        eprintln!("[PHASE]   charts {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
 
     // After formulas, compute UI sort keys for lists (presentation-only; do not reorder children)
+    let t = std::time::Instant::now();
     compute_list_ui_sort_keys(nodes);
+    if profiling {
+        eprintln!("[PHASE]   sortkeys {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
 
     // Phase 1: initialize and validate mount nodes (lazy placeholders only)
     initialize_and_validate_mount_nodes(nodes);
@@ -961,8 +1033,15 @@ fn resolve_node_templates(
                             node.children.len(),
                             resolved_children.len()
                         );
-                        node.children = resolved_children;
-                        local_progress = true;
+                        // Only claim progress if this actually changed something. Rebuilding a
+                        // templated list produces the same children once it has settled, and
+                        // reporting that as progress meant the enclosing loop could never
+                        // converge - every document containing a templated list ran the full
+                        // ten passes, every time it was resolved.
+                        if node.children != resolved_children {
+                            node.children = resolved_children;
+                            local_progress = true;
+                        }
                     } else {
                         debug_resolver!(
                             "[RESOLVER] Warning: Template not found: {}",
@@ -1034,8 +1113,10 @@ fn resolve_node_templates(
                         node.children.len(),
                         resolved_children.len()
                     );
-                    node.children = resolved_children;
-                    local_progress = true;
+                    if node.children != resolved_children {
+                        node.children = resolved_children;
+                        local_progress = true;
+                    }
                 }
                 _ => {
                     debug_resolver!(
@@ -1140,7 +1221,12 @@ fn resolve_node_templates(
                     .iter()
                     .map(|o| (o.name.clone(), o))
                     .collect();
-                let override_names: Vec<String> = overrides.keys().cloned().collect();
+                // Taken from the children rather than the map's keys: a HashMap iterates in
+                // an order that varies between runs, and this list is stored on the node and
+                // read back by the serializer, so map order would make resolving the same
+                // document twice produce two different results.
+                let override_names: Vec<String> =
+                    instance_children.iter().map(|o| o.name.clone()).collect();
                 debug_resolver!(
                     "[RESOLVER] instance '{}' overrides: {:?}",
                     node.name,
@@ -1653,6 +1739,54 @@ fn collect_all_node_paths(
     }
 }
 
+
+/// Per-formula timing, aggregated by formula text. Enabled with OVERSEER_PROFILE=1.
+///
+/// Wall-clock totals said the evaluator was slow but not which formulas cost the time, and
+/// the two documents that hurt most differ by 14x per pass at identical node counts - so the
+/// cost is in what the formulas do, not how many nodes there are.
+static PROFILE_FORMULAS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, (u64, f64)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn profile_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("OVERSEER_PROFILE").is_ok())
+}
+
+fn profile_record_formula(src: &str, elapsed: std::time::Duration) {
+    if !profile_enabled() {
+        return;
+    }
+    if let Ok(mut map) = PROFILE_FORMULAS.lock() {
+        let entry = map.entry(src.to_string()).or_insert((0, 0.0));
+        entry.0 += 1;
+        entry.1 += elapsed.as_secs_f64() * 1000.0;
+    }
+}
+
+/// Report the most expensive formulas and clear the tally.
+pub fn profile_report_formulas(label: &str) {
+    if !profile_enabled() {
+        return;
+    }
+    if let Ok(mut map) = PROFILE_FORMULAS.lock() {
+        let mut rows: Vec<(String, u64, f64)> =
+            map.iter().map(|(k, (n, ms))| (k.clone(), *n, *ms)).collect();
+        rows.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        let total: f64 = rows.iter().map(|r| r.2).sum();
+        eprintln!("[PROFILE] {}: {:.1} ms across {} distinct formulas", label, total, rows.len());
+        for (src, count, ms) in rows.iter().take(8) {
+            let shown: String = src.chars().take(76).collect();
+            eprintln!(
+                "[PROFILE]   {:>8.1} ms  {:>5} calls  {:>6.3} ms/call  {}",
+                ms, count, ms / *count as f64, shown
+            );
+        }
+        map.clear();
+    }
+}
+
 fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
     debug_resolver!("[RESOLVER] Starting multi-pass formula evaluation");
     // Build a path set of all node paths so selective evaluator effectively treats entire tree as target
@@ -1663,10 +1797,22 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
     const MAX_PASSES: usize = 4;
     let mut pass = 0usize;
     let mut progress = true;
+    // Set OVERSEER_PROFILE=1 to see where an interaction's time goes: how many passes ran,
+    // and what each cost. This is the hot path - it runs on every edit - so guessing at its
+    // shape from wall-clock totals has proven unreliable.
+    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    let started = std::time::Instant::now();
+
     while pass < MAX_PASSES && progress {
         pass += 1;
         progress = false;
+        let clone_started = std::time::Instant::now();
         let snapshot = nodes.clone();
+        let clone_ms = clone_started.elapsed().as_secs_f64() * 1000.0;
+        let pass_started = std::time::Instant::now();
+        // Every read in this pass comes from `snapshot`, so results can be cached for its
+        // duration; see FormulaEvaluator::begin_pass_memo.
+        FormulaEvaluator::begin_pass_memo();
         let len = nodes.len();
         for i in 0..len {
             let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
@@ -1683,11 +1829,29 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
                 }
             }
         }
+        FormulaEvaluator::end_pass_memo();
+        if profiling {
+            eprintln!(
+                "[PROFILE] pass {} took {:.1} ms (clone {:.1} ms) progress={} paths={}",
+                pass,
+                pass_started.elapsed().as_secs_f64() * 1000.0,
+                clone_ms,
+                progress,
+                all_paths.len()
+            );
+        }
         debug_resolver!(
             "[RESOLVER] Multi-pass formula evaluation pass {} progress={} ({} total paths)",
             pass,
             progress,
             all_paths.len()
+        );
+    }
+    if profiling {
+        eprintln!(
+            "[PROFILE] {} pass(es) in {:.1} ms total",
+            pass,
+            started.elapsed().as_secs_f64() * 1000.0
         );
     }
     debug_resolver!(
@@ -2493,7 +2657,12 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                 } else {
                     format!("_computed_{}", key)
                 };
-                match FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context) {
+                let formula_started = profile_enabled().then(std::time::Instant::now);
+                let evaluated = FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context);
+                if let Some(started) = formula_started {
+                    profile_record_formula(formula_src.as_str(), started.elapsed());
+                }
+                match evaluated {
                     Ok(result) => {
                         debug_resolver!("[RESOLVER] Formula result: {:?}", result);
                         computed_params.push((shadow_key, result));

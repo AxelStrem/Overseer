@@ -428,6 +428,27 @@ impl ActionExecutor {
     }
     /// Execute an on <eventName> block under the node at node_path, mutating the document.
     /// Transaction: apply actions in order, then run resolve_document once.
+    /// Whether an action can add, remove or move nodes, as opposed to only writing values.
+    fn action_changes_structure(action_type: &str) -> bool {
+        matches!(
+            action_type,
+            "append"
+                | "prepend"
+                | "remove"
+                | "clear"
+                | "clear_list"
+                | "move"
+                | "sort"
+                | "ensure_in_list"
+                | "set_in_list"
+                | "load"
+                | "unload"
+                | "load_mount"
+                | "unload_mount"
+                | "if"
+        )
+    }
+
     pub fn execute_event(
         nodes: &mut Vec<OverseerNode>,
         node_path: &[String],
@@ -497,6 +518,8 @@ impl ActionExecutor {
                 }
             }
         }
+        // Whether anything has been written since the last resolve.
+        let mut pending_changes = false;
         for child in owner.children.clone() {
             if child.node_type == "on" && child.name == event_name {
                 // Execute each action child in order
@@ -507,15 +530,32 @@ impl ActionExecutor {
                         action.node_type, action.name, action.parameters
                     );
                     Self::execute_action(nodes, &owner_indices, &owner_eval_path, &action)?;
-                    // Re-resolve after each action (per-action transaction)
-                    resolver::resolve_document(nodes);
+                    // Re-resolve between actions only when the tree's shape may have moved.
+                    //
+                    // A full resolve is expensive - templates, formulas, chart series, sort
+                    // keys, over every node - and running one after each action meant a
+                    // six-action button paid for seven of them. Actions that only write a
+                    // value cannot add or remove nodes, so template instantiation cannot
+                    // change and the final resolve below already recomputes everything that
+                    // depends on the values written. Structural actions genuinely do change
+                    // the tree that later actions traverse, so those still resolve in place.
+                    if Self::action_changes_structure(&action.node_type) {
+                        resolver::resolve_document(nodes);
+                        pending_changes = false;
+                    } else {
+                        pending_changes = true;
+                    }
                 }
             }
         }
 
-        // Final resolve to ensure all computed values reflect the end-of-event state.
-        // This avoids any perceived one-step lag for formulas dependent on multiple actions in a block.
-        resolver::resolve_document(nodes);
+        // Final resolve so computed values reflect the end-of-event state, avoiding a
+        // one-step lag for formulas that depend on several actions in a block. Skipped when
+        // the last action was structural and already resolved with nothing written since -
+        // resolving twice over an unchanged document produces the same answer twice.
+        if pending_changes {
+            resolver::resolve_document(nodes);
+        }
 
         // Note: do not run timers here; scheduling handles timer firing.
         Ok(())
@@ -2056,7 +2096,7 @@ impl ActionExecutor {
     ///
     /// Failures are recorded on the mount as `_mount_status` / `_mount_error` and are never
     /// propagated: a missing or broken side file must not stop the host document opening.
-    pub fn preload_mounts(nodes: &mut Vec<OverseerNode>) {
+    pub fn preload_mounts(nodes: &mut Vec<OverseerNode>) -> bool {
         fn wants_preload(node: &OverseerNode) -> bool {
             let truthy = |v: Option<&OverseerValue>| match v {
                 Some(OverseerValue::Boolean(b)) => Some(*b),
@@ -2093,10 +2133,14 @@ impl ActionExecutor {
 
         let mut targets = Vec::new();
         collect(nodes, &mut Vec::new(), &mut targets);
+        let loaded_any = !targets.is_empty();
         for path in targets {
             // Errors are already surfaced on the node itself by the load routine.
             let _ = Self::execute_event(nodes, &path, "load");
         }
+        // Tells the caller whether anything was brought in. A document with no mounts needs
+        // no second resolve, and that resolve is a full pass over every node in it.
+        loaded_any
     }
 
     fn perform_load_mount_on_owner(
@@ -2148,6 +2192,48 @@ impl ActionExecutor {
         };
         // owner_path not needed
         Self::execute_unload_mount(nodes, owner_indices, &Vec::new(), &action_stub)
+    }
+
+    /// Parse and resolve a mounted document, reusing the last result while the file on disk
+    /// is unchanged.
+    ///
+    /// Mounts are preloaded after every parse, and the host document is re-parsed on every
+    /// edit, so without this a mounted catalog is read, parsed and resolved from scratch for
+    /// each keystroke - work that produces an identical answer every time. The file's
+    /// modification time and length decide whether the cached copy still applies; anything
+    /// that changed the file changes at least one of them.
+    fn load_mounted_document(path: &str) -> std::result::Result<Vec<OverseerNode>, String> {
+        use std::sync::{LazyLock, Mutex};
+        type Stamp = (std::time::SystemTime, u64);
+        static CACHE: LazyLock<Mutex<std::collections::HashMap<String, (Stamp, Vec<OverseerNode>)>>> =
+            LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+        let stamp = std::fs::metadata(path)
+            .ok()
+            .and_then(|m| m.modified().ok().map(|t| (t, m.len())));
+
+        if let Some(stamp) = stamp {
+            if let Ok(cache) = CACHE.lock() {
+                if let Some((cached_stamp, nodes)) = cache.get(path) {
+                    if *cached_stamp == stamp {
+                        return Ok(nodes.clone());
+                    }
+                }
+            }
+        }
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read mount file '{}': {}", path, e))?;
+        let (_rem, mut ext_nodes) = crate::parser::parse_document(&content)
+            .map_err(|e| format!("Failed to parse mount file '{}': {:?}", path, e))?;
+        crate::resolver::resolve_document(&mut ext_nodes);
+
+        if let Some(stamp) = stamp {
+            if let Ok(mut cache) = CACHE.lock() {
+                cache.insert(path.to_string(), (stamp, ext_nodes.clone()));
+            }
+        }
+        Ok(ext_nodes)
     }
 
     fn execute_load_mount(
@@ -2224,19 +2310,10 @@ impl ActionExecutor {
             let fp = crate::docmgr::manager::DocumentManager::resolve_from_document(&fp)
                 .to_string_lossy()
                 .to_string();
-            match std::fs::read_to_string(&fp) {
-                Ok(content) => match crate::parser::parse_document(&content) {
-                    Ok((_rem, mut ext_nodes)) => {
-                        crate::resolver::resolve_document(&mut ext_nodes);
-                        ext_nodes
-                    }
-                    Err(e) => {
-                        load_error = Some(format!("Failed to parse mount file '{}': {:?}", fp, e));
-                        Vec::new()
-                    }
-                },
-                Err(e) => {
-                    load_error = Some(format!("Failed to read mount file '{}': {}", fp, e));
+            match Self::load_mounted_document(&fp) {
+                Ok(ext_nodes) => ext_nodes,
+                Err(message) => {
+                    load_error = Some(message);
                     Vec::new()
                 }
             }

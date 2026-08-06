@@ -8,6 +8,19 @@ const DEBUG_MODE = (() => {
     } catch { return false }
 })();
 
+// Per-interaction timings. Enable from the devtools console with
+//   localStorage.overseerProfile = '1'
+// then reload; disable with localStorage.removeItem('overseerProfile'). Reported through
+// console.warn so it survives the console.log suppression below.
+const PROFILE = (() => {
+    try { return typeof localStorage !== 'undefined' && localStorage.getItem('overseerProfile') === '1' } catch { return false }
+})();
+function profileMark(label, startedAt) {
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now())
+    if (PROFILE) console.warn(`[profile] ${label} ${(now - startedAt).toFixed(1)} ms`)
+    return now
+}
+
 // Quiet console noise in non-debug mode while preserving warnings/errors
 try {
     if (!DEBUG_MODE) {
@@ -266,6 +279,9 @@ export class OverseerApp {
             }
 
             this.currentFile = filePath
+            // A newly opened document's charts should animate in, unlike a re-render of the
+            // one already on screen.
+            try { this.renderer.resetChartAnimations() } catch(_) {}
             this._adoptDocumentPreserveRoot(overseerDocument)
             this._originalText = content
             this.isDocumentModified = false
@@ -909,10 +925,26 @@ tab Main {
         this.currentDocument = resolved
     }
 
+    /**
+     * True when a response belonging to `ticket` is no longer the newest one issued.
+     *
+     * Re-evaluating a document takes long enough that a person can edit again before the
+     * answer comes back, and that answer describes the document as it was when the request
+     * was sent. Adopting it discards everything typed since - silently, because the display
+     * simply reverts. Responses are therefore ticketed, and a superseded one is dropped: the
+     * request that overtook it was sent from a document that already includes those edits.
+     */
+    _isSupersededReevaluation(ticket) {
+        return ticket !== this._reevaluationTicket
+    }
+
     async reevaluateDocumentSelective(changedFieldPaths = [], fieldChanges = []) {
         try {
             if (!this.currentDocument) return { domOnly: false }
-            
+
+            this._reevaluationTicket = (this._reevaluationTicket || 0) + 1
+            const reevaluationTicket = this._reevaluationTicket
+
             if (DEBUG_MODE) console.log('🔄 Selective update triggered for fields:', changedFieldPaths)
             // TEMP DIAG: capture original paths array clone for comparison after augmentation
             const __origChangedPathsDiag = Array.isArray(changedFieldPaths) ? changedFieldPaths.slice() : []
@@ -1080,10 +1112,14 @@ tab Main {
             }
             
             // Store the old document state before backend processing
+            const profileStart = (typeof performance !== 'undefined' ? performance.now() : Date.now())
+            let profileAt = profileStart
             const oldDocument = JSON.parse(JSON.stringify(this.currentDocument))
-            
+            profileAt = profileMark('clone document', profileAt)
+
             // Serialize current nodes to DSL
             const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
+            profileAt = profileMark('serialize (backend round trip)', profileAt)
             if (DEBUG_MODE) console.log('📤 Serialized content being sent to backend:', content.substring(0, 500))
             // Parse + resolve + evaluate on backend with selective updates
             // Build a map of changed field values (as OverseerValue-shaped objects) to send to backend
@@ -1105,6 +1141,14 @@ tab Main {
                 return map
             })()
             const resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
+            profileAt = profileMark('resolve (backend round trip)', profileAt)
+            // Another edit was made while this was in flight, and a newer request already
+            // carries it. This answer describes the document as it was before that edit, so
+            // adopting it would silently undo it.
+            if (this._isSupersededReevaluation(reevaluationTicket)) {
+                if (DEBUG_MODE) console.log('⏭️ Dropping superseded selective update', reevaluationTicket)
+                return { domOnly: false, success: false, superseded: true }
+            }
             try {
                 // Temporary instrumentation for aggregate debugging: surface total node params
                 const findTotal = (doc) => {
@@ -1275,42 +1319,19 @@ tab Main {
                     const hasCascadeChanges = this.detectCascadeChanges(this.currentDocument, resolved, changedFieldPaths)
                     const hasFormulaRefs = this.formulasReferenceChangedNames(resolved, changedFieldPaths)
 
-                    // If formulas reference changed fields, prefer full resolve immediately to recompute dependents
-                    if (hasFormulaRefs) {
-                        if (DEBUG_MODE) console.log('ℹ️ Formula references to changed fields detected; performing full resolve fallback')
-                        try {
-                            const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
-                            const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
-                            // Merge edits into full resolve result as well
-                            try {
-                                if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
-                                    for (const ch of fieldChanges) {
-                                        let n = this.getNodeByPath(fullResolved, ch.path)
-                                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
-                                            try { n = this.renderer.resolveNodeByPathLoose(fullResolved, ch.path) } catch(_) { n = null }
-                                        }
-                                        if (n) {
-                                            const ov = this.coerceToOverseerValue(n, ch.newValue)
-                                            if (!n.parameters) n.parameters = {}
-                                            n.parameters.value = ov
-                                        }
-                                    }
-                                }
-                                mergeRecentUserEdits(fullResolved)
-                            } catch(_) {}
-                            this._applyResolvedDocumentWithFormulaPreservation(fullResolved)
-                            if (DEBUG_MODE) console.log('🔁 Applied full resolve fallback due to formula references')
-                            try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve fallback):', e); this.showError('Render error', e) }
-                            return { domOnly: false, success: true }
-                        } catch (e) {
-                            if (DEBUG_MODE) console.warn('Full resolve fallback failed, continuing with selective result:', e)
-                        }
-                    } else if (hasCascadeChanges) {
+                    // A selective resolve now recomputes every dependent value, so what is
+                    // in hand is already what a full resolve would produce. This used to
+                    // serialize the document and resolve it a second time, costing a second
+                    // backend pass and two more transfers of the entire document per edit -
+                    // the bulk of the delay on a large document. The only thing that second
+                    // pass did differently was discard the edit that prompted it, which is
+                    // why it had to be followed by merging the edit back in.
+                    if (!hasFormulaRefs && hasCascadeChanges) {
                         if (DEBUG_MODE) console.log('🔄 Cascade changes detected, updating DOM for affected fields')
                         // Get the actual cascade fields that were detected
                         const allChangedFields = this.findChangedFieldsBetweenDocuments(this.currentDocument, resolved)
                         const cascadeFields = allChangedFields.filter(field => !changedFieldPaths.includes(field))
-                        
+
                         // Re-run selective DOM update to include cascade fields
                         try {
                             this.renderer.updateDocumentForCascadeFields(this.currentDocument, resolved, changedFieldPaths, cascadeFields)
@@ -1318,37 +1339,15 @@ tab Main {
                             console.warn('Failed to update cascade fields in DOM:', e)
                         }
                     } else {
-                        if (DEBUG_MODE) console.log('ℹ️ No cascade changes detected after selective update')
-                        // Fallback: some dependencies might not be captured in selective mode; do a full resolve
-                        try {
-                            const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
-                            const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
-                            // Merge edits into full resolve result to avoid losing user changes
-                            try {
-                                if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
-                                    for (const ch of fieldChanges) {
-                                        let n = this.getNodeByPath(fullResolved, ch.path)
-                                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
-                                            try { n = this.renderer.resolveNodeByPathLoose(fullResolved, ch.path) } catch(_) { n = null }
-                                        }
-                                        if (n) {
-                                            const ov = this.coerceToOverseerValue(n, ch.newValue)
-                                            if (!n.parameters) n.parameters = {}
-                                            n.parameters.value = ov
-                                        }
-                                    }
-                                }
-                                mergeRecentUserEdits(fullResolved)
-                            } catch(_) {}
-                            this._applyResolvedDocumentWithFormulaPreservation(fullResolved)
-                            if (DEBUG_MODE) console.log('🔁 Applied full resolve fallback to refresh dependent formulas')
-                            try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve fallback):', e); this.showError('Render error', e) }
-                            return { domOnly: false, success: true }
-                        } catch (e) {
-                            if (DEBUG_MODE) console.warn('Full resolve fallback failed, continuing with selective result:', e)
-                        }
+                        if (DEBUG_MODE) console.log('🔁 Dependent formulas refreshed by the selective resolve; re-rendering')
+                        try { mergeRecentUserEdits(resolved) } catch(_) {}
+                        this._applyResolvedDocumentWithFormulaPreservation(resolved)
+                        try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (dependent refresh):', e); this.showError('Render error', e) }
+                        profileMark('render', profileAt)
+                        profileMark('TOTAL', profileStart)
+                        return { domOnly: false, success: true }
                     }
-                    
+
                     // Merge user-changed field values into the resolved document to avoid losing edits
                     try {
                         if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
@@ -1537,34 +1536,9 @@ tab Main {
                     } catch(_) {}
                     this._applyResolvedDocumentWithFormulaPreservation(resolved)
                     try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback re-render):', e); this.showError('Render error', e) }
-                    // After re-rendering the selective result, if formulas still reference changed fields,
-                    // do a full resolve fallback to ensure dependent values are recomputed
-                    try {
-                        if (this.formulasReferenceChangedNames(resolved, changedFieldPaths)) {
-                            if (DEBUG_MODE) console.log('ℹ️ Post-fallback formulas still reference changed fields; performing full resolve')
-                            const fullContent = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(resolved) })
-                            const fullResolved = await invoke('parse_overseer_content', { content: fullContent })
-                            // Merge edits into full resolve result
-                            try {
-                                if (Array.isArray(fieldChanges) && fieldChanges.length > 0) {
-                                    for (const ch of fieldChanges) {
-                                        let n = this.getNodeByPath(fullResolved, ch.path)
-                                        if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
-                                            try { n = this.renderer.resolveNodeByPathLoose(fullResolved, ch.path) } catch(_) { n = null }
-                                        }
-                                        if (n) {
-                                            const ov = this.coerceToOverseerValue(n, ch.newValue)
-                                            if (!n.parameters) n.parameters = {}
-                                            n.parameters.value = ov
-                                        }
-                                    }
-                                }
-                                mergeRecentUserEdits(fullResolved)
-                            } catch(_) {}
-                            this._applyResolvedDocumentWithFormulaPreservation(fullResolved)
-                            try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (full resolve after fallback):', e); this.showError('Render error', e) }
-                        }
-                    } catch (_) { /* non-fatal */ }
+                    // A second full resolve used to follow, re-rendering the document
+                    // again when formulas referenced a changed field. The selective resolve
+                    // already recomputes those dependents, so this only repeated the work.
                     return { domOnly: false, success: true }
                 }
             } else {
@@ -1613,6 +1587,10 @@ tab Main {
             try {
                 const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
                 const resolved = await invoke('parse_overseer_content', { content })
+                if (this._isSupersededReevaluation(reevaluationTicket)) {
+                    if (DEBUG_MODE) console.log('⏭️ Dropping superseded full update', reevaluationTicket)
+                    return { domOnly: false, success: false, superseded: true }
+                }
                 this._applyResolvedDocumentWithFormulaPreservation(resolved)
                 try { this.renderer.renderDocument(this.currentDocument) } catch (e) { console.error('Render error (fallback full update):', e); this.showError('Render error', e) }
                 return { domOnly: false, success: true }
@@ -1774,6 +1752,15 @@ tab Main {
         // Prefer backend calculation to stay consistent with formula evaluation.
         // While actively editing, avoid spamming the backend — reuse a cached value when available.
         let nextMs = null
+        // Asking the backend means sending it the whole document, which on a large one costs
+        // more than the answer is worth - and this runs after every event. A document with no
+        // timer in it has no next due time to compute, so look before making the trip.
+        const hasTimer = (nodes) => (nodes || []).some(n =>
+            (n.node_type || n.type || '').toLowerCase() === 'timer' || hasTimer(n.children))
+        if (!hasTimer(this.currentDocument)) {
+            if (DEBUG_MODE) console.log('[SCHED] document has no timers; idle')
+            return
+        }
         try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
         if (nextMs == null) nextMs = findNextDue(this.currentDocument)
                 // With dependency tracking and live UI timers, periodic full refreshes are no longer needed.

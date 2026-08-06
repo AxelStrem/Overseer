@@ -805,6 +805,11 @@ export class OverseerRenderer {
         return true
     }
 
+    /// Let charts animate again, for when a different document is opened.
+    resetChartAnimations() {
+        this._animatedCharts = new Set()
+    }
+
     renderDocument(overseerDocument) {
         if (DEBUG_MODE) {
             try {
@@ -2927,6 +2932,26 @@ export class OverseerRenderer {
             container.style.backgroundColor = this.convertColorValue(bgColor)
         }
         
+        // Animate a chart the first time it appears, and not afterwards.
+        //
+        // A re-render destroys the Chart.js instance and builds a new one, which replays the
+        // entry animation from scratch. That reads as a flourish on load and as a distraction
+        // on every subsequent edit - including edits that change nothing the chart plots.
+        try {
+            const chartKey = Array.isArray(node.__overseer_path)
+                ? node.__overseer_path.join('/')
+                : (node.name || node.node_type || 'chart')
+            if (!this._animatedCharts) this._animatedCharts = new Set()
+            if (this._animatedCharts.has(chartKey)) {
+                if (!config.options) config.options = {}
+                config.options.animation = false
+            } else {
+                this._animatedCharts.add(chartKey)
+            }
+        } catch (e) {
+            if (DEBUG_MODE) console.warn('Chart animation gating failed:', e)
+        }
+
         // Create Chart.js instance
         let chartInstance = null
         try {
@@ -3962,16 +3987,37 @@ export class OverseerRenderer {
             } catch(_) {}
 
             const newValue = input.value
-            // Keep current display as-is; DOM will be updated after materialization/selective update.
             const prevDisplay = element.textContent
             const isFormulaInput = typeof newValue === 'string' && /\$\([\s\S]*\)/.test(newValue.trim())
             element.style.display = 'inline'
-            
+
             // Safely remove input element
             try {
                 input.remove()
             } catch (e) {
                 if (DEBUG_MODE) console.warn('Input element already removed:', e)
+            }
+
+            // Show what was just typed, without waiting for the round trip. Re-resolving a
+            // document takes hundreds of milliseconds, and the display used to keep its old
+            // value for that whole window - so the edit looked like it had been ignored, and
+            // on a slow document there was time to retype it. The authoritative value still
+            // arrives with the response and overwrites this.
+            //
+            // A formula is the exception: what a field displays is the computed result, which
+            // only the backend can produce, so showing the typed source would be a lie that
+            // then flickers.
+            if (!isFormulaInput) {
+                try {
+                    const asText = (newValue == null) ? '' : String(newValue)
+                    if (element.classList && element.classList.contains('markdown-enabled')) {
+                        element.innerHTML = this.renderMarkdown(asText)
+                    } else {
+                        element.textContent = asText
+                    }
+                } catch (e) {
+                    if (DEBUG_MODE) console.warn('Optimistic repaint failed:', e)
+                }
             }
             
             // If this edit is under a phantom link preview, materialize the item first and recompute a real path

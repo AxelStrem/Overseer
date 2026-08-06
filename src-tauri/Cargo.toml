@@ -50,3 +50,14 @@ debug-parser = []
 debug-resolver = []
 debug-evaluator = []
 debug-deps = []
+
+# The backend does heavy tree work on every interaction, and an unoptimized build makes that
+# take seconds rather than milliseconds - `tauri dev` is unusable for editing documents
+# without this. Optimizing dependencies fully costs nothing after the first build, since they
+# rarely change; opt-level 1 on our own code keeps incremental rebuilds quick while removing
+# most of the penalty.
+[profile.dev]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3
