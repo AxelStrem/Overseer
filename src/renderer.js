@@ -499,6 +499,20 @@ export class OverseerRenderer {
             }
             const tmpl = tmplName ? findByNameDeep(roots, tmplName) : null
             let newItem = tmpl ? JSON.parse(JSON.stringify(tmpl)) : { name: tmplName || 'Item', node_type: 'div', parameters: {}, children: [] }
+            // The clone must not inherit the template's provenance. `source_id` points at the
+            // template's own source text, and the serializer replays that text verbatim for
+            // any node still carrying one - so a materialized entry would be written out as a
+            // full copy of the template, comments and all, instead of the handful of fields
+            // that actually differ. Without the ids it is treated as a fresh template
+            // instance, and only genuine overrides are written.
+            const stripTemplateProvenance = (n) => {
+                if (!n || typeof n !== 'object') return
+                delete n.source_id
+                delete n.source_fingerprint
+                delete n.source_snapshot
+                if (Array.isArray(n.children)) n.children.forEach(stripTemplateProvenance)
+            }
+            stripTemplateProvenance(newItem)
             // Assign a stable UID to the new item (used for DOM mapping independent of name/position)
             try {
                 const uid = `uid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
@@ -580,6 +594,14 @@ export class OverseerRenderer {
             try { keyChild.parameters._computed_value = kvTyped } catch(_) {}
             // Ensure the key field persists on serialization as an explicit override
             try { keyChild.parameters._override_present = { Boolean: true } } catch(_) {}
+            // Write it in the same dash form authored entries use.
+            try { keyChild.authored_dash = true } catch(_) {}
+            // Mark the entry as one built by cloning a template, so the serializer records
+            // only what distinguishes it. The clone has to carry the template's full
+            // structure - the click that materialized it addresses a button inside the
+            // entry, and that path has to resolve - but none of that structure belongs on
+            // disk, where the template supplies it.
+            try { newItem.parameters._materialized_from_template = { Boolean: true } } catch(_) {}
             // Insert into list honoring requested position
             const pos = (options && typeof options.position === 'string') ? options.position.toLowerCase() : 'append'
             if (pos === 'prepend') {

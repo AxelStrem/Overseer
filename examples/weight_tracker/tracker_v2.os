@@ -23,7 +23,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
 
     // The food catalog, mounted read-only and never shown. Preloaded so handle lookups
     // resolve as soon as the document opens rather than after a manual Load.
-    mount FOODS (hidden=true, lazy=false, mutable=false, source="foods.os/food_catalog/Catalog")
+    mount FOODS (hidden=true, lazy=false, mutable=false, source="foods.os/food_catalog/Catalog") { }
 
     div (hidden=true) {
 
@@ -127,6 +127,14 @@ tab tracker_v2 (label="Calories", mutable=true) {
     }
 
     list History (entry=<DayRecord>, key="date", keyPrecision="day") {
+        - {
+            - date = "2026-08-05"
+            list intake {
+                - {
+                    - portions = 1
+                }
+            }
+        }
         - {
             - date = "2026-08-04"
             list intake {

@@ -420,6 +420,44 @@ impl FileOperations {
         // `{ }` and the fallback formatter writes the whole mounted document into the host.
         // Serializing the declaration with an empty body states the invariant directly:
         // whatever a mount is currently holding, none of it is this document's text.
+        // An entry the renderer materialized by cloning a template carries the template's
+        // whole structure, because the click that created it addresses a node inside the
+        // entry and that path has to resolve. None of that belongs on disk: the template
+        // already supplies it, and writing it out turns a two-line entry into a transcription
+        // of the template, comments included. Record only what distinguishes this entry -
+        // fields explicitly overridden (its key, and anything since edited) and lists that
+        // have gained records.
+        if matches!(
+            node.parameters.get("_materialized_from_template"),
+            Some(OverseerValue::Boolean(true))
+        ) {
+            let keeps_a_value = |c: &OverseerNode| {
+                matches!(
+                    c.parameters.get("_override_present"),
+                    Some(OverseerValue::Boolean(true))
+                ) || matches!(
+                    c.parameters.get("_explicit_child_override"),
+                    Some(OverseerValue::Boolean(true))
+                )
+            };
+            let mut distinguishing = node.clone();
+            distinguishing
+                .parameters
+                .remove("_materialized_from_template");
+            distinguishing
+                .children
+                .retain(|c| keeps_a_value(c) || (c.node_type == "list" && !c.children.is_empty()));
+            return Self::serialize_node_context(
+                &distinguishing,
+                output,
+                indent_level,
+                in_list_body,
+                fallback_indent_unit,
+                list_indent_hint,
+                force_emit_template_children,
+            );
+        }
+
         if node.node_type == "mount" && !node.children.is_empty() {
             let mut declaration_only = node.clone();
             declaration_only.children.clear();
