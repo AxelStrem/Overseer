@@ -440,6 +440,29 @@ impl FileOperations {
                     Some(OverseerValue::Boolean(true))
                 )
             };
+            // Everything on a cloned child came from the template, which already declares the
+            // field's type and parameters. Restating them makes the entry differ from an
+            // authored one and, worse, freezes a copy that stops tracking the template. Keep
+            // the value and the internal markers; drop the rest, and write value-only fields
+            // in the dash form authored entries use.
+            fn strip_restated(node: &mut OverseerNode) {
+                node.parameters
+                    .retain(|k, _| k.starts_with('_') || k == "value");
+                if node.parameters.contains_key("value") && node.children.is_empty() {
+                    // `_original_type` is what the emitter consults to decide between a type
+                    // keyword and dash form; "-" is how an authored `- name = value` override
+                    // is represented.
+                    node.authored_dash = true;
+                    node.parameters.insert(
+                        "_original_type".to_string(),
+                        OverseerValue::String("-".to_string()),
+                    );
+                }
+                for child in node.children.iter_mut() {
+                    strip_restated(child);
+                }
+            }
+
             let mut distinguishing = node.clone();
             distinguishing
                 .parameters
@@ -447,6 +470,9 @@ impl FileOperations {
             distinguishing
                 .children
                 .retain(|c| keeps_a_value(c) || (c.node_type == "list" && !c.children.is_empty()));
+            for child in distinguishing.children.iter_mut() {
+                strip_restated(child);
+            }
             return Self::serialize_node_context(
                 &distinguishing,
                 output,

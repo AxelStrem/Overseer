@@ -282,3 +282,95 @@ fn a_materialized_entry_still_records_what_was_added_to_it() {
         assert_eq!(records, 1, "the new day should reload with its one record");
     });
 }
+
+/// An entry records overrides, not declarations.
+///
+/// The template already states each field's type and parameters, so a materialized entry
+/// repeating them is noise that also drifts out of sync the moment the template changes.
+/// Authored entries in the same list write `- date = "..."` and a bare `list intake {`; an
+/// entry the app creates should be indistinguishable from one written by hand.
+#[test]
+fn a_materialized_entry_does_not_restate_types_or_parameters() {
+    serialised(|| {
+        overseer::source_registry::SourceRegistry::reset();
+        let (_r, mut nodes) = parser::parse_document(DOC).expect("parse");
+        resolver::resolve_document(&mut nodes);
+
+        let mut entry = clone_template_as_entry(&nodes, "Day", "2026-08-05");
+        {
+            let intake = entry
+                .children
+                .iter_mut()
+                .find(|c| c.name == "intake")
+                .expect("intake list");
+            let mut meal = OverseerNode {
+                name: "Meal__1".to_string(),
+                node_type: "Meal".to_string(),
+                template: None,
+                parameters: Default::default(),
+                children: Vec::new(),
+                is_hierarchy_transparent: false,
+                param_order: Vec::new(),
+                raw_value_literal: None,
+                authored_dash: true,
+                child_original_index: None,
+                leading_blank_lines: 0,
+                source_snapshot: None,
+                source_id: None,
+                source_fingerprint: None,
+            };
+            meal.parameters
+                .insert("_from_template".to_string(), OverseerValue::Boolean(true));
+            let mut portions = meal.clone();
+            portions.name = "portions".to_string();
+            portions.node_type = "float".to_string();
+            portions.parameters.clear();
+            portions
+                .parameters
+                .insert("value".to_string(), OverseerValue::Integer(1));
+            portions.parameters.insert(
+                "_override_present".to_string(),
+                OverseerValue::Boolean(true),
+            );
+            meal.children.push(portions);
+            intake.children.push(meal);
+        }
+        {
+            let history = nodes[0]
+                .children
+                .iter_mut()
+                .find(|c| c.name == "History")
+                .expect("History");
+            history.children.insert(0, entry);
+        }
+
+        let out = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+        let text = entry_text(&out, "2026-08-05");
+
+        assert!(
+            text.contains("- date = "),
+            "the key should be written in override form, as authored entries are:\n{}",
+            text
+        );
+        assert!(
+            !text.contains("timestamp date"),
+            "the key restated its type, which the template already declares:\n{}",
+            text
+        );
+        assert!(
+            !text.contains("precision="),
+            "the key restated a template parameter:\n{}",
+            text
+        );
+        assert!(
+            !text.contains("entry=<Meal>") && !text.contains("layout="),
+            "the list restated template parameters:\n{}",
+            text
+        );
+        assert!(
+            text.contains("list intake"),
+            "the list itself should still be named:\n{}",
+            text
+        );
+    });
+}
