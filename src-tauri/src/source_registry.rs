@@ -15,6 +15,26 @@ struct ScopeData {
     snapshots: HashMap<u64, NodeSourceSnapshot>,
     /// Trivia after the last top-level node - comments at the end of that file.
     trailing: String,
+    /// Node numbering is per scope, so re-parsing identical text reproduces identical ids.
+    node_counter: u64,
+}
+
+/// Scope reused for a given source text, keyed by its hash.
+///
+/// Without this, every parse takes a fresh scope, and a mounted document is re-parsed on
+/// every preload - which is once per edit. Scopes then churn fast enough to evict the host
+/// document's own snapshots while it is still open, and the next save reformats every node
+/// whose snapshot has gone: braces, comments, indentation and parameter order all lost.
+/// Identical text yields identical snapshots, so it can share one scope no matter how often
+/// it is parsed.
+static SCOPE_BY_TEXT: LazyLock<RwLock<HashMap<u64, u64>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn text_hash(source: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hasher);
+    hasher.finish()
 }
 
 static SCOPES: LazyLock<RwLock<HashMap<u64, ScopeData>>> =
@@ -37,7 +57,7 @@ thread_local! {
 /// How many parsed documents to keep snapshots for. A document is re-parsed on every edit,
 /// so this only needs to cover the documents that are live at once - a host plus whatever it
 /// mounts - with room to spare.
-const MAX_RETAINED_SCOPES: usize = 8;
+const MAX_RETAINED_SCOPES: usize = 32;
 
 #[cfg(test)]
 pub static REGISTRY_TEST_MUTEX: LazyLock<ReentrantMutex<()>> =
@@ -96,16 +116,54 @@ fn parse_id(id: &str) -> Option<(u64, u64)> {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl SourceRegistry {
-    /// Begin a parse. Snapshots registered until the returned guard drops belong to this
-    /// document and cannot be confused with any other's.
-    pub fn begin_document() -> DocumentScope {
-        let id = SCOPE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        if let Ok(mut scopes) = SCOPES.write() {
-            scopes.insert(id, ScopeData::default());
-        }
-        if let Ok(mut order) = SCOPE_ORDER.write() {
-            order.push_back(id);
-        }
+    /// Begin a parse of `source`. Snapshots registered until the returned guard drops belong
+    /// to this document and cannot be confused with any other's.
+    ///
+    /// Parsing the same text again reuses its scope rather than taking a new one, so a
+    /// document that is re-read on every edit - a mounted catalog, say - does not push other
+    /// documents' snapshots out of the registry.
+    pub fn begin_document(source: &str) -> DocumentScope {
+        let hash = text_hash(source);
+        let existing = SCOPE_BY_TEXT
+            .read()
+            .ok()
+            .and_then(|m| m.get(&hash).copied())
+            .filter(|id| SCOPES.read().map(|s| s.contains_key(id)).unwrap_or(false));
+
+        let id = match existing {
+            Some(id) => {
+                // Same text, so the snapshots about to be registered are the same ones. Reset
+                // the scope and reuse its number, which also reproduces the same node ids.
+                if let Ok(mut scopes) = SCOPES.write() {
+                    if let Some(data) = scopes.get_mut(&id) {
+                        data.snapshots.clear();
+                        data.trailing.clear();
+                        data.node_counter = 0;
+                    }
+                }
+                if let Ok(mut order) = SCOPE_ORDER.write() {
+                    if let Some(pos) = order.iter().position(|x| *x == id) {
+                        order.remove(pos);
+                    }
+                    order.push_back(id);
+                }
+                id
+            }
+            None => {
+                let id = SCOPE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut scopes) = SCOPES.write() {
+                    scopes.insert(id, ScopeData::default());
+                }
+                if let Ok(mut order) = SCOPE_ORDER.write() {
+                    order.push_back(id);
+                }
+                if let Ok(mut map) = SCOPE_BY_TEXT.write() {
+                    map.insert(hash, id);
+                }
+                id
+            }
+        };
+
         if let Ok(mut active) = ACTIVE_SCOPES.write() {
             active.insert(id);
         }
@@ -131,6 +189,9 @@ impl SourceRegistry {
             };
             if let Some(id) = order.remove(pos) {
                 scopes.remove(&id);
+                if let Ok(mut by_text) = SCOPE_BY_TEXT.write() {
+                    by_text.retain(|_, scope| *scope != id);
+                }
             }
         }
     }
@@ -147,7 +208,7 @@ impl SourceRegistry {
         let scope = match Self::current_scope() {
             Some(s) => s,
             None => {
-                let guard = Self::begin_document();
+                let guard = Self::begin_document("");
                 let id = guard.id;
                 std::mem::forget(guard);
                 if let Ok(mut active) = ACTIVE_SCOPES.write() {
@@ -162,12 +223,17 @@ impl SourceRegistry {
                 id
             }
         };
-        let node = NODE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let key = format_id(scope, node);
+        let mut key = String::new();
         if let Ok(mut scopes) = SCOPES.write() {
             if let Some(data) = scopes.get_mut(&scope) {
+                data.node_counter += 1;
+                let node = data.node_counter;
                 data.snapshots.insert(node, snapshot.clone());
+                key = format_id(scope, node);
             }
+        }
+        if key.is_empty() {
+            key = format_id(scope, NODE_COUNTER.fetch_add(1, Ordering::Relaxed));
         }
         key
     }
@@ -213,6 +279,9 @@ impl SourceRegistry {
         }
         if let Ok(mut active) = ACTIVE_SCOPES.write() {
             active.clear();
+        }
+        if let Ok(mut by_text) = SCOPE_BY_TEXT.write() {
+            by_text.clear();
         }
         CURRENT_SCOPE.with(|s| s.borrow_mut().clear());
     }

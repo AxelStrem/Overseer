@@ -114,7 +114,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 set (path="/tracker_v2/Selected/selected_date") = $(date_add_days(../selected_date, -1))
             }
         }
-        timestamp selected_date (precision="day", mutable="guarded") = $(today())
+        timestamp selected_date (precision="day", mutable="guarded") = "2026-08-06"
         button Next (label="> Next Day") {
             on click {
                 set (path="/tracker_v2/Selected/selected_date") = $(date_add_days(../selected_date, 1))
@@ -128,9 +128,22 @@ tab tracker_v2 (label="Calories", mutable=true) {
 
     list History (entry=<DayRecord>, key="date", keyPrecision="day") {
         - {
+            - date = "2026-08-07"
+
+            list intake {
+                - {
+                    - portions = 1
+                }
+            }
+        }
+        - {
             - date = "2026-08-06"
             list intake {
                 - {
+                    - portions = 1
+                }
+                - {
+                    - food = "apple"
                     - portions = 1
                 }
             }

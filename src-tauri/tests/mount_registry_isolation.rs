@@ -150,3 +150,40 @@ fn parsing_a_second_document_leaves_the_first_ones_snapshots_intact() {
         }
     });
 }
+
+/// A document that stays open must keep its snapshots, however often other documents are
+/// parsed alongside it.
+///
+/// The serializer replays each node's authored text from the registry, so losing a snapshot
+/// means losing that node's formatting - braces, comments, indentation, parameter order.
+/// A mounted document is re-parsed on every preload, i.e. on every edit, so a registry that
+/// evicts by parse count discards the host's own snapshots within a few interactions. That
+/// is what made a mount lose its `{ }` on a plain load-and-save with nothing edited.
+#[test]
+fn re_parsing_another_document_does_not_evict_a_live_documents_snapshots() {
+    serialised(|| {
+        let _fx = Fixture::new();
+        overseer::source_registry::SourceRegistry::reset();
+
+        let (_r, mut nodes) = parser::parse_document(HOST).expect("host parses");
+        resolver::resolve_document(&mut nodes);
+        let payload: Vec<OverseerNode> =
+            serde_json::from_str(&serde_json::to_string(&nodes).expect("to json"))
+                .expect("from json");
+
+        let baseline = OverseerFileHandler::serialize_nodes(&payload).expect("serialize");
+        assert_eq!(baseline, HOST, "precondition: the host round-trips to begin with");
+
+        // Far more re-parses than any eviction window: this is what preloading a mount does
+        // over a working session.
+        for _ in 0..50 {
+            let (_r2, _catalog) = parser::parse_document(CATALOG).expect("catalog parses");
+        }
+
+        let after = OverseerFileHandler::serialize_nodes(&payload).expect("serialize");
+        assert_eq!(
+            after, HOST,
+            "the host lost its formatting after other documents were parsed"
+        );
+    });
+}
