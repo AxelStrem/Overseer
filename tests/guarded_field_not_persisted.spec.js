@@ -92,6 +92,22 @@ function findByName(nodes, name) {
 describe('a guarded field changed by an action', () => {
   beforeEach(() => setupDOM())
 
+  async function navigateAndSave(app, clicks) {
+    const prevEl = Array.from(document.querySelectorAll('[data-path]')).find(el => {
+      try { return JSON.parse(el.dataset.path || '[]').slice(-1)[0] === 'Prev' } catch { return false }
+    })
+    expect(prevEl, 'the Prev button should render').toBeTruthy()
+    const btn = prevEl.matches('button') ? prevEl : prevEl.querySelector('button')
+    for (let i = 0; i < clicks; i++) {
+      btn.dispatchEvent(new Event('click', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 30))
+    }
+    let sent = null
+    app._testHook_beforeSerialize = (nodes) => { sent = deepClone(nodes) }
+    await app.saveFile()
+    return sent
+  }
+
   it('is not persisted, so the authored formula survives the save', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     invoke.mockImplementation((cmd, args) => {
@@ -136,6 +152,41 @@ describe('a guarded field changed by an action', () => {
     expect(
       saved.parameters.value,
       `a guarded field must be written as authored, got ${JSON.stringify(saved.parameters.value)}`
+    ).toEqual({ Formula: 'today()' })
+  })
+
+  it('survives repeated changes, not just the first', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    // Each click steps the date back a day, as the real `set` action does.
+    const dates = ['2026-08-05', '2026-08-04', '2026-08-03']
+    let step = 0
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === 'get_next_timer_due_ms' || cmd === 'scheduler_tick') return Promise.resolve(null)
+      if (cmd === 'execute_overseer_event') {
+        const doc = deepClone(args.nodes)
+        const node = findByName(doc, 'selected_date')
+        const next = dates[Math.min(step++, dates.length - 1)]
+        node.parameters.value = { String: next }
+        node.parameters._computed_value = { String: next }
+        return Promise.resolve(doc)
+      }
+      if (cmd === 'serialize_overseer_nodes') return Promise.resolve('DOC')
+      if (cmd === 'save_overseer_file' || cmd === 'save_overseer_file_with_original') return Promise.resolve(null)
+      if (cmd === 'load_overseer_file') return Promise.resolve('DOC')
+      return Promise.resolve(null)
+    })
+
+    const app = new OverseerApp()
+    app.currentDocument = buildDoc()
+    app.currentFile = 'C:/tmp/tracker.os'
+    app._originalText = 'DOC'
+    app.renderer.renderDocument(app.currentDocument)
+
+    const sent = await navigateAndSave(app, 2)
+    const saved = findByName(sent, 'selected_date')
+    expect(
+      saved.parameters.value,
+      `after two changes the authored value must still be restored, not the intermediate one - got ${JSON.stringify(saved.parameters.value)}`
     ).toEqual({ Formula: 'today()' })
   })
 })

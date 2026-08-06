@@ -24,8 +24,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
     // The food catalog, mounted read-only and never shown. Preloaded so handle lookups
     // resolve as soon as the document opens rather than after a manual Load.
     mount FOODS (hidden=true, lazy=false, mutable=false, source="foods.os/food_catalog/Catalog") { }
-
-    div (hidden=true) {
+div (hidden=true) {
 
         div MealRecord (layout="vertical", margin=0) {
             string food (label="Food", width=20%) = "apple"
@@ -114,7 +113,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 set (path="/tracker_v2/Selected/selected_date") = $(date_add_days(../selected_date, -1))
             }
         }
-        timestamp selected_date (precision="day", mutable="guarded") = "2026-08-06"
+        timestamp selected_date (precision="day", mutable="guarded") = "2026-08-05"
         button Next (label="> Next Day") {
             on click {
                 set (path="/tracker_v2/Selected/selected_date") = $(date_add_days(../selected_date, 1))

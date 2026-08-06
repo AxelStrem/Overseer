@@ -119,11 +119,31 @@ export class OverseerRenderer {
                     } else if (changed) {
                         if (!node.parameters) node.parameters = {}
                         node.parameters._guarded_edit = { Boolean: true }
-                        if (oldVal === undefined) {
-                            node.parameters._guarded_was_new_override = { Boolean: true }
-                        } else {
-                            try { node.parameters._guarded_original_value = deepClone(oldVal) } catch(_) { node.parameters._guarded_original_value = oldVal }
+                        // The value to restore on save is the one the document was authored
+                        // with, not the one from just before the latest change. Capturing
+                        // `oldVal` unconditionally makes each change overwrite the last
+                        // capture, so a second edit records the first edit's value as the
+                        // "original" - navigate two days and the document saves the day in
+                        // between. Once captured, it must not be recaptured.
+                        const alreadyCaptured = oldNode.parameters
+                            ? oldNode.parameters._guarded_original_value
+                            : undefined
+                        if (alreadyCaptured !== undefined) {
+                            try { node.parameters._guarded_original_value = deepClone(alreadyCaptured) } catch(_) { node.parameters._guarded_original_value = alreadyCaptured }
+                        } else if (node.parameters._guarded_original_value === undefined) {
+                            if (oldVal === undefined) {
+                                node.parameters._guarded_was_new_override = { Boolean: true }
+                            } else {
+                                try { node.parameters._guarded_original_value = deepClone(oldVal) } catch(_) { node.parameters._guarded_original_value = oldVal }
+                            }
                         }
+                        // Carry a new-override marker forward too, for the same reason.
+                        try {
+                            const wasNew = oldNode.parameters && oldNode.parameters._guarded_was_new_override
+                            if (wasNew !== undefined && node.parameters._guarded_was_new_override === undefined) {
+                                node.parameters._guarded_was_new_override = deepClone(wasNew)
+                            }
+                        } catch(_) { /* non-fatal */ }
                     }
                 }
                 // Recurse children with canonical ordinal-aware path segments

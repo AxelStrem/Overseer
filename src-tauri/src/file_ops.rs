@@ -341,7 +341,26 @@ impl FileOperations {
         if let Some(snapshot) = node.source_snapshot.clone() {
             return Some(snapshot);
         }
-        node.source_id.as_deref().and_then(SourceRegistry::get)
+        let found = node.source_id.as_deref().and_then(SourceRegistry::get);
+
+        // A node that carries an id but whose snapshot has gone is about to be reformatted:
+        // it loses its braces, comments, indentation and parameter order. That is invisible
+        // in the output - the document simply comes back slightly different - so make it
+        // observable on demand. Set OVERSEER_DEBUG_SNAPSHOTS=1 to report each miss.
+        if found.is_none() {
+            if let Some(id) = node.source_id.as_deref() {
+                if std::env::var("OVERSEER_DEBUG_SNAPSHOTS").is_ok() {
+                    eprintln!(
+                        "[SNAPSHOT MISS] id={} node={} type={} children={} - will be reformatted",
+                        id,
+                        if node.name.is_empty() { "(unnamed)" } else { &node.name },
+                        node.node_type,
+                        node.children.len()
+                    );
+                }
+            }
+        }
+        found
     }
 
     fn detect_formatting(nodes: &[OverseerNode]) -> FormattingPreferences {
