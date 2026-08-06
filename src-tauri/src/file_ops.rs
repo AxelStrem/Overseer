@@ -299,6 +299,29 @@ impl FileOperations {
         Self::emit_trailing_trivia(snapshot, output);
     }
 
+    /// The node's block exactly as authored, braces included.
+    ///
+    /// `snapshot_block_inner` deliberately returns the text *between* the braces, and gives up
+    /// when there is nothing between them - which is every empty block, `{ }` and `{\n}` alike.
+    /// The childless branch of the emitter then had nothing to write and produced a bodiless
+    /// declaration, quietly dropping the braces from any empty block it reformatted.
+    fn snapshot_block_verbatim(snapshot: &NodeSourceSnapshot) -> Option<String> {
+        let open = snapshot.body.child_envelope.open.as_ref()?;
+        let close = snapshot.body.child_envelope.close.as_ref()?;
+        let span_start = snapshot.span.0;
+        let rel_start = open.span.0.checked_sub(span_start)?;
+        let rel_end = close.span.1.checked_sub(span_start)?;
+        if rel_start >= rel_end || rel_end > snapshot.full_text.len() {
+            return None;
+        }
+        if !snapshot.full_text.is_char_boundary(rel_start)
+            || !snapshot.full_text.is_char_boundary(rel_end)
+        {
+            return None;
+        }
+        Some(snapshot.full_text[rel_start..rel_end].replace("\r\n", "\n"))
+    }
+
     fn snapshot_block_inner(snapshot: &NodeSourceSnapshot) -> Option<String> {
         let (body_start, body_end) = snapshot.body_span?;
         if body_end <= body_start {
@@ -1061,7 +1084,22 @@ impl FileOperations {
                 Self::serialize_value_with_node(node, value)
             ));
         } else if node.children.is_empty() {
-            if let Some(body_text) = snapshot
+            // Replay the authored block, braces and all. A node that had no block at all
+            // still gets none - the absence of an envelope in the snapshot is what says so,
+            // and inventing braces would be just as much of a change as dropping them.
+            if let Some(block) = snapshot
+                .as_ref()
+                .and_then(|snap| Self::snapshot_block_verbatim(snap))
+            {
+                let spacer = snapshot
+                    .as_ref()
+                    .map(|snap| snap.header.trailing.as_str())
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or(" ")
+                    .replace("\r\n", "\n");
+                output.push_str(&spacer);
+                output.push_str(&block);
+            } else if let Some(body_text) = snapshot
                 .as_ref()
                 .and_then(|snap| Self::snapshot_block_inner(snap))
             {
@@ -1876,7 +1914,20 @@ impl FileOperations {
 
             params.push((key, value))
         }
-        params.sort_by(|a, b| a.0.cmp(&b.0));
+        // Parameters live in a HashMap, so their iteration order is meaningless. Sorting by
+        // name at least makes output deterministic, but it also rewrites every declaration
+        // the moment a node is reformatted - `(source=..., lazy=false)` comes back as
+        // `(lazy=false, source=...)`. The parser records the authored order for exactly this
+        // reason; anything it did not record keeps the alphabetical fallback.
+        params.sort_by(|a, b| {
+            let rank = |key: &String| {
+                node.param_order
+                    .iter()
+                    .position(|k| k == key)
+                    .unwrap_or(usize::MAX)
+            };
+            rank(a.0).cmp(&rank(b.0)).then_with(|| a.0.cmp(b.0))
+        });
         params
     }
 
@@ -1963,6 +2014,22 @@ impl FileOperations {
         if let Some(val) = node.parameters.get("value") {
             out.push_str(" = ");
             out.push_str(&Self::serialize_value_with_node(node, val));
+        }
+
+        // A childless node may still have been authored with an empty block - `div x { }`,
+        // or a mount whose body is empty by definition. Nothing above emits braces, so
+        // without this the node comes back as a bare declaration and the braces are gone.
+        // It still parses, which is why the loss went unnoticed and compounded over saves.
+        if let Some(snapshot) = Self::snapshot_for(node) {
+            if let Some(block) = Self::snapshot_block_verbatim(&snapshot) {
+                let spacer = if snapshot.header.trailing.is_empty() {
+                    " ".to_string()
+                } else {
+                    snapshot.header.trailing.replace("\r\n", "\n")
+                };
+                out.push_str(&spacer);
+                out.push_str(&block);
+            }
         }
 
         Some(out)

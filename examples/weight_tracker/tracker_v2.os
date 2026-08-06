@@ -113,7 +113,7 @@ div (hidden=true) {
                 set (path="/tracker_v2/Selected/selected_date") = $(date_add_days(../selected_date, -1))
             }
         }
-        timestamp selected_date (precision="day", mutable="guarded") = "2026-08-05"
+        timestamp selected_date (precision="day", mutable="guarded") = &(today())
         button Next (label="> Next Day") {
             on click {
                 set (path="/tracker_v2/Selected/selected_date") = $(date_add_days(../selected_date, 1))
