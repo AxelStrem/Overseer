@@ -1,3 +1,4 @@
+import { profiled } from './profile.js'
 // Debug UI is disabled unless explicitly enabled via ?debug=1 (localStorage flag ignored)
 const DEBUG_MODE = (() => {
     try {
@@ -811,6 +812,9 @@ export class OverseerRenderer {
     }
 
     renderDocument(overseerDocument) {
+        return profiled('  renderDocument', () => this._renderDocumentProfiled(overseerDocument))
+    }
+    _renderDocumentProfiled(overseerDocument) {
         if (DEBUG_MODE) {
             try {
                 console.log('Rendering document:', overseerDocument)
@@ -4963,6 +4967,9 @@ export class OverseerRenderer {
         const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)
         if (looksLikeDocArray || looksLikeDocObject) {
             const newDoc = looksLikeDocArray ? updated : updated.children
+            // An event can restructure the document, so any text the app was holding for
+            // the next edit no longer describes it and must be rebuilt.
+            try { window.app._currentText = null } catch(_) {}
             const oldDoc = window.app.currentDocument
             // Tag any backend-driven changes under mutable=guarded so they remain UI-only until save
             try { this._tagGuardedChangesAfterBackendUpdate(oldDoc, newDoc) } catch(_) {}
@@ -5216,6 +5223,9 @@ export class OverseerRenderer {
      * Returns true if successful, false if full re-render is needed
      */
     updateSelectiveFields(oldDocument, newDocument, changedFieldPaths, fieldChanges = []) {
+        return profiled('  updateSelectiveFields', () => this._updateSelectiveFields(oldDocument, newDocument, changedFieldPaths, fieldChanges))
+    }
+    _updateSelectiveFields(oldDocument, newDocument, changedFieldPaths, fieldChanges = []) {
         try {
             if (DEBUG_MODE) console.log('🎯 Selective DOM update for paths:', changedFieldPaths)
             if (fieldChanges.length > 0) {
@@ -5441,6 +5451,9 @@ export class OverseerRenderer {
      * Update DOM for cascade fields that were changed by backend processing
      */
     updateDocumentForCascadeFields(oldDocument, newDocument, userChangedFields, cascadeFields = null) {
+        return profiled('  updateDocumentForCascadeFields', () => this._updateDocumentForCascadeFields(oldDocument, newDocument, userChangedFields, cascadeFields))
+    }
+    _updateDocumentForCascadeFields(oldDocument, newDocument, userChangedFields, cascadeFields = null) {
         if (DEBUG_MODE) console.log('🔄 Updating DOM for cascade fields after backend processing')
         // Use provided cascade fields if available, otherwise compute them
         let fieldsToUpdate = cascadeFields

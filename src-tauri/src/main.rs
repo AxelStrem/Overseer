@@ -81,6 +81,26 @@ async fn serialize_overseer_nodes(nodes: Vec<OverseerNode>) -> Result<String> {
     }
 }
 
+/// `serialize_overseer_nodes` with the document delivered as raw bytes.
+///
+/// Passing the document as a normal command argument makes Tauri hand it to the webview's
+/// JSON IPC, which on a large document costs seconds - far more than the serialization it
+/// asks for, and more than receiving the same document back, which travels a different
+/// route. Taking the bytes directly avoids that path. The caller sends UTF-8 JSON; a JSON
+/// body is still accepted so an older caller keeps working.
+#[command]
+fn serialize_overseer_nodes_raw(request: tauri::ipc::Request<'_>) -> Result<String> {
+    let nodes: Vec<OverseerNode> = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => serde_json::from_slice(bytes)
+            .map_err(|e| OverseerError::SerializationError(format!("Invalid node bytes: {}", e)))?,
+        tauri::ipc::InvokeBody::Json(value) => serde_json::from_value(value.clone())
+            .map_err(|e| OverseerError::SerializationError(format!("Invalid node json: {}", e)))?,
+    };
+    file_ops::OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
+        OverseerError::SerializationError(format!("Failed to serialize nodes: {}", e))
+    })
+}
+
 #[command]
 async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
     app_api::load_document(content)
@@ -93,6 +113,20 @@ async fn parse_overseer_content_selective(
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<Vec<OverseerNode>> {
     app_api::resolve_selective(content, changed_fields, changed_field_values)
+}
+
+
+/// `parse_overseer_content_selective`, also returning the serialized document.
+///
+/// The caller keeps that text and sends it back for the next edit, instead of uploading the
+/// document each time.
+#[command]
+async fn parse_overseer_content_selective_with_text(
+    content: String,
+    changed_fields: Vec<String>,
+    changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
+) -> Result<app_api::ResolvedDocument> {
+    app_api::resolve_selective_with_text(content, changed_fields, changed_field_values)
 }
 
 #[command]
@@ -190,8 +224,10 @@ fn main() {
             save_overseer_file,
             save_overseer_file_with_original,
             serialize_overseer_nodes,
+            serialize_overseer_nodes_raw,
             parse_overseer_content,
             parse_overseer_content_selective,
+            parse_overseer_content_selective_with_text,
             find_overseer_files,
             execute_overseer_event,
             scheduler_tick,

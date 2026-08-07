@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { PROFILE, profileMark, profiled, now } from './profile.js'
 
 // Debug is opt-in only via ?debug=1; localStorage flag is ignored to avoid accidental noise
 const DEBUG_MODE = (() => {
@@ -8,18 +9,25 @@ const DEBUG_MODE = (() => {
     } catch { return false }
 })();
 
-// Per-interaction timings. Enable from the devtools console with
-//   localStorage.overseerProfile = '1'
-// then reload; disable with localStorage.removeItem('overseerProfile'). Reported through
-// console.warn so it survives the console.log suppression below.
-const PROFILE = (() => {
-    try { return typeof localStorage !== 'undefined' && localStorage.getItem('overseerProfile') === '1' } catch { return false }
-})();
-function profileMark(label, startedAt) {
-    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now())
-    if (PROFILE) console.warn(`[profile] ${label} ${(now - startedAt).toFixed(1)} ms`)
-    return now
-}
+// Tauri sends IPC over a custom protocol, and falls back permanently to the postMessage
+// interface if that ever fails (a blocked protocol or a CSP error). The two transports have
+// very different costs for a large payload: postMessage encodes a byte array by expanding it
+// into a JSON array of one number per byte, so raw bytes become the worst possible encoding
+// on exactly the route where the payload is already expensive. Tauri announces the switch on
+// console.warn and nowhere else, so that is where we learn which transport we are on.
+let ipcCustomProtocolFailed = false
+try {
+    const _warn = console.warn.bind(console)
+    console.warn = (...args) => {
+        try {
+            if (!ipcCustomProtocolFailed && typeof args[0] === 'string'
+                && args[0].includes('IPC custom protocol failed')) {
+                ipcCustomProtocolFailed = true
+            }
+        } catch(_) {}
+        return _warn(...args)
+    }
+} catch(_) {}
 
 // Quiet console noise in non-debug mode while preserving warnings/errors
 try {
@@ -85,13 +93,41 @@ export class OverseerApp {
     // - Coerces known booleans to OverseerValue shapes
     // - Applies guarded semantics (restore/drop values) only on the clone
     // - Strips internal/transient parameters on the clone
+    // Hand the document to the serializer as raw bytes.
+    //
+    // Passing a large document to invoke() as an ordinary argument routes it through the
+    // webview's JSON IPC, which measured ~5.5 s for an 8.9 MB document - two orders of
+    // magnitude more than the serialization it is asking for, and far more than the same
+    // document costs travelling back the other way. Encoding it here and sending bytes
+    // avoids that path. If anything about the raw route is unavailable, the plain command
+    // still works and is used instead.
+    async serializeNodes(nodes) {
+        // Raw bytes only pay off on the custom protocol, which sends them as a request body.
+        // On the postMessage fallback they are expanded to one JSON number per byte, which is
+        // far worse than letting Tauri serialize the document itself.
+        const json = JSON.stringify(nodes)
+        if (PROFILE) {
+            console.warn(`[profile]     payload ${(json.length / 1048576).toFixed(1)} MB via ${ipcCustomProtocolFailed ? 'postMessage (custom protocol failed)' : 'custom protocol'}`)
+        }
+        if (!ipcCustomProtocolFailed) {
+            try {
+                return await invoke('serialize_overseer_nodes_raw', new TextEncoder().encode(json))
+            } catch (e) {
+                console.warn('Raw serialization failed; falling back to JSON IPC:', e)
+            }
+        }
+        return await invoke('serialize_overseer_nodes', { nodes })
+    }
+
     normalizeDocumentForSerialization(doc) {
         // Deep clone helper (prefer structuredClone when available)
         const deepClone = (obj) => {
             try { if (typeof structuredClone === 'function') return structuredClone(obj) } catch(_) {}
             try { return JSON.parse(JSON.stringify(obj)) } catch(_) { return obj }
         }
+        const profileCloneStart = (typeof performance !== 'undefined' ? performance.now() : Date.now())
         const root = deepClone(doc)
+        const profileWalkStart = profileMark('    deep clone', profileCloneStart)
         const visit = (node) => {
             if (!node || typeof node !== 'object') return
             // Ensure required schema property exists for all nodes
@@ -174,6 +210,7 @@ export class OverseerApp {
         }
         if (Array.isArray(root)) root.forEach(visit)
         else visit(root)
+        profileMark('    walk', profileWalkStart)
         return root
     }
 
@@ -254,6 +291,8 @@ export class OverseerApp {
 
             // Parse the content
             const overseerDocument = await invoke('parse_overseer_content', { content })
+            // The text a resolve starts from, so the first edit need not upload the document.
+            this._currentText = content
             if (DEBUG_MODE) this.setStatus(`DEBUG: Document parsed, type: ${typeof overseerDocument}, length: ${overseerDocument?.length || 'unknown'}`)
             
             // Debug: Check if any chart nodes have computed series
@@ -402,9 +441,7 @@ tab Main {
             // Serialize the current document state to Overseer DSL format (always serialize to keep state in sync for tests)
             const _nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
             try { if (typeof this._testHook_beforeSerialize === 'function') this._testHook_beforeSerialize(_nodesForSerialization) } catch(_) { /* test-only hook */ }
-            const content = await invoke('serialize_overseer_nodes', { 
-                nodes: _nodesForSerialization 
-            })
+            const content = await this.serializeNodes(_nodesForSerialization)
 
             // If no file path is set yet, treat this as a dry-run serialization only
             if (!this.currentFile) {
@@ -652,6 +689,9 @@ tab Main {
      * Detect if there are cascade changes by comparing old and new documents
      */
     detectCascadeChanges(oldDocument, newDocument, userChangedFields) {
+        return profiled('  detectCascadeChanges', () => this._detectCascadeChanges(oldDocument, newDocument, userChangedFields))
+    }
+    _detectCascadeChanges(oldDocument, newDocument, userChangedFields) {
         // Simple comparison: check if any fields other than user-changed fields have different values
         const allChangedFields = this.findChangedFieldsBetweenDocuments(oldDocument, newDocument)
         const cascadeFields = allChangedFields.filter(field => !userChangedFields.includes(field))
@@ -660,6 +700,9 @@ tab Main {
 
     // Heuristic: if any remaining Formula in document references one of the changed field base names, we may need a full recompute
     formulasReferenceChangedNames(doc, changedFieldPaths) {
+        return profiled('  formulasReferenceChangedNames', () => this._formulasReferenceChangedNames(doc, changedFieldPaths))
+    }
+    _formulasReferenceChangedNames(doc, changedFieldPaths) {
         try {
             const names = new Set(
                 (changedFieldPaths || []).map(p => {
@@ -754,6 +797,9 @@ tab Main {
      * Find all fields that have different values between two documents
      */
     findChangedFieldsBetweenDocuments(doc1, doc2) {
+        return profiled('  findChangedFieldsBetweenDocuments', () => this._findChangedFieldsBetweenDocuments(doc1, doc2))
+    }
+    _findChangedFieldsBetweenDocuments(doc1, doc2) {
         const changedFields = []
         
         // Handle array documents (list of top-level nodes)
@@ -853,6 +899,9 @@ tab Main {
      * flows all benefit consistently.
      */
     _applyResolvedDocumentWithFormulaPreservation(resolved) {
+        return profiled('  applyResolvedDocument', () => this.__applyResolvedDocumentWithFormulaPreservation(resolved))
+    }
+    __applyResolvedDocumentWithFormulaPreservation(resolved) {
         try {
             if (!this.currentDocument || !resolved) { this.currentDocument = resolved; return }
             const isFormula = (v) => v && typeof v === 'object' && v.Formula
@@ -939,6 +988,17 @@ tab Main {
     }
 
     async reevaluateDocumentSelective(changedFieldPaths = [], fieldChanges = []) {
+        // Timed here rather than at each return: the function leaves through a dozen
+        // branches, and the one taken is exactly what a slow interaction needs to reveal.
+        const profileTotalStart = now()
+        try {
+            return await this._reevaluateDocumentSelective(changedFieldPaths, fieldChanges)
+        } finally {
+            profileMark('TOTAL', profileTotalStart)
+        }
+    }
+
+    async _reevaluateDocumentSelective(changedFieldPaths = [], fieldChanges = []) {
         try {
             if (!this.currentDocument) return { domOnly: false }
 
@@ -1117,9 +1177,22 @@ tab Main {
             const oldDocument = JSON.parse(JSON.stringify(this.currentDocument))
             profileAt = profileMark('clone document', profileAt)
 
-            // Serialize current nodes to DSL
-            const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
-            profileAt = profileMark('serialize (backend round trip)', profileAt)
+            // Serialize current nodes to DSL - unless the text is already in hand.
+            //
+            // Uploading the document to have it serialized measured ~5.5 s for 10.5 MB: the
+            // IPC moves about 2 MB/s, and this runs on every edit. The text of the same
+            // document is ~250 KB, and the backend hands it back with each resolve, so a plain
+            // field edit can send that instead. Anything that changes the document outside
+            // this path clears the text, and then the document is uploaded once to rebuild it.
+            let content = this._currentText
+            if (typeof content === 'string') {
+                profileAt = profileMark('  reuse document text (nothing uploaded)', profileAt)
+            } else {
+                const nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
+                profileAt = profileMark('  normalize (clone + walk)', profileAt)
+                content = await this.serializeNodes(nodesForSerialization)
+                profileAt = profileMark('  serialize (IPC + backend)', profileAt)
+            }
             if (DEBUG_MODE) console.log('📤 Serialized content being sent to backend:', content.substring(0, 500))
             // Parse + resolve + evaluate on backend with selective updates
             // Build a map of changed field values (as OverseerValue-shaped objects) to send to backend
@@ -1140,7 +1213,18 @@ tab Main {
                 } catch(_) {}
                 return map
             })()
-            const resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
+            // Ask for the resolved document and its text together, so the next edit has the
+            // text to send and needs no upload. An older backend answers only with nodes; then
+            // the text is unknown and the next edit rebuilds it.
+            let resolved = null
+            const answer = await invoke('parse_overseer_content_selective_with_text', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+            if (answer && Array.isArray(answer.nodes)) {
+                resolved = answer.nodes
+                this._currentText = typeof answer.text === 'string' ? answer.text : null
+            } else {
+                resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
+                this._currentText = null
+            }
             profileAt = profileMark('resolve (backend round trip)', profileAt)
             // Another edit was made while this was in flight, and a newer request already
             // carries it. This answer describes the document as it was before that edit, so
@@ -1585,8 +1669,9 @@ tab Main {
             console.warn('❌ Selective reevaluation failed, falling back to full update:', error)
             // Fallback: do full resolution without selective DOM updates
             try {
-                const content = await invoke('serialize_overseer_nodes', { nodes: this.normalizeDocumentForSerialization(this.currentDocument) })
+                const content = await this.serializeNodes(this.normalizeDocumentForSerialization(this.currentDocument))
                 const resolved = await invoke('parse_overseer_content', { content })
+                this._currentText = content
                 if (this._isSupersededReevaluation(reevaluationTicket)) {
                     if (DEBUG_MODE) console.log('⏭️ Dropping superseded full update', reevaluationTicket)
                     return { domOnly: false, success: false, superseded: true }
@@ -1789,6 +1874,8 @@ tab Main {
                     if (this._scheduler) this._scheduler.inFlight = true
                     if (DEBUG_MODE) console.log('[SCHED] tick invoking backend')
                     const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
+                    // A tick can change the document, so the text no longer describes it.
+                    this._currentText = null
                     // Accept only shapes that look like a document
                     const looksLikeDocArray = Array.isArray(updated) && updated.every(n => n && typeof n === 'object')
                     const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)

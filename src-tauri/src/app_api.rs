@@ -148,6 +148,29 @@ pub(crate) fn find_node_by_path_mut_transparent<'a>(
     dfs(nodes, path_parts)
 }
 
+/// Write a value the user edited, and record that it is now the user's rather than the
+/// template's.
+///
+/// A field hydrated from a template carries `_template_*` markers, and the serializer skips
+/// those children unless they are marked as an explicit override - otherwise every instance
+/// would restate everything it inherited. Writing only `value` therefore produces a document
+/// that looks right in memory and loses the edit the moment it is serialized.
+fn write_edited_value(node: &mut OverseerNode, value: OverseerValue) {
+    node.parameters.insert("value".to_string(), value);
+    // The serializer replays a node verbatim from its source snapshot while the fingerprint
+    // it was parsed with still matches, which is what preserves comments and spacing. That
+    // fingerprint is stored on the node and says nothing about the value now held in memory,
+    // so an edited node would be written back out as the text it was read from. Clearing it
+    // is how the rest of the codebase marks a node as no longer matching its source.
+    node.source_fingerprint = None;
+    node.parameters.insert(
+        "_explicit_child_override".to_string(),
+        OverseerValue::Boolean(true),
+    );
+    node.parameters
+        .insert("_override_present".to_string(), OverseerValue::Boolean(true));
+}
+
 pub(crate) fn set_field_value_by_path(
     nodes: &mut [OverseerNode],
     path: &str,
@@ -159,12 +182,12 @@ pub(crate) fn set_field_value_by_path(
     }
     // Try strict first
     if let Some(node) = find_node_by_path_mut(nodes, &path_parts) {
-        node.parameters.insert("value".to_string(), value);
+        write_edited_value(node, value);
         return Ok(());
     }
     // Fallback: transparency-aware
     if let Some(node) = find_node_by_path_mut_transparent(nodes, &path_parts) {
-        node.parameters.insert("value".to_string(), value);
+        write_edited_value(node, value);
         return Ok(());
     }
     Err(OverseerError::ValidationError(format!(
@@ -281,6 +304,31 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
         }
         Err(e) => Err(OverseerError::ParseError(format!("Parse error: {}", e))),
     }
+}
+
+
+/// A resolved document together with its serialized text.
+///
+/// The caller needs both: the nodes to render, and the text to send back as the basis for the
+/// next edit. Returning the text here is what lets the caller stop uploading the document -
+/// serializing it costs about 25 ms on the machine that already holds it, against seconds to
+/// move it across the IPC boundary.
+#[derive(serde::Serialize)]
+pub struct ResolvedDocument {
+    pub nodes: Vec<OverseerNode>,
+    pub text: String,
+}
+
+pub fn resolve_selective_with_text(
+    content: String,
+    changed_fields: Vec<String>,
+    changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
+) -> Result<ResolvedDocument> {
+    let nodes = resolve_selective(content, changed_fields, changed_field_values)?;
+    let text = OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
+        OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
+    })?;
+    Ok(ResolvedDocument { nodes, text })
 }
 
 pub fn resolve_selective(

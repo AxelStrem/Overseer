@@ -16,7 +16,10 @@ path = "src/lib.rs"
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.0.0", features = [] }
+# "devtools" so the inspector is available in release builds too. Tauri enables it for debug
+# builds on its own, but performance has to be measured in release, which is exactly where
+# the timings need reading. Drop this feature before shipping a build to anyone else.
+tauri = { version = "2.0.0", features = ["devtools"] }
 tauri-plugin-dialog = "2.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -103,6 +103,12 @@ function installBackend(delayMs) {
       installBackend.lastSent = deepClone(args.nodes)
       return 'DOC'
     }
+    // The document arrives as raw UTF-8 JSON bytes rather than a command argument, because
+    // the JSON IPC costs seconds on a large document. Decode it as the backend does.
+    if (cmd === 'serialize_overseer_nodes_raw') {
+      installBackend.lastSent = JSON.parse(new TextDecoder().decode(args))
+      return 'DOC'
+    }
     if (cmd === 'parse_overseer_content_selective' || cmd === 'parse_overseer_content') {
       // Answer from what the frontend sent at the time of this call, as the backend does.
       const answer = deepClone(installBackend.lastSent || [])
