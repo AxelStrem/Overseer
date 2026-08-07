@@ -307,6 +307,96 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
 }
 
 
+
+
+/// A guarded field and the value the document authored for it.
+///
+/// `value` absent means the override existed only in this session and should not be written
+/// at all.
+#[derive(serde::Deserialize)]
+pub struct GuardedRevert {
+    pub path: String,
+    #[serde(default)]
+    pub value: Option<OverseerValue>,
+}
+
+/// Serialize a document held as text, restoring guarded fields to what the document authored.
+///
+/// `mutable="guarded"` means a field can be changed in the open document and the change is
+/// never written to disk - navigating days in the calorie tracker is the motivating case. The
+/// text a caller holds comes from resolving *with* those changes applied, because that is how
+/// the view updates, so the text used for resolving and the text to be saved legitimately
+/// differ. The difference is a handful of fields, and they travel here rather than the caller
+/// sending back the whole document to be serialized.
+pub fn save_document_from_text(content: String, guarded: Vec<GuardedRevert>) -> Result<String> {
+    match parse_document(&content) {
+        Ok((_rem, mut nodes)) => {
+            resolver::resolve_document(&mut nodes);
+            for revert in guarded {
+                let parts: Vec<&str> = revert.path.split('/').filter(|p| !p.is_empty()).collect();
+                let node = match find_node_by_path_mut(&mut nodes, &parts) {
+                    Some(n) => Some(n),
+                    None => find_node_by_path_mut_transparent(&mut nodes, &parts),
+                };
+                if let Some(node) = node {
+                    match revert.value {
+                        Some(value) => {
+                            node.parameters.insert("value".to_string(), value);
+                        }
+                        None => {
+                            node.parameters.remove("value");
+                        }
+                    }
+                    // The text this was parsed from holds the edited value, so the node no
+                    // longer matches the source it would otherwise be replayed from. No
+                    // override marker: this value belongs to the document, not to the user.
+                    node.source_fingerprint = None;
+                }
+            }
+            OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
+                OverseerError::SerializationError(format!("Failed to serialize document: {}", e))
+            })
+        }
+        // Refusing to write is worse than writing exactly what the caller asked for.
+        Err(_) => Ok(content),
+    }
+}
+
+/// Run an event against a document given as text, returning the result and its new text.
+///
+/// The caller used to send the document itself, which on a large one costs seconds: the IPC
+/// moves a couple of MB per second and the document is the biggest thing in the system. It
+/// already holds the text from the previous resolve, and the text is two orders of magnitude
+/// smaller, so that is what travels now. Rust owns the document; the caller owns a view of it.
+pub fn execute_event_on_text(
+    content: String,
+    node_path: Vec<String>,
+    event_name: String,
+) -> Result<ResolvedDocument> {
+    let mut nodes = load_document(content)?;
+    ActionExecutor::execute_event(&mut nodes, &node_path, &event_name)?;
+    with_text(nodes)
+}
+
+/// A timer sweep over a document given as text.
+pub fn tick_on_text(content: String) -> Result<ResolvedDocument> {
+    let mut nodes = load_document(content)?;
+    ActionExecutor::tick(&mut nodes)?;
+    with_text(nodes)
+}
+
+/// When the next timer in a document given as text is due.
+pub fn next_due_ms_on_text(content: String) -> Result<Option<i64>> {
+    Ok(ActionExecutor::next_due_ms(&load_document(content)?))
+}
+
+fn with_text(nodes: Vec<OverseerNode>) -> Result<ResolvedDocument> {
+    let text = OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
+        OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
+    })?;
+    Ok(ResolvedDocument { nodes, text })
+}
+
 /// A resolved document together with its serialized text.
 ///
 /// The caller needs both: the nodes to render, and the text to send back as the basis for the
@@ -324,11 +414,7 @@ pub fn resolve_selective_with_text(
     changed_fields: Vec<String>,
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<ResolvedDocument> {
-    let nodes = resolve_selective(content, changed_fields, changed_field_values)?;
-    let text = OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
-        OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
-    })?;
-    Ok(ResolvedDocument { nodes, text })
+    with_text(resolve_selective(content, changed_fields, changed_field_values)?)
 }
 
 pub fn resolve_selective(

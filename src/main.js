@@ -119,6 +119,42 @@ export class OverseerApp {
         return await invoke('serialize_overseer_nodes', { nodes })
     }
 
+    // Guarded fields, with the value the document authored for each.
+    //
+    // `mutable="guarded"` means a change stays in the open document and never reaches disk.
+    // The text held for the next interaction comes from resolving *with* those changes - that
+    // is how navigating a day updates the view - so it cannot be saved as it stands. This is
+    // the same restoration normalizeDocumentForSerialization performs, expressed as the few
+    // fields that differ rather than as a whole document to be serialized.
+    //
+    // Segments carry an ordinal when siblings share a name, so a path through several unnamed
+    // wrappers still names one node.
+    collectGuardedReverts(doc) {
+        const out = []
+        const isTrue = (v) => v === true || (v && typeof v === 'object' && v.Boolean === true)
+        const visit = (nodes, prefix) => {
+            const seen = new Map()
+            for (const n of nodes || []) {
+                if (!n || typeof n !== 'object') continue
+                const name = n.name || ''
+                const ordinal = seen.get(name) || 0
+                seen.set(name, ordinal + 1)
+                const path = prefix.concat(ordinal === 0 ? name : `${name}#${ordinal}`)
+                const p = n.parameters || {}
+                if (isTrue(p._guarded_edit)) {
+                    if (isTrue(p._guarded_was_new_override)) {
+                        out.push({ path: path.join('/'), value: null })
+                    } else if (p._guarded_original_value !== undefined) {
+                        out.push({ path: path.join('/'), value: p._guarded_original_value })
+                    }
+                }
+                if (Array.isArray(n.children)) visit(n.children, path)
+            }
+        }
+        visit(Array.isArray(doc) ? doc : [doc], [])
+        return out
+    }
+
     normalizeDocumentForSerialization(doc) {
         // Deep clone helper (prefer structuredClone when available)
         const deepClone = (obj) => {
@@ -438,10 +474,21 @@ tab Main {
                 }
             } catch(_) { /* non-fatal safeguard */ }
             
-            // Serialize the current document state to Overseer DSL format (always serialize to keep state in sync for tests)
-            const _nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
-            try { if (typeof this._testHook_beforeSerialize === 'function') this._testHook_beforeSerialize(_nodesForSerialization) } catch(_) { /* test-only hook */ }
-            const content = await this.serializeNodes(_nodesForSerialization)
+            // Write the text already in hand rather than uploading the document to be
+            // serialized - the same saving the edit path makes, since the IPC moves a couple
+            // of MB per second. Guarded fields are the one thing the text gets wrong: it
+            // came from resolving with their UI-only values applied, so the values the
+            // document authored travel alongside and are restored before writing.
+            const guarded = typeof this._currentText === 'string'
+                ? this.collectGuardedReverts(this.currentDocument)
+                : null
+            let content = this._currentText
+            let savedFromText = typeof content === 'string'
+            if (!savedFromText) {
+                const _nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
+                try { if (typeof this._testHook_beforeSerialize === 'function') this._testHook_beforeSerialize(_nodesForSerialization) } catch(_) { /* test-only hook */ }
+                content = await this.serializeNodes(_nodesForSerialization)
+            }
 
             // If no file path is set yet, treat this as a dry-run serialization only
             if (!this.currentFile) {
@@ -452,8 +499,17 @@ tab Main {
                 return
             }
 
-            // If we have original raw text, use the merge-sav e API to preserve comments/whitespace
-            if (this._originalText != null) {
+            if (savedFromText) {
+                await invoke('save_overseer_file_from_text', {
+                    path: this.currentFile,
+                    content,
+                    guarded
+                })
+                try {
+                    this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                } catch (_) { /* non-fatal */ }
+            } else if (this._originalText != null) {
+                // If we have original raw text, use the merge-save API to preserve comments/whitespace
                 await invoke('save_overseer_file_with_original', {
                     path: this.currentFile,
                     regenerated: content,
@@ -1846,7 +1902,14 @@ tab Main {
             if (DEBUG_MODE) console.log('[SCHED] document has no timers; idle')
             return
         }
-        try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
+        // The text describes the document and is a fraction of its size, so ask with that
+        // when it is known; the document itself only travels when it is not.
+        if (typeof this._currentText === 'string') {
+            try { nextMs = await invoke('get_next_timer_due_ms_from_text', { content: this._currentText }) } catch(_) { nextMs = null }
+        }
+        if (nextMs == null) {
+            try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
+        }
         if (nextMs == null) nextMs = findNextDue(this.currentDocument)
                 // With dependency tracking and live UI timers, periodic full refreshes are no longer needed.
                 // If there are no timers due, stay idle (no background refresh to avoid flicker/scroll resets).
@@ -1873,9 +1936,20 @@ tab Main {
                     if (this._scheduler && this._scheduler.inFlight) { if (DEBUG_MODE) console.log('[SCHED] tick skipped (in flight)'); return }
                     if (this._scheduler) this._scheduler.inFlight = true
                     if (DEBUG_MODE) console.log('[SCHED] tick invoking backend')
-                    const updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
-                    // A tick can change the document, so the text no longer describes it.
-                    this._currentText = null
+                    let updated = null
+                    if (typeof this._currentText === 'string') {
+                        const answer = await invoke('scheduler_tick_with_text', { content: this._currentText }).catch(() => null)
+                        if (answer && Array.isArray(answer.nodes)) {
+                            updated = answer.nodes
+                            // The tick may have changed the document; this text describes the result.
+                            this._currentText = typeof answer.text === 'string' ? answer.text : null
+                        }
+                    }
+                    if (updated == null) {
+                        updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
+                        // A tick can change the document, so the text no longer describes it.
+                        this._currentText = null
+                    }
                     // Accept only shapes that look like a document
                     const looksLikeDocArray = Array.isArray(updated) && updated.every(n => n && typeof n === 'object')
                     const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)

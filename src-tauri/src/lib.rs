@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod addressing;
 pub mod app_api;
 pub mod dependency_tracker;
 pub mod docmgr;

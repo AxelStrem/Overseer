@@ -4867,11 +4867,37 @@ export class OverseerRenderer {
 
         // Materialize before reading the document below, so the event runs against a tree
         // that actually contains the target.
+        // Materializing changes the document here, so the text the app holds stops describing
+        // it and this event has to carry the document itself.
+        let materializedForThisEvent = false
+        let nextText = null
         if (Array.isArray(path) && path.includes('<phantom>')) {
             const realPath = await this._materializePhantomForEvent(element)
             if (realPath) path = realPath
+            materializedForThisEvent = true
         }
     try { if (DEBUG_MODE) console.debug('[Overseer] emitEvent', eventName, 'path=', path) } catch(_) {}
+
+        // Don't make the trip when nothing will run.
+        //
+        // The backend answers an event by looking for a child `on <event>` block on the owner
+        // node; finding none, it returns the document untouched. Asking anyway means uploading
+        // the entire document - measured at ~5.5 s for 10.5 MB, since the IPC moves a couple
+        // of MB per second - to be told that nothing happened. Every field edit emits a
+        // 'change' event, so a document that handles none pays this on every edit.
+        //
+        // The check mirrors the backend's own rule, including its one implicit case: a mount
+        // acts on 'load'/'unload' without declaring a handler.
+        const handlesEvent = (n) => {
+            const kids = n && Array.isArray(n.children) ? n.children : []
+            return kids.some(c => c && (c.node_type || c.type) === 'on' && c.name === eventName)
+        }
+        const isImplicitMountEvent = node && (node.node_type || node.type) === 'mount'
+            && (eventName === 'load' || eventName === 'unload')
+        if (!isImplicitMountEvent && !handlesEvent(node)) {
+            if (DEBUG_MODE) console.debug('[Overseer] no handler for', eventName, '- skipping round trip')
+            return
+        }
         // Guard: ensure nodes is an array (backend expects Vec<OverseerNode> root or serialized map)
         let nodesArg = window.app.currentDocument
         if (nodesArg && !Array.isArray(nodesArg)) {
@@ -4949,14 +4975,43 @@ export class OverseerRenderer {
                 if (Array.isArray(n.children)) copy.children = n.children.map(ch => sanitizeNode(ch)).filter(Boolean)
                 return copy
             }
-            const sanitized = Array.isArray(nodesArg) ? nodesArg.map(n=>sanitizeNode(n)).filter(Boolean) : []
-            updated = await invoke('execute_overseer_event', {
-                nodes: sanitized,
-                node_path: path,
-                nodePath: path, // provide camelCase variant for environments expecting it
-                event_name: eventName,
-                eventName // camelCase variant
-            })
+            // Send the document's text rather than the document.
+            //
+            // Uploading it measured ~5.5 s for 10.5 MB, since the IPC moves a couple of MB
+            // per second - the same cost that was removed from the edit path. Rust owns the
+            // document and rebuilds it from the text, which is two orders of magnitude
+            // smaller. The text is unknown right after something restructured the document
+            // client-side (materializing a phantom row, above), and then the document still
+            // has to travel, because the text does not yet describe it.
+            const knownText = (!materializedForThisEvent && typeof window.app._currentText === 'string')
+                ? window.app._currentText
+                : null
+            if (knownText !== null) {
+                const answer = await invoke('execute_overseer_event_with_text', {
+                    content: knownText,
+                    node_path: path,
+                    nodePath: path,
+                    event_name: eventName,
+                    eventName
+                }).catch((e) => {
+                    if (DEBUG_MODE) console.warn('[Overseer] text-driven event failed; sending the document', e)
+                    return null
+                })
+                if (answer && Array.isArray(answer.nodes)) {
+                    updated = answer.nodes
+                    nextText = typeof answer.text === 'string' ? answer.text : null
+                }
+            }
+            if (updated === undefined || updated === null) {
+                const sanitized = Array.isArray(nodesArg) ? nodesArg.map(n=>sanitizeNode(n)).filter(Boolean) : []
+                updated = await invoke('execute_overseer_event', {
+                    nodes: sanitized,
+                    node_path: path,
+                    nodePath: path, // provide camelCase variant for environments expecting it
+                    event_name: eventName,
+                    eventName // camelCase variant
+                })
+            }
         } catch(err) {
             // Attach additional context for debugging invalid args issues
             try { console.warn('[Overseer] execute_overseer_event failed', err, { eventName, path, nodesType: typeof nodesArg, sampleNode: nodesArg && nodesArg[0] && nodesArg[0].name }) } catch(_) {}
@@ -4967,9 +5022,10 @@ export class OverseerRenderer {
         const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)
         if (looksLikeDocArray || looksLikeDocObject) {
             const newDoc = looksLikeDocArray ? updated : updated.children
-            // An event can restructure the document, so any text the app was holding for
-            // the next edit no longer describes it and must be rebuilt.
-            try { window.app._currentText = null } catch(_) {}
+            // An event can restructure the document. When the backend returned the new text
+            // with it, that text describes the result and the next interaction can use it;
+            // otherwise the app has no accurate text and must rebuild it once.
+            try { window.app._currentText = nextText } catch(_) {}
             const oldDoc = window.app.currentDocument
             // Tag any backend-driven changes under mutable=guarded so they remain UI-only until save
             try { this._tagGuardedChangesAfterBackendUpdate(oldDoc, newDoc) } catch(_) {}

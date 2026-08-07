@@ -3,6 +3,7 @@
 
 use tauri::command;
 
+mod addressing;
 mod actions;
 mod app_api;
 mod dependency_tracker;
@@ -68,6 +69,20 @@ async fn save_overseer_file(path: String, content: String) -> Result<()> {
             e
         ))),
     }
+}
+
+
+/// Save a document the caller holds as text, restoring guarded fields to what was authored.
+#[command]
+async fn save_overseer_file_from_text(
+    path: String,
+    content: String,
+    guarded: Option<Vec<app_api::GuardedRevert>>,
+) -> Result<()> {
+    let text = app_api::save_document_from_text(content, guarded.unwrap_or_default())?;
+    FileOperations::write_file(&path, &text)
+        .await
+        .map_err(|e| OverseerError::IoError(format!("Failed to save file: {}", e)))
 }
 
 #[command]
@@ -151,6 +166,29 @@ async fn execute_overseer_event(
     Ok(nodes)
 }
 
+
+/// `execute_overseer_event` driven by the document's text rather than the document.
+#[command]
+async fn execute_overseer_event_with_text(
+    content: String,
+    node_path: Vec<String>,
+    event_name: String,
+) -> Result<app_api::ResolvedDocument> {
+    app_api::execute_event_on_text(content, node_path, event_name)
+}
+
+/// `scheduler_tick` driven by the document's text.
+#[command]
+async fn scheduler_tick_with_text(content: String) -> Result<app_api::ResolvedDocument> {
+    app_api::tick_on_text(content)
+}
+
+/// `get_next_timer_due_ms` driven by the document's text.
+#[command]
+async fn get_next_timer_due_ms_from_text(content: String) -> Result<Option<i64>> {
+    app_api::next_due_ms_on_text(content)
+}
+
 #[command]
 async fn scheduler_tick(mut nodes: Vec<OverseerNode>) -> Result<Vec<OverseerNode>> {
     // Run a timer sweep; this may mutate the document and re-resolve inside
@@ -222,6 +260,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_overseer_file,
             save_overseer_file,
+            save_overseer_file_from_text,
             save_overseer_file_with_original,
             serialize_overseer_nodes,
             serialize_overseer_nodes_raw,
@@ -230,6 +269,9 @@ fn main() {
             parse_overseer_content_selective_with_text,
             find_overseer_files,
             execute_overseer_event,
+            execute_overseer_event_with_text,
+            scheduler_tick_with_text,
+            get_next_timer_due_ms_from_text,
             scheduler_tick,
             get_next_timer_due_ms
         ])

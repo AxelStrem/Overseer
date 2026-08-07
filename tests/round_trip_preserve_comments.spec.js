@@ -88,6 +88,11 @@ describe('Round-trip save preserves comments around link proxies', () => {
         // Return a canonical serialization missing comments (simplified)
         return Promise.resolve('Root {\n    SelectedWeightRecord(link=/Weights[key=\"d2025-09-23\"]/amount) {\n        list intake(hidden=false)\n    }\n    Weights(entry=<WeightRecord>, key=id) {\n        - WeightRecord {\n            id = \"d2025-09-23\"\n            amount = 180\n            intake {\n                calories = 2000\n            }\n        }\n    }\n}\n')
       }
+      // Saving now writes the text the app already holds; only the command differs.
+      if (cmd === 'save_overseer_file_from_text') {
+        lastSavedMerged = args.content
+        return Promise.resolve(null)
+      }
       if (cmd === 'save_overseer_file_with_original') {
         lastSavedMerged = args.regenerated // In actual flow merge happens rust-side; here we just capture
         return Promise.resolve(null)

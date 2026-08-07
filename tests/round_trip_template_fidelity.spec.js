@@ -78,6 +78,11 @@ describe('Round-trip template fidelity (no unintended materialization)', () => {
       if (cmd === 'serialize_overseer_nodes') {
         return Promise.resolve(ORIGINAL_SOURCE)
       }
+      // Saving now writes the text the app already holds; only the command differs.
+      if (cmd === 'save_overseer_file_from_text') {
+        lastSerializedText = args.content
+        return Promise.resolve(null)
+      }
       if (cmd === 'save_overseer_file_with_original') {
         lastSerializedText = args.regenerated
         return Promise.resolve(null)

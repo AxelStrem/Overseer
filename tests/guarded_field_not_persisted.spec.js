@@ -189,4 +189,52 @@ describe('a guarded field changed by an action', () => {
       `after two changes the authored value must still be restored, not the intermediate one - got ${JSON.stringify(saved.parameters.value)}`
     ).toEqual({ Formula: 'today()' })
   })
+
+  it('travels as a revert when the save sends text rather than the document', async () => {
+    // The path that now runs: saving writes the text the app holds, which came from resolving
+    // *with* the navigated date applied. The authored value has to travel alongside it, or the
+    // navigation would be written to disk.
+    const { invoke } = await import('@tauri-apps/api/core')
+    let savedGuarded = null
+    let savedContent = null
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === 'execute_overseer_event_with_text') {
+        const doc = deepClone(buildDoc())
+        const node = findByName(doc, 'selected_date')
+        node.parameters.value = { String: '2026-08-05' }
+        node.parameters._computed_value = { String: '2026-08-05' }
+        return Promise.resolve({ nodes: doc, text: 'TEXT-WITH-NAVIGATED-DATE' })
+      }
+      if (cmd === 'save_overseer_file_from_text') {
+        savedContent = args.content
+        savedGuarded = args.guarded
+        return Promise.resolve(null)
+      }
+      if (cmd === 'load_overseer_file') return Promise.resolve('DOC')
+      return Promise.resolve(null)
+    })
+
+    const app = new OverseerApp()
+    app.currentDocument = buildDoc()
+    app.currentFile = 'C:/tmp/tracker.os'
+    app._currentText = 'TEXT-BEFORE'
+    app.renderer.renderDocument(app.currentDocument)
+
+    const prevEl = Array.from(document.querySelectorAll('[data-path]')).find(el => {
+      try { return JSON.parse(el.dataset.path || '[]').slice(-1)[0] === 'Prev' } catch { return false }
+    })
+    const btn = prevEl.matches('button') ? prevEl : prevEl.querySelector('button')
+    btn.dispatchEvent(new Event('click', { bubbles: true }))
+    await new Promise(r => setTimeout(r, 30))
+
+    await app.saveFile()
+
+    expect(savedContent, 'the save should send the text the app holds').toBe('TEXT-WITH-NAVIGATED-DATE')
+    expect(Array.isArray(savedGuarded), 'guarded reverts should accompany the text').toBe(true)
+    const revert = (savedGuarded || []).find(g => g.path.endsWith('selected_date'))
+    expect(
+      revert && revert.value,
+      `the authored value must travel with the save, got ${JSON.stringify(savedGuarded)}`
+    ).toEqual({ Formula: 'today()' })
+  })
 })
