@@ -128,3 +128,144 @@ impl DocumentRoot {
             .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))
     }
 }
+
+/// Pull a string argument, accepting either spelling the frontend might send.
+fn arg_str(args: &serde_json::Value, names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .find_map(|n| args.get(*n).and_then(|v| v.as_str()).map(|s| s.to_string()))
+}
+
+fn arg_strings(args: &serde_json::Value, names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .find_map(|n| args.get(*n).and_then(|v| v.as_array()))
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn from_value<T: serde::de::DeserializeOwned>(
+    args: &serde_json::Value,
+    name: &str,
+) -> std::result::Result<T, RequestError> {
+    let value = args
+        .get(name)
+        .cloned()
+        .ok_or_else(|| RequestError::Rejected(format!("'{}' is required", name)))?;
+    serde_json::from_value(value)
+        .map_err(|e| RequestError::Rejected(format!("'{}' is not what it should be: {}", name, e)))
+}
+
+fn as_json<T: serde::Serialize>(value: T) -> std::result::Result<serde_json::Value, RequestError> {
+    serde_json::to_value(value)
+        .map_err(|e| RequestError::Failed(format!("could not encode the answer: {}", e)))
+}
+
+impl DocumentRoot {
+    /// Answer one of the commands the frontend makes.
+    ///
+    /// The frontend speaks to the desktop app through a single call, so it can speak to this
+    /// the same way and needs no knowledge of which it is talking to. The commands are the
+    /// desktop's, handled by the same `app_api` code, which is what stops a document behaving
+    /// differently depending on where it is opened.
+    ///
+    /// `document` names which document the caller is working on. It is required for anything
+    /// that resolves, because a `mount` is written relative to the document that declares it,
+    /// and a server has several in play - unlike the app, it cannot assume.
+    pub fn command(
+        &self,
+        document: Option<&str>,
+        cmd: &str,
+        args: &serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, RequestError> {
+        // Writing is a separate matter from reading, and this server does not do it yet.
+        // Refused explicitly rather than left to fail somewhere less obvious.
+        if cmd.starts_with("save_") {
+            return Err(RequestError::Rejected(
+                "this server is read-only; changes cannot be saved".into(),
+            ));
+        }
+
+        let dir = match document {
+            Some(name) => Some(
+                self.resolve(name)?
+                    .parent()
+                    .map(|d| d.to_path_buf())
+                    .ok_or_else(|| RequestError::Failed("document has no directory".into()))?,
+            ),
+            None => None,
+        };
+        let named = document.is_some();
+
+        DocumentManager::with_document(dir, || match cmd {
+            "load_overseer_file" => {
+                let path = arg_str(args, &["path"])
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                let file = self.resolve(&path)?;
+                let text = std::fs::read_to_string(&file)
+                    .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", path, e)))?;
+                Ok(serde_json::Value::String(text))
+            }
+            "parse_overseer_content" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                if !named {
+                    return Err(RequestError::Rejected(
+                        "say which document this is, so what it mounts can be found".into(),
+                    ));
+                }
+                as_json(app_api::load_document(content).map_err(|e| {
+                    RequestError::Failed(format!("could not resolve the document: {:?}", e))
+                })?)
+            }
+            "parse_overseer_content_selective_update" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                let fields = arg_strings(args, &["changedFields", "changed_fields"]);
+                let values = args
+                    .get("changedFieldValues")
+                    .or_else(|| args.get("changed_field_values"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                as_json(
+                    app_api::resolve_selective_update(content, fields, values).map_err(|e| {
+                        RequestError::Failed(format!("could not resolve the edit: {:?}", e))
+                    })?,
+                )
+            }
+            "execute_overseer_event_update" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                let path = arg_strings(args, &["node_path", "nodePath"]);
+                let event = arg_str(args, &["event_name", "eventName"])
+                    .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
+                as_json(
+                    app_api::execute_event_update(content, path, event).map_err(|e| {
+                        RequestError::Failed(format!("could not run the event: {:?}", e))
+                    })?,
+                )
+            }
+            "serialize_overseer_nodes" | "serialize_overseer_nodes_raw" => {
+                let nodes: Vec<OverseerNode> = from_value(args, "nodes")?;
+                as_json(
+                    crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
+                        RequestError::Failed(format!("could not serialize the document: {}", e))
+                    })?,
+                )
+            }
+            "get_next_timer_due_ms_from_text" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                as_json(app_api::next_due_ms_on_text(content).map_err(|e| {
+                    RequestError::Failed(format!("could not read the timers: {:?}", e))
+                })?)
+            }
+            "get_next_timer_due_ms" => Ok(serde_json::Value::Null),
+            "find_overseer_files" => as_json(self.list()),
+            other => Err(RequestError::Rejected(format!("no command '{}'", other))),
+        })
+    }
+}
