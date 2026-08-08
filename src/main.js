@@ -1278,8 +1278,11 @@ tab Main {
             // Store the old document state before backend processing
             const profileStart = (typeof performance !== 'undefined' ? performance.now() : Date.now())
             let profileAt = profileStart
-            const oldDocument = JSON.parse(JSON.stringify(this.currentDocument))
-            profileAt = profileMark('clone document', profileAt)
+            // The pre-answer state, for working out which parts of the page to refresh. Only
+            // the whole-document path needs it, and cloning the document measured ~250 ms on
+            // a large one, so it is taken there rather than on every edit. Nothing has moved
+            // in between: a newer edit would have superseded this request and returned above.
+            let oldDocument = null
 
             // Serialize current nodes to DSL - unless the text is already in hand.
             //
@@ -1343,6 +1346,8 @@ tab Main {
             }
 
             // No baseline: the whole document is the answer, as before.
+            oldDocument = JSON.parse(JSON.stringify(this.currentDocument))
+            profileAt = profileMark('clone document', profileAt)
             let resolved = null
             const answer = (update && Array.isArray(update.nodes))
                 ? { nodes: update.nodes, text: update.text }
