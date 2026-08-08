@@ -22,7 +22,7 @@ use axum::routing::post;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::{routing::get, Router};
-use overseer::server::{DocumentRoot, RequestError};
+use overseer::server::{refuse_to_start, Access, DocumentRoot, RequestError};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,6 +32,7 @@ struct Service {
     documents: Arc<DocumentRoot>,
     /// Where the built frontend lives, when one is being served.
     frontend: Option<Arc<std::path::PathBuf>>,
+    access: Arc<Access>,
 }
 
 /// What lets the frontend run against this server rather than the desktop app.
@@ -119,6 +120,78 @@ async fn index(State(service): State<Service>) -> Response {
     }
 }
 
+
+/// The name of the cookie a browser carries once it has presented the token.
+const TOKEN_COOKIE: &str = "overseer_token";
+
+fn cookie_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())?
+        .split(';')
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(name, _)| *name == TOKEN_COOKIE)
+        .map(|(_, value)| value.to_string())
+}
+
+/// Refuse anything that has not presented the token.
+///
+/// Applied to everything, including the frontend's own files: the point is that a stranger who
+/// finds the port learns nothing, and serving them the application would be a start.
+async fn require_access(
+    State(service): State<Service>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let headers = request.headers();
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let cookie = cookie_token(headers);
+    if service.access.permits(bearer.as_deref(), cookie.as_deref()) {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "a token is required" })),
+    )
+        .into_response()
+}
+
+/// Exchange a token in the address for a cookie, so a browser can follow links afterwards.
+///
+/// This runs before the check above, because presenting the token is how a browser gets in.
+async fn sign_in(
+    State(service): State<Service>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let presented = params.get("token").map(|s| s.as_str());
+    if !service.access.permits(None, presented) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "that is not the token" })),
+        )
+            .into_response();
+    }
+    let next = params.get("next").map(|s| s.as_str()).unwrap_or("/");
+    // Refuse to bounce anywhere but back into this server.
+    let next = if next.starts_with('/') && !next.starts_with("//") { next } else { "/" };
+    let cookie = format!(
+        // HttpOnly: no part of the page needs to read this, and nothing that cannot read it
+        // can leak it. SameSite=Strict: another site must not be able to ride the session.
+        "{}={}; Path=/; HttpOnly; SameSite=Strict",
+        TOKEN_COOKIE,
+        presented.unwrap_or_default()
+    );
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, next)
+        .header(header::SET_COOKIE, cookie)
+        .body(Body::empty())
+        .expect("static response")
+}
+
 /// Report what went wrong without describing the filesystem to whoever asked.
 fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match error {
@@ -167,12 +240,38 @@ async fn main() {
     let mut root = std::path::PathBuf::from("../examples");
     let mut frontend_dir = std::path::PathBuf::from("../dist");
     let mut port: u16 = 4747;
+    let mut bind: std::net::IpAddr = std::net::IpAddr::from([127, 0, 0, 1]);
+    // Read from the environment or a file rather than an argument: a command line ends up in
+    // shell history and in the process list, where a secret has no business being.
+    let mut token = std::env::var("OVERSEER_TOKEN").ok().filter(|t| !t.is_empty());
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--root" => {
                 if let Some(value) = args.next() {
                     root = std::path::PathBuf::from(value);
+                }
+            }
+            "--bind" => {
+                if let Some(value) = args.next() {
+                    match value.parse() {
+                        Ok(a) => bind = a,
+                        Err(_) => {
+                            eprintln!("--bind takes an address, got '{}'", value);
+                            std::process::exit(2);
+                        }
+                    }
+                }
+            }
+            "--token-file" => {
+                if let Some(value) = args.next() {
+                    match std::fs::read_to_string(&value) {
+                        Ok(t) => token = Some(t.trim().to_string()).filter(|t| !t.is_empty()),
+                        Err(e) => {
+                            eprintln!("cannot read the token from '{}': {}", value, e);
+                            std::process::exit(2);
+                        }
+                    }
                 }
             }
             "--frontend" => {
@@ -193,10 +292,21 @@ async fn main() {
             }
             other => {
                 eprintln!("unknown argument '{}'", other);
-                eprintln!("usage: overseer-server [--root DIR] [--frontend DIR] [--port N]");
+                eprintln!(
+                    "usage: overseer-server [--root DIR] [--frontend DIR] [--bind ADDR] [--port N] [--token-file PATH]"
+                );
                 std::process::exit(2);
             }
         }
+    }
+
+    let access = match token {
+        Some(t) => Access::with_token(t),
+        None => Access::unrestricted(),
+    };
+    if let Some(reason) = refuse_to_start(&bind, &access) {
+        eprintln!("{}", reason);
+        std::process::exit(2);
     }
 
     let documents = match DocumentRoot::new(&root) {
@@ -223,6 +333,13 @@ async fn main() {
         }
     };
 
+    let access = Arc::new(access);
+    let state = Service {
+        documents: documents.clone(),
+        frontend: frontend.clone(),
+        access: access.clone(),
+    };
+
     let mut app = Router::new()
         .route("/documents", get(list))
         // A name may contain directories, so it is matched to the end of the path.
@@ -234,13 +351,25 @@ async fn main() {
         // Everything else is the frontend's own assets.
         app = app.fallback_service(tower_http::services::ServeDir::new(dir.as_ref()));
     }
-    let app = app.with_state(Service {
-        documents,
-        frontend,
-    });
+    // `layer` rather than `route_layer`: the latter covers routes but not the fallback, which
+    // would have left the frontend's own files reachable without a token. A stranger who finds
+    // the port should not be handed the application, never mind what it can read.
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        require_access,
+    ));
+    // Presenting the token is how a browser gets in, so this sits outside that check.
+    let app = Router::new()
+        .route("/auth", get(sign_in))
+        .merge(app)
+        .with_state(state);
 
-    // Localhost only: see the note at the top of this file.
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::new(bind, port);
+    if access.is_restricted() {
+        println!("a token is required; a browser can present it once at /auth?token=...");
+    } else {
+        println!("no token set, so anything on this machine may read these documents");
+    }
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {

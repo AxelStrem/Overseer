@@ -269,3 +269,80 @@ impl DocumentRoot {
         })
     }
 }
+
+/// Who is allowed to ask.
+///
+/// One shared secret, which is the right size of mechanism for one person's documents. It is
+/// checked the same way for a browser and for an agent, so there is a single rule to reason
+/// about rather than a local exemption that quietly becomes the way in.
+#[derive(Clone, Default)]
+pub struct Access {
+    token: Option<String>,
+}
+
+/// Compare without letting the time taken say how much of the token was right.
+fn same_secret(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    // Length is not secret - it is visible from the request either way - but the contents are,
+    // so every byte is looked at regardless of where the first difference is.
+    let mut difference = (a.len() ^ b.len()) as u8;
+    for i in 0..a.len().max(b.len()) {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
+        difference |= x ^ y;
+    }
+    difference == 0
+}
+
+impl Access {
+    /// Open to anyone who can reach the port. Only defensible on loopback.
+    pub fn unrestricted() -> Self {
+        Self { token: None }
+    }
+
+    pub fn with_token(token: impl Into<String>) -> Self {
+        Self {
+            token: Some(token.into()),
+        }
+    }
+
+    pub fn is_restricted(&self) -> bool {
+        self.token.is_some()
+    }
+
+    /// Whether a request carrying these credentials may proceed.
+    ///
+    /// A browser cannot be asked to set a header on a pasted link, so a cookie counts too;
+    /// it is set once by visiting the address with the token and is what makes the document
+    /// readable in a tab thereafter.
+    pub fn permits(&self, bearer: Option<&str>, cookie: Option<&str>) -> bool {
+        let Some(expected) = self.token.as_deref() else {
+            return true;
+        };
+        let presented = bearer
+            .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+            .map(str::trim)
+            .or(cookie);
+        presented.map(|t| same_secret(t, expected)).unwrap_or(false)
+    }
+}
+
+/// Whether an address is one only this machine can reach.
+pub fn is_loopback(addr: &std::net::IpAddr) -> bool {
+    addr.is_loopback()
+}
+
+/// Why a server may not start, if it may not.
+///
+/// Reaching beyond this machine without a token would publish a personal record to whoever
+/// finds the port, so it is refused at startup rather than left as something to remember.
+pub fn refuse_to_start(bind: &std::net::IpAddr, access: &Access) -> Option<String> {
+    if !is_loopback(bind) && !access.is_restricted() {
+        return Some(format!(
+            "refusing to listen on {} without a token: set OVERSEER_TOKEN, or pass --token-file, \
+             or bind to 127.0.0.1 to keep this machine's documents on this machine",
+            bind
+        ));
+    }
+    None
+}
