@@ -1,4 +1,4 @@
-import { profiled } from './profile.js'
+import { PROFILE, profiled } from './profile.js'
 // Debug UI is disabled unless explicitly enabled via ?debug=1 (localStorage flag ignored)
 const DEBUG_MODE = (() => {
     try {
@@ -809,6 +809,36 @@ export class OverseerRenderer {
     /// Let charts animate again, for when a different document is opened.
     resetChartAnimations() {
         this._animatedCharts = new Set()
+    }
+
+    // Repaint just these nodes, rather than rebuilding the document around them.
+    //
+    // Rendering a large document measured about two seconds for 15,000 elements, and a field
+    // edit changes a couple of them. A node remembers where it was rendered, so the subtree
+    // can be replaced in place. A node that has never been rendered - or one whose place is
+    // unknown - means falling back to a full render, which is correct but is the thing being
+    // avoided, so it is worth knowing when it happens.
+    repaintNodes(nodes, document_) {
+        const doc = document_ || (window.app && window.app.currentDocument)
+        if (!doc || !Array.isArray(nodes) || nodes.length === 0) return false
+        for (const node of nodes) {
+            const path = node && node.__overseer_path
+            // Reported under the profiling flag rather than the debug one: falling back to a
+            // full render is the cost this exists to avoid, so it should be visible to whoever
+            // is measuring, and the debug flag needs a query string the desktop app has no way
+            // to set.
+            if (!Array.isArray(path) || path.length === 0) {
+                if (PROFILE) console.warn(`[profile] FULL RENDER: '${node && node.name}' has no rendered position`)
+                this.renderDocument(doc)
+                return false
+            }
+            if (!this.rerenderSubtree(doc, path)) {
+                if (PROFILE) console.warn(`[profile] FULL RENDER: '${node && node.name}' is not on screen at ${JSON.stringify(path)}`)
+                this.renderDocument(doc)
+                return false
+            }
+        }
+        return true
     }
 
     renderDocument(overseerDocument) {

@@ -3,8 +3,9 @@
 
 use tauri::command;
 
-mod addressing;
 mod actions;
+mod addressing;
+mod delta;
 mod app_api;
 mod dependency_tracker;
 mod docmgr;
@@ -144,6 +145,21 @@ async fn parse_overseer_content_selective_with_text(
     app_api::resolve_selective_with_text(content, changed_fields, changed_field_values)
 }
 
+
+/// Resolve an edit and answer with what changed, when that is possible.
+///
+/// The answer is the whole document today: ~14 MB for a large one, over an IPC that manages a
+/// couple of MB per second, and then rebuilt element by element. A field edit changes a couple
+/// of nodes, and this says so instead.
+#[command]
+async fn parse_overseer_content_selective_update(
+    content: String,
+    changed_fields: Vec<String>,
+    changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
+) -> Result<app_api::ResolvedUpdate> {
+    app_api::resolve_selective_update(content, changed_fields, changed_field_values)
+}
+
 #[command]
 async fn find_overseer_files(_directory: String) -> Result<Vec<String>> {
     // For now, return empty vector - this function needs to be implemented
@@ -267,6 +283,7 @@ fn main() {
             parse_overseer_content,
             parse_overseer_content_selective,
             parse_overseer_content_selective_with_text,
+            parse_overseer_content_selective_update,
             find_overseer_files,
             execute_overseer_event,
             execute_overseer_event_with_text,

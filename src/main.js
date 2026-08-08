@@ -155,6 +155,54 @@ export class OverseerApp {
         return out
     }
 
+    // Apply a described change to the document in hand, returning the nodes to repaint.
+    //
+    // Changes are located by child index rather than by name, so none of the addressing the
+    // backend uses to match nodes across two resolves has to be reimplemented here, where it
+    // could drift. An index path is valid in this document because a change is never reported
+    // below an ancestor whose shape moved.
+    applyDocumentChanges(doc, changes) {
+        const nodeAt = (path) => {
+            let list = doc
+            let node = null
+            for (const index of path) {
+                node = list && list[index]
+                if (!node) return null
+                list = node.children || []
+            }
+            return node
+        }
+        const listFor = (path) => (path.length <= 1 ? doc : (nodeAt(path.slice(0, -1)) || {}).children)
+        const touched = []
+        const note = (node) => { if (node && !touched.includes(node)) touched.push(node) }
+
+        for (const change of changes || []) {
+            if (change.kind === 'parameters') {
+                const node = nodeAt(change.path)
+                if (!node) continue
+                node.parameters = change.parameters
+                note(node)
+            } else if (change.kind === 'subtree') {
+                const list = listFor(change.path)
+                if (!list) continue
+                list[change.path[change.path.length - 1]] = change.node
+                // The replaced node is new and has never been rendered, so the parent is what
+                // knows where it belongs on screen.
+                note(change.path.length <= 1 ? null : nodeAt(change.path.slice(0, -1)))
+            }
+        }
+        // Removals shift the indices of their later siblings, so they are applied from the end.
+        const removals = (changes || []).filter(c => c.kind === 'removed')
+        removals.sort((a, b) => b.path.join(',').localeCompare(a.path.join(','), undefined, { numeric: true }))
+        for (const change of removals) {
+            const list = listFor(change.path)
+            if (!list) continue
+            list.splice(change.path[change.path.length - 1], 1)
+            note(change.path.length <= 1 ? null : nodeAt(change.path.slice(0, -1)))
+        }
+        return touched
+    }
+
     normalizeDocumentForSerialization(doc) {
         // Deep clone helper (prefer structuredClone when available)
         const deepClone = (obj) => {
@@ -1269,11 +1317,36 @@ tab Main {
                 } catch(_) {}
                 return map
             })()
-            // Ask for the resolved document and its text together, so the next edit has the
-            // text to send and needs no upload. An older backend answers only with nodes; then
-            // the text is unknown and the next edit rebuilds it.
+            // Ask for what changed. The backend keeps the document it last produced, so it
+            // can describe an edit against it - a couple of nodes instead of the ~14 MB the
+            // whole document costs to move and to rebuild. It answers with the document only
+            // when it has no such baseline, which is the case right after something else
+            // changed the document out from under it.
+            const update = await invoke('parse_overseer_content_selective_update', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+            if (update && Array.isArray(update.changes)) {
+                this._currentText = typeof update.text === 'string' ? update.text : null
+                profileAt = profileMark(`resolve (${update.changes.length} changes)`, profileAt)
+                if (this._isSupersededReevaluation(reevaluationTicket)) {
+                    if (DEBUG_MODE) console.log('⏭️ Dropping superseded selective update', reevaluationTicket)
+                    return { domOnly: false, success: false, superseded: true }
+                }
+                const touched = this.applyDocumentChanges(this.currentDocument, update.changes)
+                profileAt = profileMark('  apply changes', profileAt)
+                try {
+                    this.renderer.repaintNodes(touched, this.currentDocument)
+                } catch (e) {
+                    console.error('Render error (repaint):', e)
+                    try { this.renderer.renderDocument(this.currentDocument) } catch(_) {}
+                }
+                profileMark('  repaint', profileAt)
+                return { domOnly: false, success: true }
+            }
+
+            // No baseline: the whole document is the answer, as before.
             let resolved = null
-            const answer = await invoke('parse_overseer_content_selective_with_text', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+            const answer = (update && Array.isArray(update.nodes))
+                ? { nodes: update.nodes, text: update.text }
+                : await invoke('parse_overseer_content_selective_with_text', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
             if (answer && Array.isArray(answer.nodes)) {
                 resolved = answer.nodes
                 this._currentText = typeof answer.text === 'string' ? answer.text : null

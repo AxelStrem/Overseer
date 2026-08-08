@@ -300,6 +300,9 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
             if ActionExecutor::preload_mounts(&mut nodes) {
                 resolver::resolve_document(&mut nodes);
             }
+            // The caller holds this text and this document, so the next interaction
+            // can be answered with a change rather than with the document.
+            remember(&content, &nodes);
             Ok(nodes)
         }
         Err(e) => Err(OverseerError::ParseError(format!("Parse error: {}", e))),
@@ -308,6 +311,92 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
 
 
 
+
+
+/// The last document that was resolved, with the text it was resolved from.
+///
+/// Describing a change needs the state it changed from. Rust owns the document, so it can
+/// simply keep the previous one rather than having the caller send it back - which is the
+/// whole point, since sending it back is what costs seconds.
+static LAST_RESOLVED: std::sync::Mutex<Option<(String, Vec<OverseerNode>)>> =
+    std::sync::Mutex::new(None);
+
+fn remember(text: &str, nodes: &[OverseerNode]) {
+    if let Ok(mut slot) = LAST_RESOLVED.lock() {
+        *slot = Some((text.to_string(), nodes.to_vec()));
+    }
+}
+
+
+/// Drop the remembered document.
+///
+/// Nothing depends on this for correctness - a baseline is only used when its text matches
+/// what the caller sent, so a stale one is ignored rather than misapplied. It exists so a
+/// closed document does not sit in memory, and so tests can start from a known state.
+pub fn forget_baseline() {
+    if let Ok(mut slot) = LAST_RESOLVED.lock() {
+        *slot = None;
+    }
+}
+
+/// A resolved document, described as a change where that was possible.
+#[derive(serde::Serialize)]
+pub struct ResolvedUpdate {
+    /// The text of the new document, for the caller to send with the next interaction.
+    pub text: String,
+    /// What changed, when the previous document was known.
+    pub changes: Option<Vec<crate::delta::DocumentChange>>,
+    /// The whole document, when it was not and there is nothing to describe a change against.
+    pub nodes: Option<Vec<OverseerNode>>,
+}
+
+/// Resolve an edit and answer with what changed rather than with the document.
+pub fn resolve_selective_update(
+    content: String,
+    changed_fields: Vec<String>,
+    changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
+) -> Result<ResolvedUpdate> {
+    // Take the baseline rather than copying it: it is about to be replaced either way, and on
+    // a large document a copy costs more than the diff it feeds. Only the document this text
+    // produced will do - anything else and the change would be described against a document
+    // the caller is not holding - so a baseline that does not match is put back untouched.
+    let baseline = LAST_RESOLVED.lock().ok().and_then(|mut slot| match slot.take() {
+        Some((text, nodes)) if text == content => Some(nodes),
+        other => {
+            *slot = other;
+            None
+        }
+    });
+
+    let resolved = resolve_selective(content, changed_fields, changed_field_values)?;
+    let text = OverseerFileHandler::serialize_nodes(&resolved).map_err(|e| {
+        OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
+    })?;
+    let changes = baseline.map(|before| crate::delta::diff(&before, &resolved));
+
+    match changes {
+        // The caller gets the changes, so the document itself can be handed to the cache
+        // rather than copied into it.
+        Some(changes) => {
+            if let Ok(mut slot) = LAST_RESOLVED.lock() {
+                *slot = Some((text.clone(), resolved));
+            }
+            Ok(ResolvedUpdate {
+                text,
+                changes: Some(changes),
+                nodes: None,
+            })
+        }
+        None => {
+            remember(&text, &resolved);
+            Ok(ResolvedUpdate {
+                text,
+                changes: None,
+                nodes: Some(resolved),
+            })
+        }
+    }
+}
 
 /// A guarded field and the value the document authored for it.
 ///
@@ -394,6 +483,9 @@ fn with_text(nodes: Vec<OverseerNode>) -> Result<ResolvedDocument> {
     let text = OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
         OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
     })?;
+    // This pairing is what the caller now holds, and the baseline the next change
+    // will be described against.
+    remember(&text, &nodes);
     Ok(ResolvedDocument { nodes, text })
 }
 

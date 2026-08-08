@@ -2027,6 +2027,16 @@ impl ActionExecutor {
         // Equality-aware override: don't mark as override if value is unchanged
         let same = node.parameters.get(&key).map_or(false, |v| v == &value);
         node.parameters.insert(key.clone(), value.clone());
+        if !same {
+            // The serializer replays a node from its source snapshot while the
+            // fingerprint it was parsed with still matches, and that fingerprint says
+            // nothing about what has since been written here. Leaving it means the
+            // node is written back out as the text it was read from, discarding what
+            // this action just did: a day-navigation button that writes
+            // date_add_days(selected_date, -1) would be replayed as its authored
+            // $(today()), so every click would move one day from today and no further.
+            node.source_fingerprint = None;
+        }
         // If overriding a parameter that had a template marker, remove the marker so it persists
         let marker = format!("_template_{}", key);
         if !same {

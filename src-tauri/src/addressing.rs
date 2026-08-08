@@ -91,6 +91,22 @@ fn segment(parent: Option<&OverseerNode>, siblings: &[OverseerNode], index: usiz
     }
 }
 
+
+/// The address segment of each immediate child of `parent`, in order.
+///
+/// The parent is required: it is what says whether these are entries of a keyed list, and a
+/// segment computed without it silently falls back to position.
+pub fn child_segments(parent: &OverseerNode) -> Vec<String> {
+    (0..parent.children.len())
+        .map(|i| segment(Some(parent), &parent.children, i))
+        .collect()
+}
+
+/// The address segment of each root node, in order.
+pub fn root_segments(nodes: &[OverseerNode]) -> Vec<String> {
+    (0..nodes.len()).map(|i| segment(None, nodes, i)).collect()
+}
+
 /// Visit every node with its address, outermost first.
 pub fn walk<'a, F: FnMut(&str, &'a OverseerNode)>(nodes: &'a [OverseerNode], visit: &mut F) {
     fn go<'a, F: FnMut(&str, &'a OverseerNode)>(
