@@ -15,7 +15,23 @@ pub struct DocumentId {
 /// the only thing an author can reasonably write - they know where their own files sit, not
 /// where the binary was launched from. Resolution therefore needs the document's own
 /// directory rather than the process working directory.
+///
+/// This one is process-wide, which is only defensible while exactly one document is open.
+/// It remains as the fallback for callers that have not said which document they mean;
+/// [`DocumentManager::with_document`] establishes the answer explicitly and takes precedence.
 static BASE_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+thread_local! {
+    /// The document an operation was told it is working on.
+    ///
+    /// Scoped rather than global so two documents can be resolved at the same time without
+    /// one deciding where the other's mounts live - the process-wide answer is a single slot,
+    /// and whichever loaded last would win. Resolving is synchronous work, and the scope is
+    /// handed a closure rather than a guard, so it cannot be left open across an await and
+    /// picked up by unrelated work on the same thread.
+    static SCOPED_BASE_DIR: std::cell::RefCell<Option<Option<PathBuf>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 #[derive(Default)]
 pub struct DocumentManager {}
@@ -40,9 +56,37 @@ impl DocumentManager {
         }
     }
 
+    /// Run `f` with the directory that document-relative paths resolve against.
+    ///
+    /// Nested calls stack, so a document that resolves another does not lose its own context
+    /// when the inner one finishes.
+    pub fn with_document<T>(base: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
+        let previous = SCOPED_BASE_DIR.with(|slot| slot.replace(Some(base)));
+        let result = f();
+        SCOPED_BASE_DIR.with(|slot| *slot.borrow_mut() = previous);
+        result
+    }
+
+    /// The directory of the document being worked on, if one was named.
+    pub fn scoped_base_dir() -> Option<Option<PathBuf>> {
+        SCOPED_BASE_DIR.with(|slot| slot.borrow().clone())
+    }
+
     /// Directory to resolve a document-relative path against.
+    ///
+    /// What the caller said takes precedence over what the process last happened to open.
     pub fn base_dir() -> Option<PathBuf> {
+        if let Some(scoped) = Self::scoped_base_dir() {
+            return scoped;
+        }
         BASE_DIR.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// The directory a document path implies, for handing to [`Self::with_document`].
+    pub fn dir_of(path: &str) -> Option<PathBuf> {
+        let p = PathBuf::from(path);
+        let abs = p.canonicalize().unwrap_or(p);
+        abs.parent().map(|d| d.to_path_buf())
     }
 
     pub fn resolve_path(base: &Path, relative: &str) -> PathBuf {

@@ -24,15 +24,14 @@ use types::*;
 async fn load_overseer_file(path: String) -> Result<String> {
     // Record the document's directory so a mount's relative source resolves against the
     // document that declares it.
+    // The app has one document open, so recording it here is enough; anything serving several
+    // at once names the document per operation instead, through
+    // DocumentManager::with_document, which takes precedence over this.
+    //
+    // Changing the process working directory used to happen here as well. Resolution has not
+    // depended on it for some time, and it is exactly the kind of process-wide state that
+    // makes a second open document behave unpredictably, so it no longer does.
     docmgr::manager::DocumentManager::set_current_document(Some(&path));
-    // Also set the process working directory, as earlier versions relied on. This is kept
-    // for compatibility only - resolution no longer depends on it, and it should go once
-    // multiple open documents make a single process-wide directory meaningless.
-    if let Ok(p) = std::path::PathBuf::from(&path).canonicalize() {
-        if let Some(parent) = p.parent() {
-            let _ = std::env::set_current_dir(parent);
-        }
-    }
     match FileOperations::read_file(&path).await {
         Ok(content) => Ok(content),
         Err(e) => Err(OverseerError::IoError(format!(
