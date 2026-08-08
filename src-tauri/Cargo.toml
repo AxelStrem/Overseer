@@ -2,6 +2,9 @@
 name = "overseer"
 version = "0.1.0"
 edition = "2021"
+# The app. Naming it explicitly because the package also builds `overseer-server`, and
+# `cargo run` - which `tauri dev` uses - refuses to guess between two binaries.
+default-run = "overseer"
 rust-version = "1.70"
 description = "A minimalistic personal data management framework"
 authors = ["Dmitrii XL <axelstrem@gmail.com>"]
@@ -31,6 +34,10 @@ thiserror = "1.0"
 # Parser dependencies (we'll use nom for parsing)
 nom = "7.1"
 
+# Only for the `server` binary; see the feature above.
+axum = { version = "0.7", optional = true }
+tower-http = { version = "0.5", features = ["fs", "trace"], optional = true }
+
 # Regular expressions for dependency extraction
 regex = "1.10"
 
@@ -52,6 +59,10 @@ custom-protocol = ["tauri/custom-protocol"]
 debug-parser = []
 debug-resolver = []
 debug-evaluator = []
+
+# Serving documents over HTTP. Off by default and confined to its own binary, so the desktop
+# app neither compiles nor ships an HTTP stack it has no use for.
+server = ["dep:axum", "dep:tower-http"]
 debug-deps = []
 
 # The backend does heavy tree work on every interaction, and an unoptimized build makes that
@@ -64,3 +75,8 @@ opt-level = 3
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[[bin]]
+name = "overseer-server"
+path = "src/bin/server.rs"
+required-features = ["server"]

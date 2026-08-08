@@ -8,6 +8,7 @@ pub mod file_ops;
 pub mod formula_evaluator;
 pub mod parser;
 pub mod resolver;
+pub mod server;
 pub mod source_registry;
 pub mod types;
 
