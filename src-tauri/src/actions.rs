@@ -3006,6 +3006,29 @@ impl ActionExecutor {
         Ok(())
     }
 
+    /// Append an entry to a list, as an `append` action in a document would.
+    ///
+    /// Exposed for callers that are not documents - the API a bot writes through - so that a
+    /// row added from outside is built exactly like a row added by a button. Anything else
+    /// and the two would drift, and the difference would show up as a document that behaves
+    /// differently depending on who wrote to it.
+    pub fn append_entry(
+        nodes: &mut Vec<OverseerNode>,
+        list_path: &str,
+        overrides: &Vec<OverseerNode>,
+    ) -> Result<(), OverseerError> {
+        Self::append_to_list(nodes, &[], list_path, None, None, overrides)
+    }
+
+    /// Set a value, as a `set` action would.
+    pub fn assign_value(
+        nodes: &mut Vec<OverseerNode>,
+        target: &str,
+        value: OverseerValue,
+    ) -> Result<(), OverseerError> {
+        Self::set_value(nodes, &[], &[], target, value)
+    }
+
     fn append_to_list(
         nodes: &mut Vec<OverseerNode>,
         owner_path: &[String],

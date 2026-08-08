@@ -145,3 +145,47 @@ pub fn find<'a>(nodes: &'a [OverseerNode], address: &str) -> Option<&'a Overseer
     });
     found
 }
+
+/// The path of node names that reaches an address, as actions address nodes.
+///
+/// Two schemes are in play and both are needed: an address survives a resolve and is what a
+/// caller names a node by, while an action resolves a path of names. Segments carry an ordinal
+/// where siblings share a name, so the path names one node.
+pub fn name_path(nodes: &[OverseerNode], address: &str) -> Option<Vec<String>> {
+    fn go(
+        segments: &[String],
+        nodes: &[OverseerNode],
+        prefix: &str,
+        names: &[String],
+        target: &str,
+    ) -> Option<Vec<String>> {
+        for (i, node) in nodes.iter().enumerate() {
+            let here = if prefix.is_empty() {
+                segments[i].clone()
+            } else {
+                format!("{}/{}", prefix, segments[i])
+            };
+            let ordinal = nodes[..i].iter().filter(|s| s.name == node.name).count();
+            let mut named = names.to_vec();
+            named.push(if ordinal == 0 {
+                node.name.clone()
+            } else {
+                format!("{}#{}", node.name, ordinal)
+            });
+            if here == target {
+                return Some(named);
+            }
+            if target.starts_with(&format!("{}/", here)) {
+                // Parent-aware, or an entry of a keyed list would be addressed by position
+                // and the descent would go looking down the wrong branch.
+                if let Some(found) =
+                    go(&child_segments(node), &node.children, &here, &named, target)
+                {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    go(&root_segments(nodes), nodes, "", &[], address)
+}

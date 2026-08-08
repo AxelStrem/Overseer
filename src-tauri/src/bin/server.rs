@@ -192,6 +192,74 @@ async fn sign_in(
         .expect("static response")
 }
 
+
+/// Which node an operation is about.
+///
+/// Both a document name and an address contain slashes, so neither belongs in the path -
+/// query parameters escape them properly and leave the address readable in a log.
+#[derive(serde::Deserialize)]
+struct Target {
+    document: String,
+    address: String,
+}
+
+#[derive(serde::Deserialize)]
+struct WriteBody {
+    /// Fields to set on the new entry, for an append.
+    #[serde(default)]
+    fields: std::collections::HashMap<String, overseer::types::OverseerValue>,
+    /// The value, for a set.
+    #[serde(default)]
+    value: Option<overseer::types::OverseerValue>,
+}
+
+/// Read the subtree at an address: a catalogue, a day, one food's portion weight.
+async fn read_at(
+    State(service): State<Service>,
+    axum::extract::Query(target): axum::extract::Query<Target>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let view = tokio::task::spawn_blocking(move || documents.read_at(&target.document, &target.address))
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("reading panicked: {}", e))))?
+        .map_err(respond)?;
+    // The view itself, not wrapped again: it already carries the node, its address and the
+    // addresses of its children, and a caller reaching through two "node" keys to find the
+    // first one is a sign the shape is wrong.
+    Ok(Json(json!(view)))
+}
+
+/// Append an entry to the list at an address.
+async fn append_at(
+    State(service): State<Service>,
+    axum::extract::Query(target): axum::extract::Query<Target>,
+    Json(body): Json<WriteBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let outcome = tokio::task::spawn_blocking(move || documents.append_at(&target.document, &target.address, &body.fields))
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
+        .map_err(respond)?;
+    Ok(Json(json!(outcome)))
+}
+
+/// Set the value at an address.
+async fn set_at(
+    State(service): State<Service>,
+    axum::extract::Query(target): axum::extract::Query<Target>,
+    Json(body): Json<WriteBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let Some(value) = body.value else {
+        return Err(respond(RequestError::Rejected("'value' is required".into())));
+    };
+    let documents = service.documents.clone();
+    let outcome = tokio::task::spawn_blocking(move || documents.set_at(&target.document, &target.address, value))
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
+        .map_err(respond)?;
+    Ok(Json(json!(outcome)))
+}
+
 /// Report what went wrong without describing the filesystem to whoever asked.
 fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match error {
@@ -345,6 +413,9 @@ async fn main() {
         // A name may contain directories, so it is matched to the end of the path.
         .route("/doc/*name", get(document_or_page))
         .route("/api/:cmd", post(command))
+        // The document API: a subtree is named by an address that survives a resolve.
+        .route("/v1/node", get(read_at).post(set_at))
+        .route("/v1/append", post(append_at))
         .route("/__overseer/bridge.js", get(bridge))
         .route("/", get(index));
     if let Some(dir) = frontend.as_ref() {

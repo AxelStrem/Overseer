@@ -5,6 +5,7 @@
 //! document, and whether the caller is allowed to ask for it; what a document is remains
 //! [`crate::app_api`]'s business, shared with the desktop app so the two cannot drift.
 
+use crate::actions::ActionExecutor;
 use crate::app_api;
 use crate::docmgr::manager::DocumentManager;
 use crate::types::*;
@@ -345,4 +346,245 @@ pub fn refuse_to_start(bind: &std::net::IpAddr, access: &Access) -> Option<Strin
         ));
     }
     None
+}
+
+/// Build the overrides for a new entry from field names, which may name a nested field.
+///
+/// A document writes a nested override as a nested block:
+///
+/// ```text
+/// append (list=...) {
+///     - handle = "kiwi"
+///     div per_100g {
+///         - calories = 61
+///     }
+/// }
+/// ```
+///
+/// so `per_100g/calories` has to become that shape rather than a child literally called
+/// "per_100g/calories". It cannot be set afterwards instead: a field a new entry inherits from
+/// its template goes back to the template's default on the next resolve unless the entry
+/// itself states it, and the default for a calorie figure is a plausible number rather than an
+/// obviously missing one - so getting this wrong records a food that looks fine and is wrong.
+fn entry_overrides(fields: &std::collections::HashMap<String, OverseerValue>) -> Vec<OverseerNode> {
+    let mut roots: Vec<OverseerNode> = Vec::new();
+    for (field, value) in fields {
+        let mut segments = field.split('/').filter(|s| !s.is_empty()).peekable();
+        let mut level = &mut roots;
+        while let Some(segment) = segments.next() {
+            let leaf = segments.peek().is_none();
+            let existing = level.iter().position(|n| n.name == segment);
+            let index = match existing {
+                Some(i) => i,
+                None => {
+                    let mut node = if leaf {
+                        let mut n = OverseerNode::new_with_type("-".to_string(), Some(segment.to_string()));
+                        n.authored_dash = true;
+                        n
+                    } else {
+                        OverseerNode::new_with_type("div".to_string(), Some(segment.to_string()))
+                    };
+                    node.name = segment.to_string();
+                    level.push(node);
+                    level.len() - 1
+                }
+            };
+            if leaf {
+                level[index]
+                    .parameters
+                    .insert("value".to_string(), value.clone());
+            }
+            level = &mut level[index].children;
+        }
+    }
+    roots
+}
+
+/// What a write did, for the caller to report or check.
+#[derive(serde::Serialize)]
+pub struct WriteOutcome {
+    /// The address the caller named.
+    pub address: String,
+    /// The subtree after resolving.
+    ///
+    /// A wrong reference does not fail - a food handle that matches nothing simply leaves the
+    /// derived fields at their defaults - so a caller cannot tell from a bare acknowledgement
+    /// whether it recorded what it meant. Reading the result back is what turns a plausible
+    /// wrong answer into something the caller can notice, and it is also what a bot needs to
+    /// tell a person what it just recorded.
+    pub node: OverseerNode,
+    /// The address of each immediate child, in order.
+    ///
+    /// A caller that reads a list wants to address one of its entries afterwards, and an entry
+    /// of a keyed list is addressed by its key rather than its position. Saying so here keeps
+    /// that rule in one place: a client working it out for itself would be a second
+    /// implementation of the addressing, free to drift from this one.
+    pub child_addresses: Vec<String>,
+}
+
+/// A node, with the addresses of what is under it.
+#[derive(serde::Serialize)]
+pub struct NodeView {
+    pub address: String,
+    pub node: OverseerNode,
+    pub child_addresses: Vec<String>,
+}
+
+/// The address of each immediate child of a node sitting at `address`.
+fn child_addresses(address: &str, node: &OverseerNode) -> Vec<String> {
+    crate::addressing::child_segments(node)
+        .into_iter()
+        .map(|segment| format!("{}/{}", address, segment))
+        .collect()
+}
+
+impl DocumentRoot {
+    /// Run `work` against a document and write the result back.
+    ///
+    /// The file is replaced atomically: a write that fails halfway would otherwise leave a
+    /// half-serialized document where the original was, and the original is the only copy.
+    fn edit<T>(
+        &self,
+        name: &str,
+        work: impl FnOnce(&mut Vec<OverseerNode>) -> std::result::Result<T, RequestError>,
+    ) -> std::result::Result<(T, Vec<OverseerNode>), RequestError> {
+        let path = self.resolve(name)?;
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
+        let dir = path.parent().map(|d| d.to_path_buf());
+
+        let (outcome, nodes, serialized) = DocumentManager::with_document(dir, || {
+            let mut nodes = app_api::load_document(text).map_err(|e| {
+                RequestError::Failed(format!("could not resolve '{}': {:?}", name, e))
+            })?;
+            let outcome = work(&mut nodes)?;
+            // Resolve again: what was written changes what derives from it, and the caller is
+            // about to be shown the result.
+            crate::resolver::resolve_document(&mut nodes);
+            let serialized = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
+                .map_err(|e| RequestError::Failed(format!("could not serialize: {}", e)))?;
+            Ok::<_, RequestError>((outcome, nodes, serialized))
+        })?;
+
+        let temporary = path.with_extension("os.writing");
+        std::fs::write(&temporary, serialized.as_bytes())
+            .map_err(|e| RequestError::Failed(format!("could not write '{}': {}", name, e)))?;
+        std::fs::rename(&temporary, &path).map_err(|e| {
+            let _ = std::fs::remove_file(&temporary);
+            RequestError::Failed(format!("could not replace '{}': {}", name, e))
+        })?;
+        Ok((outcome, nodes))
+    }
+
+    /// Record what was done, so a mistake made from outside the app can be found afterwards.
+    ///
+    /// One line per write, next to the documents. Not a transaction log - the document itself
+    /// is the state - but enough to answer "what did the bot put here, and when".
+    fn journal(&self, entry: serde_json::Value) {
+        let path = self.root.join("overseer-writes.jsonl");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "{}", entry);
+        }
+    }
+
+    /// The subtree at an address.
+    pub fn read_at(
+        &self,
+        name: &str,
+        address: &str,
+    ) -> std::result::Result<NodeView, RequestError> {
+        let nodes = self.open(name)?;
+        let node = crate::addressing::find(&nodes, address)
+            .cloned()
+            .ok_or_else(|| {
+                RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
+            })?;
+        Ok(NodeView {
+            child_addresses: child_addresses(address, &node),
+            address: address.to_string(),
+            node,
+        })
+    }
+
+    /// Append an entry to the list at an address, with the given fields.
+    pub fn append_at(
+        &self,
+        name: &str,
+        address: &str,
+        fields: &std::collections::HashMap<String, OverseerValue>,
+    ) -> std::result::Result<WriteOutcome, RequestError> {
+        let overrides = entry_overrides(fields);
+
+        let (_, nodes) = self.edit(name, |nodes| {
+            let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
+                RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
+            })?;
+            let target = crate::addressing::find(nodes, address).ok_or_else(|| {
+                RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
+            })?;
+            if target.node_type != "list" {
+                return Err(RequestError::Rejected(format!(
+                    "'{}' is a {}, and entries can only be appended to a list",
+                    address, target.node_type
+                )));
+            }
+            ActionExecutor::append_entry(nodes, &format!("/{}", path.join("/")), &overrides)
+                .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))
+        })?;
+
+        self.journal(serde_json::json!({
+            "at": chrono::Utc::now().to_rfc3339(),
+            "document": name,
+            "operation": "append",
+            "address": address,
+            "fields": fields,
+        }));
+
+        let node = crate::addressing::find(&nodes, address)
+            .cloned()
+            .ok_or_else(|| RequestError::Failed("the list vanished while being written".into()))?;
+        Ok(WriteOutcome {
+            child_addresses: child_addresses(address, &node),
+            address: address.to_string(),
+            node,
+        })
+    }
+
+    /// Set the value at an address.
+    pub fn set_at(
+        &self,
+        name: &str,
+        address: &str,
+        value: OverseerValue,
+    ) -> std::result::Result<WriteOutcome, RequestError> {
+        let (_, nodes) = self.edit(name, |nodes| {
+            let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
+                RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
+            })?;
+            ActionExecutor::assign_value(nodes, &format!("/{}", path.join("/")), value.clone())
+                .map_err(|e| RequestError::Failed(format!("could not set the value: {:?}", e)))
+        })?;
+
+        self.journal(serde_json::json!({
+            "at": chrono::Utc::now().to_rfc3339(),
+            "document": name,
+            "operation": "set",
+            "address": address,
+            "value": value,
+        }));
+
+        let node = crate::addressing::find(&nodes, address)
+            .cloned()
+            .ok_or_else(|| RequestError::Failed("the node vanished while being written".into()))?;
+        Ok(WriteOutcome {
+            child_addresses: child_addresses(address, &node),
+            address: address.to_string(),
+            node,
+        })
+    }
 }
