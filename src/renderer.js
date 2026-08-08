@@ -811,6 +811,41 @@ export class OverseerRenderer {
         this._animatedCharts = new Set()
     }
 
+    // Link proxies whose target has moved.
+    //
+    // A proxy declares (link="/History[key=$(../selected_date)]") and resolves that at render
+    // time, so changing the date moves what it shows without changing the proxy node at all.
+    // The backend has nothing to report for it - the link is resolved here, not there - so a
+    // described change would repaint the date and leave the day's contents showing yesterday.
+    // Re-deriving costs one pass over a handful of proxies, against a full render otherwise.
+    linkProxiesThatMoved(doc) {
+        const moved = []
+        const rawLink = (p) => {
+            if (!p || p.link === undefined) return null
+            const v = p.link
+            return (v && typeof v === 'object' && v.String !== undefined) ? v.String : v
+        }
+        const visit = (nodes) => {
+            for (const node of nodes || []) {
+                if (!node || typeof node !== 'object') continue
+                const p = node.parameters || {}
+                const link = rawLink(p)
+                if (link !== null && link !== undefined && Array.isArray(node.__overseer_path)) {
+                    try {
+                        const { computedLink } = this.resolveLinkTarget(link, node.__overseer_path)
+                        const previous = p._computed_link && p._computed_link.String
+                        if (computedLink !== undefined && String(computedLink) !== String(previous)) {
+                            moved.push(node)
+                        }
+                    } catch (_) { /* an unresolvable link is not a moved one */ }
+                }
+                if (Array.isArray(node.children)) visit(node.children)
+            }
+        }
+        visit(Array.isArray(doc) ? doc : [doc])
+        return moved
+    }
+
     // Repaint just these nodes, rather than rebuilding the document around them.
     //
     // Rendering a large document measured about two seconds for 15,000 elements, and a field
@@ -821,7 +856,15 @@ export class OverseerRenderer {
     repaintNodes(nodes, document_) {
         const doc = document_ || (window.app && window.app.currentDocument)
         if (!doc || !Array.isArray(nodes) || nodes.length === 0) return false
-        for (const node of nodes) {
+        // Whatever the document says changed, plus anything the client derives from it that
+        // has moved as a result.
+        const all = nodes.slice()
+        try {
+            for (const proxy of this.linkProxiesThatMoved(doc)) {
+                if (!all.includes(proxy)) all.push(proxy)
+            }
+        } catch (_) { /* non-fatal */ }
+        for (const node of all) {
             const path = node && node.__overseer_path
             // Reported under the profiling flag rather than the debug one: falling back to a
             // full render is the cost this exists to avoid, so it should be visible to whoever
@@ -5017,6 +5060,35 @@ export class OverseerRenderer {
                 ? window.app._currentText
                 : null
             if (knownText !== null) {
+                // Ask for what changed. An event that moves one field - a day-navigation
+                // button, say - costs a couple of nodes instead of the whole document, both
+                // to send and to repaint.
+                const update = await invoke('execute_overseer_event_update', {
+                    content: knownText,
+                    node_path: path,
+                    nodePath: path,
+                    event_name: eventName,
+                    eventName
+                }).catch(() => null)
+                if (update && Array.isArray(update.changes)) {
+                    window.app._currentText = typeof update.text === 'string' ? update.text : null
+                    const touched = window.app.applyDocumentChanges(window.app.currentDocument, update.changes)
+                    try {
+                        this.repaintNodes(touched, window.app.currentDocument)
+                    } catch (e) {
+                        console.error('Render error (event repaint):', e)
+                        try { this.renderDocument(window.app.currentDocument) } catch(_) {}
+                    }
+                    window.app.markDocumentModified && window.app.markDocumentModified()
+                    try { window.app.startScheduler && window.app.startScheduler() } catch(_) {}
+                    return
+                }
+                if (update && Array.isArray(update.nodes)) {
+                    updated = update.nodes
+                    nextText = typeof update.text === 'string' ? update.text : null
+                }
+            }
+            if (knownText !== null && (updated === undefined || updated === null)) {
                 const answer = await invoke('execute_overseer_event_with_text', {
                     content: knownText,
                     node_path: path,

@@ -155,6 +155,47 @@ export class OverseerApp {
         return out
     }
 
+    // Keep a guarded field's bookkeeping across a change that replaces its parameters.
+    //
+    // `mutable="guarded"` means a change lives in the open document and is restored to what
+    // the document authored when it is saved, so the authored value has to be remembered the
+    // first time the field moves. Comparing two whole documents used to establish that; a
+    // change says directly which node moved and to what, and the node object itself survives,
+    // so the marker is simply carried across the parameter map the backend sent - which knows
+    // nothing about guarded, that being a property of the open document rather than the file.
+    //
+    // Captured once only. Recapturing on every change would record the previous change's value
+    // as the authored one, and navigating two days would save the day in between.
+    _carryGuardedMarkers(node, incoming) {
+        try {
+            const before = node.parameters || {}
+            if (!incoming || typeof incoming !== 'object') return
+            const path = node.__overseer_path
+            const mode = Array.isArray(path) && this.renderer && this.renderer._computeEffectiveMutableAtPath
+                ? this.renderer._computeEffectiveMutableAtPath(this.currentDocument, path)
+                : (before.mutable && before.mutable.String)
+            if (mode !== 'guarded') return
+
+            const same = JSON.stringify(before.value) === JSON.stringify(incoming.value)
+            const captured = before._guarded_original_value
+            const wasNew = before._guarded_was_new_override
+            if (captured !== undefined) incoming._guarded_original_value = captured
+            if (wasNew !== undefined) incoming._guarded_was_new_override = wasNew
+            if (same) {
+                if (before._guarded_edit !== undefined) incoming._guarded_edit = before._guarded_edit
+                return
+            }
+            incoming._guarded_edit = { Boolean: true }
+            if (captured === undefined && wasNew === undefined) {
+                if (before.value === undefined) {
+                    incoming._guarded_was_new_override = { Boolean: true }
+                } else {
+                    incoming._guarded_original_value = before.value
+                }
+            }
+        } catch (_) { /* non-fatal: a missed marker costs a saved value, not a crash */ }
+    }
+
     // Apply a described change to the document in hand, returning the nodes to repaint.
     //
     // Changes are located by child index rather than by name, so none of the addressing the
@@ -180,6 +221,7 @@ export class OverseerApp {
             if (change.kind === 'parameters') {
                 const node = nodeAt(change.path)
                 if (!node) continue
+                this._carryGuardedMarkers(node, change.parameters)
                 node.parameters = change.parameters
                 note(node)
             } else if (change.kind === 'subtree') {

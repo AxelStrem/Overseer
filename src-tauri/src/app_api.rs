@@ -350,31 +350,31 @@ pub struct ResolvedUpdate {
     pub nodes: Option<Vec<OverseerNode>>,
 }
 
-/// Resolve an edit and answer with what changed rather than with the document.
-pub fn resolve_selective_update(
-    content: String,
-    changed_fields: Vec<String>,
-    changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
-) -> Result<ResolvedUpdate> {
-    // Take the baseline rather than copying it: it is about to be replaced either way, and on
-    // a large document a copy costs more than the diff it feeds. Only the document this text
-    // produced will do - anything else and the change would be described against a document
-    // the caller is not holding - so a baseline that does not match is put back untouched.
-    let baseline = LAST_RESOLVED.lock().ok().and_then(|mut slot| match slot.take() {
+/// Take the remembered document, if it is the one this text produced.
+///
+/// Taken rather than copied: it is about to be replaced either way, and on a large document a
+/// copy costs more than the diff it feeds. Only the document this text produced will do -
+/// anything else and the change would be described against a document the caller is not
+/// holding - so a baseline that does not match is put back untouched.
+fn take_baseline(content: &str) -> Option<Vec<OverseerNode>> {
+    LAST_RESOLVED.lock().ok().and_then(|mut slot| match slot.take() {
         Some((text, nodes)) if text == content => Some(nodes),
         other => {
             *slot = other;
             None
         }
-    });
+    })
+}
 
-    let resolved = resolve_selective(content, changed_fields, changed_field_values)?;
+/// Serialize a resolved document and describe it as a change where there was a baseline.
+fn finish_update(
+    resolved: Vec<OverseerNode>,
+    baseline: Option<Vec<OverseerNode>>,
+) -> Result<ResolvedUpdate> {
     let text = OverseerFileHandler::serialize_nodes(&resolved).map_err(|e| {
         OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
     })?;
-    let changes = baseline.map(|before| crate::delta::diff(&before, &resolved));
-
-    match changes {
+    match baseline.map(|before| crate::delta::diff(&before, &resolved)) {
         // The caller gets the changes, so the document itself can be handed to the cache
         // rather than copied into it.
         Some(changes) => {
@@ -396,6 +396,31 @@ pub fn resolve_selective_update(
             })
         }
     }
+}
+
+/// Resolve an edit and answer with what changed rather than with the document.
+pub fn resolve_selective_update(
+    content: String,
+    changed_fields: Vec<String>,
+    changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
+) -> Result<ResolvedUpdate> {
+    let baseline = take_baseline(&content);
+    let resolved = resolve_selective(content, changed_fields, changed_field_values)?;
+    finish_update(resolved, baseline)
+}
+
+/// Run an event and answer with what changed rather than with the document.
+pub fn execute_event_update(
+    content: String,
+    node_path: Vec<String>,
+    event_name: String,
+) -> Result<ResolvedUpdate> {
+    let baseline = take_baseline(&content);
+    // Rebuilding the document replaces the baseline with the pre-event state; the post-event
+    // one is stored below, so what is remembered is what the caller ends up holding.
+    let mut nodes = load_document(content)?;
+    ActionExecutor::execute_event(&mut nodes, &node_path, &event_name)?;
+    finish_update(nodes, baseline)
 }
 
 /// A guarded field and the value the document authored for it.

@@ -194,6 +194,17 @@ async fn execute_overseer_event_with_text(
 }
 
 /// `scheduler_tick` driven by the document's text.
+
+/// `execute_overseer_event_with_text`, answering with what changed where possible.
+#[command]
+async fn execute_overseer_event_update(
+    content: String,
+    node_path: Vec<String>,
+    event_name: String,
+) -> Result<app_api::ResolvedUpdate> {
+    app_api::execute_event_update(content, node_path, event_name)
+}
+
 #[command]
 async fn scheduler_tick_with_text(content: String) -> Result<app_api::ResolvedDocument> {
     app_api::tick_on_text(content)
@@ -287,6 +298,7 @@ fn main() {
             find_overseer_files,
             execute_overseer_event,
             execute_overseer_event_with_text,
+            execute_overseer_event_update,
             scheduler_tick_with_text,
             get_next_timer_due_ms_from_text,
             scheduler_tick,

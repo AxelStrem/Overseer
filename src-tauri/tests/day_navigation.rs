@@ -10,6 +10,16 @@ use overseer::app_api;
 use overseer::docmgr::manager::DocumentManager;
 use overseer::types::*;
 
+/// The remembered document is process-wide, as it is in the app - one document is open at a
+/// time. Tests in a file share a process and run in parallel, so they take turns.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn start() -> std::sync::MutexGuard<'static, ()> {
+    let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    app_api::forget_baseline();
+    guard
+}
+
 fn find_path(nodes: &[OverseerNode], name: &str, prefix: Vec<String>) -> Option<Vec<String>> {
     for (i, n) in nodes.iter().enumerate() {
         let ordinal = nodes[..i].iter().filter(|s| s.name == n.name).count();
@@ -50,6 +60,7 @@ fn selected_date(nodes: &[OverseerNode]) -> Option<OverseerValue> {
 
 #[test]
 fn each_click_moves_another_day() {
+    let _turn = start();
     let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../examples/weight_tracker/tracker_v2.os");
     DocumentManager::set_current_document(Some(p.to_string_lossy().as_ref()));
@@ -73,6 +84,38 @@ fn each_click_moves_another_day() {
         after_two, after_one,
         "the second click landed on the same day as the first: the date it wrote did not \
          survive into the text the click was replayed from"
+    );
+    DocumentManager::set_current_document(None);
+}
+
+#[test]
+fn navigation_through_described_changes_also_accumulates() {
+    let _turn = start();
+    // The same journey, but answered with what changed rather than with the document. The
+    // baseline has to follow the document across clicks, or the second click is answered in
+    // full and, worse, from a document the caller is not holding.
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../examples/weight_tracker/tracker_v2.os");
+    DocumentManager::set_current_document(Some(p.to_string_lossy().as_ref()));
+    let text = std::fs::read_to_string(&p).unwrap();
+
+    let loaded = app_api::load_document(text.clone()).unwrap();
+    let prev = find_path(&loaded, "Prev", Vec::new()).expect("no Prev button");
+
+    let first = app_api::execute_event_update(text, prev.clone(), "click".to_string()).unwrap();
+    let changes = first
+        .changes
+        .expect("the click was answered with a whole document despite a known baseline");
+    assert!(!changes.is_empty(), "the click reported no changes");
+
+    let second = app_api::execute_event_update(first.text, prev, "click".to_string()).unwrap();
+    assert!(
+        second.changes.is_some(),
+        "the baseline did not follow the document, so the second click sent everything"
+    );
+    assert!(
+        !second.changes.unwrap().is_empty(),
+        "the second click moved nothing: the date it wrote did not survive into the text"
     );
     DocumentManager::set_current_document(None);
 }

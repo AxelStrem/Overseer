@@ -237,4 +237,70 @@ describe('a guarded field changed by an action', () => {
       `the authored value must travel with the save, got ${JSON.stringify(savedGuarded)}`
     ).toEqual({ Formula: 'today()' })
   })
+
+  it('keeps the authored value after navigating several days through described changes', async () => {
+    // An event is answered with what changed rather than with the document, so the guarded
+    // bookkeeping can no longer come from comparing two documents. The authored value must
+    // still be captured once and only once: capturing it again on the second click would
+    // record the first day as the "original", and the document would save the day in between.
+    const { invoke } = await import('@tauri-apps/api/core')
+    const days = ['2026-08-05', '2026-08-04', '2026-08-03']
+    let click = 0
+    let savedGuarded = null
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === 'execute_overseer_event_update') {
+        const value = { String: days[Math.min(click++, days.length - 1)] }
+        return Promise.resolve({
+          text: `TEXT-${click}`,
+          // The backend's parameter map: it knows nothing about guarded, which is a property
+          // of the open document rather than of the file.
+          changes: [{
+            kind: 'parameters',
+            address: 'tracker/Selected/selected_date',
+            path: [0, 0, 0],
+            parameters: {
+              precision: { String: 'day' },
+              mutable: { String: 'guarded' },
+              value,
+              _computed_value: value,
+            },
+          }],
+          nodes: null,
+        })
+      }
+      if (cmd === 'save_overseer_file_from_text') {
+        savedGuarded = args.guarded
+        return Promise.resolve(null)
+      }
+      if (cmd === 'load_overseer_file') return Promise.resolve('DOC')
+      return Promise.resolve(null)
+    })
+
+    const app = new OverseerApp()
+    app.currentDocument = buildDoc()
+    app.currentFile = 'C:/tmp/tracker.os'
+    app._currentText = 'TEXT-0'
+    app.renderer.renderDocument(app.currentDocument)
+
+    const prevEl = Array.from(document.querySelectorAll('[data-path]')).find(el => {
+      try { return JSON.parse(el.dataset.path || '[]').slice(-1)[0] === 'Prev' } catch { return false }
+    })
+    const btn = prevEl.matches('button') ? prevEl : prevEl.querySelector('button')
+    for (let i = 0; i < 3; i++) {
+      btn.dispatchEvent(new Event('click', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 30))
+    }
+
+    // Navigation accumulated rather than sticking on the first day.
+    expect(findByName(app.currentDocument, 'selected_date').parameters.value)
+      .toEqual({ String: '2026-08-03' })
+
+    await app.saveFile()
+
+    const revert = (savedGuarded || []).find(g => g.path.endsWith('selected_date'))
+    expect(
+      revert && revert.value,
+      `the authored value must survive three days of navigation, got ${JSON.stringify(savedGuarded)}`
+    ).toEqual({ Formula: 'today()' })
+  })
 })
