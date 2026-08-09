@@ -147,5 +147,18 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 - salt = 1
             }
         }
+        - {
+            - handle = "banana"
+            - name = "Banana"
+            - portion_weight = 118
+
+            // Per 100 g - the canonical side. Defaults live here.
+            div per_100g {
+                - calories = 89
+                - protein = 1.1
+                - fat = 0
+                - carbs = 22.9
+            }
+    }
     }
 }

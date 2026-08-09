@@ -127,6 +127,22 @@ div (hidden=true) {
 
     list History (entry=<DayRecord>, key="date", keyPrecision="day") {
         - {
+            - date = "2026-08-08"
+
+            list intake {
+                - {
+                    - portions = 1
+                }
+                - {
+                    - portions = 1
+                }
+                - {
+                    - food = "banana"
+                    - portions = 1
+            }
+            }
+        }
+        - {
             - date = "2026-08-07"
 
             list intake {
