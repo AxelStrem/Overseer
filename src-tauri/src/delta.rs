@@ -86,8 +86,8 @@ pub fn diff(before: &[OverseerNode], after: &[OverseerNode]) -> Vec<DocumentChan
     let mut changes = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     compare(
-        &addressing::root_segments(after),
-        after,
+        None,
+        &addressing::effective_roots(after),
         "",
         &[],
         &previous,
@@ -128,20 +128,20 @@ pub fn diff(before: &[OverseerNode], after: &[OverseerNode]) -> Vec<DocumentChan
 /// Every address in a document with the child indices that reach it.
 fn index_paths(nodes: &[OverseerNode]) -> HashMap<String, Vec<usize>> {
     fn go(
-        segments: &[String],
-        nodes: &[OverseerNode],
+        parent: Option<&OverseerNode>,
+        children: &[(Vec<usize>, &OverseerNode)],
         prefix: &str,
         path: &[usize],
         out: &mut HashMap<String, Vec<usize>>,
     ) {
-        for (i, (segment, node)) in segments.iter().zip(nodes).enumerate() {
+        for (segment, (relative, node)) in addressing::segments_for(parent, children).iter().zip(children) {
             let address = join(prefix, segment);
             let mut here = path.to_vec();
-            here.push(i);
+            here.extend(relative.iter().copied());
             out.insert(address.clone(), here.clone());
             go(
-                &addressing::child_segments(node),
-                &node.children,
+                Some(node),
+                &addressing::effective_children(node),
                 &address,
                 &here,
                 out,
@@ -149,23 +149,24 @@ fn index_paths(nodes: &[OverseerNode]) -> HashMap<String, Vec<usize>> {
         }
     }
     let mut out = HashMap::new();
-    go(&addressing::root_segments(nodes), nodes, "", &[], &mut out);
+    go(None, &addressing::effective_roots(nodes), "", &[], &mut out);
     out
 }
 
 fn compare(
-    segments: &[String],
-    nodes: &[OverseerNode],
+    parent: Option<&OverseerNode>,
+    children: &[(Vec<usize>, &OverseerNode)],
     prefix: &str,
     path: &[usize],
     previous: &HashMap<String, &OverseerNode>,
     seen: &mut HashSet<String>,
     changes: &mut Vec<DocumentChange>,
 ) {
-    for (index, (segment, node)) in segments.iter().zip(nodes).enumerate() {
+    let segments = addressing::segments_for(parent, children);
+    for (segment, (relative, node)) in segments.iter().zip(children) {
         let address = join(prefix, segment);
         let mut here = path.to_vec();
-        here.push(index);
+        here.extend(relative.iter().copied());
         seen.insert(address.clone());
 
         let Some(was) = previous.get(&address) else {
@@ -173,7 +174,7 @@ fn compare(
             changes.push(DocumentChange::Subtree {
                 address,
                 path: here,
-                node: node.clone(),
+                node: (*node).clone(),
             });
             continue;
         };
@@ -187,7 +188,7 @@ fn compare(
             changes.push(DocumentChange::Subtree {
                 address,
                 path: here,
-                node: node.clone(),
+                node: (*node).clone(),
             });
             continue;
         }
@@ -200,8 +201,8 @@ fn compare(
             });
         }
         compare(
-            &after_children,
-            &node.children,
+            Some(node),
+            &addressing::effective_children(node),
             &address,
             &here,
             previous,

@@ -139,7 +139,7 @@ div (hidden=true) {
                 - {
                     - food = "banana"
                     - portions = 1
-            }
+                }
             }
         }
         - {

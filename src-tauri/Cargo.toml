@@ -22,8 +22,11 @@ tauri-build = { version = "2.0.0", features = [] }
 # "devtools" so the inspector is available in release builds too. Tauri enables it for debug
 # builds on its own, but performance has to be measured in release, which is exactly where
 # the timings need reading. Drop this feature before shipping a build to anyone else.
-tauri = { version = "2.0.0", features = ["devtools"] }
-tauri-plugin-dialog = "2.0.0"
+# Optional, and only the desktop app asks for them. The server binary has no use for a
+# webview, and on Linux these pull in the whole GTK/WebKit stack - which a container running
+# the document server should not have to build, install, or carry.
+tauri = { version = "2.0.0", features = ["devtools"], optional = true }
+tauri-plugin-dialog = { version = "2.0.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
@@ -55,6 +58,11 @@ parking_lot = "0.12"
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 
+# The desktop app. Not on by default: `cargo build` then means the library and whatever binary
+# was asked for, which is what the server build and the tests want. `tauri dev` and
+# `tauri build` pass it explicitly - see the npm scripts.
+desktop = ["dep:tauri", "dep:tauri-plugin-dialog"]
+
 # Debug logging features
 debug-parser = []
 debug-resolver = []
@@ -75,6 +83,11 @@ opt-level = 3
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[[bin]]
+name = "overseer"
+path = "src/main.rs"
+required-features = ["desktop"]
 
 [[bin]]
 name = "overseer-server"

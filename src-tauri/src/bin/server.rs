@@ -260,6 +260,28 @@ async fn set_at(
     Ok(Json(json!(outcome)))
 }
 
+
+#[derive(serde::Deserialize)]
+struct EventBody {
+    event: String,
+}
+
+/// Press something the document declares - a button's `on click`, say.
+async fn run_event(
+    State(service): State<Service>,
+    axum::extract::Query(target): axum::extract::Query<Target>,
+    Json(body): Json<EventBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        documents.run_event(&target.document, &target.address, &body.event)
+    })
+    .await
+    .map_err(|e| respond(RequestError::Failed(format!("the event panicked: {}", e))))?
+    .map_err(respond)?;
+    Ok(Json(json!(outcome)))
+}
+
 /// Report what went wrong without describing the filesystem to whoever asked.
 fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match error {
@@ -416,6 +438,7 @@ async fn main() {
         // The document API: a subtree is named by an address that survives a resolve.
         .route("/v1/node", get(read_at).post(set_at))
         .route("/v1/append", post(append_at))
+        .route("/v1/event", post(run_event))
         .route("/__overseer/bridge.js", get(bridge))
         .route("/", get(index));
     if let Some(dir) = frontend.as_ref() {

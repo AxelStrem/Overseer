@@ -130,6 +130,77 @@ impl DocumentRoot {
     }
 }
 
+
+/// What running an event did.
+#[derive(serde::Serialize)]
+pub struct EventOutcome {
+    pub address: String,
+    /// What the event was run on *belongs to*, afterwards.
+    ///
+    /// A button is not interesting; what it did to its surroundings is. Pressing an exercise's
+    /// Done button leaves that exercise with a new `last_done` - returning the button would
+    /// only describe the button, and the caller would have to ask again to learn anything.
+    pub node: Option<OverseerNode>,
+    pub child_addresses: Vec<String>,
+    /// True when the event removed the thing it was run on - a delete button, say.
+    pub gone: bool,
+}
+
+impl DocumentRoot {
+    /// Run an event a document declares, such as pressing a button.
+    ///
+    /// The document decides what may happen: this runs an `on <event>` block that is already
+    /// written there, rather than offering a way to do anything the document does not describe.
+    ///
+    /// Addressed like everything else, though actions resolve a path of names rather than an
+    /// address - the translation happens here so a caller never has to know there are two.
+    pub fn run_event(
+        &self,
+        name: &str,
+        address: &str,
+        event: &str,
+    ) -> std::result::Result<EventOutcome, RequestError> {
+        let (_, nodes) = self.edit(name, |nodes| {
+            let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
+                RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
+            })?;
+            ActionExecutor::execute_event(nodes, &path, event).map_err(|e| {
+                RequestError::Failed(format!("could not run '{}' on '{}': {:?}", event, address, e))
+            })
+        })?;
+
+        self.journal(serde_json::json!({
+            "at": chrono::Utc::now().to_rfc3339(),
+            "document": name,
+            "operation": "event",
+            "address": address,
+            "event": event,
+        }));
+
+        // What surrounds the button, or the node itself when it has nothing above it.
+        let reported = match address.rsplit_once('/') {
+            Some((parent, _)) => parent,
+            None => address,
+        };
+        match crate::addressing::find(&nodes, reported) {
+            Some(node) => Ok(EventOutcome {
+                child_addresses: child_addresses(reported, node),
+                node: Some(node.clone()),
+                address: reported.to_string(),
+                gone: false,
+            }),
+            // Some buttons exist to remove the thing they sit on, and then there is nothing
+            // left to describe.
+            None => Ok(EventOutcome {
+                address: reported.to_string(),
+                node: None,
+                child_addresses: Vec::new(),
+                gone: true,
+            }),
+        }
+    }
+}
+
 /// Pull a string argument, accepting either spelling the frontend might send.
 fn arg_str(args: &serde_json::Value, names: &[&str]) -> Option<String> {
     names

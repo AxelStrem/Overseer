@@ -175,23 +175,16 @@ fn exercise_done_action_introduces_unexpected_mutations() {
     strip_history(&mut before_trim);
     strip_history(&mut after_trim);
 
+    // Nothing outside History moves at all.
+    //
+    // This used to allow one exception: Done wrote the values onto a staging node and appended
+    // a copy of that, so the staging node changed on every press. It appends the values
+    // directly now - which is not only tidier but necessary, because an entry appended from a
+    // template that is itself a template instance is dropped when the document is written out.
     let diffs = collect_differences(&before_trim, &after_trim);
-    let unexpected: Vec<_> = diffs
-        .iter()
-        .filter(|entry| {
-            !entry.starts_with("exercise_tracker/div/ExerciseRecordSample")
-        })
-        .cloned()
-        .collect();
     assert!(
-        unexpected.is_empty(),
-        "Unexpected document changes beyond History detected: {:?}",
-        unexpected
-    );
-    assert!(
+        diffs.is_empty(),
+        "pressing Done changed something other than History: {:?}",
         diffs
-            .iter()
-            .any(|entry| entry.starts_with("exercise_tracker/div/ExerciseRecordSample")),
-        "Expected ExerciseRecordSample staging node to refresh with latest values"
     );
 }

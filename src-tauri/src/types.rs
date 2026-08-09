@@ -250,6 +250,19 @@ pub struct NodeSourceSnapshot {
     pub origin: SnapshotOrigin,
 }
 
+/// Trivia with its comment lines removed, and everything else left exactly as it was.
+///
+/// Only whole comment lines go. The rest is layout: the newline and indent that put a node
+/// where it belongs, and - on the trailing side - the indent before a closing brace. A line
+/// of pure whitespace looks blank and is not: dropping it as one unindents the brace.
+fn without_comments(trivia: &str) -> String {
+    trivia
+        .split('\n')
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 impl NodeSourceSnapshot {
     pub fn synthetic_from_template(template: &NodeSourceSnapshot) -> Self {
         let mut snapshot = template.clone();
@@ -259,6 +272,16 @@ impl NodeSourceSnapshot {
         snapshot.body_span = snapshot.body_span.map(|_| (0, 0));
         snapshot.trailing_span = None;
         snapshot.indent_unit = None;
+        // A comment above a template explains the template. It is not part of what the
+        // template makes: carried along, every entry added to a list arrived with a
+        // copy, so a catalogue of forty foods held forty copies of the same remark
+        // about where the defaults live.
+        //
+        // Only the comments go. The rest of the trivia is layout - the newline and
+        // indent that put the node where it belongs, and on the trailing side the
+        // indent before a closing brace - and dropping that reflows the document.
+        snapshot.leading_trivia = without_comments(&snapshot.leading_trivia);
+        snapshot.trailing_trivia = without_comments(&snapshot.trailing_trivia);
         snapshot.origin = SnapshotOrigin::Synthetic(SyntheticSnapshotKind::TemplateClone);
         snapshot
     }

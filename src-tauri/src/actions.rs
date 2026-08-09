@@ -2640,6 +2640,26 @@ impl ActionExecutor {
     }
 
     // Create a list item by cloning template definition and marking template-derived fields
+    /// Cut a cloned subtree loose from the text the template was written in.
+    ///
+    /// The root of a new instance already does this; its children were being cloned wholesale,
+    /// keeping ids that point at the template's own source. The serializer replays a node from
+    /// there when it can, so every entry added to a list arrived carrying the template's
+    /// comments - one more copy of "// Per 100 g - the canonical side" per food, for ever.
+    ///
+    /// A new entry has no source text of its own. Saying so is the whole fix: what it needs
+    /// written is computed from the node instead.
+    fn forget_where_the_template_came_from(node: &mut OverseerNode) {
+        node.source_id = None;
+        node.source_fingerprint = None;
+        node.source_snapshot = None;
+        // Spacing belonged to the template's layout, not to this entry.
+        node.leading_blank_lines = 0;
+        for child in node.children.iter_mut() {
+            Self::forget_where_the_template_came_from(child);
+        }
+    }
+
     fn clone_from_template(template: &OverseerNode) -> OverseerNode {
         // Start parameters with template defaults and add _template_ markers so serializer can skip them
         let mut params = template.parameters.clone();
@@ -2669,6 +2689,7 @@ impl ActionExecutor {
         for ch in children.iter_mut() {
             Self::mark_template_child_recursive_action(ch);
             Self::clear_computed_recursive(ch);
+            Self::forget_where_the_template_came_from(ch);
         }
 
         // Preserve the instantiated type semantics: if this template node represents an instance of a component
@@ -3000,6 +3021,13 @@ impl ActionExecutor {
             })
         }) {
             list_node.children.remove(pos);
+            // The list no longer matches the text it was read from. Saying so is what
+            // makes the removal stick: the serializer replays a node from its source
+            // snapshot while the fingerprint still matches, and every remaining entry
+            // does match - so the list would be written back exactly as it was, with
+            // the removed entry among them. An append needs no such marking, because
+            // the new entry has no source to replay and gives the list away.
+            list_node.source_fingerprint = None;
             // Mark this list field as explicitly overridden so mutations persist on template instances
             Self::mark_field_explicit_override(nodes, &indices);
         }

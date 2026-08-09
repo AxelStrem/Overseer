@@ -129,3 +129,40 @@ fn a_keyed_entry_keeps_its_address_when_one_is_inserted_before_it() {
         "the address names a different entry than it did before the insertion"
     );
 }
+
+#[test]
+fn an_unnamed_wrapper_is_not_part_of_an_address() {
+    // A `div` written without a name groups things for layout, and the rest of the system
+    // looks straight through it - formula paths, rendered paths, the frontend's own lookups.
+    // An address that mentioned it would be the odd one out, saying `div#2` where everything
+    // else says nothing at all.
+    let (_, nodes) = open();
+    let all = addressing::addresses(&nodes);
+
+    assert!(
+        all.iter().any(|a| a == "exercise_tracker/Exercises"),
+        "the list is not addressable without naming the wrapper around it"
+    );
+    assert!(
+        !all.iter().any(|a| a.contains("/div")),
+        "an unnamed wrapper appears in an address: {:?}",
+        all.iter().find(|a| a.contains("/div"))
+    );
+    DocumentManager::set_current_document(None);
+}
+
+#[test]
+fn a_named_container_keeps_its_place_in_an_address() {
+    // The question is not whether a node affects rendering - a `tab` is transparent too - but
+    // whether anyone would call it something. `tracker_v2` is a name; `div` is not.
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../examples/weight_tracker/tracker_v2.os");
+    DocumentManager::set_current_document(Some(p.to_string_lossy().as_ref()));
+    let nodes = app_api::load_document(std::fs::read_to_string(&p).unwrap()).unwrap();
+    let all = addressing::addresses(&nodes);
+    assert!(
+        all.iter().any(|a| a.starts_with("tracker_v2/History")),
+        "the named tab was dropped from its own addresses"
+    );
+    DocumentManager::set_current_document(None);
+}

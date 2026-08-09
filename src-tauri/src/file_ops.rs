@@ -691,6 +691,12 @@ impl FileOperations {
             || (indent_level > 0 && node.node_type == "-")
         {
             // Special handling for real list bodies vs non-list contexts
+            // Where the opening of this entry actually lands, which is not always the
+            // indent computed above: inside a list body it is lined up with the entries
+            // around it. The closing brace has to follow, or an entry opens at one depth
+            // and closes at another - which is what a newly added entry did, and why the
+            // next save reflowed it and differed from the one before.
+            let mut entry_indent: Option<String> = None;
             if in_list_body {
                 let mut required_indent = snapshot.as_ref().and_then(|snap| {
                     let text = if snap.full_text.contains("\r\n") {
@@ -716,6 +722,7 @@ impl FileOperations {
                     required_indent = Some(required_indent.map(|val| val.max(hint)).unwrap_or(hint));
                 }
                 if let Some(required_indent) = required_indent {
+                    entry_indent = Some(" ".repeat(required_indent));
                     let line_start = output.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
                     let current_slice = &output[line_start..];
                     let current_spaces = current_slice.chars().take_while(|c| *c == ' ').count();
@@ -954,7 +961,7 @@ impl FileOperations {
                 if !output.ends_with('\n') {
                     output.push('\n');
                 }
-                output.push_str(&indent);
+                output.push_str(entry_indent.as_deref().unwrap_or(&indent));
                 output.push_str("}\n");
                 Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                 return Ok(());
