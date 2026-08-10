@@ -487,7 +487,36 @@ fn a_day_record_has_no_stray_children() {
         let nodes = open();
         let history = find(&nodes, &["tracker_v2", "History"]).expect("History");
 
-        let expected = ["date", "totals", "intake", "add_by_portions", "add_by_grams"];
+        let expected = [
+            "date",
+            // The previous recorded day, and what this day is aiming at. Both are declared on
+            // DayRecord, so both belong here; the point of this test is the children nobody
+            // declared.
+            "previous_day",
+            "targets",
+            "totals",
+            "intake",
+            "add_by_portions",
+            "add_by_grams",
+            // The day's own Nutri-Score, worked out from its totals. Declared here rather than
+            // instantiated from the shared block - see the ignored test in
+            // tests/comment_after_childless_list.rs for why.
+            "eaten_grams",
+            "day_kj",
+            "day_sugar",
+            "day_sat_fat",
+            "day_sodium_mg",
+            "day_fibre",
+            "day_protein",
+            "day_p_energy",
+            "day_p_sugar",
+            "day_p_sat_fat",
+            "day_p_sodium",
+            "day_p_fibre",
+            "day_p_protein",
+            "day_score",
+            "day_grade",
+        ];
         for day in &history.children {
             let actual: Vec<String> = day.children.iter().map(|c| c.name.clone()).collect();
             let stray: Vec<&String> = actual
@@ -526,7 +555,8 @@ fn the_meal_record_template_has_no_stray_children() {
             .expect("intake list");
         let meal = intake.children.first().expect("a meal record");
 
-        let expected = ["food", "portion_weight", "portions", "grams", "name", "macros"];
+        // `quality` is the food's Nutri-Score block, declared on the template like the rest.
+        let expected = ["food", "portion_weight", "portions", "grams", "name", "quality", "macros"];
         let stray: Vec<String> = meal
             .children
             .iter()

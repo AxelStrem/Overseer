@@ -38,6 +38,10 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 float sugar (label="Sugar", suffix=" g", precision=1) = 2
                 float fibre (label="Fibre", suffix=" g", precision=1) = 1
                 float salt (label="Salt", suffix=" g", precision=2) = 0.2
+                float vitamin_d (label="Vit. D", suffix=" µg", precision=1) = 0.1
+                float calcium (label="Calcium", suffix=" mg", precision=0) = 25
+                float iron (label="Iron", suffix=" mg", precision=1) = 0.8
+                float potassium (label="Potassium", suffix=" mg", precision=0) = 180
             }
 
             // Per portion - always derived, never stored.
@@ -51,6 +55,10 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 float sugar (label="Sugar", suffix=" g", precision=1) = $(per_100g/sugar * portion_weight * 0.01)
                 float fibre (label="Fibre", suffix=" g", precision=1) = $(per_100g/fibre * portion_weight * 0.01)
                 float salt (label="Salt", suffix=" g", precision=2) = $(per_100g/salt * portion_weight * 0.01)
+                float vitamin_d (label="Vit. D", suffix=" µg", precision=1) = $(per_100g/vitamin_d * portion_weight * 0.01)
+                float calcium (label="Calcium", suffix=" mg", precision=0) = $(per_100g/calcium * portion_weight * 0.01)
+                float iron (label="Iron", suffix=" mg", precision=1) = $(per_100g/iron * portion_weight * 0.01)
+                float potassium (label="Potassium", suffix=" mg", precision=0) = $(per_100g/potassium * portion_weight * 0.01)
             }
         }
     }
