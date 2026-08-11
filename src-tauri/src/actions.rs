@@ -1758,10 +1758,27 @@ impl ActionExecutor {
             let min_len = if anchored { 0 } else { 1 };
             for seg in segments {
                 if seg == ".." {
-                    if abs.len() > min_len {
-                        abs.pop();
-                    } else {
-                        valid = false;
+                    // Up to the enclosing node the document actually names. A `div` used to
+                    // group fields for layout is not something an author thinks of as
+                    // containing anything, and stopping on one makes `../items` resolve a
+                    // level too shallow - so a button written beside a list stops finding it
+                    // the moment the fields around it are grouped.
+                    loop {
+                        if abs.len() > min_len {
+                            abs.pop();
+                        } else {
+                            valid = false;
+                            break;
+                        }
+                        let landed_on_wrapper = Self::find_indices_by_name_path(nodes, &abs)
+                            .and_then(|indices| Self::node_by_indices(nodes, &indices))
+                            .map(crate::addressing::is_wrapper)
+                            .unwrap_or(false);
+                        if !landed_on_wrapper {
+                            break;
+                        }
+                    }
+                    if !valid {
                         break;
                     }
                 } else if seg.is_empty() {
@@ -1783,6 +1800,15 @@ impl ActionExecutor {
             }
         }
         None
+    }
+
+    fn node_by_indices<'a>(nodes: &'a [OverseerNode], indices: &[usize]) -> Option<&'a OverseerNode> {
+        let (first, rest) = indices.split_first()?;
+        let mut node = nodes.get(*first)?;
+        for index in rest {
+            node = node.children.get(*index)?;
+        }
+        Some(node)
     }
 
     fn find_indices_by_name_path(nodes: &Vec<OverseerNode>, path: &[String]) -> Option<Vec<usize>> {
@@ -3048,6 +3074,48 @@ impl ActionExecutor {
         Self::append_to_list(nodes, &[], list_path, None, None, overrides)
     }
 
+    /// Take one entry out of the list it sits in, named by its own path.
+    ///
+    /// By path rather than by key, which is what the `remove` action uses: a list does not
+    /// have to declare a key, and the one meals are recorded in does not. An entry is
+    /// identified by where it is, which is what a caller reading the document already has.
+    pub fn remove_entry(
+        nodes: &mut Vec<OverseerNode>,
+        entry_path: &str,
+    ) -> Result<(), OverseerError> {
+        let (segments, _explicit_param, anchored) = Self::split_path_and_param(entry_path);
+        let indices = Self::resolve_target_indices(&nodes, &[], anchored, &segments)
+            .ok_or_else(|| {
+                OverseerError::ValidationError(format!("Nothing at: {}", entry_path))
+            })?;
+
+        let (last, parent_indices) = indices
+            .split_last()
+            .ok_or_else(|| OverseerError::ValidationError("Nothing to remove".to_string()))?;
+
+        let parent = Self::get_node_mut_by_indices(nodes, parent_indices).ok_or_else(|| {
+            OverseerError::ValidationError(format!("No list holds {}", entry_path))
+        })?;
+        if parent.node_type != "list" {
+            return Err(OverseerError::ValidationError(format!(
+                "{} is not in a list, so there is nothing to remove it from",
+                entry_path
+            )));
+        }
+        if *last >= parent.children.len() {
+            return Err(OverseerError::ValidationError(format!(
+                "Nothing at: {}",
+                entry_path
+            )));
+        }
+
+        parent.children.remove(*last);
+        // The list's text no longer matches what was parsed from it, so it has to be written
+        // out again rather than replayed - the same reason an edit to a value clears this.
+        parent.source_fingerprint = None;
+        Ok(())
+    }
+
     /// Set a value, as a `set` action would.
     pub fn assign_value(
         nodes: &mut Vec<OverseerNode>,
@@ -3436,6 +3504,13 @@ impl ActionExecutor {
     }
 
     // Evaluate formulas in value/params against owner_path context and apply into target
+    /// Whether a node holds a child of this name, looking through layout-only groups.
+    fn holds_named(node: &OverseerNode, name: &str) -> bool {
+        node.children.iter().any(|c| {
+            c.name == name || (crate::addressing::is_wrapper(c) && Self::holds_named(c, name))
+        })
+    }
+
     fn apply_overrides_evaluated(
         target: &mut OverseerNode,
         overrides: &Vec<OverseerNode>,
@@ -3445,7 +3520,28 @@ impl ActionExecutor {
         for ov in overrides {
             let name = ov.name.clone();
             // Find or create corresponding child in target
-            let idx_opt = target.children.iter().position(|c| c.name == name);
+            let mut idx_opt = target.children.iter().position(|c| c.name == name);
+
+            // Not beside the group, then: a template is free to keep a field inside one for
+            // layout, and an override names the field rather than the arrangement. Creating a
+            // second field beside the group instead would leave the real one at its default,
+            // with every formula reading that one and the written value showing nowhere.
+            if idx_opt.is_none() {
+                let inside = target.children.iter().position(|c| {
+                    crate::addressing::is_wrapper(c) && Self::holds_named(c, &name)
+                });
+                if let Some(wrapper_index) = inside {
+                    let wrapper = &mut target.children[wrapper_index];
+                    Self::apply_overrides_evaluated(
+                        wrapper,
+                        &vec![ov.clone()],
+                        owner_path,
+                        snapshot,
+                    )?;
+                    continue;
+                }
+            }
+            let _ = &mut idx_opt;
             if let Some(idx) = idx_opt {
                 // Merge parameters (evaluate any Formula)
                 let child = target.children.get_mut(idx).unwrap();

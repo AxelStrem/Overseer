@@ -261,6 +261,20 @@ async fn set_at(
 }
 
 
+/// Remove the entry at an address.
+async fn remove_at(
+    State(service): State<Service>,
+    axum::extract::Query(target): axum::extract::Query<Target>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let outcome = tokio::task::spawn_blocking(move || documents.remove_at(&target.document, &target.address))
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
+        .map_err(respond)?;
+    Ok(Json(json!(outcome)))
+}
+
+
 #[derive(serde::Deserialize)]
 struct EventBody {
     event: String,
@@ -438,6 +452,7 @@ async fn main() {
         // The document API: a subtree is named by an address that survives a resolve.
         .route("/v1/node", get(read_at).post(set_at))
         .route("/v1/append", post(append_at))
+        .route("/v1/remove", post(remove_at))
         .route("/v1/event", post(run_event))
         .route("/__overseer/bridge.js", get(bridge))
         .route("/", get(index));

@@ -32,7 +32,10 @@ fn sandbox(tag: &str) -> (Sandbox, DocumentRoot) {
 }
 
 fn field(node: &OverseerNode, name: &str) -> Option<OverseerValue> {
-    let child = node.children.iter().find(|c| c.name == name)?;
+    let child = overseer::addressing::effective_children(node)
+        .into_iter()
+        .map(|(_, c)| c)
+        .find(|c| c.name == name)?;
     child
         .parameters
         .get("_computed_value")
@@ -119,11 +122,7 @@ fn records_a_meal_against_a_day_that_already_exists() {
     // The point of reading the result back: a handle that matched nothing would leave the
     // derived figures at their defaults rather than failing, and this is how a caller notices.
     let added = outcome.node.children.last().expect("an entry");
-    let calories = added
-        .children
-        .iter()
-        .find(|c| c.name == "macros")
-        .and_then(|m| field(m, "calories"));
+    let calories = field(added, "calories");
     assert!(
         calories.is_some(),
         "the recorded meal has no calories, so nothing can be reported back about it"
@@ -224,12 +223,7 @@ fn the_recorded_meal_carries_the_food_s_own_figures() {
         .expect("record the meal");
 
     let added = outcome.node.children.last().expect("the new entry");
-    let macros = added
-        .children
-        .iter()
-        .find(|c| c.name == "macros")
-        .expect("the entry should have macros");
-    let recorded = number(field(macros, "calories")).expect("calories");
+    let recorded = number(field(added, "calories")).expect("calories");
 
     let expected = 2.0 * portion * calories_per_100g * 0.01;
     assert!(
@@ -325,12 +319,7 @@ fn a_new_food_keeps_the_figures_it_was_given() {
         )
         .expect("a meal of the new food should record");
     let added = outcome.node.children.last().expect("the new entry");
-    let macros = added
-        .children
-        .iter()
-        .find(|c| c.name == "macros")
-        .expect("macros");
-    let recorded = number(field(macros, "calories")).expect("calories");
+    let recorded = number(field(added, "calories")).expect("calories");
     let expected = 75.0 * 61.0 * 0.01;
     assert!(
         (recorded - expected).abs() < 0.01,
@@ -368,4 +357,66 @@ fn a_list_says_how_to_address_its_entries() {
         field(&apple.node, "handle"),
         Some(OverseerValue::String("apple".into()))
     );
+}
+
+// -- taking a meal back out ------------------------------------------------------------------
+
+#[test]
+fn removes_a_meal_from_the_day_it_was_recorded_against() {
+    let (_sandbox, documents) = sandbox("remove");
+    let day = "tracker_v2/History/[2026-08-08]/intake";
+
+    let before = documents.read_at("tracker_v2.os", day).expect("read the day");
+    let count = before.node.children.len();
+    assert!(count >= 2, "the day needs records to remove one of");
+    let doomed = before.child_addresses.first().cloned().expect("an entry to remove");
+    let survivor_name = before.node.children[1]
+        .children
+        .iter()
+        .find(|c| c.name == "food")
+        .and_then(|c| c.parameters.get("value").cloned());
+
+    let outcome = documents
+        .remove_at("tracker_v2.os", &doomed)
+        .expect("remove the meal");
+
+    // It answers with the list, because the entry is gone and the list is what is left.
+    assert_eq!(outcome.address, day);
+    assert_eq!(outcome.node.children.len(), count - 1, "one entry should have gone");
+
+    // The one that followed it is still there, and is now first.
+    let now_first = outcome.node.children[0]
+        .children
+        .iter()
+        .find(|c| c.name == "food")
+        .and_then(|c| c.parameters.get("value").cloned());
+    assert_eq!(now_first, survivor_name, "the wrong entry was removed");
+
+    // And it is gone from the file, not just from this copy of the tree.
+    let again = documents.read_at("tracker_v2.os", day).expect("read the day again");
+    assert_eq!(again.node.children.len(), count - 1);
+}
+
+#[test]
+fn refuses_to_remove_something_that_is_not_in_a_list() {
+    let (_sandbox, documents) = sandbox("remove_field");
+    let outcome = documents.remove_at("tracker_v2.os", "tracker_v2/History/[2026-08-08]/date");
+    match outcome {
+        Err(RequestError::Rejected(message)) => {
+            assert!(message.contains("only entries of a list"), "{}", message)
+        }
+        Err(other) => panic!("removing a field failed for the wrong reason: {:?}", other),
+        Ok(_) => panic!("removing a field was allowed"),
+    }
+}
+
+#[test]
+fn removing_something_that_is_not_there_says_so() {
+    let (_sandbox, documents) = sandbox("remove_missing");
+    let outcome = documents.remove_at("tracker_v2.os", "tracker_v2/History/[2026-08-08]/intake/nope");
+    match outcome {
+        Err(RequestError::NotFound(_)) => {}
+        Err(other) => panic!("expected a not-found, got {:?}", other),
+        Ok(_) => panic!("removing something absent was allowed"),
+    }
 }

@@ -658,4 +658,57 @@ impl DocumentRoot {
             node,
         })
     }
+
+    /// Remove the entry at an address, and answer with the list it came out of.
+    ///
+    /// The list rather than the entry, because the entry is gone and what a caller needs next
+    /// is what remains - both to report it and to address the entries that shifted up.
+    pub fn remove_at(
+        &self,
+        name: &str,
+        address: &str,
+    ) -> std::result::Result<WriteOutcome, RequestError> {
+        let parent_address = address
+            .rsplit_once('/')
+            .map(|(head, _)| head.to_string())
+            .ok_or_else(|| {
+                RequestError::Rejected(format!(
+                    "'{}' is a whole document rather than an entry in a list",
+                    address
+                ))
+            })?;
+
+        let (_, nodes) = self.edit(name, |nodes| {
+            let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
+                RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
+            })?;
+            let holder = crate::addressing::find(nodes, &parent_address).ok_or_else(|| {
+                RequestError::NotFound(format!("nothing at '{}' in '{}'", parent_address, name))
+            })?;
+            if holder.node_type != "list" {
+                return Err(RequestError::Rejected(format!(
+                    "'{}' is in a {}, and only entries of a list can be removed",
+                    address, holder.node_type
+                )));
+            }
+            ActionExecutor::remove_entry(nodes, &format!("/{}", path.join("/")))
+                .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))
+        })?;
+
+        self.journal(serde_json::json!({
+            "at": chrono::Utc::now().to_rfc3339(),
+            "document": name,
+            "operation": "remove",
+            "address": address,
+        }));
+
+        let node = crate::addressing::find(&nodes, &parent_address)
+            .cloned()
+            .ok_or_else(|| RequestError::Failed("the list vanished while being written".into()))?;
+        Ok(WriteOutcome {
+            child_addresses: child_addresses(&parent_address, &node),
+            address: parent_address,
+            node,
+        })
+    }
 }

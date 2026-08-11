@@ -144,6 +144,17 @@ body {
     box-shadow: var(--shadow);
 }
 
+/* A group that exists only to arrange its children draws nothing of its own. Otherwise every
+   row added for layout becomes another frame inside the last one, and a border stops telling
+   the reader anything about what belongs with what. */
+.overseer-div.layout-wrapper {
+    background: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+}
+
 /* If inline style disables border, also suppress default shadow for a truly flat look */
 .overseer-div[style*="border: none"] {
     border: none !important;
@@ -220,12 +231,40 @@ body {
     flex-direction: column;
 }
 
+/* Flow: as many equal columns as the width allows, then on to the next row. For lists of
+   cards - a day's meals, say - where `horizontal` would wrap them at whatever widths they
+   happened to have, and `vertical` wastes the width entirely. The minimum is what a card needs
+   to stay readable; below it the row simply holds one. */
+.overseer-div.layout-flow,
+.overseer-list.layout-flow {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 6px;
+    align-items: start;
+}
+
 /* When parent aligns center/far, ensure inner containers don't stick to top */
 .overseer-div.align-center > .overseer-div:first-child,
 .overseer-div.align-far > .overseer-div:first-child,
 .overseer-list.align-center > .overseer-div:first-child,
 .overseer-list.align-far > .overseer-div:first-child {
     align-self: stretch;
+}
+
+/* A flex or grid child will not shrink below its own content unless told it may: the default
+   `min-width: auto` means a long name keeps its full width and simply draws over whatever is
+   next to it, rather than wrapping inside its own box. */
+.overseer-div.layout-horizontal > *,
+.overseer-list.layout-horizontal > *,
+.overseer-div.layout-flow > *,
+.overseer-list.layout-flow > * {
+    min-width: 0;
+}
+
+/* A figure and its unit are one thing to read. Left to wrap, "55 g" becomes two lines with the
+   unit orphaned under the number. */
+.number-field .field-value {
+    white-space: nowrap;
 }
 
 /* Fallback for generic layout classes */
@@ -296,9 +335,19 @@ body {
 
 .number-field .field-value {
     font-family: monospace;
+    /* Block, or the span is only as wide as its digits and sits at the left of the field -
+       where `text-align` has nothing to align. The heading above it is a block and does move,
+       which is what left the two looking offset from each other. */
+    display: block;
     text-align: right;
     color: var(--primary-color);
     font-weight: 500;
+}
+
+/* A column of figures is read down its right-hand edge, where the units line up - so the
+   heading belongs over that edge rather than over the first digit. */
+.number-field label {
+    text-align: right;
 }
 
 .date-field .field-value {
@@ -452,7 +501,19 @@ body {
     position: relative;
 }
 
-.overseer-chart canvas {
+/* A chart asked for a size in pixels fills the box it was given, and Chart.js sizes the canvas
+   to it. Stretching the canvas to 100% here would undo that - the rule below is for charts
+   that were given no size and should take the width they are placed in. */
+.overseer-chart.sized {
+    padding: 4px;
+    margin-bottom: 0;
+}
+
+.overseer-chart.sized canvas {
+    display: block;
+}
+
+.overseer-chart:not(.sized) canvas {
     display: block;
     width: 100% !important;
     height: auto !important;

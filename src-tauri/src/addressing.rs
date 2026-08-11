@@ -63,8 +63,15 @@ fn key_field(node: &OverseerNode) -> Option<&str> {
 }
 
 /// The value a node carries for its list's key field.
+///
+/// Through wrappers, because grouping an entry's fields for layout must not change what the
+/// entry is called. It did once: a day whose date was put in a row with the rest of its
+/// summary lost its key, and every address that named it by date stopped resolving.
 fn key_of(node: &OverseerNode, field: &str) -> Option<String> {
-    let child = node.children.iter().find(|c| c.name == field)?;
+    let child = effective_children(node)
+        .into_iter()
+        .map(|(_, child)| child)
+        .find(|c| c.name == field)?;
     // The computed value is what the rest of the document sees, so it is what identifies the
     // entry; the raw value may still be the formula that produced it.
     child
@@ -103,7 +110,12 @@ fn segment(parent: Option<&OverseerNode>, siblings: &[OverseerNode], index: usiz
 /// A `tab` is also transparent, for layout, but it has a name of its own and keeps it. The
 /// question is not whether a node affects rendering; it is whether anyone would call it
 /// something.
-fn is_wrapper(node: &OverseerNode) -> bool {
+/// Whether a node groups its children for layout and stands for nothing itself.
+///
+/// Public because more than addressing has to agree about it. A rule that only one layer
+/// honours is worse than no rule: a document laid out the obvious way then keeps its
+/// addresses but loses its action targets, and nothing says why.
+pub fn is_wrapper(node: &OverseerNode) -> bool {
     node.is_hierarchy_transparent && (node.name.is_empty() || node.name == node.node_type)
 }
 

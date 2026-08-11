@@ -864,8 +864,22 @@ impl FileOperations {
                                     }
                                 }
                             }
-                            // Recurse
+                            // Down through wrappers and into leaves, and no further. What is
+                            // hoisted here is written as `- name = value` on the entry, which
+                            // is only true of something that is effectively the entry's own
+                            // child - so a node standing for itself ends the search, whatever
+                            // is inside it.
+                            //
+                            // Without that, a template instance used inside a wrapper had its
+                            // own overrides copied into every record: `- input = $(../../amount)`
+                            // on each of them, saying something the entry never said and could
+                            // not have meant.
                             for ch in &node.children {
+                                let stands_for_itself =
+                                    !ch.children.is_empty() && !ch.is_hierarchy_transparent;
+                                if stands_for_itself {
+                                    continue;
+                                }
                                 collect_descendant_value_overrides(ch, _name_filter_unused, out);
                             }
                         }

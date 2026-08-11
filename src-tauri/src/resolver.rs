@@ -1356,6 +1356,11 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
             match layout_value.as_str() {
                 "vertical" => return "vertical".to_string(),
                 "horizontal" => return "horizontal".to_string(),
+                // Along the row and on to the next when the row runs out. Unlike `horizontal`,
+                // which wraps whatever widths its children happen to have, this fits as many
+                // equal columns as there is room for - so a list of cards is three across on a
+                // wide window and one on a narrow one, without the document naming a width.
+                "flow" => return "flow".to_string(),
                 "inherit" => {
                     return parent_layout.unwrap_or("vertical").to_string();
                 }

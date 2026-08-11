@@ -45,10 +45,19 @@ fn open() -> Vec<OverseerNode> {
     nodes
 }
 
+/// Walks by name, looking through groups that exist only for layout - the same rule the rest
+/// of the system follows, so a document that groups its fields does not need these paths
+/// rewritten.
 fn find<'a>(nodes: &'a [OverseerNode], path: &[&str]) -> Option<&'a OverseerNode> {
+    fn child<'a>(node: &'a OverseerNode, name: &str) -> Option<&'a OverseerNode> {
+        overseer::addressing::effective_children(node)
+            .into_iter()
+            .map(|(_, c)| c)
+            .find(|c| c.name == name)
+    }
     let mut cur = nodes.iter().find(|n| n.name == path[0])?;
     for seg in &path[1..] {
-        cur = cur.children.iter().find(|c| &c.name == seg)?;
+        cur = child(cur, seg)?;
     }
     Some(cur)
 }
@@ -145,7 +154,7 @@ fn stating_portions_derives_grams_and_macros() {
         close(number(&nodes, &as_refs(&g)), 300.0, "wrap grams from portions");
 
         let mut c = base.clone();
-        c.extend(["macros".to_string(), "calories".to_string()]);
+        c.push("calories".to_string());
         close(number(&nodes, &as_refs(&c)), 411.0, "wrap calories");
 
         let mut pr = base;
@@ -168,7 +177,7 @@ fn stating_grams_derives_portions_and_macros() {
 
         // 250 g at 80 kcal/100 g.
         let mut c = base;
-        c.extend(["macros".to_string(), "calories".to_string()]);
+        c.push("calories".to_string());
         close(number(&nodes, &as_refs(&c)), 200.0, "latte calories");
     });
 }
@@ -193,7 +202,7 @@ fn day_totals_sum_the_intake() {
                 day.name
             );
 
-            for macro_name in ["calories", "protein", "sugar", "salt"] {
+            for macro_name in ["protein", "sugar", "salt"] {
                 let summed: f64 = intake
                     .children
                     .iter()
@@ -429,9 +438,9 @@ fn each_add_button_stores_only_its_own_amount() {
                 .clone();
 
             let raw = |name: &str| {
-                added
-                    .children
-                    .iter()
+                overseer::addressing::effective_children(&added)
+                    .into_iter()
+                    .map(|(_, c)| c)
                     .find(|c| c.name == name)
                     .and_then(|c| c.parameters.get("value").cloned())
             };
@@ -515,10 +524,17 @@ fn a_day_record_has_no_stray_children() {
             "day_p_fibre",
             "day_p_protein",
             "day_score",
-            "day_grade",
+            // The headline group is named, so it stands for itself and appears here; the
+            // grade moved inside it.
+            "day_headline",
         ];
         for day in &history.children {
-            let actual: Vec<String> = day.children.iter().map(|c| c.name.clone()).collect();
+            // Through layout groups: this is looking for nodes nobody declared, and a `div`
+            // arranging the day's summary is not one.
+            let actual: Vec<String> = overseer::addressing::effective_children(day)
+                .into_iter()
+                .map(|(_, c)| c.name.clone())
+                .collect();
             let stray: Vec<&String> = actual
                 .iter()
                 .filter(|n| !expected.contains(&n.as_str()))
@@ -555,12 +571,17 @@ fn the_meal_record_template_has_no_stray_children() {
             .expect("intake list");
         let meal = intake.children.first().expect("a meal record");
 
-        // `quality` is the food's Nutri-Score block, declared on the template like the rest.
-        let expected = ["food", "portion_weight", "portions", "grams", "name", "quality", "macros"];
-        let stray: Vec<String> = meal
-            .children
-            .iter()
-            .map(|c| c.name.clone())
+        // `quality` is the food's Nutri-Score block and `calories` its headline figure, both
+        // declared on the template like the rest.
+        let expected = [
+            "food", "portion_weight", "portions", "grams", "name", "calories", "quality",
+            "macros",
+        ];
+        // Through any layout grouping: what this is looking for is a node nobody declared,
+        // and a `div` used to arrange the fields is not one.
+        let stray: Vec<String> = overseer::addressing::effective_children(meal)
+            .into_iter()
+            .map(|(_, c)| c.name.clone())
             .filter(|n| !expected.contains(&n.as_str()))
             .collect();
         assert!(

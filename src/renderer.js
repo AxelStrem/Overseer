@@ -19,6 +19,9 @@ import {
     PointElement,
     LineElement,
     LineController,
+    ArcElement,
+    PieController,
+    DoughnutController,
     Title,
     Tooltip,
     Legend
@@ -31,6 +34,12 @@ Chart.register(
     PointElement,
     LineElement,
     LineController,
+    // A chart that says `kind="pie"` draws slices instead of a line. Chart.js only knows the
+    // controllers that are registered, and an unregistered one fails at draw time rather than
+    // at configuration - so these belong here even though most charts are lines.
+    ArcElement,
+    PieController,
+    DoughnutController,
     Title,
     Tooltip,
     Legend
@@ -974,6 +983,14 @@ export class OverseerRenderer {
 
         if (!node || typeof node !== 'object') {
             if (DEBUG_MODE) console.warn('Invalid node:', node)
+            return
+        }
+
+        // A leading underscore marks something the machinery put there - the resolver, the
+        // serializer, or this renderer's own bookkeeping. None of it is content, and a field
+        // named that way has no label to explain itself, so it shows up as a bare string of
+        // characters in the middle of a document nobody wrote it into.
+        if (typeof node.name === 'string' && node.name.startsWith('_')) {
             return
         }
 
@@ -1991,10 +2008,34 @@ export class OverseerRenderer {
         return tabContent
     }
 
+    /// How narrow a column may get before the row holds one fewer.
+    ///
+    /// `flow` fits as many equal columns as it can, and what "as many as it can" means depends
+    /// entirely on how much room a card needs to stay readable - which the document knows and
+    /// the stylesheet cannot. Given none, the sheet's own minimum applies.
+    applyFlowColumns(element, node, layout) {
+        if (layout !== 'flow') return
+        const raw = this.getParameterValue(node, 'min-width')
+        if (raw === null || raw === undefined) return
+        const min = this.convertCssSizeValue(raw)
+        if (!min) return
+        element.style.gridTemplateColumns = `repeat(auto-fit, minmax(${min}, 1fr))`
+    }
+
     createDivElement(node) {
         const div = document.createElement('div')
         div.className = 'overseer-div'
-        
+
+        // A div written without a name groups its children for layout and stands for nothing
+        // itself - the same rule the addresses, the formulas and the actions follow. Drawing it
+        // a box of its own is the visual version of giving it an address: every group added for
+        // arrangement becomes another frame, and the borders stop meaning anything.
+        const isWrapper = node.is_hierarchy_transparent &&
+            (!node.name || node.name === node.node_type)
+        if (isWrapper) {
+            div.classList.add('layout-wrapper')
+        }
+
         if (node.name) {
             div.setAttribute('data-name', node.name)
         }
@@ -2003,6 +2044,7 @@ export class OverseerRenderer {
         // Apply layout (use effective layout calculated by resolver, or fall back to explicit parameter)
         const layout = this.getEffectiveLayout(node)
         div.classList.add(`layout-${layout}`)
+        this.applyFlowColumns(div, node, layout)
         
         // Apply spacing and margins
         this.applyLayoutStyles(div, node)
@@ -2020,6 +2062,7 @@ export class OverseerRenderer {
         // Apply layout (use effective layout calculated by resolver, or fall back to explicit parameter)
         const layout = this.getEffectiveLayout(node)
         list.classList.add(`layout-${layout}`)
+        this.applyFlowColumns(list, node, layout)
         
     // Apply spacing and margins  
     this.applyLayoutStyles(list, node)
@@ -2263,6 +2306,10 @@ export class OverseerRenderer {
         const pref = this.getParameterValue(node, 'prefix') || ''
         const suf = this.getParameterValue(node, 'suffix') || ''
         const precRaw = this.getParameterValue(node, 'precision')
+        // `format="trim"` makes `precision` a limit rather than a width: two portions of
+        // something reads as "2", one and a half as "1.5". A count is not a measurement, and
+        // writing it "2.00" says a precision nobody claimed.
+        const numberFormat = (this.getParameterValue(node, 'format') || '').toString().toLowerCase()
         const fmtNumber = (v) => {
             if (v === null || v === undefined) return ''
             if (typeof v === 'string') {
@@ -2276,7 +2323,12 @@ export class OverseerRenderer {
             if (!isNaN(n)) {
                 const p = (precRaw === null || precRaw === undefined) ? undefined : parseInt(precRaw, 10)
                 if (!isNaN(p) && p >= 0) {
-                    return n.toFixed(p)
+                    const fixed = n.toFixed(p)
+                    if (numberFormat === 'trim' && fixed.includes('.')) {
+                        // The zeros, and the point if nothing is left after it.
+                        return fixed.replace(/0+$/, '').replace(/\.$/, '')
+                    }
+                    return fixed
                 }
                 // No precision specified; render integers without decimals
                 if (Number.isInteger(n)) return String(n)
@@ -2562,7 +2614,9 @@ export class OverseerRenderer {
         container.className = 'overseer-field boolean-field'
         
         // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
-        const labelText = node.parameters && node.parameters.label ? node.parameters.label : null;
+        // Through the accessor, like everywhere else: the parameter arrives as
+        // { String: "Irregular" }, and setting that as text gives "[object Object]".
+        const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
             label.textContent = labelText
@@ -2762,9 +2816,15 @@ export class OverseerRenderer {
         const canvas = document.createElement('canvas')
         container.appendChild(canvas)
         
-        // Size handling - support width/height parameters
-        const rawW = this.getParameterValue(node, 'width')
-        const rawH = this.getParameterValue(node, 'height')
+        // Size handling - support width/height parameters.
+        //
+        // Through the css converter: `260px` reaches here as { Pixels: 260 }, which the size
+        // parser below turns into "[object Object]" and quietly discards in favour of the
+        // container's width. Percentages happen to arrive as strings, which is why charts sized
+        // that way have always worked and ones sized in pixels never did.
+        const asCss = (v) => (v === null || v === undefined ? v : this.convertCssSizeValue(v))
+        const rawW = asCss(this.getParameterValue(node, 'width'))
+        const rawH = asCss(this.getParameterValue(node, 'height'))
         const rawAR = this.getParameterValue(node, 'aspect-ratio')
         
         const parseAspectRatio = (v) => {
@@ -2833,9 +2893,69 @@ export class OverseerRenderer {
         }
         
         computeSize()
-        
+
+        // A chart given a size in pixels keeps it. The stylesheet stretches a canvas to its
+        // container, which is right for a chart that owns a row and wrong for one placed beside
+        // other things: in a horizontal group the container has no width of its own, so it
+        // collapses and takes the chart with it - a bordered box with nothing in it.
+        const isPixelSize = (v) => v !== null && v !== undefined && !String(v).trim().endsWith('%')
+        if (isPixelSize(rawW) || isPixelSize(rawH)) {
+            container.classList.add('sized')
+            container.style.flex = '0 0 auto'
+            if (isPixelSize(rawW)) container.style.width = width + 'px'
+            if (isPixelSize(rawH)) container.style.height = height + 'px'
+        }
+
         // Get plot children
         const plotsAll = (node.children || []).filter(c => (c.node_type||'').toLowerCase() === 'plot')
+
+        // A pie is a different shape of question: not a series over an axis, but a handful of
+        // parts of one whole. Each plot contributes a single `amount` and its own colour, and
+        // the axes and domains below have nothing to say about it.
+        const kind = (this.getParameterValue(node, 'kind') || 'line').toString().toLowerCase()
+        if (kind === 'pie' || kind === 'doughnut') {
+            const labels = []
+            const values = []
+            const colors = []
+            for (const plot of plotsAll) {
+                const raw = this.getParameterValue(plot, '_computed_amount')
+                const amount = Number(raw !== undefined && raw !== null ? raw : this.getParameterValue(plot, 'amount'))
+                if (!isFinite(amount) || amount <= 0) continue
+                labels.push(this.getParameterValue(plot, 'label') || plot.name || 'Slice')
+                values.push(amount)
+                colors.push(this.convertColorValue(this.getParameterValue(plot, 'color') || '#4A90E2'))
+            }
+            if (values.length === 0) return container
+
+            const pie = new Chart(canvas, {
+                type: kind,
+                data: {
+                    labels,
+                    datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: true, position: 'right', labels: { usePointStyle: true, boxWidth: 8 } },
+                        tooltip: {
+                            callbacks: {
+                                // The number itself is rarely the point; the share is.
+                                label: (item) => {
+                                    const total = values.reduce((a, b) => a + b, 0)
+                                    const share = total > 0 ? Math.round((item.parsed / total) * 100) : 0
+                                    return `${item.label}: ${Math.round(item.parsed)} (${share}%)`
+                                },
+                            },
+                        },
+                    },
+                },
+            })
+            canvas._chartInstance = pie
+            container._chartInstance = pie
+            return container
+        }
+
         
         // Check if we have computed series data
         const hasData = plotsAll.some(plot => {
@@ -3313,6 +3433,23 @@ export class OverseerRenderer {
             }
         }
         
+        // Shadow, either by name or as a css value of its own. Named, because a document is
+        // describing what a thing is rather than dictating pixels - and because four sizes
+        // that agree with each other look better than four that were each guessed at.
+        if (params.shadow !== undefined) {
+            const asked = String(this.getParameterValue(node, 'shadow') ?? '').trim()
+            const named = {
+                none: 'none',
+                soft: '0 1px 2px rgba(0, 0, 0, 0.20)',
+                lifted: '0 2px 6px rgba(0, 0, 0, 0.28)',
+                floating: '0 6px 16px rgba(0, 0, 0, 0.35)',
+            }
+            const shadow = named[asked.toLowerCase()] ?? asked
+            if (shadow) {
+                element.style.setProperty('box-shadow', shadow, 'important')
+            }
+        }
+
         // Border radius parameter for controlling corner rounding
         if (params['border-radius']) {
             const borderRadiusValue = this.convertCssSizeValue(params['border-radius'])
