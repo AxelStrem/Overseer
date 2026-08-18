@@ -254,12 +254,15 @@ impl DocumentRoot {
         cmd: &str,
         args: &serde_json::Value,
     ) -> std::result::Result<serde_json::Value, RequestError> {
-        // Writing is a separate matter from reading, and this server does not do it yet.
-        // Refused explicitly rather than left to fail somewhere less obvious.
+        // Saving is the browser's way of writing: it runs the action, serializes the whole
+        // document, and sends the text back. The write API the bot uses is finer-grained and
+        // safer, but nothing in the page speaks it - a button press there is an ordinary save.
+        //
+        // The hazard a whole-document save brings is that the page may be stale: the bot could
+        // have recorded something since it loaded, and this text would quietly replace it. So
+        // where the client tells us what it started from, that is checked first.
         if cmd.starts_with("save_") {
-            return Err(RequestError::Rejected(
-                "this server is read-only; changes cannot be saved".into(),
-            ));
+            return self.save(cmd, args);
         }
 
         let dir = match document {
@@ -437,6 +440,166 @@ pub fn refuse_to_start(bind: &std::net::IpAddr, access: &Access) -> Option<Strin
 /// its template goes back to the template's default on the next resolve unless the entry
 /// itself states it, and the default for a calorie figure is a plausible number rather than an
 /// obviously missing one - so getting this wrong records a food that looks fine and is wrong.
+/// Refuse to touch an entry that is not the one the caller thinks it is.
+///
+/// Compared as text, because a caller sends what it read back and a figure can arrive as 1 or
+/// 1.0 without meaning anything different. What matters is whether this is the same meal, not
+/// whether two numbers are the same type.
+fn check_expected(
+    entry: &OverseerNode,
+    address: &str,
+    expect: &std::collections::HashMap<String, OverseerValue>,
+) -> std::result::Result<(), RequestError> {
+    fn as_text(value: &OverseerValue) -> String {
+        match value {
+            OverseerValue::String(s) => s.clone(),
+            OverseerValue::Timestamp(s) | OverseerValue::Date(s) => s.clone(),
+            OverseerValue::Integer(i) => i.to_string(),
+            OverseerValue::Float(f) => {
+                if f.fract() == 0.0 {
+                    format!("{}", *f as i64)
+                } else {
+                    f.to_string()
+                }
+            }
+            OverseerValue::Boolean(b) => b.to_string(),
+            other => format!("{:?}", other),
+        }
+    }
+    fn look(node: &OverseerNode, name: &str) -> Option<OverseerValue> {
+        for child in &node.children {
+            if child.name == name {
+                return child
+                    .parameters
+                    .get("_computed_value")
+                    .or_else(|| child.parameters.get("value"))
+                    .cloned();
+            }
+            if let Some(found) = look(child, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    for (field, wanted) in expect {
+        let found = look(entry, field);
+        let matches = found.as_ref().map(as_text) == Some(as_text(wanted));
+        if !matches {
+            return Err(RequestError::Rejected(format!(
+                "'{}' is not the entry you meant: its '{}' is {}, not {}. Read the list again - \
+                 removing an entry renumbers the ones after it, so an address from a moment ago \
+                 may now name something else.",
+                address,
+                field,
+                found.as_ref().map(as_text).unwrap_or_else(|| "missing".into()),
+                as_text(wanted),
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The node a template name refers to, wherever it was declared.
+fn find_template<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+    for node in nodes {
+        if node.name == name {
+            return Some(node);
+        }
+        if let Some(found) = find_template(&node.children, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Every field name an entry made from this template could accept.
+///
+/// Both forms callers use: the bare name of a field anywhere in the template, and the path to
+/// one - `calories` and `per_100g/calories` are the same field asked for two ways, and the
+/// catalogue is written with the second.
+fn accepted_field_names(
+    template: &OverseerNode,
+) -> (
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeSet<String>,
+) {
+    fn walk(
+        node: &OverseerNode,
+        prefix: &str,
+        all: &mut std::collections::BTreeSet<String>,
+        settable: &mut std::collections::BTreeSet<String>,
+    ) {
+        for child in &node.children {
+            // A layout wrapper stands for nothing a caller would name, so its children are
+            // offered at the level the wrapper sits at rather than beneath it. `div` is what an
+            // unnamed one is called, and naming it in an error message would only mislead.
+            if child.name.is_empty() || child.name.starts_with('_') || child.name == "div" {
+                walk(child, prefix, all, settable);
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                child.name.clone()
+            } else {
+                format!("{}/{}", prefix, child.name)
+            };
+            all.insert(child.name.clone());
+            all.insert(path.clone());
+            // Only what is worth *suggesting*. A field the template computes is derived from
+            // the others, so setting it does nothing and offering it invites a second mistake
+            // immediately after the first.
+            let computed = matches!(child.parameters.get("value"), Some(OverseerValue::Formula(_)));
+            let container = !child.children.is_empty();
+            if !computed && !container {
+                settable.insert(child.name.clone());
+            }
+            walk(child, &path, all, settable);
+        }
+    }
+    let mut all = std::collections::BTreeSet::new();
+    let mut settable = std::collections::BTreeSet::new();
+    walk(template, "", &mut all, &mut settable);
+    (all, settable)
+}
+
+/// Refuse an append that names a field the entry does not have.
+///
+/// Accepting one silently is how a meal became an apple. The bot was told to record "the
+/// handle and one amount", wrote `handle` where the template says `food`, and the server took
+/// it: the amount landed, the food did not, and the record fell back to the template's default
+/// food. It resolved to a real, plausible meal that nobody ate, and the stray field was pruned
+/// on the next write so nothing was left pointing at the cause.
+///
+/// A name is worth refusing over precisely because the caller is a model. Told which names
+/// exist, it corrects itself in one step; told nothing, it invents a diagnosis - and this one
+/// invented a bug in the resolver and started deleting records to work around it.
+fn reject_unknown_fields(
+    template: &OverseerNode,
+    fields: &std::collections::HashMap<String, OverseerValue>,
+) -> std::result::Result<(), RequestError> {
+    let (accepted, settable) = accepted_field_names(template);
+    let mut unknown: Vec<&str> = fields
+        .keys()
+        .map(|k| k.as_str())
+        .filter(|k| !accepted.contains(*k))
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    unknown.sort_unstable();
+    let offered: Vec<&str> = settable.iter().map(|s| s.as_str()).collect();
+    Err(RequestError::Rejected(format!(
+        "'{}' has no field called {}. Its fields are: {}",
+        template.name,
+        unknown
+            .iter()
+            .map(|u| format!("'{}'", u))
+            .collect::<Vec<_>>()
+            .join(", "),
+        offered.join(", ")
+    )))
+}
+
 fn entry_overrides(fields: &std::collections::HashMap<String, OverseerValue>) -> Vec<OverseerNode> {
     let mut roots: Vec<OverseerNode> = Vec::new();
     for (field, value) in fields {
@@ -514,6 +677,83 @@ impl DocumentRoot {
     ///
     /// The file is replaced atomically: a write that fails halfway would otherwise leave a
     /// half-serialized document where the original was, and the original is the only copy.
+
+    /// Write a document the browser has serialized for us.
+    fn save(
+        &self,
+        cmd: &str,
+        args: &serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, RequestError> {
+        let name = arg_str(args, &["path"])
+            .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+        let path = self.resolve(&name)?;
+
+        let text = match cmd {
+            "save_overseer_file_with_original" => {
+                let regenerated = arg_str(args, &["regenerated"]).ok_or_else(|| {
+                    RequestError::Rejected("'regenerated' is required".into())
+                })?;
+                // What the page was working from. If the file no longer says that, something
+                // else has written since - the bot, or another tab - and this text was built
+                // without it. Refusing is the only answer that cannot lose the other write.
+                if let Some(original) = arg_str(args, &["original"]) {
+                    let on_disk = std::fs::read_to_string(&path).map_err(|e| {
+                        RequestError::Failed(format!("could not read '{}': {}", name, e))
+                    })?;
+                    if crate::app_api::canonicalize_document(&on_disk)
+                        != crate::app_api::canonicalize_document(&original)
+                    {
+                        return Err(RequestError::Rejected(format!(
+                            "'{}' changed since this page loaded it, so saving would discard                              that change. Reload and try again.",
+                            name
+                        )));
+                    }
+                }
+                crate::app_api::canonicalize_document(&regenerated)
+            }
+            "save_overseer_file_from_text" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                let guarded: Vec<crate::app_api::GuardedRevert> = args
+                    .get("guarded")
+                    .and_then(|g| serde_json::from_value(g.clone()).ok())
+                    .unwrap_or_default();
+                crate::app_api::save_document_from_text(content, guarded).map_err(|e| {
+                    RequestError::Failed(format!("could not prepare '{}': {:?}", name, e))
+                })?
+            }
+            "save_overseer_file" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                crate::app_api::canonicalize_document(&content)
+            }
+            other => {
+                return Err(RequestError::Rejected(format!(
+                    "'{}' is not something this server knows how to do",
+                    other
+                )))
+            }
+        };
+
+        // Written beside the file and renamed over it, so a reader never sees half a document.
+        let temporary = path.with_extension("os.writing");
+        std::fs::write(&temporary, text.as_bytes())
+            .map_err(|e| RequestError::Failed(format!("could not write '{}': {}", name, e)))?;
+        std::fs::rename(&temporary, &path).map_err(|e| {
+            let _ = std::fs::remove_file(&temporary);
+            RequestError::Failed(format!("could not replace '{}': {}", name, e))
+        })?;
+
+        self.journal(serde_json::json!({
+            "at": chrono::Utc::now().to_rfc3339(),
+            "document": name,
+            "operation": "save",
+            "via": cmd,
+        }));
+
+        Ok(serde_json::Value::Null)
+    }
+
     fn edit<T>(
         &self,
         name: &str,
@@ -604,6 +844,22 @@ impl DocumentRoot {
                     address, target.node_type
                 )));
             }
+            // Checked against the template the list makes its entries from. A list that names
+            // no template takes whatever it is given, as it always has - there is nothing to
+            // check against, and refusing everything would be worse than accepting anything.
+            if let Some(template_name) = target
+                .parameters
+                .get("entry")
+                .and_then(|v| match v {
+                    OverseerValue::Template(t) => Some(t.clone()),
+                    OverseerValue::String(s) => Some(s.trim_matches(['<', '>']).to_string()),
+                    _ => None,
+                })
+            {
+                if let Some(template) = find_template(nodes, &template_name) {
+                    reject_unknown_fields(&template, fields)?;
+                }
+            }
             ActionExecutor::append_entry(nodes, &format!("/{}", path.join("/")), &overrides)
                 .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))
         })?;
@@ -663,10 +919,23 @@ impl DocumentRoot {
     ///
     /// The list rather than the entry, because the entry is gone and what a caller needs next
     /// is what remains - both to report it and to address the entries that shifted up.
+    /// Take an entry out of a list, optionally checking first that it is the right one.
+    ///
+    /// `expect` is field values the entry must already have. It exists because entries of a
+    /// list with no key are addressed by position, and removing one renumbers every entry
+    /// after it - so an address read a moment ago can already name a different thing. A caller
+    /// working through several removals is therefore removing the wrong ones from the second
+    /// onward, and nothing about the result says so.
+    ///
+    /// That is not hypothetical. A cider was recorded correctly, then five removals and five
+    /// appends chased each other through one evening's meals, and what survived was a lager
+    /// nobody had ordered and no cider at all. With `expect`, the second removal refuses and
+    /// says what is actually at that address.
     pub fn remove_at(
         &self,
         name: &str,
         address: &str,
+        expect: &std::collections::HashMap<String, OverseerValue>,
     ) -> std::result::Result<WriteOutcome, RequestError> {
         let parent_address = address
             .rsplit_once('/')
@@ -690,6 +959,12 @@ impl DocumentRoot {
                     "'{}' is in a {}, and only entries of a list can be removed",
                     address, holder.node_type
                 )));
+            }
+            if !expect.is_empty() {
+                let entry = crate::addressing::find(nodes, address).ok_or_else(|| {
+                    RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
+                })?;
+                check_expected(entry, address, expect)?;
             }
             ActionExecutor::remove_entry(nodes, &format!("/{}", path.join("/")))
                 .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))

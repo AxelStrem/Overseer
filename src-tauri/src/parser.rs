@@ -1000,12 +1000,48 @@ fn parse_formula_value(input: &str) -> IResult<&str, OverseerValue> {
     )))
 }
 
-/// Parse quoted strings
+/// Parse quoted strings, undoing the escaping the serializer applies.
+///
+/// The other half of `OverseerFileHandler::escape_string`. Read with `take_until("\"")`, a
+/// value containing a quotation mark ended at the first one and left the remainder of the
+/// sentence as tokens in the middle of a list - which is a corrupt document, discovered later
+/// and nowhere near the prose that caused it.
+///
+/// An escape nobody defined keeps both of its characters, so a path someone typed by hand as
+/// "C:\Users\me" still says that. It comes back out written "C:\\Users\\me", which reads as
+/// the same string: the file changes once, the value never does.
 fn parse_quoted_string_value(input: &str) -> IResult<&str, OverseerValue> {
-    map(
-        delimited(char('"'), take_until("\""), char('"')),
-        |s: &str| OverseerValue::String(s.to_string()),
-    )(input)
+    let mut chars = input.char_indices();
+    if !matches!(chars.next(), Some((_, '"'))) {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Char,
+        )));
+    }
+    let mut out = String::new();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '"' => return Ok((&input[i + c.len_utf8()..], OverseerValue::String(out))),
+            '\\' => match chars.next() {
+                Some((_, 'n')) => out.push('\n'),
+                Some((_, 'r')) => out.push('\r'),
+                Some((_, 't')) => out.push('\t'),
+                Some((_, '"')) => out.push('"'),
+                Some((_, '\\')) => out.push('\\'),
+                Some((_, other)) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => break,
+            },
+            _ => out.push(c),
+        }
+    }
+    // Ran off the end without a closing quote.
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Char,
+    )))
 }
 
 /// Parse numbers (int or float)

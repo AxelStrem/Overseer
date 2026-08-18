@@ -42,6 +42,13 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 float calcium (label="Calcium", suffix=" mg", precision=0) = 25
                 float iron (label="Iron", suffix=" mg", precision=1) = 0.8
                 float potassium (label="Potassium", suffix=" mg", precision=0) = 180
+
+                // Neither is nutrition exactly, and both are worth a column anyway: they are
+                // the two things in food that change how a day goes rather than what it was
+                // worth. Zero by default because zero is the truth for nearly everything -
+                // only coffee, tea, a few soft drinks and anything alcoholic say otherwise.
+                float caffeine (label="Caffeine", suffix=" mg", precision=0) = 0
+                float alcohol (label="Alcohol", suffix=" g", precision=1) = 0
             }
 
             // Per portion - always derived, never stored.
@@ -59,6 +66,8 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 float calcium (label="Calcium", suffix=" mg", precision=0) = $(per_100g/calcium * portion_weight * 0.01)
                 float iron (label="Iron", suffix=" mg", precision=1) = $(per_100g/iron * portion_weight * 0.01)
                 float potassium (label="Potassium", suffix=" mg", precision=0) = $(per_100g/potassium * portion_weight * 0.01)
+                float caffeine (label="Caffeine", suffix=" mg", precision=0) = $(per_100g/caffeine * portion_weight * 0.01)
+                float alcohol (label="Alcohol", suffix=" g", precision=1) = $(per_100g/alcohol * portion_weight * 0.01)
             }
         }
     }

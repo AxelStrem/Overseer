@@ -1578,6 +1578,10 @@ export class OverseerRenderer {
                 return this.createStringElement(node)
             case 'text':
                 return this.createTextElement(node)
+            // A set of tags reads as what it is: the line the document wrote. Rendering it as
+            // a container would put each tag in a box of its own.
+            case 'tags':
+                return this.createStringElement(node)
             case 'int':
             case 'float':
                 return this.createNumberElement(node)
@@ -3524,8 +3528,18 @@ export class OverseerRenderer {
             if (valueEl) {
                 // Avoid collapsing to 0 height when empty
                 if (!valueEl.style.minHeight) valueEl.style.minHeight = '20px'
-                // Keep inline-block so borders/padding wrap text nicely
-                if (!valueEl.style.display) valueEl.style.display = 'inline-block'
+                // Keep inline-block so borders/padding wrap text nicely - except where the
+                // value is meant to line up under its heading. An inline-block is only as wide
+                // as its digits and sits at the left of the field, so `text-align` has nothing
+                // to move: the heading went to the right edge and the figure stayed at the
+                // left, which reads as every heading belonging to the column after it.
+                //
+                // Set here rather than in the stylesheet because this is an inline style, and
+                // an inline style wins.
+                if (!valueEl.style.display) {
+                    const linesUpUnderItsHeading = container.classList.contains('number-field')
+                    valueEl.style.display = linesUpUnderItsHeading ? 'block' : 'inline-block'
+                }
                 // Inherit typography unless explicitly overridden later
                 if (!hasExplicitFont) {
                     valueEl.style.color = 'inherit'
@@ -3988,6 +4002,12 @@ export class OverseerRenderer {
             case 'date':
                 return datePart
             case 'time':
+                // Honours precision, like the default path does. A meal wants the clock to the
+                // minute; seconds on it are noise, and a `format` that silently ignored the
+                // `precision` beside it would be one more parameter that means nothing where
+                // you happened to put it.
+                if (precision === 'minutes' || precision === 'minute') return `${h}:${m}`
+                if (precision === 'hours' || precision === 'hour') return `${h}:00`
                 return timePart
             case 'iso': {
                 // ISO-like local (no Z to avoid implying UTC)

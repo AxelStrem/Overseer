@@ -82,11 +82,14 @@ tab tracker_v2 (label="Calories", mutable=true) {
             // come from.
             string grade (font-size=44px, width=14%, font-color=$(((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= -1 ? "#038141" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 2 ? "#85bb2f" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 10 ? "#fecb02" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 18 ? "#ee8100" : ("#e63e11"))))), width=10%) = $(((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= -1 ? "A" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 2 ? "B" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 10 ? "C" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 18 ? "D" : ("E")))))
         }
-        div MealRecord (layout="vertical", margin=0, border-radius=0, shadow="lifted") {
+        div MealRecord (layout="vertical", margin=0, background-color="#16203a", border-radius=0, shadow="lifted") {
             // What the record actually stores, and the reason a correction to a food reaches
             // every meal that ever used it. Hidden because it is machinery: a diary is read in
             // names, and the name below is looked up through this.
-            string food (label="Food", hidden=true, width=20%) = "apple"
+            // No default worth eating. A record that lost its handle used to fall back
+            // to a real food and resolve into a plausible meal nobody had - three of them
+            // are in the history. Empty, the lookup finds nothing and the record says so.
+            string food (label="Food", hidden=true, width=20%) = ""
 
             // The catalogued weight of one portion of this food, used to convert between
             // the two amount styles. Not shown - it belongs to the food, not to the meal.
@@ -96,12 +99,20 @@ tab tracker_v2 (label="Calories", mutable=true) {
             // The macros go underneath, so a meal reads as a heading with its detail below.
             // The group has no name, so it changes the layout and nothing else.
             div (layout="horizontal", margin=0) {
-                string name (font-size=20px, width=30%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/name)
+                // When it was eaten. The clock only: the day is the entry this record sits in,
+                // and repeating it on every mouthful would say nothing thirteen times a day.
+                //
+                // Stored as a full instant all the same - a time without a date is not a moment,
+                // and `format` decides how much of one is shown, not how much is kept.
+                timestamp at (label="", format="time", precision="minutes", font-size=13px,
+                              width=8%, hidden=$(at == "")) = ""
+
+                string name (font-size=20px, width=24%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/name)
 
                 // Whichever of these a record states, the other is derived. Both are null here
                 // so neither shadows the other; a record must state one of them.
-                float portions (precision=2, format="trim", suffix=" ×", width=11%, fallback=$(grams / portion_weight)) = null
-                float grams (suffix=" g", precision=0, width=11%, fallback=$(portions * portion_weight)) = null
+                float portions (precision=2, format="trim", suffix=" ×", width=10%, fallback=$(grams / portion_weight)) = null
+                float grams (suffix=" g", precision=0, width=10%, fallback=$(portions * portion_weight)) = null
 
                 // The one figure most meals are read for, at a size to match. It sits beside
                 // the grade rather than in the table below, where it was one number among
@@ -129,6 +140,10 @@ tab tracker_v2 (label="Calories", mutable=true) {
                     float trans_fat (label="Trans Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/trans_fat * 0.01)
                     float carbs (label="Carbs", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/carbs * 0.01)
                     float sugar (label="Sugar", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/sugar * 0.01)
+
+                    // Beside the energy macros because that is what it is: alcohol carries
+                    // 7 kcal a gram, and a day with any in it is not read the same way.
+                    float alcohol (label="Alcohol", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/alcohol * 0.01)
                 }
                 div (layout="horizontal", margin=0) {
                     float fibre (label="Fibre", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/fibre * 0.01)
@@ -137,6 +152,11 @@ tab tracker_v2 (label="Calories", mutable=true) {
                     float calcium (label="Calcium", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/calcium * 0.01)
                     float iron (label="Iron", suffix=" mg", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/iron * 0.01)
                     float potassium (label="Potassium", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/potassium * 0.01)
+
+                    // The other row, because caffeine is not an energy macro - it is the one
+                    // figure here that says something about the shape of a day rather than
+                    // about what was in it.
+                    float caffeine (label="Caffeine", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/caffeine * 0.01)
                 }
             }
         }
@@ -157,12 +177,18 @@ tab tracker_v2 (label="Calories", mutable=true) {
             // figures in a line leaves a strip of empty space under every one of them.
             div totals (layout="vertical", margin=0, border-radius=0, shadow="soft") {
                 div (layout="horizontal", margin=0) {
-                    float calories (label="Total kcal", precision=0, hidden=true) = $(intake.map(|x| x/calories).sum())
+                    // Not hidden, though the headline shows it again in large type. A node
+                    // called `totals` that omits the total is a trap: anything reading the
+                    // day finds every macro except the one figure it came for, and fills
+                    // the gap from somewhere else. That is exactly how a morning's first
+                    // meal got reported against yesterday's running total.
+                    float calories (label="Total kcal", precision=0) = $(intake.map(|x| x/calories).sum())
                     float protein (label="Protein", suffix=" g", precision=1) = $(intake.map(|x| x/macros/protein).sum())
                     float fat (label="Fat", suffix=" g", precision=1) = $(intake.map(|x| x/macros/fat).sum())
                     float saturated_fat (label="Sat. Fat", suffix=" g", precision=1) = $(intake.map(|x| x/macros/saturated_fat).sum())
                     float carbs (label="Carbs", suffix=" g", precision=1) = $(intake.map(|x| x/macros/carbs).sum())
                     float sugar (label="Sugar", suffix=" g", precision=1) = $(intake.map(|x| x/macros/sugar).sum())
+                    float alcohol (label="Alcohol", suffix=" g", precision=1) = $(intake.map(|x| x/macros/alcohol).sum())
                 }
                 div (layout="horizontal", margin=0) {
                     float fibre (label="Fibre", suffix=" g", precision=1) = $(intake.map(|x| x/macros/fibre).sum())
@@ -171,6 +197,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                     float calcium (label="Calcium", suffix=" mg", precision=0) = $(intake.map(|x| x/macros/calcium).sum())
                     float iron (label="Iron", suffix=" mg", precision=1) = $(intake.map(|x| x/macros/iron).sum())
                     float potassium (label="Potassium", suffix=" mg", precision=0) = $(intake.map(|x| x/macros/potassium).sum())
+                    float caffeine (label="Caffeine", suffix=" mg", precision=0) = $(intake.map(|x| x/macros/caffeine).sum())
                 }
             }
 
@@ -240,7 +267,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 }
                 int day_score (hidden=true) = $((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein)
                 // What the day came to and how good it was, side by side.
-                div day_headline (layout="horizontal", margin=0, border-radius=0, shadow="lifted") {
+                div day_headline (layout="horizontal", margin=0, background-color="#16203a", border-radius=0, shadow="lifted") {
                     float day_calories (label="Total kcal", precision=0, font-size=34px, width=25%, font-color=$(totals/calories > targets/target_calories ? "#e63e11" : (totals/calories > targets/target_calories * 0.9 ? "#ee8100" : "#7ed321"))) = $(totals/calories)
                     string day_grade (label="Day quality", font-size=64px, font-color=$(((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein) <= -1 ? "#038141" : (((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein) <= 2 ? "#85bb2f" : (((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein) <= 10 ? "#fecb02" : (((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein) <= 18 ? "#ee8100" : ("#e63e11"))))), width=20%) = $(((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein) <= -1 ? "A" : (((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein) <= 2 ? "B" : (((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein) <= 10 ? "C" : (((day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) >= 11 ? (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre : (day_p_energy + day_p_sugar + day_p_sat_fat + day_p_sodium) - day_p_fibre - day_p_protein) <= 18 ? "D" : ("E")))))
 
@@ -354,6 +381,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
             - date = "2026-08-05"
             list intake {
                 - {
+                    - food = "apple"
                     - portions = 1
                 }
             }
@@ -362,6 +390,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
             - date = "2026-08-06"
             list intake {
                 - {
+                    - food = "apple"
                     - portions = 1
                 }
                 - {
@@ -375,6 +404,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
 
             list intake {
                 - {
+                    - food = "apple"
                     - portions = 1
                 }
                 - {
@@ -388,9 +418,11 @@ tab tracker_v2 (label="Calories", mutable=true) {
 
             list intake {
                 - {
+                    - food = "apple"
                     - portions = 1
                 }
                 - {
+                    - food = "apple"
                     - portions = 1
                 }
                 - {

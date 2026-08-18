@@ -335,10 +335,9 @@ body {
 
 .number-field .field-value {
     font-family: monospace;
-    /* Block, or the span is only as wide as its digits and sits at the left of the field -
-       where `text-align` has nothing to align. The heading above it is a block and does move,
-       which is what left the two looking offset from each other. */
-    display: block;
+    /* The renderer makes this a block for number fields, which is what gives `text-align`
+       something to move - see applyNodeStyles. Setting it here would not work: the display is
+       an inline style, and an inline style wins. */
     text-align: right;
     color: var(--primary-color);
     font-weight: 500;
@@ -378,11 +377,22 @@ body {
     font-style: italic;
 }
 
-/* Boolean Field */
+/* Boolean Field
+ *
+ * Composed like every other field: the label above the control, not beside it.
+ *
+ * This was the one field type that put its label somewhere else. A row of fields aligns only
+ * if they all agree where a label goes, and in a row of headed numbers the checkbox's heading
+ * sat on the line the numbers were on, dragging its whole column half a line out of true. The
+ * blood pressure diary's "Irregular" and the task rules' "duplicates" were the same bug
+ * reported twice.
+ *
+ * A checkbox conventionally wears its label on the right, and read alone that is nicer. It is
+ * never alone: it sits in a row beside other fields, and matching them is worth more than the
+ * convention.
+ */
 .boolean-field, .checkbox-field {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    display: block;
 }
 
 .boolean-field input[type="checkbox"],

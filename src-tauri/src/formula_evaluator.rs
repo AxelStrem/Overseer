@@ -1876,30 +1876,7 @@ impl FormulaEvaluator {
                     ));
                 }
                 let val = Self::evaluate_expression(&args[0], context)?;
-                // Helper: parse timestamp or date into chrono::DateTime<Utc>
-                fn parse_to_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-                    // Try RFC3339 first
-                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-                        return Some(dt.with_timezone(&chrono::Utc));
-                    }
-                    // Try date-only
-                    if let Ok(nd) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-                        let ndt = nd.and_hms_opt(0, 0, 0)?;
-                        let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
-                            ndt,
-                            chrono::Utc,
-                        );
-                        return Some(dt);
-                    }
-                    None
-                }
-                let ts_opt: Option<chrono::DateTime<chrono::Utc>> = match val {
-                    OverseerValue::Timestamp(ref s) => parse_to_utc(s),
-                    OverseerValue::Date(ref d) => parse_to_utc(d),
-                    OverseerValue::String(ref s) => parse_to_utc(s),
-                    _ => None,
-                };
-                if let Some(ts) = ts_opt {
+                if let Some(ts) = Self::to_utc(&val) {
                     let now = match Self::get_time_override() {
                         Some(dt) => dt,
                         None => chrono::Utc::now(),
@@ -1911,6 +1888,67 @@ impl FormulaEvaluator {
                     Err(OverseerError::FormulaError(
                         "days_since: unable to parse timestamp/date".to_string(),
                     ))
+                }
+            }
+            // minutes_since(ts): the same as days_since, at the resolution a deadline needs.
+            //
+            // `days_since` truncates toward zero, so three hours late and three hours early
+            // both come out 0 and neither can be told from the other. A deadline is exactly
+            // the question that turns on which side of zero you are.
+            //
+            // Negative in the future, which is what makes `minutes_since(due) > 0` read as
+            // "overdue" rather than needing a second function to say the opposite.
+            "minutes_since" => {
+                if args.len() != 1 {
+                    return Err(OverseerError::FormulaError(
+                        "minutes_since(x) takes exactly 1 argument".to_string(),
+                    ));
+                }
+                let val = Self::evaluate_expression(&args[0], context)?;
+                match Self::to_utc(&val) {
+                    Some(ts) => {
+                        let now = Self::get_time_override().unwrap_or_else(chrono::Utc::now);
+                        Ok(OverseerValue::Integer(
+                            now.signed_duration_since(ts).num_minutes(),
+                        ))
+                    }
+                    None => Err(OverseerError::FormulaError(
+                        "minutes_since: unable to parse timestamp/date".to_string(),
+                    )),
+                }
+            }
+            // date_add_hours(x, n): a deadline an interval after something, where the interval
+            // is shorter than a day. `n` may be fractional, so half an hour is 0.5 and there is
+            // no need for a third function to say it in minutes.
+            "date_add_hours" => {
+                if args.len() != 2 {
+                    return Err(OverseerError::FormulaError(
+                        "date_add_hours(x, n) takes exactly 2 arguments".to_string(),
+                    ));
+                }
+                let val = Self::evaluate_expression(&args[0], context)?;
+                let hours = match Self::evaluate_expression(&args[1], context)? {
+                    OverseerValue::Integer(i) => i as f64,
+                    OverseerValue::Float(f) => f,
+                    OverseerValue::String(ref s) => s.parse::<f64>().map_err(|_| {
+                        OverseerError::FormulaError("date_add_hours: n must be a number".into())
+                    })?,
+                    _ => {
+                        return Err(OverseerError::FormulaError(
+                            "date_add_hours: n must be a number".to_string(),
+                        ))
+                    }
+                };
+                match Self::to_utc(&val) {
+                    Some(dt) => {
+                        let minutes = (hours * 60.0).round() as i64;
+                        Ok(OverseerValue::Timestamp(
+                            (dt + chrono::Duration::minutes(minutes)).to_rfc3339(),
+                        ))
+                    }
+                    None => Err(OverseerError::FormulaError(
+                        "date_add_hours: unable to parse timestamp/date".to_string(),
+                    )),
                 }
             }
             // date_add_days(x, n): add n days to a Date (YYYY-MM-DD) or Timestamp (RFC3339)
@@ -1946,19 +1984,20 @@ impl FormulaEvaluator {
                         Ok(OverseerValue::Date(nd2.format("%Y-%m-%d").to_string()))
                     }
                     OverseerValue::Timestamp(ref ts) | OverseerValue::String(ref ts) => {
-                        // Try RFC3339
-                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
-                            let dt2 = dt + chrono::Duration::days(n_days);
-                            return Ok(OverseerValue::Timestamp(dt2.to_rfc3339()));
-                        }
-                        // Try date-only string
-                        if let Ok(nd) = chrono::NaiveDate::parse_from_str(ts, "%Y-%m-%d") {
+                        // A bare date stays a date: adding a day to "2026-08-12" should not
+                        // hand back an instant with a midnight in it.
+                        if let Ok(nd) = chrono::NaiveDate::parse_from_str(ts.trim(), "%Y-%m-%d") {
                             let nd2 = nd + chrono::Duration::days(n_days);
                             return Ok(OverseerValue::Date(nd2.format("%Y-%m-%d").to_string()));
                         }
-                        Err(OverseerError::FormulaError(
-                            "date_add_days: unable to parse timestamp/date".to_string(),
-                        ))
+                        match Self::to_utc(&val) {
+                            Some(dt) => Ok(OverseerValue::Timestamp(
+                                (dt + chrono::Duration::days(n_days)).to_rfc3339(),
+                            )),
+                            None => Err(OverseerError::FormulaError(
+                                "date_add_days: unable to parse timestamp/date".to_string(),
+                            )),
+                        }
                     }
                     _ => Err(OverseerError::FormulaError(
                         "date_add_days: unsupported argument type".to_string(),
@@ -1974,71 +2013,7 @@ impl FormulaEvaluator {
                 }
                 let a = Self::evaluate_expression(&args[0], context)?;
                 let b = Self::evaluate_expression(&args[1], context)?;
-                // Helper: parse date or timestamp to NaiveDate using local time for timestamps
-                fn to_naive_date(v: &OverseerValue) -> Option<chrono::NaiveDate> {
-                    use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, Utc};
-                    match v {
-                        OverseerValue::Date(d) => NaiveDate::parse_from_str(d, "%Y-%m-%d").ok(),
-                        OverseerValue::Timestamp(ts) | OverseerValue::String(ts) => {
-                            let txt = ts.trim();
-                            // 1) RFC3339 (timezone-aware)
-                            if let Ok(dt) = DateTime::parse_from_rfc3339(txt) {
-                                let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
-                                return Some(local_dt.date_naive());
-                            }
-                            // 2) Allow space instead of 'T' (optionally with trailing Z)
-                            {
-                                let mut patched = txt.replace('T', " ");
-                                let had_z = patched.ends_with('Z');
-                                if had_z {
-                                    patched = patched.trim_end_matches('Z').trim_end().to_string();
-                                }
-                                if let Ok(ndt) =
-                                    NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S%.f")
-                                {
-                                    let dt = chrono::DateTime::<Utc>::from_naive_utc_and_offset(
-                                        ndt, Utc,
-                                    );
-                                    let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
-                                    return Some(local_dt.date_naive());
-                                }
-                                if let Ok(ndt) =
-                                    NaiveDateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S")
-                                {
-                                    let dt = chrono::DateTime::<Utc>::from_naive_utc_and_offset(
-                                        ndt, Utc,
-                                    );
-                                    let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
-                                    return Some(local_dt.date_naive());
-                                }
-                            }
-                            // 3) No timezone with 'T': treat as UTC
-                            if let Ok(ndt) =
-                                chrono::NaiveDateTime::parse_from_str(txt, "%Y-%m-%dT%H:%M:%S%.f")
-                            {
-                                let dt =
-                                    chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc);
-                                let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
-                                return Some(local_dt.date_naive());
-                            }
-                            if let Ok(ndt) =
-                                chrono::NaiveDateTime::parse_from_str(txt, "%Y-%m-%dT%H:%M:%S")
-                            {
-                                let dt =
-                                    chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc);
-                                let local_dt: DateTime<Local> = DateTime::<Local>::from(dt);
-                                return Some(local_dt.date_naive());
-                            }
-                            // 4) Date-only
-                            if let Ok(nd) = chrono::NaiveDate::parse_from_str(txt, "%Y-%m-%d") {
-                                return Some(nd);
-                            }
-                            None
-                        }
-                        _ => None,
-                    }
-                }
-                if let (Some(da), Some(db)) = (to_naive_date(&a), to_naive_date(&b)) {
+                if let (Some(da), Some(db)) = (Self::to_local_date(&a), Self::to_local_date(&b)) {
                     Ok(OverseerValue::Boolean(da == db))
                 } else {
                     Err(OverseerError::FormulaError(
@@ -2046,11 +2021,106 @@ impl FormulaEvaluator {
                     ))
                 }
             }
+            // Which day of the week, of the month, or which month a date falls on.
+            //
+            // Enough to say "every Tuesday" or "the 7th of each month" in a formula, which
+            // durations cannot express: months and years are not a fixed number of days, and
+            // there is no modulo operator to derive a weekday from one.
+            //
+            // Weekdays are 1-7 from Monday, as ISO numbers them and as people say them.
+            // Months are 1-12. Both read the date the way `same_day` does, in local time, so
+            // "is it Tuesday" and "is it still the same day" never disagree about where a
+            // midnight falls.
+            "weekday" | "day_of_month" | "month_of" => {
+                if args.len() != 1 {
+                    return Err(OverseerError::FormulaError(format!(
+                        "{}(x) takes exactly 1 argument",
+                        name
+                    )));
+                }
+                let val = Self::evaluate_expression(&args[0], context)?;
+                let date = Self::to_local_date(&val).ok_or_else(|| {
+                    OverseerError::FormulaError(format!(
+                        "{}: unable to parse argument as date/timestamp",
+                        name
+                    ))
+                })?;
+                use chrono::Datelike;
+                let n = match name {
+                    "weekday" => date.weekday().num_days_from_monday() as i64 + 1,
+                    "day_of_month" => date.day() as i64,
+                    _ => date.month() as i64,
+                };
+                Ok(OverseerValue::Integer(n))
+            }
             _ => Err(OverseerError::FormulaError(format!(
                 "Unknown function: {}",
                 name
             ))),
         }
+    }
+
+    /// An instant, however it was written.
+    ///
+    /// One parser for every date function, because they were three and they disagreed.
+    /// `same_day` read "2026-08-12T09:17:00" quite happily while `days_since` refused it, so a
+    /// task written by the bot sorted by a date the document could not subtract - and reported
+    /// "invalid formula error" in the one field a person actually looks at. Whether a string is
+    /// a timestamp is not a question two functions in the same document may answer differently.
+    ///
+    /// Accepted: RFC3339; a space in place of the `T`; a trailing `Z`; no zone at all; and a
+    /// bare date, which is midnight.
+    ///
+    /// With no zone the instant is taken as UTC. It is genuinely ambiguous - someone writing a
+    /// wall-clock time usually means their own - but UTC is what `same_day` has always assumed,
+    /// and a silent change of meaning is worse than a documented guess. Anything writing a
+    /// timestamp should include the offset; the guides say so.
+    fn to_utc(v: &OverseerValue) -> Option<chrono::DateTime<chrono::Utc>> {
+        use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+        let text = match v {
+            OverseerValue::Date(d) => d,
+            OverseerValue::Timestamp(ts) | OverseerValue::String(ts) => ts,
+            _ => return None,
+        };
+        let txt = text.trim();
+        if let Ok(dt) = DateTime::parse_from_rfc3339(txt) {
+            return Some(dt.with_timezone(&Utc));
+        }
+        let mut patched = txt.replace('T', " ");
+        if patched.ends_with('Z') {
+            patched = patched.trim_end_matches('Z').trim_end().to_string();
+        }
+        for fmt in ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"] {
+            if let Ok(ndt) = NaiveDateTime::parse_from_str(&patched, fmt) {
+                return Some(DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc));
+            }
+        }
+        let nd = NaiveDate::parse_from_str(txt, "%Y-%m-%d").ok()?;
+        Some(DateTime::<Utc>::from_naive_utc_and_offset(
+            nd.and_hms_opt(0, 0, 0)?,
+            Utc,
+        ))
+    }
+
+    /// A date value as a local calendar date, however it was written.
+    ///
+    /// Timestamps are instants and dates are not, so turning one into the other needs a
+    /// timezone; local is the one the person reading the document lives in.
+    ///
+    /// A bare date is taken as written rather than run through UTC and back: "2026-08-12" is
+    /// the 12th to whoever wrote it, and west of Greenwich the round trip would make it the
+    /// 11th.
+    fn to_local_date(v: &OverseerValue) -> Option<chrono::NaiveDate> {
+        use chrono::{DateTime, Local, NaiveDate};
+        if let OverseerValue::Date(d) = v {
+            return NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").ok();
+        }
+        if let OverseerValue::Timestamp(ts) | OverseerValue::String(ts) = v {
+            if let Ok(nd) = NaiveDate::parse_from_str(ts.trim(), "%Y-%m-%d") {
+                return Some(nd);
+            }
+        }
+        Self::to_utc(v).map(|dt| DateTime::<Local>::from(dt).date_naive())
     }
 }
 
@@ -2670,6 +2740,35 @@ enum ListItem<'a> {
 }
 
 impl FormulaEvaluator {
+    /// What a node offers to a method chain.
+    ///
+    /// Ordinarily its children - `intake.map(...)` walks the entries of a list. A `tags` node
+    /// has no children: it holds `"lidl,edeka,ikea"`, and what it means is those three values.
+    /// Handing them over here is what lets every method that already exists work on a set of
+    /// tags, rather than each of them needing to learn what a tag is.
+    fn items_of(node: &OverseerNode) -> Vec<ListItem<'_>> {
+        if node.node_type == "tags" {
+            let text = match node
+                .parameters
+                .get("_computed_value")
+                .or_else(|| node.parameters.get("value"))
+            {
+                Some(OverseerValue::String(s)) => s.clone(),
+                _ => String::new(),
+            };
+            return text
+                .split(',')
+                .map(|tag| tag.trim())
+                .filter(|tag| !tag.is_empty())
+                .map(|tag| ListItem::Value(OverseerValue::String(tag.to_string())))
+                .collect();
+        }
+        node.get_accessible_children()
+            .into_iter()
+            .map(ListItem::Node)
+            .collect()
+    }
+
     fn evaluate_method_chain(
         base: &FormulaExpression,
         calls: &[MethodCall],
@@ -2694,22 +2793,14 @@ impl FormulaEvaluator {
                     Some(n) => n,
                     None => return Ok(OverseerValue::String("null".to_string())),
                 };
-                base_node
-                    .get_accessible_children()
-                    .into_iter()
-                    .map(|n| ListItem::Node(n))
-                    .collect()
+                Self::items_of(base_node)
             }
         } else {
             let base_node = match Self::eval_expr_to_node(base, context) {
                 Some(n) => n,
                 None => return Ok(OverseerValue::String("null".to_string())),
             };
-            base_node
-                .get_accessible_children()
-                .into_iter()
-                .map(|n| ListItem::Node(n))
-                .collect()
+            Self::items_of(base_node)
         };
         debug_evaluator!("[EVAL] Initial list size: {}", list.len());
 

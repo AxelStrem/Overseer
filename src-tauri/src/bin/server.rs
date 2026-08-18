@@ -265,9 +265,15 @@ async fn set_at(
 async fn remove_at(
     State(service): State<Service>,
     axum::extract::Query(target): axum::extract::Query<Target>,
+    // Optional, and optional on purpose: a list with a key addresses its entries by that key
+    // and cannot go stale, so insisting would be noise. Sent, it is checked - see `remove_at`.
+    body: Option<Json<WriteBody>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let documents = service.documents.clone();
-    let outcome = tokio::task::spawn_blocking(move || documents.remove_at(&target.document, &target.address))
+    let expect = body.map(|Json(b)| b.fields).unwrap_or_default();
+    let outcome = tokio::task::spawn_blocking(move || {
+        documents.remove_at(&target.document, &target.address, &expect)
+    })
         .await
         .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
         .map_err(respond)?;

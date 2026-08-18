@@ -159,6 +159,26 @@ impl FileOperations {
         Ok(output)
     }
 
+    /// Whether a marker says the *node* came from a template, rather than saying where one of
+    /// its parameters got its value.
+    ///
+    /// `_template_background-color` and its two companions are written by styling inheritance:
+    /// a colour set on an ancestor is copied onto every descendant so the renderer can read it,
+    /// and marked so it is not written back to disk. That is a fact about one parameter.
+    ///
+    /// Read as a fact about the node - "everything here came from a template" - the entry
+    /// serializer answers it by writing the node without its contents. Colouring a template
+    /// therefore emptied the group inside it: twenty-three lines of a meal card replaced by
+    /// `div (layout="horizontal", margin=0) {}`, on the first save after the colour was added.
+    fn marks_a_template_node(key: &str) -> bool {
+        const INHERITED_STYLING: [&str; 3] = [
+            "_template_background-color",
+            "_template_font-color",
+            "_template_font-size",
+        ];
+        key.starts_with("_template_") && !INHERITED_STYLING.contains(&key)
+    }
+
     fn push_trivia(output: &mut String, trivia: &str) {
         if trivia.is_empty() {
             return;
@@ -777,7 +797,7 @@ impl FileOperations {
                     || node
                         .parameters
                         .keys()
-                        .any(|k| k.starts_with("_template_"));
+                        .any(|k| Self::marks_a_template_node(k));
                 // Pre-parse explicit override names list on the instance (if present)
                 // NOTE: Do not use this list to filter which overrides to persist. Users can introduce
                 // new overrides at runtime (e.g., by editing a field), and this list may be stale.
@@ -806,7 +826,7 @@ impl FileOperations {
                         Some(OverseerValue::Boolean(true))
                     );
                     let has_template_param_markers =
-                        child.parameters.keys().any(|k| k.starts_with("_template_"));
+                        child.parameters.keys().any(|k| Self::marks_a_template_node(k));
                     let is_template_child = is_template_child_flag || has_template_param_markers;
                     let has_explicit_override = matches!(
                         child.parameters.get("_explicit_child_override"),
@@ -1388,7 +1408,7 @@ impl FileOperations {
                 || node
                     .parameters
                     .keys()
-                    .any(|k| k.starts_with("_template_"));
+                    .any(|k| Self::marks_a_template_node(k));
             // Pre-parse explicit override names list on the instance (if present)
             let explicit_names: Option<Vec<String>> = if let Some(OverseerValue::String(list)) =
                 node.parameters.get("_explicit_overrides")
@@ -1424,7 +1444,7 @@ impl FileOperations {
                     Some(OverseerValue::Boolean(true))
                 );
                 let has_template_param_markers =
-                    child.parameters.keys().any(|k| k.starts_with("_template_"));
+                    child.parameters.keys().any(|k| Self::marks_a_template_node(k));
                 let is_template_child = is_template_child_flag || has_template_param_markers;
                 // Only treat as includeable if it was explicitly overridden by the source, not just equal/diff logic
                 let has_explicit_override = matches!(
@@ -2132,10 +2152,34 @@ impl FileOperations {
         Some(result)
     }
 
+    /// A string as a document may hold it: on one line, and readable back as itself.
+    ///
+    /// Without this, prose destroys the document it is written into. A recap containing a
+    /// quotation mark ended the value early and left the rest of the sentence as stray tokens;
+    /// one containing a newline spread a value across lines that the next field then landed
+    /// inside. Both cost the whole entry, and the failure appears as a document that no longer
+    /// parses rather than as anything to do with the text that was written.
+    ///
+    /// Escaped rather than rejected: a diary is prose, and prose has quotation marks in it.
+    fn escape_string(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        for c in s.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                _ => out.push(c),
+            }
+        }
+        out
+    }
+
     fn serialize_value(value: &OverseerValue) -> String {
         match value {
             OverseerValue::Null => "null".to_string(),
-            OverseerValue::String(s) => format!("\"{}\"", s),
+            OverseerValue::String(s) => format!("\"{}\"", Self::escape_string(s)),
             OverseerValue::Integer(i) => i.to_string(),
             OverseerValue::Float(f) => f.to_string(),
             OverseerValue::Boolean(b) => b.to_string(),

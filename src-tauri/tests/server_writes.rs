@@ -377,7 +377,7 @@ fn removes_a_meal_from_the_day_it_was_recorded_against() {
         .and_then(|c| c.parameters.get("value").cloned());
 
     let outcome = documents
-        .remove_at("tracker_v2.os", &doomed)
+        .remove_at("tracker_v2.os", &doomed, &HashMap::new())
         .expect("remove the meal");
 
     // It answers with the list, because the entry is gone and the list is what is left.
@@ -400,7 +400,7 @@ fn removes_a_meal_from_the_day_it_was_recorded_against() {
 #[test]
 fn refuses_to_remove_something_that_is_not_in_a_list() {
     let (_sandbox, documents) = sandbox("remove_field");
-    let outcome = documents.remove_at("tracker_v2.os", "tracker_v2/History/[2026-08-08]/date");
+    let outcome = documents.remove_at("tracker_v2.os", "tracker_v2/History/[2026-08-08]/date", &HashMap::new());
     match outcome {
         Err(RequestError::Rejected(message)) => {
             assert!(message.contains("only entries of a list"), "{}", message)
@@ -413,7 +413,7 @@ fn refuses_to_remove_something_that_is_not_in_a_list() {
 #[test]
 fn removing_something_that_is_not_there_says_so() {
     let (_sandbox, documents) = sandbox("remove_missing");
-    let outcome = documents.remove_at("tracker_v2.os", "tracker_v2/History/[2026-08-08]/intake/nope");
+    let outcome = documents.remove_at("tracker_v2.os", "tracker_v2/History/[2026-08-08]/intake/nope", &HashMap::new());
     match outcome {
         Err(RequestError::NotFound(_)) => {}
         Err(other) => panic!("expected a not-found, got {:?}", other),

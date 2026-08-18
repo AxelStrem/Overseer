@@ -573,8 +573,9 @@ fn the_meal_record_template_has_no_stray_children() {
 
         // `quality` is the food's Nutri-Score block and `calories` its headline figure, both
         // declared on the template like the rest.
+        // `at` is when it was eaten: the clock only, since the day is the entry it sits in.
         let expected = [
-            "food", "portion_weight", "portions", "grams", "name", "calories", "quality",
+            "food", "portion_weight", "at", "portions", "grams", "name", "calories", "quality",
             "macros",
         ];
         // Through any layout grouping: what this is looking for is a node nobody declared,
