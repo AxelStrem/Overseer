@@ -135,10 +135,17 @@ fn an_event_nothing_declares_is_refused() {
         "exercise_tracker/Exercises/[bicep_curls]",
         "explode",
     );
-    // Nothing happens rather than something unexpected: an `on explode` block does not exist,
-    // so there is nothing to run.
-    assert!(outcome.is_ok(), "{:?}", outcome.err());
-    assert_eq!(history_len(&documents), history_len(&documents));
+    // Refused, rather than quietly doing nothing. This used to answer Ok - the reasoning being
+    // that no `on explode` block exists, so there is nothing to run - and the caller could not
+    // tell that apart from a press that worked. It is how `.../bought/click` was pressed three
+    // times on a shopping item, accepted each time, without the item ever moving to history.
+    match outcome {
+        Err(RequestError::Rejected(said)) => {
+            assert!(said.contains("explode"), "it did not name the event: {said}");
+        }
+        Err(other) => panic!("refused for the wrong reason: {other:?}"),
+        Ok(_) => panic!("an event nothing declares was not refused"),
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 

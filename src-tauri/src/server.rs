@@ -164,6 +164,17 @@ impl DocumentRoot {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
+            // Refused rather than run, when there is nothing there to run. Every press used to
+            // answer 200 with the surrounding node, whether or not the node had the handler -
+            // so pressing `.../bought/click`, with the event written into the address, looked
+            // exactly like pressing `.../bought`. It was accepted three times in a row, the
+            // shopping list never changed, and the only conclusion available was that the
+            // document was broken.
+            if let Some(node) = crate::addressing::find(nodes, address) {
+                if !responds_to(node, event) {
+                    return Err(RequestError::Rejected(describe_no_handler(node, address, event)));
+                }
+            }
             ActionExecutor::execute_event(nodes, &path, event).map_err(|e| {
                 RequestError::Failed(format!("could not run '{}' on '{}': {:?}", event, address, e))
             })
@@ -440,6 +451,122 @@ pub fn refuse_to_start(bind: &std::net::IpAddr, access: &Access) -> Option<Strin
 /// its template goes back to the template's default on the next resolve unless the entry
 /// itself states it, and the default for a calorie figure is a plausible number rather than an
 /// obviously missing one - so getting this wrong records a food that looks fine and is wrong.
+/// Whether this node declares something to do for this event.
+///
+/// A handler is a child of type `on` named for the event. A mount is the one exception: it
+/// loads and unloads without anyone writing that down.
+fn responds_to(node: &OverseerNode, event: &str) -> bool {
+    if node.node_type == "mount" && (event == "load" || event == "unload") {
+        return true;
+    }
+    node.children
+        .iter()
+        .any(|child| child.node_type == "on" && child.name == event)
+}
+
+/// Why the press did nothing, and what to press instead.
+fn describe_no_handler(node: &OverseerNode, address: &str, event: &str) -> String {
+    let declared: Vec<&str> = node
+        .children
+        .iter()
+        .filter(|c| c.node_type == "on")
+        .map(|c| c.name.as_str())
+        .collect();
+
+    // The mistake that produced this: the event written onto the end of the address. The
+    // handler is a real node, so the address resolves and nothing looks wrong.
+    if address.rsplit('/').next() == Some(event) {
+        if let Some(button) = address.strip_suffix(&format!("/{}", event)) {
+            return format!(
+                "'{}' is the handler for '{}', not something to run it on. Press '{}' instead -                  the event is a separate argument, not part of the address.",
+                address, event, button
+            );
+        }
+    }
+    if declared.is_empty() {
+        format!("'{}' has no '{}' to run, and declares no events at all.", address, event)
+    } else {
+        format!(
+            "'{}' has no '{}' to run. It declares: {}.",
+            address,
+            event,
+            declared.join(", ")
+        )
+    }
+}
+
+/// Refuse an entry whose key is already taken.
+///
+/// A list with a `key` addresses its entries by that field, so two entries sharing a value
+/// share an address - and one of them is then unreachable. Worse, a reader keying them into a
+/// map keeps only the last: two diary notes written in one turn, both stamped with the time of
+/// the message rather than the times of the things they described, became one note by the time
+/// anything read them back. Nothing failed and nothing said so.
+///
+/// Refused here, where the caller is told which value is taken and can pick another - a second
+/// apart is enough - rather than discovered a day later in a recap that is quietly missing
+/// half of what was said.
+fn reject_duplicate_key(
+    list: &OverseerNode,
+    fields: &std::collections::HashMap<String, OverseerValue>,
+) -> std::result::Result<(), RequestError> {
+    let key = match list.parameters.get("key") {
+        Some(OverseerValue::String(k)) if !k.is_empty() => k.clone(),
+        // No key means entries are addressed by position, where duplicates are ordinary: two
+        // of the same thing on a shopping list are two things to buy.
+        _ => return Ok(()),
+    };
+    let Some(wanted) = fields.get(&key) else {
+        // Nothing to collide with. The entry will take the template's default, which is its
+        // own kind of trouble but not this one.
+        return Ok(());
+    };
+
+    fn value_of(entry: &OverseerNode, name: &str) -> Option<OverseerValue> {
+        for child in &entry.children {
+            if child.name == name {
+                return child
+                    .parameters
+                    .get("_computed_value")
+                    .or_else(|| child.parameters.get("value"))
+                    .cloned();
+            }
+            if let Some(found) = value_of(child, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    fn as_text(value: &OverseerValue) -> String {
+        match value {
+            OverseerValue::String(s) | OverseerValue::Timestamp(s) | OverseerValue::Date(s) => {
+                s.clone()
+            }
+            OverseerValue::Integer(i) => i.to_string(),
+            OverseerValue::Float(f) => f.to_string(),
+            other => format!("{:?}", other),
+        }
+    }
+
+    let taken = as_text(wanted);
+    if list
+        .children
+        .iter()
+        .filter_map(|entry| value_of(entry, &key))
+        .any(|existing| as_text(&existing) == taken)
+    {
+        return Err(RequestError::Rejected(format!(
+            concat!(
+                "this list is keyed by '{}' and an entry with '{}' = {} is already in ",
+                "it. Two entries with the same key share one address, and whichever is ",
+                "read second is the only one anything sees. Use a different {}."
+            ),
+            key, key, taken, key
+        )));
+    }
+    Ok(())
+}
+
 /// Refuse to touch an entry that is not the one the caller thinks it is.
 ///
 /// Compared as text, because a caller sends what it read back and a figure can arrive as 1 or
@@ -860,6 +987,7 @@ impl DocumentRoot {
                     reject_unknown_fields(&template, fields)?;
                 }
             }
+            reject_duplicate_key(target, fields)?;
             ActionExecutor::append_entry(nodes, &format!("/{}", path.join("/")), &overrides)
                 .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))
         })?;
