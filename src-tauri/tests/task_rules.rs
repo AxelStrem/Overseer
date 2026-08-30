@@ -36,6 +36,25 @@ fn rules_at(instant: &str, handle: &str, overrides: &[(&str, &str)]) -> Vec<Over
     nodes
 }
 
+/// The document with an extra record in `History`, at a given instant.
+fn with_history(instant: &str, record: &str) -> Vec<OverseerNode> {
+    let when = chrono::DateTime::parse_from_rfc3339(instant)
+        .expect("bad instant")
+        .with_timezone(&chrono::Utc);
+    FormulaEvaluator::set_time_override(Some(when));
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DOC);
+    let text = std::fs::read_to_string(path).expect("no tasks.os");
+    // Records go in after the list's opening line, which is the only place they can go: the
+    // list is written empty as `{ }` on one line.
+    let anchor = "    list History (entry=<Record>, layout=\"vertical\") { }";
+    assert!(text.contains(anchor), "the History list is not shaped as this expects");
+    let opened = format!("    list History (entry=<Record>, layout=\"vertical\") {{\n{record}    }}");
+    let text = text.replace(anchor, &opened);
+    let nodes = app_api::load_document(text).expect("load");
+    FormulaEvaluator::set_time_override(None);
+    nodes
+}
+
 fn field(nodes: &[OverseerNode], name: &str) -> Option<OverseerValue> {
     for n in nodes {
         if n.name == name {
@@ -119,10 +138,64 @@ fn a_missed_occasion_is_skipped_rather_than_queued() {
 
 #[test]
 fn duplicates_are_allowed_when_the_rule_says_so() {
-    let allow = [("allow_duplicates", "true"), ("mode", "\"daily\"")];
+    let allow = [("when_open", "\"add\""), ("mode", "\"daily\"")];
     assert!(
         due(&rules_at("2026-08-18T09:00:00Z", "kitchen_floor", &allow), "kitchen_floor"),
         "an open task blocked a rule that permits duplicates"
+    );
+}
+
+// -- what happens to the task that never got done ---------------------------------------------
+
+#[test]
+fn a_rule_that_expires_its_tasks_comes_due_with_one_still_open() {
+    // The difference that makes the whole feature. `skip` waits for the open one to be closed
+    // by hand - which is what silently attributed today's effort to yesterday's task.
+    let replace = [("when_open", "\"fail\""), ("mode", "\"daily\"")];
+    let nodes = rules_at("2026-08-18T09:00:00Z", "kitchen_floor", &replace);
+    assert!(due(&nodes, "kitchen_floor"), "an open task blocked a rule that expires them");
+    assert_eq!(
+        rule_field(&nodes, "kitchen_floor", "expires_open"),
+        OverseerValue::Boolean(true),
+        "the rule must tell the sweep to close the open one"
+    );
+}
+
+#[test]
+fn skipping_is_still_the_default() {
+    // Every rule already written says nothing about this, and must keep waiting.
+    let daily = [("mode", "\"daily\"")];
+    let nodes = rules_at("2026-08-18T09:00:00Z", "kitchen_floor", &daily);
+    assert!(!due(&nodes, "kitchen_floor"), "the default stopped waiting for the open task");
+    assert_eq!(
+        rule_field(&nodes, "kitchen_floor", "expires_open"),
+        OverseerValue::Boolean(false)
+    );
+}
+
+#[test]
+fn a_task_closed_unfinished_does_not_start_an_interval_countdown() {
+    // "Wash the floors every 10 days" must not be satisfied by ten days of not washing them.
+    // `kitchen_floor` is an interval rule; the history entry below is one of its tasks closed
+    // as not done, long enough ago to have earned an occasion if it counted as a completion.
+    let nodes = rules_at("2026-08-18T09:00:00Z", "kitchen_floor", &[]);
+    let before = rule_field(&nodes, "kitchen_floor", "done_count");
+
+    let with_failure = with_history(
+        "2026-08-18T09:00:00Z",
+        r#"        - {
+            - done_at = "2026-08-01T09:00:00Z"
+            - rule = "kitchen_floor"
+            - title = "Wash the kitchen floor"
+            - difficulty = 25
+            - failed = true
+        }
+"#,
+    );
+    assert_eq!(
+        rule_field(&with_failure, "kitchen_floor", "done_count"),
+        before,
+        "a task closed as not done was counted as having been done"
     );
 }
 
@@ -289,4 +362,128 @@ fn switching_a_rule_off_does_not_cost_it_what_it_knows() {
         Some(OverseerValue::String("off".into())),
         "a switched-off rule did not say so"
     );
+}
+
+// -- the hour of the day ---------------------------------------------------------------------
+//
+// A calendar rule used to be due for the whole of its day, so a daily task appeared at
+// whatever moment the first sweep after the quiet hours happened to run. Naming an hour is
+// what makes "the pills, at half seven" a rule rather than a reminder to look at the list.
+
+/// A UTC instant for a local wall-clock time, so these read as the times a person would say.
+fn local(day: &str, hour: u32, minute: u32) -> String {
+    use chrono::TimeZone;
+    let date = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").expect("bad day");
+    chrono::Local
+        .from_local_datetime(&date.and_hms_opt(hour, minute, 0).expect("bad time"))
+        .earliest()
+        .expect("no such local time")
+        .with_timezone(&chrono::Utc)
+        .to_rfc3339()
+}
+
+/// One computed field of one rule, by handle.
+fn rule_field(nodes: &[OverseerNode], handle: &str, name: &str) -> OverseerValue {
+    fn list<'a>(nodes: &'a [OverseerNode], what: &str) -> Option<&'a OverseerNode> {
+        for n in nodes {
+            if n.name == what {
+                return Some(n);
+            }
+            if let Some(f) = list(&n.children, what) {
+                return Some(f);
+            }
+        }
+        None
+    }
+    let rules = list(nodes, "Rules").expect("no rules");
+    for entry in &rules.children {
+        let own = field(std::slice::from_ref(entry), "handle")
+            .map(|v| format!("{v:?}"))
+            .unwrap_or_default();
+        if own.contains(handle) {
+            return field(std::slice::from_ref(entry), name)
+                .unwrap_or_else(|| panic!("rule {handle} has no {name}"));
+        }
+    }
+    panic!("no rule {handle}");
+}
+
+fn number(v: OverseerValue) -> f64 {
+    match v {
+        OverseerValue::Integer(i) => i as f64,
+        OverseerValue::Float(f) => f,
+        other => panic!("not a number: {other:?}"),
+    }
+}
+
+#[test]
+fn a_rule_that_names_an_hour_waits_for_it() {
+    let half_seven = [("at_hour", "7"), ("at_minute", "30")];
+    assert!(!due(&rules_at(&local("2026-08-11", 6, 0), "make_bed", &half_seven), "make_bed"));
+    assert!(!due(&rules_at(&local("2026-08-11", 7, 29), "make_bed", &half_seven), "make_bed"));
+    assert!(due(&rules_at(&local("2026-08-11", 7, 30), "make_bed", &half_seven), "make_bed"));
+    assert!(due(&rules_at(&local("2026-08-11", 23, 0), "make_bed", &half_seven), "make_bed"));
+}
+
+#[test]
+fn naming_no_hour_is_what_every_rule_did_before() {
+    // The default has to stay a no-op, or every rule already written changes meaning.
+    for hour in [0, 5, 9, 22] {
+        assert!(
+            due(&rules_at(&local("2026-08-11", hour, 0), "make_bed", &[]), "make_bed"),
+            "a rule with no hour should be due at {hour}:00"
+        );
+    }
+}
+
+#[test]
+fn the_hour_applies_to_the_calendar_rules_too() {
+    // 2026-08-11 is a Tuesday, which is `bins`.
+    let evening = [("at_hour", "18"), ("at_minute", "0")];
+    assert!(!due(&rules_at(&local("2026-08-11", 9, 0), "bins", &evening), "bins"));
+    assert!(due(&rules_at(&local("2026-08-11", 18, 0), "bins", &evening), "bins"));
+    // Still only on its own weekday.
+    assert!(!due(&rules_at(&local("2026-08-12", 18, 0), "bins", &evening), "bins"));
+}
+
+#[test]
+fn a_deadline_can_be_a_time_of_day_rather_than_a_length() {
+    let morning = [
+        ("at_hour", "7"), ("at_minute", "30"),
+        ("due_hour", "9"), ("due_minute", "0"),
+    ];
+    let nodes = rules_at(&local("2026-08-11", 7, 30), "make_bed", &morning);
+    assert_eq!(rule_field(&nodes, "make_bed", "has_due_time"), OverseerValue::Boolean(true));
+    assert!(
+        (number(rule_field(&nodes, "make_bed", "hours_until_due")) - 1.5).abs() < 0.001,
+        "half seven to nine is an hour and a half"
+    );
+}
+
+#[test]
+fn a_task_that_opens_late_is_late_rather_than_given_another_day() {
+    // The container was down until ten. The promise was nine, and it is now broken - which is
+    // the honest answer. Rolling it to nine tomorrow would hand a missed sweep a free day.
+    let morning = [
+        ("at_hour", "7"), ("at_minute", "30"),
+        ("due_hour", "9"), ("due_minute", "0"),
+    ];
+    let nodes = rules_at(&local("2026-08-11", 10, 0), "make_bed", &morning);
+    assert!(
+        number(rule_field(&nodes, "make_bed", "hours_until_due")) < 0.0,
+        "a deadline already passed should be negative, not tomorrow"
+    );
+}
+
+#[test]
+fn a_deadline_before_the_appearing_hour_means_the_next_day() {
+    // "Up at ten at night, due by two in the morning" is one occurrence, not a promise
+    // sixteen hours in the past.
+    let overnight = [
+        ("at_hour", "22"), ("at_minute", "0"),
+        ("due_hour", "2"), ("due_minute", "0"),
+    ];
+    let nodes = rules_at(&local("2026-08-11", 22, 0), "make_bed", &overnight);
+    let hours = number(rule_field(&nodes, "make_bed", "hours_until_due"));
+    assert!((hours - 4.0).abs() < 0.001, "ten at night to two is four hours, got {hours}");
 }

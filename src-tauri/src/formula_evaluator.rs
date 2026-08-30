@@ -2053,6 +2053,36 @@ impl FormulaEvaluator {
                 };
                 Ok(OverseerValue::Integer(n))
             }
+            // Minutes since local midnight: the clock on the wall, as a number that compares.
+            //
+            // The one thing the calendar functions could not say. A rule can ask what day it
+            // is and how long ago something happened, but not what time it is now - so "every
+            // morning at 07:30" had nowhere to live, and the nearest workaround,
+            // `minutes_since(today())`, is wrong in a way that looks right: `today()` is a
+            // local date, `to_utc` reads a bare date as midnight UTC, and `now()` is UTC - so
+            // it answers with UTC time of day. Four hours early in Tbilisi, every day, and
+            // fine on the machine of anyone who happens to live at Greenwich.
+            //
+            // Local, like `weekday` and `same_day`, so a rule that fires "on Tuesday at 07:30"
+            // cannot disagree with itself about which of those comes first.
+            "minutes_of_day" => {
+                if args.len() != 1 {
+                    return Err(OverseerError::FormulaError(
+                        "minutes_of_day(x) takes exactly 1 argument".to_string(),
+                    ));
+                }
+                let val = Self::evaluate_expression(&args[0], context)?;
+                let instant = Self::to_utc(&val).ok_or_else(|| {
+                    OverseerError::FormulaError(
+                        "minutes_of_day: unable to parse argument as date/timestamp".to_string(),
+                    )
+                })?;
+                use chrono::Timelike;
+                let local = instant.with_timezone(&chrono::Local);
+                Ok(OverseerValue::Integer(
+                    local.hour() as i64 * 60 + local.minute() as i64,
+                ))
+            }
             _ => Err(OverseerError::FormulaError(format!(
                 "Unknown function: {}",
                 name

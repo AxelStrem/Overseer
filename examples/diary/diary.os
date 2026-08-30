@@ -30,6 +30,19 @@ tab diary (label="Diary", mutable=true) {
             // chore, and there is no obligation to answer.
             text mine (markdown=true, hidden=$(mine == ""),
                        background-color="#1b2a1b", padding=8) = ""
+
+            // Four numbers to fill in by hand, for whatever is worth counting at the time.
+            //
+            // Deliberately unnamed: what they hold is decided day to day rather than fixed
+            // here, and a field called `mood` would quietly insist on meaning mood forever.
+            // Nothing reads them - not the bot, not a formula, not the recap - so they can be
+            // repurposed without breaking anything.
+            div (layout="horizontal", margin=0, spacing=16, alignment="center") {
+                int eax (label="eax", format="trim") = 0
+                int ebx (label="ebx", format="trim") = 0
+                int ecx (label="ecx", format="trim") = 0
+                int edx (label="edx", format="trim") = 0
+            }
         }
 
         // Something said during the day: how it felt, what was happening, what was being done.
@@ -48,8 +61,17 @@ tab diary (label="Diary", mutable=true) {
         }
     }
 
-    // Newest last, like every other history here.
-    list Days (entry=<Day>, key="day", layout="vertical", spacing=10) { }
+    // Newest first, which is the one history here that reads better that way: the entry you
+    // want is nearly always yesterday's, and the list only grows.
+    //
+    // Sorted by how long ago the day was, ascending - `sort_by` sorts one way only, and a date
+    // cannot be negated the way `tasks/Open` negates its priority. The most recent day is the
+    // fewest days ago, so ascending on that is descending on the date.
+    //
+    // Presentation only: the file keeps them in the order they were written, so appending
+    // stays an append and the backup's line-wise merge sees what it expects.
+    list Days (entry=<Day>, key="day", layout="vertical", spacing=10,
+               sort_by=$(|x| days_since(x/day))) { }
 
     text notes_header (markdown=true) = "## Notes"
 

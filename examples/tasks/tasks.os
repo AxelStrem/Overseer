@@ -48,7 +48,7 @@ tab tasks (label="Tasks", mutable=true) {
             bool overdue (hidden=true) = $(has_deadline && minutes_since(../deadline) > 0)
 
             div (layout="horizontal", margin=0, alignment="center") {
-                string title (label="", font-size=18px, width=48%) = ""
+                string title (label="", font-size=18px, width=44%) = ""
 
                 // The deadline twice over, because they answer different questions: the date
                 // is what you plan around, the countdown is what you feel. `remaining` counts
@@ -62,7 +62,7 @@ tab tasks (label="Tasks", mutable=true) {
                 int difficulty (label="", format="trim", width=8%) = 1
                 int priority (label="", font-size=18px, width=10%) =
                     $(../base_priority + ../priority_gain * days_since(../added))
-                button done (label="done", margin=0, width=10%) {
+                button done (label="done", margin=0, width=8%) {
                     on click {
                         append (list="/tasks/History") {
                             - done_at = $(now())
@@ -72,6 +72,29 @@ tab tasks (label="Tasks", mutable=true) {
                             - difficulty = $(../difficulty)
                             - deadline = $(../deadline)
                             - was_late = $(../overdue)
+                        }
+                        remove (from="/tasks/Open", keyField="added", keyValue=$(../added))
+                    }
+                }
+
+                // Closed without being done. The same two actions as `done`, deliberately: a
+                // task that was never finished still happened, and a list that remembers only
+                // successes cannot answer "how often do I actually manage this?" - which is
+                // most of what the history is for.
+                //
+                // Pressed by a person who knows the day is gone, and by the sweep when a
+                // recurring rule comes round again and its last task is still sitting there.
+                button fail (label="fail", margin=0, width=8%) {
+                    on click {
+                        append (list="/tasks/History") {
+                            - done_at = $(now())
+                            - added = $(../added)
+                            - rule = $(../rule)
+                            - title = $(../title)
+                            - difficulty = $(../difficulty)
+                            - deadline = $(../deadline)
+                            - was_late = $(../overdue)
+                            - failed = true
                         }
                         remove (from="/tasks/Open", keyField="added", keyValue=$(../added))
                     }
@@ -113,6 +136,11 @@ tab tasks (label="Tasks", mutable=true) {
             timestamp deadline (hidden=true) = ""
             bool was_late (label="late", width=8%, hidden=$(was_late == false)) = false
 
+            // Closed without being done. `done_at` is really "closed at" on these - the field
+            // is shared because a record is a record, and every count that means *completed*
+            // filters on this flag rather than on the mere presence of a record.
+            bool failed (label="not done", width=10%, hidden=$(failed == false)) = false
+
             int difficulty (label="", format="trim", width=10%) = 1
         }
 
@@ -138,7 +166,9 @@ tab tasks (label="Tasks", mutable=true) {
                 // something says so, rather than looking broken.
                 string state (label="", font-size=13px, width=20%) =
                     $(active == false ? "off" :
-                     (due ? "due" : (open_now > 0 ? "still open" : "waiting")))
+                     (due ? "due" :
+                     (open_now > 0 ? "still open" :
+                     (has_time && time_has_come == false ? "not yet today" : "waiting"))))
 
                 button add (label="add", margin=0, width=14%) {
                     on click {
@@ -155,7 +185,8 @@ tab tasks (label="Tasks", mutable=true) {
                             // stored as an interval and computed later: the deadline is a
                             // fact about this occurrence, and editing the rule afterwards
                             // should not move a promise already made.
-                            - deadline = $(../due_in_hours > 0 ? date_add_hours(now(), ../due_in_hours) : "")
+                            - deadline = $(../has_due_time ? date_add_hours(now(), ../hours_until_due) :
+                                          (../due_in_hours > 0 ? date_add_hours(now(), ../due_in_hours) : ""))
                         }
                         set (path="../last_created", mode="value") = $(now())
                     }
@@ -199,6 +230,17 @@ tab tasks (label="Tasks", mutable=true) {
                 int month (label="month", format="trim",
                            hidden=$(../mode != "yearly")) = 1
 
+                // What time of day it should appear. 0:00 means any time, which is what every
+                // rule did before there was a choice, and stays the default.
+                //
+                // Two integers rather than one timestamp, deliberately. A timestamp would show
+                // as "07:30" and read back through `minutes_of_day` - but it carries an
+                // offset, and whatever writes it has to get that offset right. The bot writes
+                // these fields, and a zone guessed wrong fires the rule four hours out with
+                // nothing on the card to say why. 7 and 30 cannot be wrong about a zone.
+                int at_hour (label="at", format="trim") = 0
+                int at_minute (label=":", format="trim") = 0
+
                 // How long the task gets, once it appears. 0 means no deadline, which is the
                 // default and should stay the default: a rule that puts a deadline on
                 // something every day teaches you to ignore deadlines.
@@ -207,7 +249,26 @@ tab tasks (label="Tasks", mutable=true) {
                 // "within half an hour" are both sayable without a second field.
                 float due_in_hours (label="due in (h)", format="trim") = 0
 
-                bool allow_duplicates (label="duplicates") = false
+                // The same promise as a clock time rather than a length, and it wins over
+                // `due_in_hours` when both are set. "Due by nine" survives the container being
+                // down until half past eight; "due in an hour and a half" quietly becomes ten.
+                int due_hour (label="due at", format="trim") = 0
+                int due_minute (label=":", format="trim") = 0
+
+                // What to do when this rule comes round and its last task is still open.
+                //
+                //   skip - leave it be; this occasion passes. The dishwasher does not need
+                //          running twice because nobody emptied it.
+                //   add  - open another alongside. Two of the same thing at once is a
+                //          sensible thing to see for some rules and nonsense for most.
+                //   fail - close the open one as not done, and open a fresh one. For the
+                //          things where yesterday's occasion is genuinely gone: the pills you
+                //          did not take, the practice you did not do. Doing it today is not
+                //          doing it yesterday, and a history that says otherwise is wrong.
+                //
+                // Was a boolean, `allow_duplicates`, which could hold only the first two. The
+                // third is not a variation on either: it is the only one that closes a task.
+                string when_open (label="if open") = "skip"
 
                 // When it last put something in the list. Shown because "why has this not
                 // fired" is nearly always answered by it - and hidden until there is one,
@@ -230,10 +291,16 @@ tab tasks (label="Tasks", mutable=true) {
             // the smallest days-ago is the most recent one - `max` over timestamps would say
             // the same thing if timestamps compared, and this needs only numbers.
             int open_now (hidden=true) = $(/tasks/Open.filter(|t| t/rule == ../handle).count())
+            //
+            // Both count what was *finished*. A task closed as not done is in the history too -
+            // that is the point of recording it - but it must never start an interval's
+            // countdown: "wash the floors every 10 days" would otherwise be satisfied by ten
+            // days of not washing them.
             int done_count (hidden=true) =
-                $(/tasks/History.filter(|h| h/rule == ../trigger).count())
+                $(/tasks/History.filter(|h| h/rule == ../trigger && h/failed == false).count())
             float since_done (hidden=true) = $(done_count == 0 ? 0 :
-                /tasks/History.filter(|h| h/rule == ../trigger).map(|h| days_since(h/done_at)).min())
+                /tasks/History.filter(|h| h/rule == ../trigger && h/failed == false)
+                              .map(|h| days_since(h/done_at)).min())
 
             // Has this rule already fired for the occasion that is current now?
             //
@@ -252,9 +319,34 @@ tab tasks (label="Tasks", mutable=true) {
             // rather than waiting out an interval that has nothing to count from.
             bool never_ran (hidden=true) = $(ever_ran == false && done_count == 0)
 
+            // The clock, and what this rule wants of it.
+            //
+            // `at_minutes` of 0 is the whole of "any time": the gate below is `>=`, so a rule
+            // that names no hour passes it from midnight and behaves exactly as it always did.
+            int at_minutes (hidden=true) = $(at_hour * 60 + at_minute)
+            int due_minutes (hidden=true) = $(due_hour * 60 + due_minute)
+            int clock_now (hidden=true) = $(minutes_of_day(now()))
+            bool has_time (hidden=true) = $(at_minutes > 0)
+            bool has_due_time (hidden=true) = $(due_minutes > 0)
+            bool time_has_come (hidden=true) = $(clock_now >= at_minutes)
+
+            // How long this occurrence gets, when the deadline is a time rather than a length.
+            //
+            // Which day that time falls on is decided by the rule, not by when the sweep
+            // happened to run: a deadline at or before the appearing hour means the next day -
+            // "up at 22:00, due by 02:00" - and anything later means today. So a task that
+            // opens late because nothing was running is honestly late, rather than being
+            // handed a fresh 24 hours by the accident of a missed sweep.
+            float hours_until_due (hidden=true) =
+                $((due_minutes - clock_now + (due_minutes <= at_minutes ? 1440 : 0)) / 60.0)
+
+            // Whether a still-open task is closed to make room for this occasion. Read by the
+            // sweep, which does the closing - the rule judges, as with everything else here.
+            bool expires_open (hidden=true) = $(when_open == "fail")
+
             // `active` first, so a rule that is switched off costs nothing to ask and answers
             // the same whatever the calendar says.
-            bool due (hidden=true) = $(active && (allow_duplicates || open_now == 0) && (
+            bool due (hidden=true) = $(active && time_has_come && (when_open != "skip" || open_now == 0) && (
                 mode == "daily"   ? fresh_today :
                 mode == "weekly"  ? (weekday(today()) == ../weekday && fresh_today) :
                 mode == "monthly" ? (day_of_month(today()) == ../day && fresh_today) :

@@ -1984,14 +1984,35 @@ export class OverseerRenderer {
         tabButton.className = 'tab-button'
     // Bug 8: Tabs should use a 'label' parameter instead of exposing node name
     tabButton.textContent = this.getParameterValue(node, 'label') || node.name || 'Tab'
-        
+        // Which tab this button belongs to, so a repaint can find the one it replaces.
+        tabButton.dataset.tab = node.name || ''
+
         const tabContent = document.createElement('div')
         tabContent.className = 'tab-content'
         tabContent.style.display = 'none'
-        
-        // Add tab button to tab container
-        this.tabContainer.appendChild(tabButton)
-        
+
+        // A repaint, rather than a first render.
+        //
+        // This runs again whenever a tab's own parameters change - which an event does every
+        // time it touches a list inside one, because the resolver records the overrides on the
+        // tab. Appending unconditionally then left a second button for the same tab, and the
+        // content returned here starts hidden and is only shown when it is the only tab. So
+        // pressing `bought` swapped the visible page for a hidden one and grew a duplicate
+        // "Shopping" tab beside it: the page went blank and the new tab was empty.
+        //
+        // The existing button is replaced in place instead - same position in the row, and no
+        // stale click handler left pointing at content that has just been swapped out.
+        const name = tabButton.dataset.tab
+        const existing = name
+            ? Array.from(this.tabContainer.children).find(b => b.dataset && b.dataset.tab === name)
+            : null
+        const wasActive = !!(existing && existing.classList.contains('active'))
+        if (existing) {
+            this.tabContainer.replaceChild(tabButton, existing)
+        } else {
+            this.tabContainer.appendChild(tabButton)
+        }
+
         // Tab click handler
         tabButton.addEventListener('click', () => {
             // Hide all tab contents and deactivate buttons
@@ -2001,13 +2022,13 @@ export class OverseerRenderer {
             tabContent.style.display = 'block'
             tabButton.classList.add('active')
         })
-        
-        // Make first tab active by default
-        if (this.tabContainer.children.length === 1) {
+
+        // Whichever tab was showing goes on showing; failing that, the first one does.
+        if (wasActive || (!existing && this.tabContainer.children.length === 1)) {
             tabButton.classList.add('active')
             tabContent.style.display = 'block'
         }
-        
+
         this.applyNodeStyles(tabContent, node)
         return tabContent
     }
@@ -5089,9 +5110,113 @@ export class OverseerRenderer {
         }
     }
 
+    /**
+     * Where a queued event's target can be found again after the document has moved under it.
+     *
+     * List entries are named by position - Task__1, Task__2 - so removing one renames every
+     * entry after it. A press that was waiting its turn while that happened is holding a name
+     * that now means a different entry. Keyed lists have something better to go on: the key is
+     * a value on the entry, and it does not move.
+     *
+     * Returns null when there is nothing stable to hold on to, which is the honest answer for
+     * an unkeyed list and means the caller should drop the event rather than guess.
+     */
+    _anchorForPath(path) {
+        const doc = window.app && window.app.currentDocument
+        if (!doc || !Array.isArray(path) || path.length < 2) return null
+        for (let i = path.length - 1; i > 0; i--) {
+            const parent = this.findNodeByPath(doc, path.slice(0, i))
+            if (!parent) continue
+            if (String(parent.node_type || parent.type || '').toLowerCase() !== 'list') continue
+            const keyField = this.getParameterValue(parent, 'key')
+            if (!keyField) return null
+            const entry = this.findNodeByPath(doc, path.slice(0, i + 1))
+            if (!entry) return null
+            const field = (entry.children || []).find(c => c && c.name === String(keyField))
+            if (!field) return null
+            const value = this.getParameterValue(field, 'value')
+            if (value === undefined || value === null) return null
+            return {
+                listPath: path.slice(0, i),
+                keyField: String(keyField),
+                keyValue: String(value),
+                tail: path.slice(i + 1),
+            }
+        }
+        return null
+    }
+
+    /** The path that anchor points at now, or null if the entry has gone. */
+    _pathFromAnchor(anchor) {
+        const doc = window.app && window.app.currentDocument
+        const list = doc && this.findNodeByPath(doc, anchor.listPath)
+        if (!list || !Array.isArray(list.children)) return null
+        const entry = list.children.find((c) => {
+            const field = (c.children || []).find(f => f && f.name === anchor.keyField)
+            if (!field) return false
+            const value = this.getParameterValue(field, 'value')
+            return value !== undefined && value !== null && String(value) === anchor.keyValue
+        })
+        if (!entry) return null
+        return [...anchor.listPath, entry.name, ...anchor.tail]
+    }
+
+    /**
+     * Run one event at a time, against the document as it is when its turn comes.
+     *
+     * Every event is sent with the document's text, and that text is only replaced when the
+     * answer arrives. Two presses made in quick succession were therefore both computed
+     * against the document as it stood before either of them - and the second answer, applied
+     * over the first, put back what the first had removed. Marking two tasks done in a row
+     * left one of them open and the other closed, and which one depended on the timing.
+     *
+     * Waiting is not enough on its own: by the time a queued press runs, the entries it was
+     * addressed against may have been renumbered. So the target is re-found by its key, and
+     * an event whose target has genuinely gone is dropped rather than sent to whatever now
+     * occupies that name.
+     */
     async emitEvent(node, element, eventName) {
         if (!window.app || !window.app.currentDocument) return
-        let path = (element && element.dataset && element.dataset.path)
+        const path = (element && element.dataset && element.dataset.path)
+            ? JSON.parse(element.dataset.path)
+            : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
+
+        const busy = this._eventInFlight
+        if (!busy) {
+            return this._runEventExclusively(node, element, eventName, path, null)
+        }
+        // Held behind something already in flight, so the document is about to change under
+        // this path. Remember what it points at now, while that is still true.
+        const anchor = this._anchorForPath(path)
+        return this._runEventExclusively(node, element, eventName, path, anchor, busy)
+    }
+
+    async _runEventExclusively(node, element, eventName, path, anchor, busy) {
+        let release
+        this._eventInFlight = new Promise((resolve) => { release = resolve })
+        try {
+            if (busy) {
+                try { await busy } catch (_) { /* its failure is not this event's business */ }
+                if (anchor) {
+                    const fresh = this._pathFromAnchor(anchor)
+                    if (!fresh) {
+                        console.warn('[Overseer] dropping an event whose target is gone', anchor)
+                        return
+                    }
+                    path = fresh
+                }
+            }
+            return await this._emitEventNow(node, element, eventName, path)
+        } finally {
+            this._eventInFlight = null
+            release()
+        }
+    }
+
+    async _emitEventNow(node, element, eventName, pathOverride) {
+        if (!window.app || !window.app.currentDocument) return
+        let path = Array.isArray(pathOverride) ? pathOverride
+            : (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
 

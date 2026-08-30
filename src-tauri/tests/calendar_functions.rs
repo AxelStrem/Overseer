@@ -4,6 +4,7 @@
 //! modulo operator a weekday cannot be derived from one. These three functions are the whole
 //! of what the task scheduler's calendar rules need.
 
+use chrono::TimeZone;
 use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::{OverseerNode, OverseerValue};
@@ -228,4 +229,90 @@ fn the_two_compose_into_what_a_rule_needs() {
     let due_in_a_day = "minutes_since(date_add_hours(anchor, 24)) > 0 ? 1 : 0";
     assert_eq!(at("2026-07-06T10:00:00Z", due_in_a_day), OverseerValue::Integer(1));
     assert_eq!(at("2026-07-06T08:00:00Z", due_in_a_day), OverseerValue::Integer(0));
+}
+
+// `minutes_of_day` is the fourth: the clock, rather than the calendar.
+//
+// Written to hold whatever zone the machine running the tests is in, because that is exactly
+// the property being tested - a function that only works at Greenwich is the bug it replaces.
+
+/// Local minutes since local midnight for an instant, worked out independently of the evaluator.
+fn expected_local_minutes(instant: &str) -> i64 {
+    use chrono::Timelike;
+    let local = chrono::DateTime::parse_from_rfc3339(instant)
+        .expect("bad instant")
+        .with_timezone(&chrono::Local);
+    local.hour() as i64 * 60 + local.minute() as i64
+}
+
+#[test]
+fn the_clock_is_read_in_local_time() {
+    for instant in ["2026-08-22T06:51:00Z", "2026-01-15T23:10:00Z", "2026-03-01T00:05:00Z"] {
+        assert_eq!(
+            int(at(instant, "minutes_of_day(now())")),
+            expected_local_minutes(instant),
+            "{instant} did not come out as the local wall clock"
+        );
+    }
+}
+
+#[test]
+fn ninety_minutes_later_reads_ninety_minutes_later() {
+    // Independent of the zone: whatever midnight it counts from, the gap is the gap.
+    let before = int(at("2026-08-22T06:00:00Z", "minutes_of_day(now())"));
+    let after = int(at("2026-08-22T07:30:00Z", "minutes_of_day(now())"));
+    assert_eq!((after - before).rem_euclid(1440), 90);
+}
+
+#[test]
+fn it_reads_a_stored_timestamp_too() {
+    // The anchor is 2026-07-05T09:00:00Z, so this must not depend on when the test runs.
+    assert_eq!(
+        int(at("2026-01-01T00:00:00Z", "minutes_of_day(anchor)")),
+        expected_local_minutes("2026-07-05T09:00:00Z")
+    );
+}
+
+#[test]
+fn it_is_not_the_workaround_it_replaces() {
+    // `minutes_since(today())` was the only way to ask this before, and it answers in UTC:
+    // `today()` is a local date, a bare date parses as midnight UTC, and `now()` is UTC. The
+    // two agree only where the local offset is zero, which is why the bug survived review.
+    use chrono::Offset;
+    let instant = "2026-08-22T06:51:00Z";
+    let offset_minutes = chrono::Local
+        .from_utc_datetime(
+            &chrono::DateTime::parse_from_rfc3339(instant).unwrap().naive_utc(),
+        )
+        .offset()
+        .fix()
+        .local_minus_utc() as i64
+        / 60;
+
+    let clock = int(at(instant, "minutes_of_day(now())"));
+    let workaround = int(at(instant, "minutes_since(today())"));
+    assert_eq!(
+        (clock - workaround).rem_euclid(1440),
+        offset_minutes.rem_euclid(1440),
+        "the difference between the two should be exactly the local offset"
+    );
+}
+
+#[test]
+fn the_same_instant_spelled_two_ways_reads_the_same() {
+    // True in any zone, which the offset test above is not: on a machine whose local time is
+    // UTC it compares zero to zero. This one has something to say wherever it runs.
+    let anchored = |written: &str| {
+        let text = format!(
+            "tab t (label=\"T\") {{
+    timestamp anchor (hidden=true) = \"{written}\"
+    int out = $(minutes_of_day(anchor))
+}}
+"
+        );
+        let nodes = app_api::load_document(text).expect("load");
+        int(find(&nodes, "out").expect("no out field"))
+    };
+    assert_eq!(anchored("2026-08-22T09:00:00+04:00"), anchored("2026-08-22T05:00:00Z"));
+    assert_eq!(anchored("2026-08-22T00:30:00-03:00"), anchored("2026-08-22T03:30:00Z"));
 }
