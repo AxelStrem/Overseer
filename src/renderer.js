@@ -894,7 +894,11 @@ export class OverseerRenderer {
     }
 
     renderDocument(overseerDocument) {
-        return profiled('  renderDocument', () => this._renderDocumentProfiled(overseerDocument))
+        const rendered = profiled('  renderDocument', () => this._renderDocumentProfiled(overseerDocument))
+        // Straight away, rather than leaving it to the filter element's own timeout: a full
+        // render would otherwise show every entry for a frame before hiding most of them again.
+        try { this.applyFilters() } catch (_) { /* a filter must never break a render */ }
+        return rendered
     }
     _renderDocumentProfiled(overseerDocument) {
         if (DEBUG_MODE) {
@@ -1578,10 +1582,10 @@ export class OverseerRenderer {
                 return this.createStringElement(node)
             case 'text':
                 return this.createTextElement(node)
-            // A set of tags reads as what it is: the line the document wrote. Rendering it as
-            // a container would put each tag in a box of its own.
             case 'tags':
-                return this.createStringElement(node)
+                return this.createTagsElement(node)
+            case 'filter':
+                return this.createFilterElement(node)
             case 'int':
             case 'float':
                 return this.createNumberElement(node)
@@ -2218,6 +2222,404 @@ export class OverseerRenderer {
                 container.appendChild(btnEl)
             }
         } catch(_) { /* ignore */ }
+    }
+
+    /**
+     * A set of tags, drawn as what it is rather than as the line it is stored on.
+     *
+     * The value is a comma-separated set - already a real collection to the evaluator, which
+     * can `filter` and `count` it - but it was rendered as a plain string, so a field holding
+     * six labels read as forty characters of prose. Here each one gets a chip.
+     *
+     * `vocabulary` names a keyed list of the tags that exist: its entries supply the label to
+     * show and the colour to show it in, so the palette is document data rather than something
+     * the renderer decides. Without one the chips take a default colour, which is what an
+     * existing document with a bare `tags` field gets.
+     *
+     * Editing goes through the same path as every other field: the set is written back as the
+     * line it came from and `reevaluateDocumentSelective` works out the rest. There is nothing
+     * here the server needs to know about.
+     */
+    /**
+     * A filter over a list: some text to match, and tags to narrow by.
+     *
+     * Client-side, and deliberately. The alternative was a field in the document and `hidden`
+     * formulas on the entries, which would have meant re-resolving the whole document on every
+     * keystroke - 289ms measured on a document smaller than the one this is for - and storing
+     * the filter, so it would be written to the file, committed by the backup and synced to
+     * whoever else is reading. A filter is a view, like which tab is open or where you have
+     * scrolled. `sort_by` is presentation-only for the same reason.
+     *
+     * Nothing here writes to the document, and the server never hears about it.
+     *
+     * What it needs from the document:
+     *   target     - the list to filter
+     *   text       - which of an entry's fields the typed text is matched against
+     *   tags       - which field holds an entry's tags, if it has any
+     *   vocabulary - the tag list, for drawing the chips to narrow by
+     *   status     - a nought-to-a-hundred field, offered as three boxes: not started, in
+     *                progress, finished. Derived rather than stored, because "in progress" is
+     *                not a state anything writes down - it is what a percentage between the
+     *                two ends means.
+     */
+    createFilterElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-filter'
+
+        const target = String(this.getParameterValue(node, 'target') || '')
+            .split('/').filter(Boolean)
+        const textFields = String(this.getParameterValue(node, 'text') || '')
+            .split(',').map(s => s.trim()).filter(Boolean)
+        const tagField = this.getParameterValue(node, 'tags')
+        const statusField = this.getParameterValue(node, 'status')
+        if (target.length === 0) {
+            // Nothing to filter is worth saying out loud rather than rendering an inert box.
+            container.textContent = 'filter: no target list named'
+            container.classList.add('filter-broken')
+            return container
+        }
+
+        // Kept on the renderer rather than in the element, so it survives the element being
+        // replaced - which happens on every repaint of the list it filters. A filter that
+        // silently cleared itself whenever something changed nearby would be worse than none.
+        const key = target.join('/')
+        const state = this.filterState(key, { target, textFields, tagField, statusField })
+
+        if (textFields.length > 0) {
+            const box = document.createElement('input')
+            box.className = 'filter-text'
+            box.type = 'text'
+            box.placeholder = this.getParameterValue(node, 'label') || 'filter'
+            box.value = state.text
+            // On input, not on blur: the point of typing into it is watching the list shrink.
+            box.addEventListener('input', () => {
+                state.text = box.value
+                this.applyFilters()
+            })
+            container.appendChild(box)
+        }
+
+        if (tagField) {
+            const vocabulary = this.tagVocabulary(node)
+            const chips = document.createElement('span')
+            chips.className = 'filter-tags'
+            for (const [tag, known] of vocabulary) {
+                const chip = this.tagChip(tag, known, null)
+                chip.classList.add('filter-tag')
+                if (state.tags.has(tag)) chip.classList.add('filter-tag-on')
+                chip.addEventListener('click', () => {
+                    if (state.tags.has(tag)) state.tags.delete(tag)
+                    else state.tags.add(tag)
+                    chip.classList.toggle('filter-tag-on', state.tags.has(tag))
+                    this.applyFilters()
+                })
+                chips.appendChild(chip)
+            }
+            container.appendChild(chips)
+        }
+
+        if (statusField) {
+            const boxes = document.createElement('span')
+            boxes.className = 'filter-status'
+            for (const [which, label] of [['none', 'not started'],
+                                          ['some', 'in progress'],
+                                          ['done', 'finished']]) {
+                const holder = document.createElement('label')
+                holder.className = 'filter-status-option'
+                const box = document.createElement('input')
+                box.type = 'checkbox'
+                box.checked = state.status.has(which)
+                box.addEventListener('change', () => {
+                    if (box.checked) state.status.add(which)
+                    else state.status.delete(which)
+                    this.applyFilters()
+                })
+                holder.appendChild(box)
+                holder.appendChild(document.createTextNode(label))
+                boxes.appendChild(holder)
+            }
+            container.appendChild(boxes)
+        }
+
+        const count = document.createElement('span')
+        count.className = 'filter-count'
+        count.dataset.filterCount = key
+        container.appendChild(count)
+
+        this.applyNodeStyles(container, node)
+        // Applied after this returns, when the list it filters is on the page too.
+        setTimeout(() => this.applyFilters(), 0)
+        return container
+    }
+
+    /** What a filter is currently set to, remembered across repaints. */
+    filterState(key, about) {
+        if (!this._filters) this._filters = new Map()
+        const held = this._filters.get(key)
+        if (held) {
+            // The document may have been reloaded with the fields named differently.
+            Object.assign(held, about)
+            return held
+        }
+        const fresh = Object.assign({ text: '', tags: new Set(), status: new Set() }, about)
+        this._filters.set(key, fresh)
+        return fresh
+    }
+
+    /**
+     * Hide the entries of every filtered list that do not match, and say how many are left.
+     *
+     * Called after any render as well as on every keystroke, because a repaint replaces the
+     * entries with fresh elements that know nothing about the filter. Reading the fields from
+     * the document rather than from the page: what is on screen is abbreviated, formatted and
+     * sometimes hidden, and none of that is what you meant to search.
+     */
+    applyFilters() {
+        if (!this._filters || this._filters.size === 0) return
+        const doc = window.app && window.app.currentDocument
+        if (!doc) return
+
+        // Every element that carries a path, gathered once. Asking the document for each entry
+        // in turn instead - `querySelectorAll` per row - cost 338ms for one keystroke over 120
+        // rows, which is what the document-side filter would have cost and the reason this one
+        // is here at all. Several elements can share a path, because a transparent layout div
+        // contributes no segment of its own.
+        const byPath = new Map()
+        for (const element of document.querySelectorAll('[data-path]')) {
+            const held = byPath.get(element.dataset.path)
+            if (held) held.push(element)
+            else byPath.set(element.dataset.path, [element])
+        }
+
+        for (const [key, state] of this._filters) {
+            const list = this.findNodeByPath(doc, state.target)
+            if (!list || !Array.isArray(list.children)) continue
+            const wanted = state.text.trim().toLowerCase()
+            let showing = 0
+
+            for (const entry of list.children) {
+                const matches = this.entryMatchesFilter(entry, wanted, state)
+                if (matches) showing += 1
+                const path = JSON.stringify([...state.target, entry.name])
+                for (const element of byPath.get(path) || []) {
+                    element.classList.toggle('filtered-out', !matches)
+                }
+            }
+
+            for (const label of document.querySelectorAll(`[data-filter-count='${key}']`)) {
+                const total = list.children.length
+                const narrowed = wanted !== '' || state.tags.size > 0 || state.status.size > 0
+                label.textContent = narrowed ? `${showing} of ${total}` : `${total}`
+            }
+        }
+    }
+
+    /** Whether one entry survives the filter. Empty filter, everything survives. */
+    entryMatchesFilter(entry, wanted, state) {
+        // Searched all the way down, not just among the entry's own children. An entry's fields
+        // sit inside the layout divs that arrange them - `title` is a grandchild of the row in
+        // every document written so far - so looking only at direct children found nothing and
+        // quietly filtered everything away.
+        const fieldText = (name) => {
+            const seek = (node) => {
+                for (const child of node.children || []) {
+                    if (child && child.name === name) return child
+                    const found = seek(child)
+                    if (found) return found
+                }
+                return null
+            }
+            const child = seek(entry)
+            if (!child) return ''
+            const value = this.getParameterValue(child, 'value')
+            return value === null || value === undefined ? '' : String(value)
+        }
+
+        if (wanted !== '') {
+            const haystack = state.textFields.map(fieldText).join(' ').toLowerCase()
+            if (!haystack.includes(wanted)) return false
+        }
+
+        if (state.status.size > 0) {
+            if (!state.statusField) return false
+            const figure = Number(fieldText(state.statusField))
+            // Anything that is not a number counts as not started: a task with nothing in the
+            // field has not been begun, which is the honest reading of an empty percentage.
+            const which = !Number.isFinite(figure) || figure <= 0 ? 'none'
+                : figure >= 100 ? 'done'
+                : 'some'
+            if (!state.status.has(which)) return false
+        }
+
+        if (state.tags.size > 0) {
+            if (!state.tagField) return false
+            // Narrowing, not widening: picking a second tag asks for the things that are both,
+            // which is what adding a condition to a filter is usually taken to mean.
+            const held = new Set(fieldText(state.tagField).split(',').map(s => s.trim()))
+            for (const tag of state.tags) {
+                if (!held.has(tag)) return false
+            }
+        }
+
+        return true
+    }
+
+    createTagsElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field tags-field'
+
+        const labelText = this.getParameterValue(node, 'label')
+        if (labelText) {
+            const label = document.createElement('label')
+            label.textContent = labelText
+            container.appendChild(label)
+        }
+
+        const chips = document.createElement('span')
+        chips.className = 'tag-chips'
+        container.appendChild(chips)
+
+        const held = () => String(this.getNodeValue(node) || '')
+            .split(',').map(s => s.trim()).filter(Boolean)
+
+        const write = (tags) => {
+            this.updateNodeValue(node, tags.join(', '))
+            try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
+            try {
+                window.app.reevaluateDocumentSelective([this.buildNodePath(container).join('/')])
+            } catch (_) {
+                try { window.app.reevaluateDocumentSelective([]) } catch (_) {}
+            }
+        }
+
+        const editable = () => this.getEffectiveMutableMode(node, container) !== 'false'
+
+        const paint = () => {
+            chips.textContent = ''
+            const vocabulary = this.tagVocabulary(node)
+            for (const tag of held()) {
+                const removing = editable()
+                    ? () => { write(held().filter(t => t !== tag)); paint() }
+                    : null
+                chips.appendChild(this.tagChip(tag, vocabulary.get(tag), removing))
+            }
+            if (!editable()) return
+            // Offered rather than always shown: a hundred tasks each with a picker open is
+            // unreadable, and the tags themselves are what you came to look at.
+            const add = document.createElement('button')
+            add.className = 'tag-add'
+            add.textContent = '+'
+            add.title = 'add a tag'
+            add.addEventListener('click', (event) => {
+                event.stopPropagation()
+                const spare = [...vocabulary.keys()].filter(tag => !held().includes(tag))
+                this.offerTags(add, spare, vocabulary, (tag) => { write([...held(), tag]); paint() })
+            })
+            chips.appendChild(add)
+        }
+        paint()
+
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    /**
+     * The tags a field may hold: display name and colour, by tag.
+     *
+     * Read from the list named by `vocabulary`, whose entries are ordinary document data. Empty
+     * when the field names no list, or names one that is not there - a field without a
+     * vocabulary is still perfectly usable, it simply has no colours to draw with.
+     */
+    tagVocabulary(node) {
+        const found = new Map()
+        const where = this.getParameterValue(node, 'vocabulary')
+        if (!where) return found
+        try {
+            const segments = String(where).split('/').filter(Boolean)
+            const list = this.findNodeByPath(window.app.currentDocument, segments)
+            for (const entry of (list && list.children) || []) {
+                const field = (name) => {
+                    const child = (entry.children || []).find(c => c && c.name === name)
+                    return child ? this.getParameterValue(child, 'value') : null
+                }
+                const tag = field('tag')
+                if (tag === null || tag === undefined || tag === '') continue
+                found.set(String(tag), {
+                    name: field('name') || String(tag),
+                    colour: field('colour') || field('color') || null,
+                })
+            }
+        } catch (_) { /* a field with no readable vocabulary just has no colours */ }
+        return found
+    }
+
+    /** One chip. `remove` absent means the field cannot be edited, so it is not offered. */
+    tagChip(tag, known, remove) {
+        const chip = document.createElement('span')
+        chip.className = 'tag-chip'
+        chip.dataset.tag = tag
+        chip.textContent = (known && known.name) || tag
+        if (known && known.colour) {
+            chip.style.backgroundColor = known.colour
+            chip.style.color = this.readableOn(known.colour)
+        }
+        if (!known) {
+            // A tag the vocabulary does not list. Shown rather than hidden: it is in the
+            // document, and dropping it from the display would misreport what the field holds.
+            chip.classList.add('tag-unknown')
+            chip.title = 'not in this document\u2019s tag list'
+        }
+        if (remove) {
+            const cross = document.createElement('button')
+            cross.className = 'tag-remove'
+            cross.textContent = '\u00d7'
+            cross.title = `remove ${tag}`
+            cross.addEventListener('click', (event) => { event.stopPropagation(); remove() })
+            chip.appendChild(cross)
+        }
+        return chip
+    }
+
+    /** The tags not yet on this field, to pick from. Closes on the next click anywhere. */
+    offerTags(beside, available, vocabulary, chosen) {
+        document.querySelectorAll('.tag-picker').forEach(picker => picker.remove())
+        if (available.length === 0) return
+        const picker = document.createElement('span')
+        picker.className = 'tag-picker'
+        for (const tag of available) {
+            const option = this.tagChip(tag, vocabulary.get(tag), null)
+            option.classList.add('tag-option')
+            option.addEventListener('click', (event) => {
+                event.stopPropagation()
+                picker.remove()
+                chosen(tag)
+            })
+            picker.appendChild(option)
+        }
+        beside.parentElement.appendChild(picker)
+        const dismiss = () => { picker.remove(); document.removeEventListener('click', dismiss) }
+        setTimeout(() => document.addEventListener('click', dismiss), 0)
+    }
+
+    /**
+     * Black or white, whichever can be read on this background.
+     *
+     * The document picks the colours and has no way to say what to write on them, so this is
+     * worked out rather than asked for. Perceived brightness rather than a plain average: a
+     * saturated blue and a saturated yellow average the same and want opposite ink.
+     */
+    readableOn(colour) {
+        try {
+            const probe = document.createElement('span')
+            probe.style.color = colour
+            document.body.appendChild(probe)
+            const computed = getComputedStyle(probe).color
+            probe.remove()
+            const [r, g, b] = (computed.match(/\d+/g) || ['0', '0', '0']).map(Number)
+            return (0.299 * r + 0.587 * g + 0.114 * b) > 140 ? '#101010' : '#f5f5f5'
+        } catch (_) {
+            return '#f5f5f5'
+        }
     }
 
     createStringElement(node) {
@@ -5879,6 +6281,11 @@ export class OverseerRenderer {
             const fresh = wrapper.firstElementChild
             if (fresh) {
                 parent.replaceChild(fresh, parent.children[idx])
+                // What was just put on the page is new elements, which know nothing about any
+                // filter over them. Without this a filtered list quietly refills the moment
+                // anything else nearby changes - the same shape as the tab that lost its
+                // content on a repaint.
+                try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return true
             }
         } catch (e) {

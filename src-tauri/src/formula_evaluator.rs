@@ -2053,6 +2053,39 @@ impl FormulaEvaluator {
                 };
                 Ok(OverseerValue::Integer(n))
             }
+            // An instant as a plain number, so instants can be ordered.
+            //
+            // Every other date function here answers "how long ago?", which means it answers
+            // differently every minute. That is right for a countdown and wrong for a sort:
+            // `sort_by` sorts ascending only, so putting the newest thing first means negating
+            // something - and negating `minutes_since` gives every entry of a history a key
+            // that moves with the clock. Sorting a 60-entry history that way put 209 changes
+            // and 99 KB into the delta of every interaction that touched nothing near it,
+            // against 38 and 16 KB without it.
+            //
+            // This depends on the instant alone, so it never changes and never shows up in a
+            // delta.
+            //
+            // Milliseconds, because equal keys fall back to the order the file holds -
+            // which is oldest first, so anything that ties reads backwards. Minutes tied
+            // two items bought in one turn; seconds still tied three bought in the same
+            // second, fifteen milliseconds apart. Nothing a person or a bot records lands
+            // twice in one millisecond, and the key costs no more for being large.
+            "millis_since_epoch" => {
+                if args.len() != 1 {
+                    return Err(OverseerError::FormulaError(
+                        "millis_since_epoch(x) takes exactly 1 argument".to_string(),
+                    ));
+                }
+                let val = Self::evaluate_expression(&args[0], context)?;
+                let instant = Self::to_utc(&val).ok_or_else(|| {
+                    OverseerError::FormulaError(
+                        "millis_since_epoch: unable to parse argument as date/timestamp"
+                            .to_string(),
+                    )
+                })?;
+                Ok(OverseerValue::Integer(instant.timestamp_millis()))
+            }
             // Minutes since local midnight: the clock on the wall, as a number that compares.
             //
             // The one thing the calendar functions could not say. A rule can ask what day it

@@ -120,7 +120,15 @@ describe('pressing done on two entries in a row', () => {
       if (delay) await new Promise(r => setTimeout(r, delay))
       return {
         text: `TEXT-${live.map(e => e.text).join('+')}`,
-        changes: [{ kind: 'subtree', address: 'tasks/Open', path: [0, 0], node: listOf(kept) }],
+        changes: [
+          // The real delta for a done press carries this too: the resolver records the
+          // overrides on the tab, so the tab's own parameters change every time a list
+          // inside it does. Verified against the Rust delta for tasks.os.
+          { kind: 'parameters', address: 'tasks', path: [0],
+            parameters: { label: { String: 'Tasks' }, mutable: { Boolean: true },
+                          _explicit_overrides: { String: 'Open' } } },
+          { kind: 'subtree', address: 'tasks/Open', path: [0, 0], node: listOf(kept) },
+        ],
         nodes: null,
       }
     })

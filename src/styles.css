@@ -866,3 +866,199 @@ body {
 .markdown-enabled li {
     margin-bottom: 8px;
 }
+
+/* Tags, as chips rather than as the line they are stored on.
+ *
+ * A `tags` field holds a comma-separated set. Rendered as a string, six labels read as forty
+ * characters of prose; the point of a chip is that a set of them can be taken in at a glance.
+ * Colours come from the document's own tag list, so nothing here picks them. */
+.tags-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.tag-chips {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    /* So a long row of tags wraps inside its column instead of stretching the row. */
+    min-width: 0;
+}
+
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 7px;
+    border-radius: 9px;
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
+    /* The default, for a field that names no vocabulary or a tag the list does not hold. */
+    background-color: var(--secondary-color);
+    color: #f5f5f5;
+}
+
+/* A tag the document's list does not mention. Not hidden - it is in the document, and drawing
+ * only the known ones would misreport what the field holds - but marked, because it is usually
+ * a typo or a tag someone has since removed from the list. */
+.tag-chip.tag-unknown {
+    background-color: transparent;
+    color: var(--text-secondary);
+    border: 1px dashed var(--border-color);
+}
+
+.tag-remove {
+    border: 0;
+    background: none;
+    padding: 0;
+    margin: 0 -2px 0 0;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    color: inherit;
+    /* Faint until wanted: the tag is what you are reading, the cross is what you reach for. */
+    opacity: 0.5;
+}
+
+.tag-remove:hover {
+    opacity: 1;
+}
+
+.tag-add {
+    border: 1px dashed var(--border-color);
+    background: none;
+    color: var(--text-secondary);
+    border-radius: 9px;
+    padding: 0 6px;
+    font-size: 11px;
+    line-height: 16px;
+    cursor: pointer;
+    opacity: 0.55;
+}
+
+.tag-add:hover {
+    opacity: 1;
+}
+
+/* What is left to add. Positioned over the row rather than in it, so opening the picker does
+ * not reflow a list of a hundred tasks. */
+.tag-picker {
+    position: absolute;
+    z-index: 20;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-width: 320px;
+    margin-top: 2px;
+    padding: 6px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--surface-color);
+    box-shadow: var(--shadow);
+}
+
+.tag-picker .tag-option {
+    cursor: pointer;
+    opacity: 0.85;
+}
+
+.tag-picker .tag-option:hover {
+    opacity: 1;
+}
+
+/* A filter over a list: text to match and tags to narrow by.
+ *
+ * Entirely a view. Nothing here is written to the document, which is why it can afford to
+ * respond on every keystroke - the alternative was a field in the document and a re-resolve
+ * per character. */
+.overseer-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 4px 0 6px 0;
+}
+
+.filter-text {
+    padding: 3px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 12px;
+    min-width: 160px;
+}
+
+.filter-tags {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+/* Faint until chosen, so the row reads as "what could I narrow by" rather than as a set of
+ * tags already applied. */
+.filter-tag {
+    cursor: pointer;
+    opacity: 0.4;
+}
+
+.filter-tag:hover {
+    opacity: 0.75;
+}
+
+.filter-tag.filter-tag-on {
+    opacity: 1;
+    outline: 2px solid var(--text-color);
+    outline-offset: 1px;
+}
+
+.filter-count {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: auto;
+}
+
+.filter-broken {
+    font-size: 12px;
+    color: var(--error-color);
+}
+
+/* Hidden by the filter.
+ *
+ * The class is repeated to raise its specificity, which looks odd and is the whole point. The
+ * layout rules above set `display: flex !important` on `.overseer-div.layout-horizontal` -
+ * specificity (0,2,0) - so a plain `.filtered-out` at (0,1,0) lost to them even with
+ * `!important` of its own, and every row stayed visible while the count said "4 of 10".
+ *
+ * Three classes puts this at (0,3,0), above every layout rule rather than merely tied with the
+ * ones that exist today. */
+.filtered-out.filtered-out.filtered-out {
+    display: none !important;
+}
+
+/* The three status boxes. Derived from the percentage rather than stored, so "in progress" is
+ * whatever sits between the two ends. */
+.filter-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.filter-status-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.filter-status-option input {
+    margin: 0;
+    cursor: pointer;
+}

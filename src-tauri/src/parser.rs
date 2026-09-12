@@ -102,6 +102,15 @@ enum BodyKind {
     ValueAssignment(ValueAssignmentCapture),
     DirectValue(DirectValueCapture),
     Block(BlockCapture),
+    /// A value and then a body: `int done (...) = 0 { on change { ... } }`.
+    ///
+    /// These were exclusive, so a body written after a value was not read as this node's at
+    /// all - it became the next sibling, and the brace that closed it closed the enclosing
+    /// block early. Which meant a field could have a handler or a value and not both, and so
+    /// no field could react to being edited: `tracker_v2.os` records that as the reason it
+    /// cannot clear the counterpart of an amount, and a project item could not stamp when its
+    /// progress last moved.
+    ValueThenBlock(ValueAssignmentCapture, BlockCapture),
 }
 
 struct ParserContextGuard;
@@ -629,7 +638,15 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     let body_start_ptr = cur.as_ptr() as usize;
     let body_kind = if let Ok((after_assign, capture)) = parse_value_assignment_capture(cur) {
         cur = after_assign;
-        BodyKind::ValueAssignment(capture)
+        // A body may follow the value. Looked for here rather than left to the caller, which
+        // read it as the next sibling and let its closing brace close the block this node is
+        // in - the failure that made a field with a handler impossible.
+        if let Ok((after_block, block)) = parse_block_capture(cur) {
+            cur = after_block;
+            BodyKind::ValueThenBlock(capture, block)
+        } else {
+            BodyKind::ValueAssignment(capture)
+        }
     } else if let Ok((after_block, capture)) = parse_block_capture(cur) {
         cur = after_block;
         BodyKind::Block(capture)
@@ -670,6 +687,15 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
             block_open_span = Some(capture.open_span);
             block_close_span = Some(capture.close_span);
             children = capture.children;
+        }
+        BodyKind::ValueThenBlock(value, block) => {
+            assignment_span = Some(value.assignment_span);
+            value_span = Some(value.value_span);
+            raw_value_literal = value.raw_literal;
+            value_parameter = Some(value.value);
+            block_open_span = Some(block.open_span);
+            block_close_span = Some(block.close_span);
+            children = block.children;
         }
         BodyKind::None => {}
     }

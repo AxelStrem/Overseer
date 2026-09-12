@@ -316,3 +316,72 @@ fn the_same_instant_spelled_two_ways_reads_the_same() {
     assert_eq!(anchored("2026-08-22T09:00:00+04:00"), anchored("2026-08-22T05:00:00Z"));
     assert_eq!(anchored("2026-08-22T00:30:00-03:00"), anchored("2026-08-22T03:30:00Z"));
 }
+
+// `millis_since_epoch` is the one that does not move.
+//
+// Ordering a list newest-first means negating something, because `sort_by` sorts one way only.
+// Negating "how long ago" works and costs the earth: that key changes every minute, so every
+// entry of every history lands in every delta. This one depends on the instant alone.
+
+/// `millis_since_epoch` of a stored timestamp, read through a document.
+fn anchored_minutes(written: &str) -> i64 {
+    let text = format!(
+        "tab t (label=\"T\") {{
+    timestamp anchor (hidden=true) = \"{written}\"
+    int out = $(millis_since_epoch(anchor))
+}}
+"
+    );
+    let nodes = app_api::load_document(text).expect("load");
+    int(find(&nodes, "out").expect("no out field"))
+}
+
+#[test]
+fn it_does_not_move_with_the_clock() {
+    // The anchor field is fixed, so asking at two very different moments must agree. This is
+    // the whole property: a sort key that changes is a sort key in every delta.
+    let a = int(at("2026-01-01T00:00:00Z", "millis_since_epoch(anchor)"));
+    let b = int(at("2030-06-30T23:59:00Z", "millis_since_epoch(anchor)"));
+    assert_eq!(a, b, "it moved with the clock");
+}
+
+#[test]
+fn later_is_larger() {
+    let earlier = anchored_minutes("2026-08-22T09:00:00Z");
+    assert_eq!(anchored_minutes("2026-08-22T09:01:00Z") - earlier, 60_000, "a minute in ms");
+    // Seconds matter: two things recorded in one turn are seconds apart, and minute
+    // precision tied them so they read backwards.
+    assert_eq!(anchored_minutes("2026-08-22T09:00:04Z") - earlier, 4_000, "seconds are lost");
+    // Three things bought in one turn were fifteen milliseconds apart, and seconds tied
+    // them - so they read forwards while everything around them read backwards.
+    assert_eq!(anchored_minutes("2026-08-22T09:00:00.015Z") - earlier, 15, "ms are lost");
+    assert!(anchored_minutes("2027-01-01T00:00:00Z") > anchored_minutes("2026-01-01T00:00:00Z"));
+}
+
+#[test]
+fn the_same_instant_written_two_ways_gives_one_number() {
+    assert_eq!(
+        anchored_minutes("2026-08-22T09:00:00+04:00"),
+        anchored_minutes("2026-08-22T05:00:00Z"),
+        "the offset was not taken into account"
+    );
+}
+
+#[test]
+fn negating_it_puts_the_newest_first() {
+    // What the histories write. Ascending on the negative is descending on the instant.
+    let mut keys = ["2026-08-20T10:00:00Z", "2026-08-22T10:00:00Z", "2026-08-21T10:00:00Z"]
+        .map(|t| (0 - anchored_minutes(t), t));
+    keys.sort();
+    assert_eq!(
+        keys.map(|(_, t)| t),
+        ["2026-08-22T10:00:00Z", "2026-08-21T10:00:00Z", "2026-08-20T10:00:00Z"]
+    );
+}
+
+#[test]
+fn two_things_in_one_day_are_still_ordered() {
+    // What `days_since` could not do: it ties everything from the same day, and ties fall back
+    // to the order the file holds - which put the oldest of the last day at the top.
+    assert!(anchored_minutes("2026-08-22T21:30:00Z") > anchored_minutes("2026-08-22T08:15:00Z"));
+}

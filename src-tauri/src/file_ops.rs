@@ -1118,12 +1118,21 @@ impl FileOperations {
             output.push(')');
         }
 
-        // Handle body (value assignment, block, or nothing)
-        if let Some(value) = node.parameters.get("value") {
-            output.push_str(&format!(
-                " = {}\n",
-                Self::serialize_value_with_node(node, value)
-            ));
+        // Handle body (value assignment, block, both, or nothing)
+        //
+        // A node may carry a value *and* a body: `int done (...) = 0 { on change { ... } }`.
+        // This used to take the value branch and drop the children on the floor, silently -
+        // the serializer half of why a field could not have a handler. The value is written
+        // here and, when there are children, the block arm below writes them.
+        let assigned = node
+            .parameters
+            .get("value")
+            .map(|value| Self::serialize_value_with_node(node, value));
+        if let Some(text) = &assigned {
+            output.push_str(&format!(" = {}", text));
+        }
+        if assigned.is_some() && node.children.is_empty() {
+            output.push('\n');
         } else if node.children.is_empty() {
             // Replay the authored block, braces and all. A node that had no block at all
             // still gets none - the absence of an envelope in the snapshot is what says so,
@@ -1195,6 +1204,11 @@ impl FileOperations {
                 if trimmed.starts_with('}') {
                     header_trailing = " ".to_string();
                 }
+            }
+            // With a value already written, the snapshot's header trailing is the whitespace
+            // that sat before the `=` - replaying it here would put it after the value instead.
+            if assigned.is_some() {
+                header_trailing = " ".to_string();
             }
             output.push_str(&header_trailing);
 

@@ -37,6 +37,15 @@ tab diary (label="Diary", mutable=true) {
             // here, and a field called `mood` would quietly insist on meaning mood forever.
             // Nothing reads them - not the bot, not a formula, not the recap - so they can be
             // repurposed without breaking anything.
+            // What was said as the day went, in the day it was said in.
+            //
+            // Empty until something is said, which is most days: the heading and an empty box
+            // under every entry would suggest a chore, and there is no obligation to say
+            // anything. Keyed by the moment, as they were when they lived in a list of their
+            // own - so a note keeps its address when it is edited or removed.
+            list Notes (entry=<Note>, key="at", layout="vertical", spacing=4,
+                        hidden=$(Notes.count() == 0)) { }
+
             div (layout="horizontal", margin=0, spacing=16, alignment="center") {
                 int eax (label="eax", format="trim") = 0
                 int ebx (label="ebx", format="trim") = 0
@@ -47,35 +56,36 @@ tab diary (label="Diary", mutable=true) {
 
         // Something said during the day: how it felt, what was happening, what was being done.
         //
-        // Kept in a list of its own rather than inside the day it belongs to. A day's entry
-        // does not exist until the morning after, and whether it exists is exactly how the
-        // bot decides if the recap has been written yet - so a note arriving at lunchtime
-        // would look like a recap that had already happened, and the day would never get one.
+        // These lived in a list of their own, because a day's entry did not exist until the
+        // morning after and whether it existed was how the bot decided the recap had been
+        // written - so a note at lunchtime would have looked like a recap already done, and
+        // the day would never have got one. That is no longer what is asked: the bot looks at
+        // whether the day has a `recap`, which a note does not write. So a note can live where
+        // it belongs, in its own day.
         //
-        // The full instant is stored and the whole of it shown: these are read in a run
-        // spanning days, where a bare clock time would say nothing about which day it was.
+        // The full instant is still stored - it is the key, and a bare time would collide
+        // across days - but only the clock is shown, the date being the entry it sits in.
         div Note (layout="horizontal", margin=0, spacing=8, alignment="center") {
-            timestamp at (label="", format="datetime", precision="minutes",
-                          font-size=13px, width=16%) = "2026-01-01T00:00:00Z"
-            string note (label="", width=84%) = ""
+            timestamp at (label="", format="time", precision="minutes",
+                          font-size=13px, width=10%) = "2026-01-01T00:00:00Z"
+            string note (label="", width=90%) = ""
         }
     }
 
     // Newest first, which is the one history here that reads better that way: the entry you
     // want is nearly always yesterday's, and the list only grows.
     //
-    // Sorted by how long ago the day was, ascending - `sort_by` sorts one way only, and a date
-    // cannot be negated the way `tasks/Open` negates its priority. The most recent day is the
-    // fewest days ago, so ascending on that is descending on the date.
+    // Sorted by the day itself, negated - `sort_by` sorts one way only, so newest-first means
+    // ascending on something that shrinks as the date grows. This said `days_since(x/day)`
+    // first, which reads better but follows the clock: every key shifts when a day turns over,
+    // and every entry then lands in the next delta. `millis_since_epoch` never moves.
     //
     // Presentation only: the file keeps them in the order they were written, so appending
     // stays an append and the backup's line-wise merge sees what it expects.
     list Days (entry=<Day>, key="day", layout="vertical", spacing=10,
-               sort_by=$(|x| days_since(x/day))) { }
+               sort_by=$(|x| 0 - millis_since_epoch(x/day))) { }
 
-    text notes_header (markdown=true) = "## Notes"
 
     // What the morning recap is mostly made of. The other documents say what was recorded;
     // these are the only place the day says how it went while it was going.
-    list Notes (entry=<Note>, key="at", layout="vertical", spacing=4) { }
 }

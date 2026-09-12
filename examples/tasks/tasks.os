@@ -433,5 +433,13 @@ tab tasks (label="Tasks", mutable=true) {
     text history_header (markdown=true) = "## Done"
 
     // Newest last, like every other history here.
-    list History (entry=<Record>, layout="vertical") { }
+    // Newest first. `sort_by` sorts ascending only, so the instant is negated - the same way
+    // `tasks/Open` negates its priority. `millis_since_epoch` rather than "how long ago",
+    // because a key that follows the clock changes every minute and every entry of it then
+    // lands in the delta of every interaction.
+    //
+    // Presentation only: the file keeps them in the order they happened, so appending stays an
+    // append and the backup's line-wise merge sees what it expects.
+    list History (entry=<Record>, layout="vertical",
+               sort_by=$(|x| 0 - millis_since_epoch(x/done_at))) { }
 }

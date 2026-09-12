@@ -27,6 +27,11 @@ tab shopping (label="Shopping", mutable=true) {
             string tag (hidden=true) = ""
             string name (font-size=16px, width=40%) = ""
 
+            // What colour this shop's chip takes wherever it is shown. Read from here by any
+            // `tags` field pointed at this list, so a shop is recoloured in one place and the
+            // change reaches every item that is sold there.
+            string colour (label="", width=20%) = "#6b7280"
+
             // Selecting a shop is what filters the list below.
             button show (label="show", margin=0, width=20%) {
                 on click {
@@ -39,7 +44,7 @@ tab shopping (label="Shopping", mutable=true) {
         div ItemType (layout="horizontal", margin=0, alignment="center") {
             string handle (hidden=true) = ""
             string name (width=35%) = ""
-            tags shops (label="sold at", width=55%) = ""
+            tags shops (label="sold at", vocabulary="/shopping/Shops", width=55%) = ""
         }
 
         // Something to buy.
@@ -57,7 +62,7 @@ tab shopping (label="Shopping", mutable=true) {
             // In two steps because a method cannot be chained onto a path that ends at a tag
             // set - `Types.filter(...)/shops.filter(...)` is not a formula the evaluator will
             // take. Held in a `tags` field first, it is one.
-            tags shops_here (hidden=true) = $(/shopping/Types.filter(|x| x/handle == ../handle)/shops)
+            tags shops_here (hidden=true, vocabulary="/shopping/Shops") = $(/shopping/Types.filter(|x| x/handle == ../handle)/shops)
             int available_here (hidden=true) = $(shops_here.filter(|s| s == /shopping/Selected/selected_shop).count())
 
             string name (font-size=18px, width=30%) = $(/shopping/Types.filter(|x| x/handle == ../handle)/name)
@@ -108,18 +113,22 @@ tab shopping (label="Shopping", mutable=true) {
             - {
                 - tag = "lidl"
                 - name = "Lidl"
+                - colour = "#0e8a16"
             }
             - {
                 - tag = "edeka"
                 - name = "Edeka"
+                - colour = "#1d76db"
             }
             - {
                 - tag = "dm"
                 - name = "dm"
+                - colour = "#8250df"
             }
             - {
                 - tag = "ikea"
                 - name = "IKEA"
+                - colour = "#bf6b00"
             }
         }
     }
@@ -179,5 +188,13 @@ tab shopping (label="Shopping", mutable=true) {
     text history_header (markdown=true) = "## Bought"
 
     // Newest last, like every other history here.
-    list History (entry=<Bought>, layout="vertical") { }
+    // Newest first. `sort_by` sorts ascending only, so the instant is negated - the same way
+    // `tasks/Open` negates its priority. `millis_since_epoch` rather than "how long ago",
+    // because a key that follows the clock changes every minute and every entry of it then
+    // lands in the delta of every interaction.
+    //
+    // Presentation only: the file keeps them in the order they happened, so appending stays an
+    // append and the backup's line-wise merge sees what it expects.
+    list History (entry=<Bought>, layout="vertical",
+               sort_by=$(|x| 0 - millis_since_epoch(x/bought_at))) { }
 }

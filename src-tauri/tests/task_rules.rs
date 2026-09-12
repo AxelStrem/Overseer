@@ -36,6 +36,24 @@ fn rules_at(instant: &str, handle: &str, overrides: &[(&str, &str)]) -> Vec<Over
     nodes
 }
 
+/// The document text with `records` put inside its empty `History` list.
+///
+/// Found by the `{ }` that ends the declaration rather than by the whole line: the list carries
+/// parameters - a sort, now - and matching the declaration verbatim meant that adding one made
+/// two fixtures here quietly stop finding anywhere to put anything.
+fn filled_history(text: &str, records: &str) -> String {
+    let at = text.find("list History (entry=<Record>").expect("no History list");
+    let empty = text[at..]
+        .find(") { }")
+        .expect("the History list is not empty, so there is nowhere to put these")
+        + at;
+    format!(
+        "{}) {{\n{records}    }}{}",
+        &text[..empty],
+        &text[empty + ") { }".len()..]
+    )
+}
+
 /// The document with an extra record in `History`, at a given instant.
 fn with_history(instant: &str, record: &str) -> Vec<OverseerNode> {
     let when = chrono::DateTime::parse_from_rfc3339(instant)
@@ -44,12 +62,7 @@ fn with_history(instant: &str, record: &str) -> Vec<OverseerNode> {
     FormulaEvaluator::set_time_override(Some(when));
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DOC);
     let text = std::fs::read_to_string(path).expect("no tasks.os");
-    // Records go in after the list's opening line, which is the only place they can go: the
-    // list is written empty as `{ }` on one line.
-    let anchor = "    list History (entry=<Record>, layout=\"vertical\") { }";
-    assert!(text.contains(anchor), "the History list is not shaped as this expects");
-    let opened = format!("    list History (entry=<Record>, layout=\"vertical\") {{\n{record}    }}");
-    let text = text.replace(anchor, &opened);
+    let text = filled_history(&text, record);
     let nodes = app_api::load_document(text).expect("load");
     FormulaEvaluator::set_time_override(None);
     nodes
@@ -211,24 +224,20 @@ fn a_rule_that_never_ran_fires_once_straight_away() {
 #[test]
 fn an_interval_rule_waits_out_its_interval_after_the_trigger_was_done() {
     // The floor was washed on the 11th; the plants want watering 3 days later.
-    let history = |done: &str| {
+    let record = |done: &str| {
         format!(
-            "    list History (entry=<Record>, layout=\"vertical\") {{
-        - {{
+            "        - {{
             - done_at = \"{done}\"
             - rule = \"kitchen_floor\"
             - title = \"Wash the kitchen floor\"
             - difficulty = 25
         }}
-    }}"
+"
         )
     };
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DOC);
     let base = std::fs::read_to_string(path).expect("no tasks.os");
-    let empty = "    list History (entry=<Record>, layout=\"vertical\") { }";
-    assert!(base.contains(empty), "the history fixture is no longer empty");
-
-    let with_history = base.replace(empty, &history("2026-08-11T18:00:00Z"));
+    let with_history = filled_history(&base, &record("2026-08-11T18:00:00Z"));
     // `water_plants` must also look like it has run once, or `never_ran` fires it regardless.
     let with_history = with_history.replace(
         "            - handle = \"water_plants\"\n",

@@ -29,14 +29,16 @@ try {
     }
 } catch(_) {}
 
-// Quiet console noise in non-debug mode while preserving warnings/errors
-try {
-    if (!DEBUG_MODE) {
-        console.debug = () => {}
-        const _origLog = console.log.bind(console)
-        console.log = () => {}
-    }
-} catch {}
+// Nothing is silenced here any more.
+//
+// This used to replace console.log and console.debug with no-ops outside debug mode, to keep
+// the console quiet. It silenced nothing of ours - every one of the frontend's ~113 log calls
+// already sits inside `if (DEBUG_MODE)` - and what it did silence was whoever had the page
+// open. Anything typed into the console printed nothing, on this page and no other, which is
+// a confusing thing to meet and cost a debugging session to work out.
+//
+// Quiet belongs at the call site, where you can see it. Replacing a global takes the console
+// away from someone who has not agreed to give it up.
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { OverseerRenderer } from './renderer.js'
 import { FileManager } from './file-manager.js'

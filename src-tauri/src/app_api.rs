@@ -366,6 +366,29 @@ fn take_baseline(content: &str) -> Option<Vec<OverseerNode>> {
     })
 }
 
+/// The document as its own text reads, rather than as it happens to sit in memory.
+///
+/// List entries are named by position - `Task__5` - and that name is given when a document is
+/// parsed, to a `- { ... }` item that carries no name of its own. Remove an entry in memory and
+/// the survivors keep the names they were given: the list runs `Task__4, Task__6, Task__7`,
+/// with a hole where the removed one was. Serialize and parse that same document and the names
+/// come out contiguous again, because the items are numbered as they are instantiated.
+///
+/// Both are self-consistent; they simply disagree. That mattered because the caller addresses
+/// events by name and the server answers them by parsing text. After one task was closed, the
+/// page went on offering the names it had been handed - and the next press named an entry that
+/// the text resolves to a different task. Closing two tasks in a row closed the wrong second
+/// one, reliably, and only a save and reload put the two back in step.
+///
+/// So the text is made the authority: what the caller is given is what its text produces.
+fn as_its_text_reads(nodes: &[OverseerNode]) -> Result<(String, Vec<OverseerNode>)> {
+    let text = OverseerFileHandler::serialize_nodes(nodes).map_err(|e| {
+        OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
+    })?;
+    let reparsed = load_document(text.clone())?;
+    Ok((text, reparsed))
+}
+
 /// Serialize a resolved document and describe it as a change where there was a baseline.
 fn finish_update(
     resolved: Vec<OverseerNode>,
@@ -374,6 +397,15 @@ fn finish_update(
     let text = OverseerFileHandler::serialize_nodes(&resolved).map_err(|e| {
         OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
     })?;
+    finish_update_with(text, resolved, baseline)
+}
+
+/// The same, when the text has already been worked out.
+fn finish_update_with(
+    text: String,
+    resolved: Vec<OverseerNode>,
+    baseline: Option<Vec<OverseerNode>>,
+) -> Result<ResolvedUpdate> {
     match baseline.map(|before| crate::delta::diff(&before, &resolved)) {
         // The caller gets the changes, so the document itself can be handed to the cache
         // rather than copied into it.
@@ -420,7 +452,11 @@ pub fn execute_event_update(
     // one is stored below, so what is remembered is what the caller ends up holding.
     let mut nodes = load_document(content)?;
     ActionExecutor::execute_event(&mut nodes, &node_path, &event_name)?;
-    finish_update(nodes, baseline)
+    // Only here, and not on the edit path: an event is the thing that can add or remove list
+    // entries, and a shape change is what puts the names out of step. An edit changes values,
+    // costs one parse today, and should not be made to cost two.
+    let (text, nodes) = as_its_text_reads(&nodes)?;
+    finish_update_with(text, nodes, baseline)
 }
 
 /// A guarded field and the value the document authored for it.
