@@ -53,6 +53,8 @@ tab project (label="Project", mutable=true) {
         //     obvious way, this document is slow enough to be unpleasant.
         //
         // Tinted by how far along it is, so a column of a hundred reads before it is read.
+        // Only larger tasks are tinted, since a leaf still on this list reads nought - which is
+        // useful in itself: the colour picks out the goals out of the work.
         // A bar would say it better, but a bar needs a width of `$(done + "%")` and there is no
         // string concatenation in the formula language - a bare number is read as pixels.
         div Item (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center",
@@ -68,8 +70,8 @@ tab project (label="Project", mutable=true) {
             // lines tall. For a list meant to hold a hundred of them that is most of the
             // screen spent on three short fields.
             //
-            // The widths add to a hundred with `commentary` counted, and `commentary` hides
-            // itself when empty - which is most rows - so its share goes back to the title.
+            // The widths come to about a hundred with `commentary` counted, and `commentary`
+            // hides itself when empty - which is most rows - so its share goes to the title.
 
             // What a child names when it says this is its parent. Short, because it is typed
             // by hand: the list is keyed by `added`, which is stable for addressing and no use
@@ -80,7 +82,7 @@ tab project (label="Project", mutable=true) {
             // each other read as an error. Both are assumed not to happen.
             string handle (label="id", font-size=11px, width=6%) = ""
 
-            string title (label="", font-size=14px, width=24%) = ""
+            string title (label="", font-size=14px, width=30%) = ""
 
             // Which larger task this is part of, by that task's handle. Empty for a task that
             // stands on its own, which is most of them.
@@ -93,63 +95,67 @@ tab project (label="Project", mutable=true) {
             // The tags, as chips. `vocabulary` is what makes them chips rather than a line of
             // text: it names the list below, and each chip takes its colour and its display
             // name from there.
-            tags labels (label="", vocabulary="/project/Labels", width=16%) = ""
+            tags labels (label="", vocabulary="/project/Labels", width=18%) = ""
 
-            // Nought to a hundred, typed freely; the button beside it is what stamps
-            // `moved_at`. Only read for a task with nothing under it - a task with children
-            // takes its figure from them, and typing here would be overruled.
+            // How far along this one is, worked out rather than typed. Only shown for a task
+            // with children, because only such a task has anything to work it out from.
             //
-            // A handler on this field would be better, so that any edit stamped it. The parser
-            // now allows one - `int done (...) = 0 { on change { ... } }` reads and writes back
-            // correctly - but not yet inside a list entry: an entry records an override as
-            // `- done = 37`, and the machinery that writes those drops a field that has
-            // children, so a typed percentage would read back as whatever the template
-            // declares. Until that is sorted, the stamp records progress made by the button.
-            int own (label="", format="trim", suffix="%", width=5%,
-                     hidden=$(kids > 0)) = 0
-
-            // What this task has got through, and what it is worth.
+            // A leaf is done or it is not, and an open leaf is not: a leaf that is finished has
+            // left `Items` for `History`, so everything still on this list reads nought. There
+            // is nothing to type and no half-finished leaf. Work part-way through a task is
+            // recorded by splitting it - the piece that is done becomes a child with its share
+            // of the points and gets finished - which credits the same points on the same day
+            // and says what was done as well as how much. The percentage is then a reading of
+            // the tree rather than a second account of it kept by hand.
             //
-            // A task with nothing under it is worth its own points and reads its own
-            // figure. A task with children is worth the sum of theirs and reads their
-            // progress weighted by it - so a task of one ten-pointer and three one-pointers
-            // does not read 75% with the real work untouched.
+            // A task with children is worth the sum of theirs and reads their progress weighted
+            // by it, so a task of one ten-pointer and three one-pointers does not read 75% with
+            // the real work untouched. Children already finished are counted from `History` at
+            // full weight, or a task would fall back towards nought as they were completed.
             //
-            // Children finished already have left `Items` for `History`; they are counted
-            // there at full weight, or a task would read nought at the moment its last
-            // child was done.
-            // `precision=0` because the arithmetic is fractional and the answer is not:
-            // a task made of a five-pointer and a three-pointer lands on 58.333333333333336
-            // and wants to read 58%.
-            int done (label="", format="trim", precision=0, suffix="%", width=5%,
-                      hidden=$(kids == 0)) = $(kids == 0 ? own :
+            // `weight == 0` happens only if everything under a task has been set to nought
+            // points by hand. It reads 0% rather than dividing by it, because that is a hard
+            // error and a row saying `invalid formula error` says nothing useful.
+            // `precision=0` because the arithmetic is fractional and the answer is not: a task
+            // made of a five-pointer and a three-pointer lands on 58.333333333333336 and wants
+            // to read 58%.
+            int done (label="", format="trim", precision=0, suffix="%", width=6%,
+                      hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
                           (/project/Items.filter(|x| x/parent == ../handle)
                                          .map(|x| x/done * x/weight).sum()
                            + finished_weight * 100) / weight)
 
-            // A quarter at a time, stamping as it goes. A button rather than a note to
-            // remember: a stamp that can be forgotten is a field that lies, and "this has
-            // not moved in three weeks" is the whole reason the stamp exists.
-            button advance (label="+25%", margin=0, width=6%,
-                            hidden=$(kids > 0)) {
-                on click {
-                    set (path="../own", mode="value") =
-                        $(../own + 25 > 100 ? 100 : ../own + 25)
-                    set (path="../moved_at", mode="value") = $(now())
-                }
-            }
-
-            int points (label="", format="trim", width=4%) = 0
+            // What finishing this is worth.
+            //
+            // On a leaf, the work itself. On a task with children, a bonus on top of everything
+            // already earned beneath it, paid when `finish` is pressed - which is what makes
+            // closing a goal worth doing rather than a formality.
+            //
+            // One rather than nought by default: a task all of whose children are worth nothing
+            // has no weight to divide by, so this way a tree cannot be typed into an error on
+            // the way to being filled in.
+            int points (label="", format="trim", width=5%) = 1
 
             // Finished. The same two actions as the task manager's done button, and for the
             // same reason: nothing is edited into place, so History is a record of what
             // happened rather than of what the list looks like now.
-            // Hidden while anything still names this task, which keeps it out of the way
-            // rather than making it impossible - anything addressing the button directly can
-            // still press it. Finishing a task with children would leave them naming
-            // something no longer in the list, and nothing would say so.
-            button finish (label="finish", margin=0, width=8%,
-                           hidden=$(kids > 0)) {
+            //
+            // One button for both kinds of task, because there is only one thing to do: record
+            // it as finished and take its points. What differs is when it is offered - hidden
+            // while a task still has children *open*, rather than while it has children at all.
+            //
+            // So a leaf always offers it; a task with work outstanding beneath it does not; and
+            // a task whose children are all finished does, and then sits there unfinished until
+            // it is pressed. That last state is the useful one: everything under a goal is done
+            // and the goal is still open, so more can be put under it instead of closing it.
+            //
+            // `open_kids` rather than "done reads 100" on purpose. A child still on the list has
+            // to be finished before its parent can be, or the parent would leave it naming
+            // something no longer there and nothing would say so. Hidden keeps that out of the
+            // way rather than making it impossible: anything addressing the button directly can
+            // still press it.
+            button finish (label="finish", margin=0, width=9%,
+                           hidden=$(open_kids > 0)) {
                 on click {
                     append (list="/project/History") {
                         - finished_at = $(now())
@@ -165,11 +171,16 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
-            // How many tasks name this one, in either list. Nought means a leaf, and a leaf
-            // is the only kind of task whose figure is typed rather than worked out.
+            // How many tasks name this one, in either list. Nought means a leaf, which is
+            // what decides whether a percentage is shown at all. History is counted too, so a
+            // task does not turn back into a leaf when the last of its children is finished.
             int kids (hidden=true) =
                 $(/project/Items.filter(|x| x/parent == ../handle).count()
                   + /project/History.filter(|x| x/parent == ../handle).count())
+
+            // Of those, the ones still open. What `finish` waits for.
+            int open_kids (hidden=true) =
+                $(/project/Items.filter(|x| x/parent == ../handle).count())
 
             // The points already finished under this one.
             float finished_weight (hidden=true) =
@@ -182,16 +193,25 @@ tab project (label="Project", mutable=true) {
                 /project/Items.filter(|x| x/parent == ../handle).map(|x| x/weight).sum()
                 + ../finished_weight)
 
-            // When the progress last moved. Written by the button above, which is the only
-            // thing that touches it, and empty until something happens so a new task does not
-            // claim progress it has not made. Elapsed, because "eleven days ago" is what is
-            // worth reading.
-            timestamp moved_at (label="", mode="elapsed", font-size=11px, width=8%,
-                                hidden=$(moved_at == "")) = ""
+            // When this last moved, read rather than stamped.
+            //
+            // For a task with finished children, the most recent of those finishes. For a leaf,
+            // when it was added, which is the same question asked of something that has not
+            // moved at all - and a leaf reading three weeks is exactly the signal wanted.
+            // Elapsed, because "eleven days ago" is the thing worth reading.
+            //
+            // This was stamped by the `+25%` button, which made it true only when the button was
+            // remembered. Nothing writes it now, so it cannot be wrong. `max` compares
+            // timestamps properly and hands the timestamp back; the count is tested first
+            // because the largest of nothing is not a time.
+            timestamp moved_at (label="", mode="elapsed", font-size=11px, width=10%) =
+                $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
+                  /project/History.filter(|x| x/parent == ../handle)
+                                  .map(|x| x/finished_at).max())
 
             // Whatever is worth remembering about this one. Hidden until there is something,
             // which is most rows - and its share of the width then goes back to the title.
-            string commentary (label="", font-size=11px, width=18%,
+            string commentary (label="", font-size=11px, width=16%,
                                hidden=$(commentary == "")) = ""
         }
 
@@ -223,6 +243,11 @@ tab project (label="Project", mutable=true) {
     // names the fields the typed text is matched against - the fields, not what is on screen,
     // because what is on screen is formatted and sometimes hidden. Picking two tags narrows to
     // the things that are both.
+    //
+    // `status` reads the same percentage the rows show, so the three boxes are really a question
+    // about larger tasks: every leaf here reads "not started", one that had started having been
+    // split and one that was finished being in History. Which makes "finished" the useful box -
+    // it finds exactly the goals whose work is all done and which are waiting to be closed.
     div (layout="horizontal", margin=0, spacing=10, alignment="center") {
 
         filter (target="/project/Items", text="title, commentary", tags="labels",
@@ -231,8 +256,10 @@ tab project (label="Project", mutable=true) {
         // A new task, without editing the document or asking the bot.
         //
         // It arrives with nothing but the moment it was added, which is its key, and every
-        // other field at whatever the template says. That is the point: the row appears at the
-        // top of the list - newest first - and is filled in by typing into it.
+        // other field at whatever the template says - one point in particular, so whatever it
+        // is put under has something to divide by before anything else is typed. That is the
+        // point of it: the row appears at the top of the list - newest first - and is filled in
+        // by typing into it.
         button add (label="+ task", margin=0, width=20%) {
             on click {
                 append (list="/project/Items") {
@@ -247,10 +274,13 @@ tab project (label="Project", mutable=true) {
     // would pin the oldest bug permanently to the top.
     // Rows to look at and then delete. A copy of this template starts with them so there is
     // something to press before there is anything real, and they are written to show the parts
-    // that are not obvious: three levels of task, a `done` that is worked out rather than typed,
-    // and a finished child still counted from History below.
+    // that are not obvious: three levels of task, percentages worked out rather than typed, and
+    // finished children still counted from the History below.
     //
-    // `editor` reads 58% and `parser` 75%, neither of them typed anywhere.
+    // `editor` reads 50% and `parser` 75%, neither of them typed anywhere. `docs` is the one to
+    // look at: both things under it are finished, so it reads 100%, offers `finish` and waits.
+    // Its own two points are not paid until that is pressed - and until it is, more work can go
+    // under it.
     list Items (entry=<Item>, key="added", layout="vertical", spacing=1,
                 sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
         - {
@@ -258,7 +288,7 @@ tab project (label="Project", mutable=true) {
             - handle = "editor"
             - title = "Rewrite the document editor"
             - labels = "feature"
-            - points = 1
+            - points = 3
         }
         - {
             - added = "2026-09-01T09:05:00+04:00"
@@ -266,7 +296,7 @@ tab project (label="Project", mutable=true) {
             - parent = "editor"
             - title = "Parser mishandles nested blocks"
             - labels = "bug"
-            - points = 1
+            - points = 2
         }
         - {
             - added = "2026-09-01T09:10:00+04:00"
@@ -274,20 +304,8 @@ tab project (label="Project", mutable=true) {
             - parent = "parser"
             - title = "A body after a value closes the block early"
             - labels = "bug"
-            - own = 60
-            - points = 5
-            - moved_at = "2026-09-08T18:20:00+04:00"
+            - points = 2
             - commentary = "only when the value comes first; a body on its own is fine"
-        }
-        - {
-            - added = "2026-09-01T09:15:00+04:00"
-            - handle = "roundtrip"
-            - parent = "parser"
-            - title = "Round-trip every real document in a test"
-            - labels = "bug, docs"
-            - own = 100
-            - points = 3
-            - moved_at = "2026-09-09T11:00:00+04:00"
         }
         - {
             - added = "2026-09-02T10:00:00+04:00"
@@ -295,7 +313,7 @@ tab project (label="Project", mutable=true) {
             - parent = "editor"
             - title = "Tighten the row layout"
             - labels = "ui"
-            - points = 3
+            - points = 4
         }
         - {
             - added = "2026-09-02T10:30:00+04:00"
@@ -303,34 +321,14 @@ tab project (label="Project", mutable=true) {
             - parent = "editor"
             - title = "Undo survives a repaint"
             - labels = "bug, later"
-            - own = 25
             - points = 5
-            - moved_at = "2026-09-06T14:40:00+04:00"
         }
         - {
             - added = "2026-09-03T11:00:00+04:00"
             - handle = "docs"
             - title = "Write the guide"
             - labels = "docs"
-            - points = 1
-        }
-        - {
-            - added = "2026-09-03T11:05:00+04:00"
-            - handle = "gfilter"
-            - parent = "docs"
-            - title = "Document the filter"
-            - labels = "docs"
-            - own = 40
             - points = 2
-            - moved_at = "2026-09-09T09:30:00+04:00"
-        }
-        - {
-            - added = "2026-09-03T11:10:00+04:00"
-            - handle = "gparent"
-            - parent = "docs"
-            - title = "Document how a task becomes a larger one"
-            - labels = "docs"
-            - points = 1
         }
         - {
             - added = "2026-09-04T16:00:00+04:00"
@@ -342,6 +340,11 @@ tab project (label="Project", mutable=true) {
         }
     }
 
+    // What is left and what has been earned.
+    //
+    // `points outstanding` counts every open row, which includes the bonus on a larger task - so
+    // it is what is still available rather than what the remaining work is worth. The two differ
+    // by the bonuses, and the bonuses are the point of them.
     div (layout="horizontal", margin=0, spacing=16, alignment="center") {
         int open_now (label="open") = $(/project/Items.count())
         int points_open (label="points outstanding") = $(/project/Items.map(|x| x/points).sum())
@@ -383,9 +386,11 @@ tab project (label="Project", mutable=true) {
     text history_header (markdown=true) = "## Finished"
 
     // Newest first, as every history here is.
-    // One finished child, kept here rather than deleted - it is what stops `editor` reading
-    // lower than it should. A task counts what has been finished under it at full weight, or a
-    // task would fall back towards nought as its children were completed.
+    //
+    // Kept rather than deleted, because this is where a task's progress comes from: what has
+    // been finished under it is counted at full weight, or a task would fall back towards nought
+    // as its children were completed. `roundtrip` is three quarters of `parser`; `gfilter` and
+    // `gparent` are all of `docs`, which is why `docs` offers its `finish`.
     list History (entry=<Finished>, layout="vertical", spacing=1,
                   sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) {
         - {
@@ -396,6 +401,33 @@ tab project (label="Project", mutable=true) {
             - title = "Escape quotes and newlines when saving"
             - labels = "bug"
             - points = 5
+        }
+        - {
+            - finished_at = "2026-09-09T09:30:00+04:00"
+            - added = "2026-09-03T11:05:00+04:00"
+            - handle = "gfilter"
+            - parent = "docs"
+            - title = "Document the filter"
+            - labels = "docs"
+            - points = 2
+        }
+        - {
+            - finished_at = "2026-09-09T11:00:00+04:00"
+            - added = "2026-09-01T09:15:00+04:00"
+            - handle = "roundtrip"
+            - parent = "parser"
+            - title = "Round-trip every real document in a test"
+            - labels = "bug, docs"
+            - points = 6
+        }
+        - {
+            - finished_at = "2026-09-10T15:10:00+04:00"
+            - added = "2026-09-03T11:10:00+04:00"
+            - handle = "gparent"
+            - parent = "docs"
+            - title = "Document how a task becomes a larger one"
+            - labels = "docs"
+            - points = 1
         }
     }
 }
