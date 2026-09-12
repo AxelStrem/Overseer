@@ -72,6 +72,12 @@ tab project (label="Project", mutable=true) {
             //
             // The widths come to about a hundred with `commentary` counted, and `commentary`
             // hides itself when empty - which is most rows - so its share goes to the title.
+            //
+            // `id` and `of` are the only two that carry a label, and they say so: `layout`
+            // on a field decides where its label goes, and inside a row like this one the
+            // default is above the value, which would make every row two lines tall for the
+            // sake of four characters. They are wider than the value alone would need
+            // because the label is now sharing the width with it.
 
             // What a child names when it says this is its parent. Short, because it is typed
             // by hand: the list is keyed by `added`, which is stable for addressing and no use
@@ -80,9 +86,9 @@ tab project (label="Project", mutable=true) {
             // Nothing enforces that these are unique or that the tree has no loops. Two tasks
             // sharing a handle are treated as one by anything counting children; two naming
             // each other read as an error. Both are assumed not to happen.
-            string handle (label="id", font-size=11px, width=6%) = ""
+            string handle (label="id", font-size=11px, width=8%) = ""
 
-            string title (label="", font-size=14px, width=30%) = ""
+            string title (label="title", font-size=14px, width=28%) = ""
 
             // Which larger task this is part of, by that task's handle. Empty for a task that
             // stands on its own, which is most of them.
@@ -90,12 +96,12 @@ tab project (label="Project", mutable=true) {
             // Typed rather than picked. A task is a row in a list as a tag is, but the picker
             // built for tags chooses several from a fixed vocabulary and this wants exactly
             // one, so it is a plain handle until a single-select picker exists.
-            string parent (label="of", font-size=11px, width=6%) = ""
+            string parent (label="of", font-size=11px, width=7%) = ""
 
             // The tags, as chips. `vocabulary` is what makes them chips rather than a line of
             // text: it names the list below, and each chip takes its colour and its display
             // name from there.
-            tags labels (label="", vocabulary="/project/Labels", width=18%) = ""
+            tags labels (label="tags", vocabulary="/project/Labels", width=18%) = ""
 
             // How far along this one is, worked out rather than typed. Only shown for a task
             // with children, because only such a task has anything to work it out from.
@@ -119,7 +125,7 @@ tab project (label="Project", mutable=true) {
             // `precision=0` because the arithmetic is fractional and the answer is not: a task
             // made of a five-pointer and a three-pointer lands on 58.333333333333336 and wants
             // to read 58%.
-            int done (label="", format="trim", precision=0, suffix="%", width=6%,
+            int done (label="done", format="trim", precision=0, suffix="%", width=7%,
                       hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
                           (/project/Items.filter(|x| x/parent == ../handle)
                                          .map(|x| x/done * x/weight).sum()
@@ -134,7 +140,7 @@ tab project (label="Project", mutable=true) {
             // One rather than nought by default: a task all of whose children are worth nothing
             // has no weight to divide by, so this way a tree cannot be typed into an error on
             // the way to being filled in.
-            int points (label="", format="trim", width=5%) = 1
+            int points (label="pts", format="trim", width=6%) = 1
 
             // Finished. The same two actions as the task manager's done button, and for the
             // same reason: nothing is edited into place, so History is a record of what
@@ -204,14 +210,14 @@ tab project (label="Project", mutable=true) {
             // remembered. Nothing writes it now, so it cannot be wrong. `max` compares
             // timestamps properly and hands the timestamp back; the count is tested first
             // because the largest of nothing is not a time.
-            timestamp moved_at (label="", mode="elapsed", font-size=11px, width=10%) =
+            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=12%) =
                 $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
                   /project/History.filter(|x| x/parent == ../handle)
                                   .map(|x| x/finished_at).max())
 
             // Whatever is worth remembering about this one. Hidden until there is something,
             // which is most rows - and its share of the width then goes back to the title.
-            string commentary (label="", font-size=11px, width=16%,
+            string commentary (label="", font-size=11px, span="row",
                                hidden=$(commentary == "")) = ""
         }
 
@@ -282,6 +288,7 @@ tab project (label="Project", mutable=true) {
     // Its own two points are not paid until that is pressed - and until it is, more work can go
     // under it.
     list Items (entry=<Item>, key="added", layout="vertical", spacing=1,
+                view="table", header=true, sticky=true, lines="vertical",
                 sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
         - {
             - added = "2026-09-01T09:00:00+04:00"

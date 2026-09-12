@@ -284,6 +284,137 @@ body {
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
+/* A list drawn as a table.
+ *
+ * The columns are declared once here, on the list, and every row is a subgrid of them - so a row
+ * keeps its own element, its own box and whatever colour it is tinted, and still lines its cells
+ * up with every other row. `display: contents` on the rows would align them just as well and
+ * would throw all of that away, which is why it is not used.
+ *
+ * The renderer strips the list's and the rows' `layout-*` classes before these apply, rather than
+ * fighting the `display: flex !important` they carry. That is deliberate: nothing here is
+ * `!important`, so the rule that hides a filtered row still outranks all of it.
+ *
+ * The template comes from the renderer as an inline `grid-template-columns`, because the widths
+ * are the document's to choose.
+ */
+.overseer-list.view-table {
+    display: grid;
+    align-items: start;
+}
+
+.overseer-list.view-table > .table-row,
+.overseer-list.view-table > .table-header {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: subgrid;
+}
+
+/* Cells fill the row's height rather than sitting centred in it, so that a separator drawn down
+   the side of one runs the whole way instead of stopping where its text does. The renderer clears
+   the inline `align-items: center` a horizontal row is given, or this could not apply. */
+.overseer-list.view-table > .table-row {
+    align-items: stretch;
+    row-gap: 0;
+}
+
+/* A grid item will not shrink below its content unless told it may, and these are columns of a
+   fixed share of the width: without this a long title widens its column and drags the whole
+   table out of shape. */
+.overseer-list.view-table > .table-row > * {
+    min-width: 0;
+}
+
+/* Having filled the height, each cell centres its own content on the line. The padding is the
+   table's rather than the form's: the renderer drops the default a field would otherwise carry,
+   which was about two thirds of the height of a row. */
+.overseer-list.view-table > .table-row > .overseer-field {
+    display: flex;
+    align-items: center;
+    padding: 0 6px;
+}
+
+.overseer-list.view-table > .table-row > .overseer-field > .field-value,
+.overseer-list.view-table > .table-row > .overseer-field > .text-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 1px 0;
+    min-height: 0;
+}
+
+/* Buttons sit on the line the fields' text sits on, as they do in a horizontal row. */
+.overseer-list.view-table > .table-row > .overseer-button {
+    align-self: center;
+}
+
+/* A field that takes a line of its own, below the columns and inside its row. Its whole point is
+   to break the table deliberately - a note worth reading as a sentence rather than squeezed into
+   a column - so it keeps none of the column's alignment, and none of the separators either. */
+.overseer-list.view-table > .table-row > .table-own-line {
+    grid-column: 1 / -1;
+    display: block;
+    padding: 0 6px 1px 6px;
+    opacity: 0.85;
+}
+
+.overseer-list.view-table > .table-row > .table-own-line > .field-value {
+    padding: 0;
+    min-height: 0;
+}
+
+/* The heading. Quiet on purpose: it names the columns and should not compete with them. */
+.table-header {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--secondary-color);
+    border-bottom: 1px solid var(--border-color);
+    padding: 2px 0 3px 0;
+    background: var(--background-color);
+}
+
+/* Held at the top of the scrolling area while the table is on screen, and gone with the table
+   when it scrolls past - which is what sticky does on its own, being confined to its parent's
+   box. It needs the opaque background above, or the rows show through it. */
+.table-header.sticky {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.table-heading {
+    padding: 0 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Rules between the cells, for a table wide enough that the eye loses its place along a row. Off
+   by default: on a short table they are clutter, and the row's own tint already separates one row
+   from the next. `lines=true` draws both; `lines="vertical"` or `lines="horizontal"` draws one.
+ *
+ * Drawn on the left of each cell rather than the right, so that the column set does not have to
+ * be consulted to know which cell is last. A row whose note takes a line of its own ends with the
+ * note, so a right-hand rule would have to skip it and then find the real last column - and the
+ * note is not the last column, it is under all of them.
+ */
+.overseer-list.view-table.table-lines-rows > .table-row {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.overseer-list.view-table.table-lines-columns > .table-row > *,
+.overseer-list.view-table.table-lines-columns > .table-header > .table-heading {
+    border-left: 1px solid var(--border-color);
+}
+
+/* No rule down the outside edge of the table, and none beside a note: it sits below the columns
+   rather than in one, so a line at its left would point at nothing. */
+.overseer-list.view-table.table-lines-columns > .table-row > *:first-child,
+.overseer-list.view-table.table-lines-columns > .table-header > .table-heading:first-child,
+.overseer-list.view-table.table-lines-columns > .table-row > .table-own-line {
+    border-left: none;
+}
+
 /* Field Styles */
 .overseer-field {
     border-radius: 6px;
@@ -305,12 +436,45 @@ body {
     background: var(--background-color);
 }
 
+/* Where a label sits relative to its value.
+ *
+ * Alternating with the nesting, the way a container's layout does: above the value inside a
+ * horizontal row, beside it inside a vertical column - so a column of fields reads as a column
+ * of "name: value" lines rather than as twice as many lines. `layout` on the field overrides it,
+ * in the same vocabulary a div uses. The resolver decides, the renderer marks the field.
+ *
+ * The label's own `display` and `margin-bottom` are set inline by the renderer, which is why
+ * they are not set here: they were already inline before this existed, and an inline style
+ * overrules anything in a stylesheet. What is here is the arrangement of the field itself.
+ */
 .overseer-field label {
-    display: block;
-    margin-bottom: 4px;
     font-weight: 500;
     color: var(--text-color);
     font-size: 14px;
+}
+
+/* The field becomes the row that holds the two of them. `baseline` rather than `center` so the
+ * label sits on the same line as the value's text instead of on the middle of its padding box.
+ */
+.overseer-field.label-beside {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+/* The label takes the width of its word; the value takes the rest. `min-width: 0` because a flex
+ * item will not shrink below its content otherwise, and a long value would push the field wider
+ * than the column it was given.
+ */
+.overseer-field.label-beside > label {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.overseer-field.label-beside > .field-value,
+.overseer-field.label-beside > .text-content {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 
@@ -379,22 +543,21 @@ body {
 
 /* Boolean Field
  *
- * Composed like every other field: the label above the control, not beside it.
+ * Composed like every other field, which is now the only thing worth saying about it.
  *
- * This was the one field type that put its label somewhere else. A row of fields aligns only
- * if they all agree where a label goes, and in a row of headed numbers the checkbox's heading
- * sat on the line the numbers were on, dragging its whole column half a line out of true. The
- * blood pressure diary's "Irregular" and the task rules' "duplicates" were the same bug
- * reported twice.
+ * This was the one field type that put its label somewhere else, always beside the control. A
+ * row of fields aligns only if they all agree where a label goes, and in a row of headed numbers
+ * the checkbox's heading sat on the line the numbers were on, dragging its whole column half a
+ * line out of true - the blood pressure diary's "Irregular" and the task rules' "duplicates"
+ * were that same bug reported twice. It was fixed by pinning the label above the control.
  *
- * A checkbox conventionally wears its label on the right, and read alone that is nicer. It is
- * never alone: it sits in a row beside other fields, and matching them is worth more than the
- * convention.
+ * `label-beside` is the general form of what that was reaching for, so the pin is gone: a
+ * checkbox in a row of fields wears its label above like the rest of them, and one in a column
+ * wears it on the right, which is the convention and reads better. Both because of where it is,
+ * not because it is a checkbox. Nothing replaces the rule - the container is a div, so it is
+ * block already, and the flex row that puts a label beside a value is the more specific rule
+ * when it applies.
  */
-.boolean-field, .checkbox-field {
-    display: block;
-}
-
 .boolean-field input[type="checkbox"],
 .checkbox-field input[type="checkbox"] {
     width: 16px;

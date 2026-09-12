@@ -623,6 +623,98 @@ fn resolve_path_vec_to_node<'a>(
     Some(current)
 }
 
+
+/// A node that stands for something happening rather than something on screen.
+///
+/// Kept in step with `isEventHandlerName` and `isActionName` in the renderer, which say the same
+/// thing about the same names. A row template holds these inside a button rather than beside its
+/// fields, so in practice this catches nothing - it is here so that a template written the other
+/// way does not grow a column with no cells in it.
+fn is_event_or_action_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    matches!(
+        n.as_str(),
+        "click" | "change" | "timeout" | "submit" | "dblclick" | "hover" | "keydown" | "keyup"
+            | "input" | "tick"
+            | "set" | "inc" | "dec" | "toggle" | "clear" | "clear_list" | "ensure_in_list"
+            | "ensure" | "remove" | "append" | "move" | "sort" | "set_now" | "set_now_ts"
+            | "activate" | "deactivate"
+    )
+}
+
+/// Whether a node is hidden by its declaration rather than by a formula.
+///
+/// The distinction the whole table rests on. `hidden=true` is bookkeeping - a field that exists
+/// to be read by other formulas and is never drawn - and it gets no column. `hidden=$(kids == 0)`
+/// is a field that is drawn on some rows and not others, and it must get one: without a column of
+/// its own the rows that lack it would slide left and stop lining up with the rows that have it.
+fn is_always_hidden(node: &OverseerNode) -> bool {
+    match node.parameters.get("hidden") {
+        Some(OverseerValue::Boolean(b)) => *b,
+        Some(OverseerValue::String(s)) => s.eq_ignore_ascii_case("true"),
+        _ => false,
+    }
+}
+
+fn css_size_text(value: &OverseerValue) -> Option<String> {
+    match value {
+        OverseerValue::CssSize(size) => Some(match size {
+            crate::types::CssSize::Pixels(v) => format!("{}px", v),
+            crate::types::CssSize::Percentage(v) => format!("{}%", v),
+            crate::types::CssSize::Em(v) => format!("{}em", v),
+            crate::types::CssSize::Rem(v) => format!("{}rem", v),
+            crate::types::CssSize::ViewportWidth(v) => format!("{}vw", v),
+            crate::types::CssSize::ViewportHeight(v) => format!("{}vh", v),
+            crate::types::CssSize::Auto => "auto".to_string(),
+            crate::types::CssSize::FitContent => "fit-content".to_string(),
+        }),
+        OverseerValue::String(s) if !s.is_empty() => Some(s.clone()),
+        OverseerValue::Integer(i) => Some(format!("{}px", i)),
+        _ => None,
+    }
+}
+
+/// The columns a table draws, read off the entry template.
+///
+/// It has to come from the template rather than from the rows, for two reasons. A row only shows
+/// the fields it currently has, and which those are differs from row to row - a leaf has no
+/// percentage, a task with children has no finish button - so no single row knows the full set.
+/// And a list with nothing in it has no rows at all, which is exactly when a heading is worth
+/// most.
+///
+/// Each column carries what the renderer needs and nothing else: the field's name, to match a
+/// cell to a column; its label, which becomes the heading; its width, which moves from the cell
+/// to the column because a percentage on a grid item is a percentage of its own column; and
+/// whether it takes a line of its own below the rest.
+fn table_columns(template: &OverseerNode) -> String {
+    let mut columns = Vec::new();
+    for child in &template.children {
+        if is_event_or_action_name(&child.name) || is_always_hidden(child) {
+            continue;
+        }
+        let label = match child.parameters.get("label") {
+            Some(OverseerValue::String(s)) => s.clone(),
+            _ => String::new(),
+        };
+        let width = child
+            .parameters
+            .get("width")
+            .and_then(css_size_text)
+            .unwrap_or_default();
+        let spans_the_row = matches!(
+            child.parameters.get("span"),
+            Some(OverseerValue::String(s)) if s == "row"
+        );
+        columns.push(serde_json::json!({
+            "name": child.name,
+            "label": label,
+            "width": width,
+            "span": spans_the_row,
+        }));
+    }
+    serde_json::to_string(&columns).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// Resolves templates for a single node and its children.
 /// Returns true if any progress was made in this pass.
 fn resolve_node_templates(
@@ -640,6 +732,33 @@ fn resolve_node_templates(
 
     // Check if the current node is a list that uses a template or simple type.
     if node.node_type == "list" {
+        // A list asked to draw as a table needs its column set worked out before anything else,
+        // while the template is in reach. Done first so that nothing here is holding a borrow on
+        // the parameters being written to.
+        let wants_a_table = matches!(
+            node.parameters.get("view"),
+            Some(OverseerValue::String(view)) if view == "table"
+        );
+        if wants_a_table {
+            let template_name = match node.parameters.get("entry") {
+                Some(OverseerValue::Template(path)) => Some(
+                    path.trim_start_matches("../")
+                        .split('/')
+                        .last()
+                        .unwrap_or("")
+                        .to_string(),
+                ),
+                _ => None,
+            };
+            if let Some(name) = template_name {
+                if let Some(template_node) = find_template_by_name(all_nodes, &name) {
+                    let columns = table_columns(&template_node);
+                    node.parameters
+                        .insert("_columns".to_string(), OverseerValue::String(columns));
+                }
+            }
+        }
+
         if let Some(entry_value) = node.parameters.get("entry") {
             match entry_value {
                 OverseerValue::Template(template_path) => {
@@ -1340,6 +1459,21 @@ fn resolve_layout_parameters(nodes: &mut Vec<OverseerNode>, parent_layout: Optio
                 resolve_layout_parameters(&mut node.children, Some(&effective_layout));
             }
         } else {
+            // A field is not a container, but it does arrange two things: its label and its
+            // value. That arrangement alternates with the nesting exactly as a div's does -
+            // label above the value inside a horizontal row, beside it inside a vertical
+            // column - so it is the same calculation, and `layout` on the field overrides it
+            // with the same vocabulary: horizontal, vertical, inherit, opposite.
+            //
+            // Under its own key rather than `_effective_layout`, and the children still
+            // inherit the *parent's* layout rather than this one. A field is not a layout
+            // parent for whatever is nested under it - a handler, an override - and making it
+            // one would flip the arrangement of anything below without being asked to.
+            node.parameters.insert(
+                "_label_layout".to_string(),
+                OverseerValue::String(calculate_effective_layout(node, parent_layout)),
+            );
+
             // For non-container nodes, just pass through the parent layout to children
             if !node.children.is_empty() {
                 resolve_layout_parameters(&mut node.children, parent_layout);

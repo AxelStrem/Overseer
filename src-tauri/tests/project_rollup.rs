@@ -226,11 +226,23 @@ fn a_tree_worth_nothing_reads_nought_rather_than_failing() {
     // source is edited rather than a small copy of it written here, which would drift.
     // Both halves, or this proves nothing: dropping the per-entry overrides alone leaves every
     // task falling back on the template's one point, and the division never reaches zero.
-    let zeroed = TEMPLATE
+    //
+    // Anchored on the declaration rather than on the text of its parameters, which have changed
+    // twice - the guard below caught it the second time, when the label became a table heading.
+    let zeroed: String = TEMPLATE
         .replace("- points = ", "- points_unused = ")
-        .replace("width=5%) = 1", "width=5%) = 0");
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("int points (") {
+                line.replace("= 1", "= 0")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        zeroed.contains("width=5%) = 0") && !zeroed.contains("\n            - points = "),
+        zeroed.contains("= 0") && !zeroed.contains("\n            - points = "),
         "the template moved; this test is no longer zeroing anything",
     );
     let nodes = resolved(&zeroed);

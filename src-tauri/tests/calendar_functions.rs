@@ -1,8 +1,9 @@
 //! Saying "every Tuesday" or "the 7th of the month" in a formula.
 //!
-//! Durations cannot express either: a month is not a fixed number of days, and without a
-//! modulo operator a weekday cannot be derived from one. These three functions are the whole
-//! of what the task scheduler's calendar rules need.
+//! Durations cannot express either: a month is not a fixed number of days, and a weekday cannot
+//! be derived from one by arithmetic that has no calendar in it - `%` exists now, and still does
+//! not know when a month ends. These three functions are the whole of what the task scheduler's
+//! calendar rules need.
 
 use chrono::TimeZone;
 use overseer::app_api;

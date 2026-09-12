@@ -345,8 +345,89 @@ async fn document(
     Ok(Json(json!({ "nodes": resolved })))
 }
 
-#[tokio::main]
-async fn main() {
+/// Hand back to the operating system the memory a request stopped needing.
+///
+/// Freeing memory inside a process does not return it: the allocator keeps it for the next
+/// request, which is usually right and is wrong here. Resolving one large document peaks at
+/// around a hundred and sixty megabytes, and the next request may be half an hour away - so
+/// without this the service sits on the high-water mark of everything it has ever done, and a
+/// host that bills by memory held bills for all of it.
+///
+/// glibc only, which is what the container runs; everywhere else this is nothing. Declared
+/// directly rather than through a crate, since it is one symbol and adding a dependency to the
+/// server for it would be the larger change.
+///
+/// Rate-limited because it walks the arenas: worth doing after a resolve that took forty
+/// seconds, not after each of a hundred small reads while someone scrolls a page.
+#[cfg(target_env = "gnu")]
+fn release_free_memory() {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
+
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    const NOT_MORE_OFTEN_THAN: Duration = Duration::from_secs(2);
+
+    if let Ok(mut last) = LAST.lock() {
+        let now = Instant::now();
+        if last.map(|then| now.duration_since(then) < NOT_MORE_OFTEN_THAN) == Some(true) {
+            return;
+        }
+        *last = Some(now);
+    } else {
+        return;
+    }
+
+    // Safety: no arguments to get wrong, no pointers involved, and it is safe to call at any
+    // time from any thread - it takes the allocator's own locks.
+    unsafe {
+        malloc_trim(0);
+    }
+}
+
+#[cfg(not(target_env = "gnu"))]
+fn release_free_memory() {}
+
+/// Runs after every response, so nothing has to remember to ask.
+async fn give_back_memory(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let response = next.run(request).await;
+    release_free_memory();
+    response
+}
+
+fn main() {
+    // Tokio's blocking pool is five hundred threads by default, and every document operation
+    // runs on it. That is the wrong shape for this service twice over.
+    //
+    // The work is serialised behind the documents anyway - one bot, one reader - so the extra
+    // threads buy no throughput. And under glibc each thread that allocates is given a heap
+    // arena of its own, which is never handed back: a resolve peaking at a hundred and sixty
+    // megabytes on each of a dozen different threads leaves a dozen high-water marks, and the
+    // service sits on their sum. That is what turned a two-hundred-megabyte peak into two
+    // gigabytes held, and why it arrived in steps rather than climbing.
+    //
+    // Two rather than one so that a slow resolve cannot block a quick read behind it.
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .max_blocking_threads(2)
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("cannot start: {}", e);
+            std::process::exit(1);
+        }
+    };
+    runtime.block_on(serve());
+}
+
+async fn serve() {
     let mut root = std::path::PathBuf::from("../examples");
     let mut frontend_dir = std::path::PathBuf::from("../dist");
     let mut port: u16 = 4747;
@@ -473,6 +554,8 @@ async fn main() {
         state.clone(),
         require_access,
     ));
+    // Outside the access check, so a refused request gives its memory back too.
+    let app = app.layer(axum::middleware::from_fn(give_back_memory));
     // Presenting the token is how a browser gets in, so this sits outside that check.
     let app = Router::new()
         .route("/auth", get(sign_in))

@@ -46,6 +46,10 @@ Chart.register(
 );
 
 export class OverseerRenderer {
+    /** What a field is given when the document asks for nothing. */
+    static FIELD_PADDING = '4px 6px'
+    static VALUE_MIN_HEIGHT = '20px'
+
     constructor() {
         this.contentDisplay = document.getElementById('content-display')
         this.tabContainer = document.getElementById('tab-container')
@@ -1544,8 +1548,11 @@ export class OverseerRenderer {
                         }
                     }
                     renderChildren()
+                    if (nodeTypeLower === 'list') this.setUpTable(element, node)
                 } else {
                     if (DEBUG_MODE) console.log('No children for node:', node)
+                    // An empty list still draws its heading, which is when a heading says most.
+                    if (nodeTypeLower === 'list') this.setUpTable(element, node)
                 }
             } catch (e) { if (DEBUG_MODE) console.warn('Style inheritance error:', e) }
         } else {
@@ -2093,10 +2100,167 @@ export class OverseerRenderer {
         list.classList.add(`layout-${layout}`)
         this.applyFlowColumns(list, node, layout)
         
-    // Apply spacing and margins  
+    // Apply spacing and margins
     this.applyLayoutStyles(list, node)
     this.applyNodeStyles(list, node)
         return list
+    }
+
+    /**
+     * A list drawn as a table: columns that line up all the way down.
+     *
+     * Rows line up today only by coincidence - every row carries the same percentage widths - and
+     * the coincidence breaks wherever a field is hidden, because a hidden field is not rendered
+     * at all and everything after it slides left to fill the gap. A task with children shows a
+     * percentage and a leaf does not, so the two kinds of row disagree about where every later
+     * column starts, and a list of both reads ragged.
+     *
+     * So the columns are declared once on the list and each cell is placed in the one that is
+     * its own. A cell that is missing leaves its column empty instead of moving its neighbours.
+     *
+     * The column set comes from the resolver, which reads it off the entry template - see
+     * `table_columns` there - and it has to come from the template rather than from the rows: no
+     * single row knows the whole set, and a list with nothing in it has no rows to ask.
+     *
+     * `view` rather than `layout`, because a table is not a direction: a table of rows and a
+     * table of columns are both tables, and `layout` means something already on every other kind
+     * of node.
+     */
+    setUpTable(list, node) {
+        if (!list || String(this.getParameterValue(node, 'view') || '') !== 'table') return
+        const columns = this.getParameterValue(node, '_columns')
+        if (!columns) return
+        // Kept on the element so a later repaint can put back what it undid without the node.
+        list.dataset.columns = String(columns)
+        list.dataset.header = this.getParameterValue(node, 'header') ? '1' : ''
+        list.dataset.stickyHeader = this.getParameterValue(node, 'sticky') ? '1' : ''
+        // `true` for both, or name the one wanted: `vertical` rules between the columns,
+        // `horizontal` between the rows.
+        const lines = this.getParameterValue(node, 'lines')
+        list.dataset.lines = (lines === null || lines === undefined) ? '' : String(lines)
+        this.arrangeTable(list)
+    }
+
+    /**
+     * Put every cell in its column.
+     *
+     * Written to be run again at any time. Anything repainted underneath a table - one field
+     * re-rendered after an edit - comes back as fresh elements that know nothing about the grid
+     * over them, which is the same hazard the filter has and is handled the same way.
+     */
+    arrangeTable(list) {
+        let columns
+        try { columns = JSON.parse(list.dataset.columns || '[]') } catch (_) { return }
+        if (!Array.isArray(columns) || columns.length === 0) return
+
+        const across = columns.filter((c) => !c.span)
+        const ownLine = new Set(columns.filter((c) => c.span).map((c) => c.name))
+        if (across.length === 0) return
+
+        // The list stops arranging its children itself and becomes the grid they sit in. Its
+        // layout classes carry `display: flex !important`, so they have to go rather than be
+        // overridden - which also keeps every rule here free of `!important`, and so below the
+        // one that hides a filtered row.
+        list.classList.add('view-table')
+        list.classList.remove('layout-vertical', 'layout-horizontal', 'layout-flow')
+        const lines = list.dataset.lines || ''
+        list.classList.toggle('table-lines-columns', lines === 'true' || lines === 'vertical')
+        list.classList.toggle('table-lines-rows', lines === 'true' || lines === 'horizontal')
+        list.style.gridTemplateColumns = across.map((c) => c.width || '1fr').join(' ')
+
+        const column = new Map(across.map((c, i) => [c.name, i + 1]))
+
+        for (const row of Array.from(list.children)) {
+            if (row.classList.contains('table-header')) continue
+            row.classList.add('table-row')
+            row.classList.remove('layout-horizontal', 'layout-vertical', 'layout-flow')
+            // A horizontal row centres its children on the line and lets them be as tall as they
+            // are. A table row wants the opposite: cells that fill its height, so that a
+            // separator drawn between two of them runs the whole way down instead of stopping
+            // where the shorter one's text does. The content is centred inside the cell instead.
+            row.style.alignItems = ''
+
+            for (const cell of Array.from(row.children)) {
+                const name = this.fieldNameOf(cell)
+                // The column owns the width now. Left on the cell, a percentage would be read
+                // against its own column rather than the row, and every cell would be a sliver
+                // of the space it asked for.
+                cell.style.width = ''
+                if (column.has(name)) {
+                    cell.style.gridColumn = String(column.get(name))
+                } else if (ownLine.has(name)) {
+                    // Its own line under the rest, inside the row - so it keeps the row's box
+                    // and whatever colour the row is tinted, rather than becoming a row of its
+                    // own that happens to sit next to it.
+                    cell.style.gridColumn = '1 / -1'
+                    cell.classList.add('table-own-line')
+                }
+                // The heading says what the column holds, so the cell need not repeat it.
+                const label = cell.querySelector(':scope > label')
+                if (label) label.remove()
+                cell.classList.remove('label-beside', 'label-above')
+
+                // Room a table does not have.
+                //
+                // A field is padded to sit in a form, one of half a dozen down a page. In a
+                // table it is one of a hundred rows, and that padding was about two thirds of
+                // the height of one.
+                //
+                // Only a padding the renderer chose is dropped; one the document asked for is
+                // its own business. Which is which is read from the flag set where the default
+                // is applied, rather than by recognising the value - there are three of those
+                // and they would drift.
+                if (cell.dataset.paddingIsDefault) cell.style.padding = ''
+                const value = cell.querySelector(':scope > .field-value, :scope > .text-content')
+                if (value && value.dataset.minHeightIsDefault) value.style.minHeight = ''
+            }
+        }
+
+        this.drawTableHeading(list, across)
+    }
+
+    /**
+     * The heading row.
+     *
+     * Rebuilt rather than patched: this runs again after every repaint, and appending would
+     * leave a table wearing three headings - the same bug the tab bar had.
+     */
+    drawTableHeading(list, across) {
+        const existing = list.querySelector(':scope > .table-header')
+        if (existing) existing.remove()
+        if (list.dataset.header !== '1') return
+
+        const header = document.createElement('div')
+        header.className = 'table-header'
+        // Sticky holds it at the top of the scrolling area while the table is on screen, and
+        // lets it leave with the table - which is what sticky does by itself, being confined to
+        // its parent's box. Nothing on the way up to the scroller sets an `overflow`, which is
+        // the usual reason this silently does nothing.
+        if (list.dataset.stickyHeader === '1') header.classList.add('sticky')
+
+        across.forEach((c, i) => {
+            const cell = document.createElement('span')
+            cell.className = 'table-heading'
+            cell.textContent = c.label || ''
+            cell.style.gridColumn = String(i + 1)
+            header.appendChild(cell)
+        })
+        list.insertBefore(header, list.firstChild)
+    }
+
+    /** Which field a cell holds, by the last segment of the path it carries. */
+    fieldNameOf(element) {
+        try {
+            const path = JSON.parse(element.dataset.path || '[]')
+            return Array.isArray(path) && path.length ? String(path[path.length - 1]) : ''
+        } catch (_) {
+            return ''
+        }
+    }
+
+    /** Re-place every table on the page, after something underneath one was repainted. */
+    arrangeTables() {
+        for (const list of document.querySelectorAll('.view-table')) this.arrangeTable(list)
     }
 
     coerceSortKey(key) {
@@ -3726,6 +3890,9 @@ export class OverseerRenderer {
                 } else {
                     element.style.padding = '8px'
                 }
+                // Ours, not the document's. A table undoes this to get a row down to one line,
+                // and must not undo a padding that was asked for - see `arrangeTable`.
+                element.dataset.paddingIsDefault = '1'
             }
         }
     }
@@ -3939,18 +4106,34 @@ export class OverseerRenderer {
             const params = node?.parameters || {}
             const hasExplicitFont = params['font-color'] !== undefined || params['font-size'] !== undefined
 
-            // Ensure label spacing is pleasant
+            // Where the label sits relative to the value.
+            //
+            // Alternating with the nesting, the way a div's layout does: above the value inside
+            // a horizontal row, beside it inside a vertical column. The resolver works it out -
+            // same calculation as a container's, same `layout` parameter to override it - and
+            // leaves the answer under `_label_layout`.
+            //
+            // Only when there is a label to place. A field written `label=""` renders the value
+            // alone, and making its container a flex row would change how that value sizes for
+            // no reason at all.
             const label = container.querySelector('label')
             if (label) {
-                if (!label.style.marginBottom) label.style.marginBottom = '4px'
-                if (!label.style.display) label.style.display = 'block'
+                const beside = this.getParameterValue(node, '_label_layout') === 'horizontal'
+                container.classList.add(beside ? 'label-beside' : 'label-above')
+                // Inline, because these are inline already and an inline style wins: leaving
+                // the stylesheet to say it would be overruled by the line below.
+                if (!label.style.marginBottom) label.style.marginBottom = beside ? '0' : '4px'
+                if (!label.style.display) label.style.display = beside ? 'inline-block' : 'block'
             }
 
             // Value element defaults
             const valueEl = container.querySelector('.field-value') || container.querySelector('.text-content')
             if (valueEl) {
                 // Avoid collapsing to 0 height when empty
-                if (!valueEl.style.minHeight) valueEl.style.minHeight = '20px'
+                if (!valueEl.style.minHeight) {
+                    valueEl.style.minHeight = OverseerRenderer.VALUE_MIN_HEIGHT
+                    valueEl.dataset.minHeightIsDefault = '1'
+                }
                 // Keep inline-block so borders/padding wrap text nicely - except where the
                 // value is meant to line up under its heading. An inline-block is only as wide
                 // as its digits and sits at the left of the field, so `text-align` has nothing
@@ -3975,7 +4158,10 @@ export class OverseerRenderer {
                 params['padding-top'] !== undefined || params['padding-bottom'] !== undefined ||
                 params['padding-left'] !== undefined || params['padding-right'] !== undefined
             if (!hasExplicitPadding) {
-                if (!container.style.padding) container.style.padding = '4px 6px'
+                if (!container.style.padding) {
+                    container.style.padding = OverseerRenderer.FIELD_PADDING
+                    container.dataset.paddingIsDefault = '1'
+                }
             }
         } catch (_) { /* no-op */ }
     }
@@ -6282,9 +6468,11 @@ export class OverseerRenderer {
             if (fresh) {
                 parent.replaceChild(fresh, parent.children[idx])
                 // What was just put on the page is new elements, which know nothing about any
-                // filter over them. Without this a filtered list quietly refills the moment
-                // anything else nearby changes - the same shape as the tab that lost its
-                // content on a repaint.
+                // filter over them, or about the table they landed in. Without this a filtered
+                // list quietly refills the moment anything else nearby changes - the same shape
+                // as the tab that lost its content on a repaint - and a repainted cell drops out
+                // of its column.
+                try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
                 try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return true
             }

@@ -97,6 +97,7 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
     // Added comparisons (step 4.1)
     Equal,
     NotEqual,
@@ -1719,6 +1720,15 @@ impl FormulaEvaluator {
                 }
                 OverseerValue::Float(left_num / right_num)
             }
+            // What is left over. Rust's `%` keeps the sign of the left operand, as C does and
+            // as every language a formula here is likely to be written by habit from does:
+            // -1 % 3 is -1, not 2. Worth knowing before using it to pick one of three things.
+            BinaryOperator::Modulo => {
+                if right_num == 0.0 {
+                    return Err(OverseerError::FormulaError("Modulo by zero".to_string()));
+                }
+                OverseerValue::Float(left_num % right_num)
+            }
             BinaryOperator::Equal => OverseerValue::Boolean(left_num == right_num),
             BinaryOperator::NotEqual => OverseerValue::Boolean(left_num != right_num),
             BinaryOperator::LessThan => OverseerValue::Boolean(left_num < right_num),
@@ -2534,7 +2544,7 @@ fn additive_expression(input: &str) -> IResult<&str, FormulaExpression> {
 fn multiplicative_expression(input: &str) -> IResult<&str, FormulaExpression> {
     let (input, first) = unary_expression(input)?;
     let (input, operations) = many0(pair(
-        delimited(multispace0, alt((char('*'), char('/'))), multispace0),
+        delimited(multispace0, alt((char('*'), char('/'), char('%'))), multispace0),
         unary_expression,
     ))(input)?;
 
@@ -2544,6 +2554,7 @@ fn multiplicative_expression(input: &str) -> IResult<&str, FormulaExpression> {
             let operator = match op {
                 '*' => BinaryOperator::Multiply,
                 '/' => BinaryOperator::Divide,
+                '%' => BinaryOperator::Modulo,
                 _ => unreachable!(),
             };
             FormulaExpression::BinaryOp {
