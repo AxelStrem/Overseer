@@ -222,6 +222,33 @@ fn a_rule_that_never_ran_fires_once_straight_away() {
 }
 
 #[test]
+fn a_follow_up_written_before_its_trigger_ever_ran_arrives_once() {
+    // The same rule read the other way round, and the reason it is worth writing down.
+    //
+    // `water_plants` waits on the floor being washed, and the floor has never been washed - so
+    // "three days after the floor" is due now. That is deliberate for a chore phased off
+    // another chore, and surprising for a genuine follow-up: "unload the washing machine",
+    // written before any cycle has been recorded, arrives immediately.
+    //
+    // It happens once. After the trigger has been completed there is always something to count
+    // from, and the rule behaves exactly as it reads. Recording one completion of the trigger
+    // first is the whole of the workaround.
+    let waiting = rules_at("2026-08-11T09:00:00Z", "water_plants", &[]);
+    assert!(due(&waiting, "water_plants"), "the cold start no longer fires");
+
+    let settled = rule_and_history(
+        "2026-08-11T09:00:00Z",
+        "water_plants",
+        &[],
+        &floor_washed("2026-08-11T08:00:00Z"),
+    );
+    assert!(
+        !due(&settled, "water_plants"),
+        "an hour after the floor was washed, a three-day follow-up was still due"
+    );
+}
+
+#[test]
 fn an_interval_rule_waits_out_its_interval_after_the_trigger_was_done() {
     // The floor was washed on the 11th; the plants want watering 3 days later.
     let record = |done: &str| {
@@ -495,4 +522,358 @@ fn a_deadline_before_the_appearing_hour_means_the_next_day() {
     let nodes = rules_at(&local("2026-08-11", 22, 0), "make_bed", &overnight);
     let hours = number(rule_field(&nodes, "make_bed", "hours_until_due"));
     assert!((hours - 4.0).abs() < 0.001, "ten at night to two is four hours, got {hours}");
+}
+
+// -- a wait said in hours ----------------------------------------------------------------------
+//
+// `after` already made one rule follow another. What it could not say was "soon": the wait was
+// whole days, and `days_since` truncates, so the shortest follow-up expressible was roughly
+// "tomorrow". Two hours after the washing machine finishes is the useful case, and was the one
+// that could not be written.
+
+/// The document with the named rule given an extra field, and one record in `History`.
+fn rule_and_history(
+    instant: &str,
+    handle: &str,
+    overrides: &[(&str, &str)],
+    records: &str,
+) -> Vec<OverseerNode> {
+    let when = chrono::DateTime::parse_from_rfc3339(instant)
+        .expect("bad instant")
+        .with_timezone(&chrono::Utc);
+    FormulaEvaluator::set_time_override(Some(when));
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DOC);
+    let mut text = std::fs::read_to_string(path).expect("no tasks.os");
+    let anchor = format!("            - handle = \"{handle}\"\n");
+    assert!(text.contains(&anchor), "no rule {handle} in the document");
+    let extra: String = overrides
+        .iter()
+        .map(|(k, v)| format!("            - {k} = {v}\n"))
+        .collect();
+    text = text.replace(&anchor, &format!("{anchor}{extra}"));
+    let text = filled_history(&text, records);
+
+    let nodes = app_api::load_document(text).expect("load");
+    FormulaEvaluator::set_time_override(None);
+    nodes
+}
+
+/// A completion of the floor-washing rule, which is what `water_plants` waits on.
+fn floor_washed(done: &str) -> String {
+    format!(
+        "        - {{
+            - done_at = \"{done}\"
+            - rule = \"kitchen_floor\"
+            - title = \"Wash the kitchen floor\"
+            - difficulty = 25
+        }}
+"
+    )
+}
+
+#[test]
+fn a_follow_up_in_hours_waits_hours_rather_than_days() {
+    let washed = floor_washed("2026-08-11T09:00:00Z");
+    let hours = [("interval_hours", "2")];
+
+    assert!(
+        !due(
+            &rule_and_history("2026-08-11T10:30:00Z", "water_plants", &hours, &washed),
+            "water_plants"
+        ),
+        "an hour and a half after the trigger, a two-hour follow-up came due"
+    );
+    assert!(
+        due(
+            &rule_and_history("2026-08-11T11:30:00Z", "water_plants", &hours, &washed),
+            "water_plants"
+        ),
+        "two and a half hours after the trigger, a two-hour follow-up had not come due"
+    );
+}
+
+#[test]
+fn a_wait_in_days_still_means_what_it_always_meant() {
+    // `interval_hours` wins only when it is set. Every rule written before it existed leaves it
+    // at nought and must behave exactly as it did; this is the whole of that promise.
+    let washed = floor_washed("2026-08-11T09:00:00Z");
+
+    assert!(
+        !due(
+            &rule_and_history("2026-08-13T09:00:00Z", "water_plants", &[], &washed),
+            "water_plants"
+        ),
+        "two days after the floor, a three-day follow-up came due"
+    );
+    assert!(
+        due(
+            &rule_and_history("2026-08-15T09:00:00Z", "water_plants", &[], &washed),
+            "water_plants"
+        ),
+        "four days after the floor, a three-day follow-up had not come due"
+    );
+}
+
+// -- recurring, but on no schedule -------------------------------------------------------------
+//
+// The dishwasher runs when it is full. A rule for it must not nag on a schedule that is not real,
+// and must not sit in the open list as a permanent reproach - so it does neither, and records
+// what happened at the moment it happens.
+
+#[test]
+fn an_on_demand_rule_is_never_due() {
+    for instant in ["2026-08-11T09:00:00Z", "2026-09-01T23:00:00Z"] {
+        let nodes = rules_at(instant, "kitchen_floor", &[("mode", "\"on_demand\"")]);
+        assert!(
+            !due(&nodes, "kitchen_floor"),
+            "an on-demand rule came due at {instant}, so the sweep would open a task for it"
+        );
+    }
+}
+
+#[test]
+fn pressing_did_it_records_a_completion_without_opening_a_task() {
+    let when = chrono::DateTime::parse_from_rfc3339("2026-08-11T09:00:00Z")
+        .expect("bad instant")
+        .with_timezone(&chrono::Utc);
+    FormulaEvaluator::set_time_override(Some(when));
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DOC);
+    let text = std::fs::read_to_string(path).expect("no tasks.os");
+    let anchor = "            - handle = \"kitchen_floor\"\n";
+    let text = text.replace(anchor, &format!("{anchor}            - mode = \"on_demand\"\n"));
+    let mut nodes = app_api::load_document(text).expect("load");
+
+    let before = count(&nodes, "History");
+    let open_before = count(&nodes, "Open");
+
+    let button = button_path(&nodes, "kitchen_floor", "did");
+    app_api::execute_event(&mut nodes, &button, "click").expect("click");
+    FormulaEvaluator::set_time_override(None);
+
+    assert_eq!(
+        count(&nodes, "History"),
+        before + 1,
+        "pressing `did it` recorded nothing"
+    );
+    assert_eq!(
+        count(&nodes, "Open"),
+        open_before,
+        "pressing `did it` opened a task, which is the one thing an on-demand rule must not do"
+    );
+}
+
+#[test]
+fn what_was_done_on_demand_starts_a_follow_up() {
+    // The two features meeting, which is the point of both. An on-demand completion is a
+    // completion like any other - the record it writes carries the rule's handle and is not a
+    // failure - so anything naming that rule in `after` counts from it, with no extra
+    // machinery. That is how the washing machine comes to ask to be unloaded.
+    //
+    // The record here is the one the test above proves `did it` writes.
+    let an_hour_later = rule_and_history(
+        "2026-08-11T10:00:00Z",
+        "water_plants",
+        &[("interval_hours", "2")],
+        &floor_washed("2026-08-11T09:00:00Z"),
+    );
+    assert!(
+        !due(&an_hour_later, "water_plants"),
+        "an hour after the trigger was done, a two-hour follow-up was already due"
+    );
+
+    let later = rule_and_history(
+        "2026-08-11T11:30:00Z",
+        "water_plants",
+        &[("interval_hours", "2")],
+        &floor_washed("2026-08-11T09:00:00Z"),
+    );
+    assert!(
+        due(&later, "water_plants"),
+        "two and a half hours after the trigger was done, the follow-up had not come due"
+    );
+}
+
+/// How many entries a named list holds.
+fn count(nodes: &[OverseerNode], list_name: &str) -> usize {
+    named(nodes, list_name).map(|l| l.children.len()).unwrap_or(0)
+}
+
+fn named<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+    for n in nodes {
+        if n.name == name {
+            return Some(n);
+        }
+        if let Some(f) = named(&n.children, name) {
+            return Some(f);
+        }
+    }
+    None
+}
+
+/// The address of a button on the named rule.
+fn button_path(nodes: &[OverseerNode], handle: &str, button: &str) -> Vec<String> {
+    fn path_to(node: &OverseerNode, want: &str, trail: &mut Vec<String>) -> bool {
+        for child in &node.children {
+            trail.push(child.name.clone());
+            if child.name == want {
+                return true;
+            }
+            if path_to(child, want, trail) {
+                return true;
+            }
+            trail.pop();
+        }
+        false
+    }
+
+    let rules = named(nodes, "Rules").expect("no rules");
+    for entry in &rules.children {
+        let own = field(std::slice::from_ref(entry), "handle")
+            .map(|v| format!("{v:?}"))
+            .unwrap_or_default();
+        if own.contains(handle) {
+            let mut trail = vec!["tasks".to_string(), "Rules".to_string(), entry.name.clone()];
+            assert!(
+                path_to(entry, button, &mut trail),
+                "no `{button}` button on rule {handle}"
+            );
+            return trail;
+        }
+    }
+    panic!("no rule {handle}");
+}
+
+// -- what kind of thing it was -----------------------------------------------------------------
+//
+// A tag is set on the rule and travels: onto every task the rule opens, and from the task into
+// the record when it closes. Set once, on the thing that has a kind.
+//
+// The travelling is the whole point. Every statistic about this document is computed from
+// History - "which sort of thing do I not get round to", "what earned the most last week" - and a
+// record that did not keep its tags could only be re-tagged by looking the rule up afterwards,
+// which would silently re-tag last month's history the day a rule was re-categorised.
+
+/// The `labels` of the last entry in a named list.
+fn last_labels(nodes: &[OverseerNode], list_name: &str) -> String {
+    let list = named(nodes, list_name).unwrap_or_else(|| panic!("no {list_name}"));
+    let entry = list.children.last().unwrap_or_else(|| panic!("{list_name} is empty"));
+    field(std::slice::from_ref(entry), "labels")
+        .map(|v| format!("{v:?}"))
+        .unwrap_or_default()
+}
+
+fn document_at(instant: &str) -> Vec<OverseerNode> {
+    let when = chrono::DateTime::parse_from_rfc3339(instant)
+        .expect("bad instant")
+        .with_timezone(&chrono::Utc);
+    FormulaEvaluator::set_time_override(Some(when));
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DOC);
+    let text = std::fs::read_to_string(path).expect("no tasks.os");
+    let nodes = app_api::load_document(text).expect("load");
+    FormulaEvaluator::set_time_override(None);
+    nodes
+}
+
+#[test]
+fn a_rule_puts_its_tags_on_what_it_opens() {
+    let mut nodes = document_at("2026-08-11T09:00:00Z");
+    let button = button_path(&nodes, "kitchen_floor", "add");
+    app_api::execute_event(&mut nodes, &button, "click").expect("click");
+
+    assert!(
+        last_labels(&nodes, "Open").contains("chores"),
+        "the task opened by a tagged rule came out untagged: {}",
+        last_labels(&nodes, "Open")
+    );
+}
+
+#[test]
+fn closing_a_task_keeps_its_tags_in_the_record() {
+    let mut nodes = document_at("2026-08-11T09:00:00Z");
+
+    // Open one from a rule, so it is tagged the way a real one would be, then close it.
+    let add = button_path(&nodes, "kitchen_floor", "add");
+    app_api::execute_event(&mut nodes, &add, "click").expect("add");
+
+    let open = named(&nodes, "Open").expect("no open list");
+    let newest = open.children.last().expect("nothing opened").name.clone();
+    let done = vec![
+        "tasks".to_string(),
+        "Open".to_string(),
+        newest,
+        "done".to_string(),
+    ];
+    app_api::execute_event(&mut nodes, &done, "click").expect("done");
+
+    assert!(
+        last_labels(&nodes, "History").contains("chores"),
+        "the record forgot what kind of thing it was: {}",
+        last_labels(&nodes, "History")
+    );
+}
+
+#[test]
+fn an_on_demand_completion_is_tagged_too() {
+    // It never becomes a task, so it is the one path where the tag would have to be copied a
+    // second time rather than travelling with something.
+    let when = chrono::DateTime::parse_from_rfc3339("2026-08-11T09:00:00Z")
+        .expect("bad instant")
+        .with_timezone(&chrono::Utc);
+    FormulaEvaluator::set_time_override(Some(when));
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DOC);
+    let text = std::fs::read_to_string(path).expect("no tasks.os");
+    let anchor = "            - handle = \"kitchen_floor\"\n";
+    let text = text.replace(anchor, &format!("{anchor}            - mode = \"on_demand\"\n"));
+    let mut nodes = app_api::load_document(text).expect("load");
+    FormulaEvaluator::set_time_override(None);
+
+    let button = button_path(&nodes, "kitchen_floor", "did");
+    app_api::execute_event(&mut nodes, &button, "click").expect("click");
+
+    assert!(
+        last_labels(&nodes, "History").contains("chores"),
+        "an on-demand completion was recorded without its tags: {}",
+        last_labels(&nodes, "History")
+    );
+}
+
+#[test]
+fn every_tag_in_use_is_one_the_document_offers() {
+    // A tag that is not in the vocabulary still shows, as the bare handle marked "no longer
+    // listed" - honest, and not what anyone wants to find. This catches the typo at the point
+    // it is introduced rather than on the card weeks later.
+    let nodes = document_at("2026-08-11T09:00:00Z");
+
+    let vocabulary: Vec<String> = named(&nodes, "Labels")
+        .expect("no Labels list")
+        .children
+        .iter()
+        .filter_map(|entry| field(std::slice::from_ref(entry), "tag"))
+        .map(|v| format!("{v:?}"))
+        .collect();
+    assert!(!vocabulary.is_empty(), "the vocabulary is empty");
+
+    for list_name in ["Rules", "Open", "History"] {
+        let Some(list) = named(&nodes, list_name) else {
+            continue;
+        };
+        for entry in &list.children {
+            let held = field(std::slice::from_ref(entry), "labels")
+                .map(|v| format!("{v:?}"))
+                .unwrap_or_default();
+            for tag in held
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != ',')
+                .split(',')
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+            {
+                assert!(
+                    vocabulary.iter().any(|known| known.contains(tag)),
+                    "`{tag}` in {list_name} is not one of the tags this document offers"
+                );
+            }
+        }
+    }
 }

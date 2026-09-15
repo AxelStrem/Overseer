@@ -1932,8 +1932,18 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
     let mut all_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut pref: Vec<String> = Vec::new();
     collect_all_node_paths(nodes, &mut pref, &mut all_paths);
-    // Re-run up to MAX_PASSES (logic borrowed from selective path) until stable
-    const MAX_PASSES: usize = 4;
+    // Re-run until nothing changes.
+    //
+    // This was four, and it was a budget rather than a limit: the food tracker was still changing
+    // values on the fourth pass, so what it showed was a snapshot of an unfinished computation
+    // and depended on how many times the document happened to be resolved - which differed
+    // between the two entry points. Raising it did not help until the two reasons a document
+    // could never settle were fixed: a fallback computed for a field that states a value, and a
+    // failed fallback reading as Null where a failed formula reads as an error. Both are below,
+    // and both had to go before this number could
+    // reach an answer at all. It settles on its sixth pass now, so this is a guard against a
+    // formula that genuinely never stops moving rather than a budget the document has to fit in.
+    const MAX_PASSES: usize = 12;
     let mut pass = 0usize;
     let mut progress = true;
     // Set OVERSEER_PROFILE=1 to see where an interaction's time goes: how many passes ran,
@@ -2617,16 +2627,30 @@ unsafe fn recursively_evaluate_node_formulas(
             document_root,
         );
         let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
-        // Compute fallback first if declared
-        if let Some(fb) = node.parameters.get("fallback").cloned() {
-            let fb_val = match fb {
+        // Compute fallback first if declared - and only where it could ever be read. A fallback
+        // is consulted when the stated value is null and at no other time, so computing one for a
+        // field that states a value is work for an answer nobody can see.
+        //
+        // It is also how the food tracker came never to settle. `portions` falls back to grams
+        // over the portion weight and `grams` falls back to portions times it, so a record that
+        // states one has the other derived - correctly - while the stated one's unused fallback
+        // was recomputed every pass from the derived one. Multiplying and dividing by the same
+        // weight does not return the same bits, so the pair changed forever and the document was
+        // still moving when the pass limit stopped it.
+        // Only an unset field reads either of these - see `states_a_value`.
+        let unset = !FormulaEvaluator::states_a_value(&node.parameters);
+        for (declared, shadow) in [("fallback", "_computed_fallback"), ("default", "_computed_default")] {
+            let Some(source) = node.parameters.get(declared).cloned().filter(|_| unset) else {
+                continue;
+            };
+            let worked_out = match source {
                 OverseerValue::Formula(f) => {
                     FormulaEvaluator::evaluate_formula(f.as_str(), &context)
-                        .unwrap_or(OverseerValue::Null)
+                        .unwrap_or_else(|_| OverseerValue::String("invalid formula error".to_string()))
                 }
                 other => other,
             };
-            computed_params.push(("_computed_fallback".to_string(), fb_val));
+            computed_params.push((shadow.to_string(), worked_out));
         }
         for (key, formula_src) in &formula_pairs {
             debug_resolver!(
@@ -2773,16 +2797,24 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                 document_root,
             );
             let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
-            // Compute fallback first (parity with full evaluator) so dependents can read _computed_fallback immediately
-            if let Some(fb) = node.parameters.get("fallback").cloned() {
-                let fb_val = match fb {
+            // Compute fallback first (parity with full evaluator) so dependents can read
+            // _computed_fallback immediately - and only where it could ever be read. See the
+            // note on the same guard in the full evaluator: a fallback belongs to a field that
+            // states no value, and computing the others is what kept this document moving.
+            // Only an unset field reads either of these - see `states_a_value`.
+            let unset = !FormulaEvaluator::states_a_value(&node.parameters);
+            for (declared, shadow) in [("fallback", "_computed_fallback"), ("default", "_computed_default")] {
+                let Some(source) = node.parameters.get(declared).cloned().filter(|_| unset) else {
+                    continue;
+                };
+                let worked_out = match source {
                     OverseerValue::Formula(f) => {
                         FormulaEvaluator::evaluate_formula(f.as_str(), &context)
-                            .unwrap_or(OverseerValue::Null)
+                            .unwrap_or_else(|_| OverseerValue::String("invalid formula error".to_string()))
                     }
                     other => other,
                 };
-                computed_params.push(("_computed_fallback".to_string(), fb_val));
+                computed_params.push((shadow.to_string(), worked_out));
             }
             for (key, formula_src) in &formula_pairs {
                 debug_resolver!(

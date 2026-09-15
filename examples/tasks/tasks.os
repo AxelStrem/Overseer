@@ -48,19 +48,23 @@ tab tasks (label="Tasks", mutable=true) {
             bool overdue (hidden=true) = $(has_deadline && minutes_since(../deadline) > 0)
 
             div (layout="horizontal", margin=0, alignment="center") {
-                string title (label="", font-size=18px, width=44%) = ""
+                string title (label="", font-size=18px, width=34%) = ""
+
+                // What kind of thing this is. Set by the rule that opened it, or by hand for a
+                // one-off, and carried into the history when it closes.
+                tags labels (label="", vocabulary="/tasks/Labels", width=14%) = ""
 
                 // The deadline twice over, because they answer different questions: the date
                 // is what you plan around, the countdown is what you feel. `remaining` counts
                 // down live and goes negative once it is past, so a late task says how late.
                 timestamp due_at (label="", format="datetime", precision="minutes",
-                                  font-size=13px, width=14%,
+                                  font-size=13px, width=12%,
                                   hidden=$(../has_deadline == false)) = $(../deadline)
-                timestamp left (label="", mode="remaining", font-size=13px, width=10%,
+                timestamp left (label="", mode="remaining", font-size=13px, width=8%,
                                 hidden=$(../has_deadline == false)) = $(../deadline)
 
-                int difficulty (label="", format="trim", width=8%) = 1
-                int priority (label="", font-size=18px, width=10%) =
+                int difficulty (label="", format="trim", width=6%) = 1
+                int priority (label="", font-size=18px, width=8%) =
                     $(../base_priority + ../priority_gain * days_since(../added))
                 button done (label="done", margin=0, width=8%) {
                     on click {
@@ -70,6 +74,7 @@ tab tasks (label="Tasks", mutable=true) {
                             - rule = $(../rule)
                             - title = $(../title)
                             - difficulty = $(../difficulty)
+                            - labels = $(../labels)
                             - deadline = $(../deadline)
                             - was_late = $(../overdue)
                         }
@@ -92,6 +97,7 @@ tab tasks (label="Tasks", mutable=true) {
                             - rule = $(../rule)
                             - title = $(../title)
                             - difficulty = $(../difficulty)
+                            - labels = $(../labels)
                             - deadline = $(../deadline)
                             - was_late = $(../overdue)
                             - failed = true
@@ -122,24 +128,41 @@ tab tasks (label="Tasks", mutable=true) {
             string description (label="", font-size=13px, hidden=$(description == "")) = ""
         }
 
+        // A tag that exists here.
+        //
+        // The vocabulary lives in the document rather than in the renderer, so it can be changed
+        // without touching any code: rename one here and every chip showing it is renamed.
+        // Removing one leaves anything still holding it showing the bare handle, marked as no
+        // longer listed - which is honest, since the task really does still hold it.
+        div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
+            string tag (hidden=true) = ""
+            string name (label="", width=40%) = ""
+            string colour (label="", width=30%) = "#6b7280"
+        }
+
         // Something done. Difficulty travels with it: the history is what any statistic about
         // how much was got through will be computed from.
         div Record (layout="horizontal", margin=0, alignment="center") {
-            timestamp done_at (format="datetime", width=22%) = "2026-01-01T00:00:00Z"
+            timestamp done_at (format="datetime", width=20%) = "2026-01-01T00:00:00Z"
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string rule (hidden=true) = ""
-            string title (width=50%) = ""
+            string title (width=38%) = ""
+
+            // Kept, rather than looked up from the rule afterwards. A record is what happened,
+            // and what a task was called at the time is part of that: re-tagging a rule next
+            // month should not silently re-tag what was finished last month.
+            tags labels (label="", vocabulary="/tasks/Labels", width=16%) = ""
 
             // Whether it was late when it was finished. Worked out once, at the moment the
             // button was pressed, and stored - the deadline and the doing are both in the
             // past now, and nothing later should be able to change the answer.
             timestamp deadline (hidden=true) = ""
-            bool was_late (label="late", width=8%, hidden=$(was_late == false)) = false
+            bool was_late (label="late", width=7%, hidden=$(was_late == false)) = false
 
             // Closed without being done. `done_at` is really "closed at" on these - the field
             // is shared because a record is a record, and every count that means *completed*
             // filters on this flag rather than on the mere presence of a record.
-            bool failed (label="not done", width=10%, hidden=$(failed == false)) = false
+            bool failed (label="not done", width=9%, hidden=$(failed == false)) = false
 
             int difficulty (label="", format="trim", width=10%) = 1
         }
@@ -158,19 +181,58 @@ tab tasks (label="Tasks", mutable=true) {
             string handle (hidden=true) = ""
 
             div (layout="horizontal", margin=0, alignment="center") {
-                string title (label="", font-size=17px, width=38%) = ""
-                string mode (label="", width=13%) = "manual"
-                int difficulty (label="", format="trim", width=7%) = 1
+                string title (label="", font-size=17px, width=30%) = ""
+
+                // Put on everything this rule opens, and from there into the history. Set it
+                // once here rather than on each task: a rule is the thing that has a kind.
+                tags labels (label="", vocabulary="/tasks/Labels", width=14%) = ""
+
+                string mode (label="", width=11%) = "manual"
+                int difficulty (label="", format="trim", width=6%) = 1
 
                 // Whether being due matters right now. Shown so a rule that is waiting on
                 // something says so, rather than looking broken.
-                string state (label="", font-size=13px, width=20%) =
+                string state (label="", font-size=13px, width=17%) =
                     $(active == false ? "off" :
                      (due ? "due" :
                      (open_now > 0 ? "still open" :
-                     (has_time && time_has_come == false ? "not yet today" : "waiting"))))
+                     (mode == "on_demand" ? "on demand" :
+                     (has_time && time_has_come == false ? "not yet today" : "waiting")))))
 
-                button add (label="add", margin=0, width=14%) {
+                // Done, without ever having been a task.
+                //
+                // For the things that recur but are not scheduled: the dishwasher runs when it
+                // is full, the bins go out when they are full, and neither has an opinion about
+                // what day it is. A rule for one of these would either nag on a schedule that is
+                // not real, or sit in the open list as a permanent reproach - so it does neither
+                // and simply records what happened, for the points and for the count.
+                //
+                // The same two lines as a task's `done` button, minus the parts only a task has:
+                // no deadline to have missed, no `added` from earlier, because it began and
+                // ended in the same press.
+                //
+                // That record is also what makes a follow-up work. `since_done` counts exactly
+                // this - completions of the trigger that were not failures - so pressing here
+                // starts the clock on any rule that names this one in `after`.
+                button did (label="did it", margin=0, width=14%,
+                            hidden=$(mode != "on_demand")) {
+                    on click {
+                        append (list="/tasks/History") {
+                            - done_at = $(now())
+                            - added = $(now())
+                            - rule = $(../handle)
+                            - title = $(../title)
+                            - difficulty = $(../difficulty)
+                            - labels = $(../labels)
+                        }
+                    }
+                }
+
+                // Opens one, for every other kind of rule. Hidden for `on_demand`, which has
+                // the button above instead: a rule that exists precisely so that nothing sits
+                // in the open list should not offer to put something there.
+                button add (label="add", margin=0, width=14%,
+                            hidden=$(mode == "on_demand")) {
                     on click {
                         append (list="/tasks/Open") {
                             - added = $(now())
@@ -178,6 +240,7 @@ tab tasks (label="Tasks", mutable=true) {
                             - title = $(../title)
                             - description = $(../description)
                             - difficulty = $(../difficulty)
+                            - labels = $(../labels)
                             - base_priority = $(../base_priority)
                             - priority_gain = $(../priority_gain)
 
@@ -221,6 +284,20 @@ tab tasks (label="Tasks", mutable=true) {
 
                 int interval_days (label="every (days)", format="trim",
                                    hidden=$(../mode != "interval")) = 7
+
+                // The same wait said in hours, and it wins when it is set.
+                //
+                // `after` makes one rule follow another, and the useful follows are short:
+                // unload the washing machine two hours after the cycle, take the bread out
+                // twenty minutes after the oven. In whole days none of that can be said - the
+                // shortest thing expressible was "tomorrow, roughly".
+                //
+                // Fractional, and hours rather than minutes, for the same reason `due_in_hours`
+                // is: 0.5 says half an hour without needing a second field, and 48 says two days
+                // for anyone who would rather write it that way.
+                float interval_hours (label="or (hours)", format="trim",
+                                      hidden=$(../mode != "interval")) = 0
+
                 string after (label="after", hidden=$(../mode != "interval")) = ""
 
                 int weekday (label="weekday", format="trim",
@@ -300,7 +377,13 @@ tab tasks (label="Tasks", mutable=true) {
                 $(/tasks/History.filter(|h| h/rule == ../trigger && h/failed == false).count())
             float since_done (hidden=true) = $(done_count == 0 ? 0 :
                 /tasks/History.filter(|h| h/rule == ../trigger && h/failed == false)
-                              .map(|h| days_since(h/done_at)).min())
+                              .map(|h| minutes_since(h/done_at)).min())
+
+            // What this rule is waiting for, in the same unit. `interval_hours` when it is set,
+            // and the days otherwise - so every rule written before this existed means exactly
+            // what it always meant.
+            float wait_minutes (hidden=true) =
+                $(../interval_hours > 0 ? ../interval_hours * 60 : ../interval_days * 1440)
 
             // Has this rule already fired for the occasion that is current now?
             //
@@ -309,7 +392,8 @@ tab tasks (label="Tasks", mutable=true) {
             // already if it created something *after* that completion happened - which, in
             // days-ago, means a smaller number than the completion's.
             bool fresh_today (hidden=true) = $(same_day(../last_created, now()) == false)
-            bool fresh_since_done (hidden=true) = $(days_since(../last_created) > ../since_done)
+            bool fresh_since_done (hidden=true) =
+                $(minutes_since(../last_created) > ../since_done)
 
             // Whether this rule has ever put anything in the list. The epoch default is how a
             // rule says "never", and 3650 days is far enough from any real one to be safe.
@@ -317,6 +401,13 @@ tab tasks (label="Tasks", mutable=true) {
 
             // A rule that has never run and never been completed fires once, straight away,
             // rather than waiting out an interval that has nothing to count from.
+            //
+            // This holds for a rule that waits on another one too, which is worth knowing when
+            // writing a follow-up: "unload the washing machine", written before any cycle has
+            // ever been recorded, has never run and has nothing completed to count from, so it
+            // arrives once, immediately. After that first time there is always a completion to
+            // count from and it behaves as it reads. Press `did it` on the trigger before
+            // writing anything that follows it, and the question does not come up.
             bool never_ran (hidden=true) = $(ever_ran == false && done_count == 0)
 
             // The clock, and what this rule wants of it.
@@ -353,7 +444,7 @@ tab tasks (label="Tasks", mutable=true) {
                 mode == "yearly"  ? (month_of(today()) == ../month &&
                                      day_of_month(today()) == ../day && fresh_today) :
                 mode == "interval" ? (never_ran ||
-                                     (since_done >= ../interval_days && fresh_since_done)) :
+                                     (since_done >= ../wait_minutes && fresh_since_done)) :
                 false))
         }
     }
@@ -365,6 +456,7 @@ tab tasks (label="Tasks", mutable=true) {
         - {
             - added = "2026-08-04T09:00:00Z"
             - title = "Move the plants to bigger pots"
+            - labels = "chores"
             - description = "strawberries, peppers, rosemary"
             - difficulty = 40
             - base_priority = 10
@@ -373,6 +465,7 @@ tab tasks (label="Tasks", mutable=true) {
         - {
             - added = "2026-08-10T18:00:00Z"
             - rule = "kitchen_floor"
+            - labels = "chores"
             - title = "Wash the kitchen floor"
             - difficulty = 25
             - base_priority = 5
@@ -385,6 +478,7 @@ tab tasks (label="Tasks", mutable=true) {
     list Rules (entry=<Rule>, key="handle", layout="vertical", spacing=6) {
         - {
             - handle = "kitchen_floor"
+            - labels = "chores"
             - title = "Wash the kitchen floor"
             - mode = "interval"
             - difficulty = 25
@@ -394,6 +488,7 @@ tab tasks (label="Tasks", mutable=true) {
         }
         - {
             - handle = "water_plants"
+            - labels = "chores"
             - title = "Water the plants"
             - mode = "interval"
             - difficulty = 10
@@ -404,6 +499,7 @@ tab tasks (label="Tasks", mutable=true) {
         }
         - {
             - handle = "make_bed"
+            - labels = "chores"
             - title = "Make the bed"
             - mode = "daily"
             - difficulty = 3
@@ -412,6 +508,7 @@ tab tasks (label="Tasks", mutable=true) {
         }
         - {
             - handle = "bins"
+            - labels = "chores"
             - title = "Take the bins out"
             - mode = "weekly"
             - weekday = 2
@@ -421,6 +518,7 @@ tab tasks (label="Tasks", mutable=true) {
         }
         - {
             - handle = "rent"
+            - labels = "admin"
             - title = "Pay the rent"
             - mode = "monthly"
             - day = 1
@@ -442,4 +540,49 @@ tab tasks (label="Tasks", mutable=true) {
     // append and the backup's line-wise merge sees what it expects.
     list History (entry=<Record>, layout="vertical",
                sort_by=$(|x| 0 - millis_since_epoch(x/done_at))) { }
+
+    text labels_header (markdown=true) = "## Tags"
+
+    // What kinds of thing there are.
+    //
+    // Six is a guess at a useful number: few enough that every task can be put in one without
+    // deliberating, many enough that the answer means something. Rename or replace them freely -
+    // the handle is what tasks store, so changing a `name` here renames the chip everywhere and
+    // changes nothing else.
+    //
+    // `practice` is the skill-building routines - the languages, the instrument, the daily
+    // problem. Named for what they are rather than what they are for: they are worth tracking
+    // whether or not any given week amounts to growth.
+    list Labels (entry=<Label>, key="tag", layout="vertical", spacing=1) {
+        - {
+            - tag = "chores"
+            - name = "chores"
+            - colour = "#0e8a16"
+        }
+        - {
+            - tag = "practice"
+            - name = "practice"
+            - colour = "#8250df"
+        }
+        - {
+            - tag = "health"
+            - name = "health"
+            - colour = "#d73a4a"
+        }
+        - {
+            - tag = "projects"
+            - name = "projects"
+            - colour = "#1d76db"
+        }
+        - {
+            - tag = "admin"
+            - name = "admin"
+            - colour = "#bf6b00"
+        }
+        - {
+            - tag = "misc"
+            - name = "misc"
+            - colour = "#6b7280"
+        }
+    }
 }

@@ -292,14 +292,17 @@ pub(crate) fn find_node_by_path_mut<'a>(
 pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
     match parse_document(&content) {
         Ok((_remaining, mut nodes)) => {
-            resolver::resolve_document(&mut nodes);
             // Mounted content is not part of the host document's text, so it has to be
-            // brought in after every parse. Only re-resolve when something actually arrived:
-            // resolving is a full pass over every node, and a document without mounts was
-            // paying for a second one that could not change anything.
-            if ActionExecutor::preload_mounts(&mut nodes) {
-                resolver::resolve_document(&mut nodes);
-            }
+            // brought in after every parse - and before resolving, because until it is there
+            // every formula that reads through the mount resolves to an error and then has to
+            // be worked out a second time. This is the order the selective path has always
+            // used; this one resolved first, then mounted, then resolved again, and on the food
+            // tracker those extra passes were about half the cost of opening it.
+            //
+            // `preload` and `lazy` are read as written rather than as computed, which is what
+            // lets this run before anything is resolved.
+            ActionExecutor::preload_mounts(&mut nodes);
+            resolver::resolve_document(&mut nodes);
             // The caller holds this text and this document, so the next interaction
             // can be answered with a change rather than with the document.
             remember(&content, &nodes);

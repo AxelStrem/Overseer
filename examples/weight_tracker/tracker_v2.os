@@ -111,7 +111,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
 
                 // Whichever of these a record states, the other is derived. Both are null here
                 // so neither shadows the other; a record must state one of them.
-                float portions (precision=2, format="trim", suffix=" ×", width=10%, fallback=$(grams / portion_weight)) = null
+                float portions (precision=2, format="trim", suffix=" ×", width=10%, fallback=$(grams / portion_weight), default=1) = null
                 float grams (suffix=" g", precision=0, width=10%, fallback=$(portions * portion_weight)) = null
 
                 // The one figure most meals are read for, at a size to match. It sits beside
@@ -208,19 +208,23 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // day nobody ate anything on does not break the chain.
                 timestamp previous_day (hidden=true) = $(/tracker_v2/History.filter(|x| x/date < ../date).map(|x| x/date).max())
 
-                // What the day is aiming at. Carried from the previous day rather than restated:
-                // a target is a standing intention. Setting one here changes every day after it
-                // that has not set its own, because each of those reads the day before it in turn.
-                // With no earlier day at all, the default in the reduce is what a first day gets.
+                // What the day is aiming at: the standing target at the top of the document.
+                //
+                // This used to be carried from the day before it, each day reading the one before
+                // that in turn - a chain as long as the history, walked again every time any
+                // figure on the page was wanted. It answered the same number every time, because
+                // the walk always reached the seed: no day had ever stated a target of its own,
+                // and none could. A list entry has no way to write into a nested div, so these
+                // two fields were never reachable from the history at all.
+                //
+                // Moving them up to the day itself is what it would take to let one day differ
+                // from the rest. Until something needs that, one standing figure is the honest
+                // shape - and it is what the chain was computing anyway.
                 div targets (label="Targets", layout="horizontal", margin=0, border-radius=0, shadow="soft") {
-                    float target_calories (label="Target kcal", precision=0, fallback=$(
-                        /tracker_v2/History.filter(|x| x/date < ../../date).count() == 0 ? 1800 :
-                        /tracker_v2/History.filter(|x| same_day(x/date, ../../previous_day)).map(|x| x/targets/target_calories).reduce(1800, |acc, v| v)
-                    )) = null
-                    float target_protein (label="Target protein", suffix=" g", precision=0, fallback=$(
-                        /tracker_v2/History.filter(|x| x/date < ../../date).count() == 0 ? 100 :
-                        /tracker_v2/History.filter(|x| same_day(x/date, ../../previous_day)).map(|x| x/targets/target_protein).reduce(100, |acc, v| v)
-                    )) = null
+                    float target_calories (label="Target kcal", precision=0,
+                                           fallback=$(/tracker_v2/standing_calories)) = null
+                    float target_protein (label="Target protein", suffix=" g", precision=0,
+                                          fallback=$(/tracker_v2/standing_protein)) = null
                 }
 
                 // Everything eaten today, graded as though it were one food: the day's totals
@@ -328,6 +332,16 @@ tab tracker_v2 (label="Calories", mutable=true) {
             // one made the selected day the only one shaped differently.
             list intake (hidden=false, layout="flow", min-width=520px)
         }
+    }
+
+    // What every day aims at.
+    //
+    // One figure rather than one per day. Change it and every day follows, including those
+    // already recorded - which is the honest reading of "this is what I am aiming at", and is
+    // what the document did before this anyway.
+    div standing (label="Standing targets", layout="horizontal", margin=0) {
+        float standing_calories (label="kcal a day", precision=0) = 1800
+        float standing_protein (label="protein a day", suffix=" g", precision=0) = 100
     }
 
     list History (entry=<DayRecord>, key="date", keyPrecision="day") {

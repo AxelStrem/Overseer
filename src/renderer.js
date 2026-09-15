@@ -2647,10 +2647,22 @@ export class OverseerRenderer {
             .split(',').map(s => s.trim()).filter(Boolean)
 
         const write = (tags) => {
-            this.updateNodeValue(node, tags.join(', '))
+            // Read before writing: the backend is told what this changed *from* and *to*, and
+            // the first of those is gone the moment the node is updated.
+            const before = String(this.getNodeValue(node) || '')
+            const after = tags.join(', ')
+            this.updateNodeValue(node, after)
             try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
             try {
-                window.app.reevaluateDocumentSelective([this.buildNodePath(container).join('/')])
+                // The value has to travel, not just the path. What gets written to the file is
+                // the text the backend produced, and it can only put this edit into that text
+                // if it is told what the edit was - without it the tag shows on screen, the
+                // save writes text resolved from content that never had it, and the tag is gone
+                // on the next load.
+                const path = this.buildNodePath(container).join('/')
+                window.app.reevaluateDocumentSelective(
+                    [path], [{ path, oldValue: before, newValue: after }]
+                )
             } catch (_) {
                 try { window.app.reevaluateDocumentSelective([]) } catch (_) {}
             }
@@ -3230,6 +3242,7 @@ export class OverseerRenderer {
                 return
             }
             if (mode === 'guarded') { try { checkbox.setAttribute('data-guarded-edit','1') } catch(_) {} }
+            const was = this.getNodeValue(node)
             this.updateNodeValue(node, checkbox.checked)
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
@@ -3238,7 +3251,12 @@ export class OverseerRenderer {
                 // Try to determine field path for selective update
                 try {
                     const fieldPath = this.buildNodePath(container).join('/')
-                    window.app.reevaluateDocumentSelective([fieldPath])
+                    // With the value, or the save writes text that never saw this - see the
+                    // note in `createTagsElement`, which had the same fault.
+                    window.app.reevaluateDocumentSelective(
+                        [fieldPath],
+                        [{ path: fieldPath, oldValue: was, newValue: checkbox.checked }]
+                    )
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
                     window.app.reevaluateDocumentSelective([])
@@ -3346,6 +3364,7 @@ export class OverseerRenderer {
             }
             if (mode === 'guarded') { try { checkbox.setAttribute('data-guarded-edit','1') } catch(_) {} }
             if (DEBUG_MODE) console.log('Checkbox changed:', node.name, checkbox.checked)
+            const was = this.getNodeValue(node)
             this.updateNodeValue(node, checkbox.checked)
 
             // Mark document as modified
@@ -3357,7 +3376,11 @@ export class OverseerRenderer {
                 // Try to determine field path for selective update
                 try {
                     const fieldPath = this.buildNodePath(container).join('/')
-                    window.app.reevaluateDocumentSelective([fieldPath])
+                    // With the value - see the note in `createTagsElement`.
+                    window.app.reevaluateDocumentSelective(
+                        [fieldPath],
+                        [{ path: fieldPath, oldValue: was, newValue: checkbox.checked }]
+                    )
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
                     window.app.reevaluateDocumentSelective([])

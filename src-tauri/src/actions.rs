@@ -42,6 +42,25 @@ macro_rules! debug_sched {
     };
 }
 
+thread_local! {
+    /// Whether bringing a mount in should resolve the document afterwards.
+    ///
+    /// True for a `load` that a person or a rule triggered: the actions after it in the same
+    /// block have to see what arrived. False while preloading, where the caller resolves once as
+    /// soon as every mount is in - there, resolving per mount is a full pass over every node in
+    /// the document for an answer that is about to be computed again.
+    static RESOLVE_AFTER_MOUNT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Restores the setting when it goes out of scope, including on the way out of an error.
+struct MountResolveSuspended;
+
+impl Drop for MountResolveSuspended {
+    fn drop(&mut self) {
+        RESOLVE_AFTER_MOUNT.with(|flag| flag.set(true));
+    }
+}
+
 pub struct ActionExecutor;
 
 impl ActionExecutor {
@@ -506,7 +525,9 @@ impl ActionExecutor {
                             &owner_indices,
                             &owner_eval_path,
                         )?;
-                        resolver::resolve_document(nodes);
+                        if RESOLVE_AFTER_MOUNT.with(|flag| flag.get()) {
+                            resolver::resolve_document(nodes);
+                        }
                         return Ok(());
                     }
                     "unload" => {
@@ -2170,6 +2191,8 @@ impl ActionExecutor {
         let mut targets = Vec::new();
         collect(nodes, &mut Vec::new(), &mut targets);
         let loaded_any = !targets.is_empty();
+        RESOLVE_AFTER_MOUNT.with(|flag| flag.set(false));
+        let _restore_when_done = MountResolveSuspended;
         for path in targets {
             // Errors are already surfaced on the node itself by the load routine.
             let _ = Self::execute_event(nodes, &path, "load");

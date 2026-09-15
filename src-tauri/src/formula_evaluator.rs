@@ -437,6 +437,63 @@ impl FormulaEvaluator {
         }
     }
     /// Helper: get effective parameter value preferring computed shadow
+    /// Whether a field states a value of its own.
+    ///
+    /// Unset means no value at all, or one written as null - and only an unset field consults its
+    /// `fallback`. A formula counts as stated, even one that works out to null: what it evaluates
+    /// to is not the question, and asking it that way would make the answer depend on evaluation
+    /// order, which is exactly what a fallback must not do.
+    ///
+    /// Deliberately answerable from the document alone. A dependency on a fallback exists only
+    /// for an unset field, so knowing this without evaluating anything is what lets that
+    /// dependency be worked out ahead of time.
+    pub fn states_a_value(params: &std::collections::HashMap<String, OverseerValue>) -> bool {
+        match params.get("value") {
+            None => false,
+            Some(OverseerValue::Null) => false,
+            Some(_) => true,
+        }
+    }
+
+    /// Whether a fallback actually produced something, as opposed to producing nothing or saying
+    /// it could not. Nothing and a failure are the same answer to the field that asked.
+    fn answered(value: &OverseerValue) -> bool {
+        match value {
+            OverseerValue::Null => false,
+            OverseerValue::String(s) => s != "invalid formula error",
+            _ => true,
+        }
+    }
+
+    /// What an unset field reads: its fallback if that answered, otherwise its default.
+    ///
+    /// Returns `None` when neither has anything to offer, and the caller treats the field as the
+    /// null it was written as.
+    fn value_for_unset<'p>(
+        params: &'p std::collections::HashMap<String, OverseerValue>,
+    ) -> Option<&'p OverseerValue> {
+        if let Some(fb) = params.get("_computed_fallback") {
+            if Self::answered(fb) {
+                return Some(fb);
+            }
+        } else if let Some(fb_raw) = params.get("fallback") {
+            // A literal fallback needs no evaluating, so it is usable before any pass has run.
+            if !matches!(fb_raw, OverseerValue::Formula(_)) && Self::answered(fb_raw) {
+                return Some(fb_raw);
+            }
+        }
+        if let Some(default) = params.get("_computed_default") {
+            if Self::answered(default) {
+                return Some(default);
+            }
+        } else if let Some(default_raw) = params.get("default") {
+            if !matches!(default_raw, OverseerValue::Formula(_)) && Self::answered(default_raw) {
+                return Some(default_raw);
+            }
+        }
+        None
+    }
+
     fn get_effective_param<'p>(
         params: &'p std::collections::HashMap<String, OverseerValue>,
         key: &str,
@@ -445,17 +502,12 @@ impl FormulaEvaluator {
         // return None so callers can decide to evaluate the raw formula in the correct context (avoids stale ordering).
         if key == "value" {
             if let Some(raw) = params.get("value") {
-                // If explicitly Null, consult fallback
+                // Unset, so what it reads is its fallback or its default - see `value_for_unset`.
                 if matches!(raw, OverseerValue::Null) {
-                    if let Some(fb) = params.get("_computed_fallback") {
-                        return Some(fb);
+                    if let Some(stood_in) = Self::value_for_unset(params) {
+                        return Some(stood_in);
                     }
-                    if let Some(fb_raw) = params.get("fallback") {
-                        if !matches!(fb_raw, OverseerValue::Formula(_)) {
-                            return Some(fb_raw);
-                        }
-                    }
-                    // No fallback provided; treat as an effective Null value
+                    // Neither had anything; it is the null it was written as.
                     return Some(raw);
                 } else if !matches!(raw, OverseerValue::Formula(_)) {
                     return Some(raw);
@@ -494,21 +546,27 @@ impl FormulaEvaluator {
                     return FormulaEvaluator::evaluate_formula(f, &ctx);
                 }
                 OverseerValue::Null => {
-                    // Use computed fallback if present; else evaluate fallback formula if any; else literal fallback; else Null
-                    if let Some(fb) = node.parameters.get("_computed_fallback") {
-                        return Ok(fb.clone());
+                    // Unset, so the same order the readers use: whatever the fallback answered,
+                    // then the default, then the null it was written as.
+                    if let Some(stood_in) = Self::value_for_unset(&node.parameters) {
+                        return Ok(stood_in.clone());
                     }
-                    if let Some(fb_raw) = node.parameters.get("fallback") {
-                        match fb_raw {
-                            OverseerValue::Formula(f) => {
-                                let ctx = EvaluationContext::new_with_current(
-                                    node,
-                                    path.to_vec(),
-                                    document_root,
-                                );
-                                return FormulaEvaluator::evaluate_formula(f, &ctx);
+                    // Nothing computed yet - evaluate the fallback here, in this node's context,
+                    // and fall through to the default if it has nothing to say either.
+                    if let Some(OverseerValue::Formula(f)) = node.parameters.get("fallback") {
+                        let ctx =
+                            EvaluationContext::new_with_current(node, path.to_vec(), document_root);
+                        if let Ok(answered) = FormulaEvaluator::evaluate_formula(f, &ctx) {
+                            if Self::answered(&answered) {
+                                return Ok(answered);
                             }
-                            other => return Ok(other.clone()),
+                        }
+                    }
+                    if let Some(OverseerValue::Formula(f)) = node.parameters.get("default") {
+                        let ctx =
+                            EvaluationContext::new_with_current(node, path.to_vec(), document_root);
+                        if let Ok(answered) = FormulaEvaluator::evaluate_formula(f, &ctx) {
+                            return Ok(answered);
                         }
                     }
                     return Ok(OverseerValue::Null);
@@ -2962,8 +3020,31 @@ impl FormulaEvaluator {
                     let lambda = call.args.get(0).ok_or_else(|| {
                         OverseerError::FormulaError("filter() requires 1 argument".to_string())
                     })?;
+                    // Whatever the predicate compares against, worked out once rather than once
+                    // per element - see `with_invariant_side_resolved`. Falls back to the
+                    // predicate as written whenever there is nothing safe to hoist.
+                    let hoisted = Self::with_invariant_side_resolved(lambda, context);
+                    let lambda = hoisted.as_ref().unwrap_or(lambda);
+                    // `x/field == literal`, which is what the hoist leaves behind, can be
+                    // answered by reading the field. Everything else goes the long way.
+                    let direct = Self::direct_field_comparison(lambda);
                     let mut out: Vec<ListItem> = Vec::new();
                     for item in list.into_iter() {
+                        if let (Some((field, operator, wanted, field_on_left)), ListItem::Node(n)) =
+                            (&direct, &item)
+                        {
+                            if let Some(held) = Self::field_already_known(n, field) {
+                                let verdict = if *field_on_left {
+                                    Self::apply_binary_operator(&held, operator, wanted)
+                                } else {
+                                    Self::apply_binary_operator(wanted, operator, &held)
+                                };
+                                if Self::value_to_bool(&verdict?).unwrap_or(false) {
+                                    out.push(item);
+                                }
+                                continue;
+                            }
+                        }
                         let keep_val = match &item {
                             ListItem::Node(n) => {
                                 Self::eval_lambda(lambda, None, Some(*n), None, context)?
@@ -3548,6 +3629,215 @@ impl FormulaEvaluator {
         None
     }
 
+
+
+    /// The child of this node reachable by name, without allocating a list of them all.
+    ///
+    /// The same rule `get_accessible_children` follows: a transparent child is not itself
+    /// reachable, but everything under it is.
+    fn accessible_child<'n>(node: &'n OverseerNode, name: &str) -> Option<&'n OverseerNode> {
+        for child in &node.children {
+            if child.is_hierarchy_transparent {
+                if let Some(found) = Self::accessible_child(child, name) {
+                    return Some(found);
+                }
+            } else if child.name == name {
+                return Some(child);
+            }
+        }
+        None
+    }
+
+    /// `node/field`, when it can be answered by reading rather than by evaluating.
+    ///
+    /// `None` means "ask the general path" - the field is not a child, or its value is a formula
+    /// that has not been worked out yet. Both are handled there and neither is worth duplicating.
+    fn field_already_known(node: &OverseerNode, field: &str) -> Option<OverseerValue> {
+        let child = Self::accessible_child(node, field)?;
+        Self::get_effective_param(&child.parameters, "value").cloned()
+    }
+
+    /// A predicate of the shape `x/field <op> literal`, in the pieces needed to run it directly.
+    ///
+    /// Only reached after the invariant side has been hoisted, which is what turns the other half
+    /// into a literal. The flag says which side the field was on, because `<` does not mean the
+    /// same thing read backwards.
+    fn direct_field_comparison(
+        lambda: &FormulaExpression,
+    ) -> Option<(String, BinaryOperator, OverseerValue, bool)> {
+        let FormulaExpression::Lambda { params, body } = lambda else {
+            return None;
+        };
+        if params.len() != 1 {
+            return None;
+        }
+        let param = &params[0];
+        let FormulaExpression::BinaryOp {
+            left,
+            operator,
+            right,
+        } = body.as_ref()
+        else {
+            return None;
+        };
+
+        let field_of = |e: &FormulaExpression| -> Option<String> {
+            match e {
+                FormulaExpression::PathReference(path)
+                    if path.len() == 2 && &path[0] == param =>
+                {
+                    Some(path[1].clone())
+                }
+                _ => None,
+            }
+        };
+        let literal_of = |e: &FormulaExpression| -> Option<OverseerValue> {
+            match e {
+                FormulaExpression::StringLiteral(s) => Some(OverseerValue::String(s.clone())),
+                FormulaExpression::Number(n) => Some(OverseerValue::Float(*n)),
+                FormulaExpression::BooleanLiteral(b) => Some(OverseerValue::Boolean(*b)),
+                _ => None,
+            }
+        };
+
+        if let (Some(field), Some(value)) = (field_of(left), literal_of(right)) {
+            return Some((field, operator.clone(), value, true));
+        }
+        if let (Some(field), Some(value)) = (field_of(right), literal_of(left)) {
+            return Some((field, operator.clone(), value, false));
+        }
+        None
+    }
+
+    /// Whether an expression reads a lambda's parameter anywhere inside it.
+    ///
+    /// Conservative on purpose: anything this cannot see into is assumed to mention it, so the
+    /// optimisation that asks the question is skipped rather than applied wrongly. A new kind of
+    /// expression therefore costs speed, never correctness.
+    fn mentions_binding(expr: &FormulaExpression, name: &str) -> bool {
+        match expr {
+            FormulaExpression::Number(_)
+            | FormulaExpression::StringLiteral(_)
+            | FormulaExpression::BooleanLiteral(_) => false,
+            FormulaExpression::FieldReference(field) => field == name,
+            FormulaExpression::PathReference(path) => path.first().is_some_and(|s| s == name),
+            FormulaExpression::PathParam { path, .. } => path.first().is_some_and(|s| s == name),
+            // A nested lambda that names the same parameter shadows this one, so anything under
+            // it is talking about a different binding.
+            FormulaExpression::Lambda { params, body } => {
+                !params.iter().any(|p| p == name) && Self::mentions_binding(body, name)
+            }
+            FormulaExpression::MethodChain { base, calls } => {
+                Self::mentions_binding(base, name)
+                    || calls
+                        .iter()
+                        .any(|c| c.args.iter().any(|a| Self::mentions_binding(a, name)))
+            }
+            FormulaExpression::UnaryOp { expr, .. } => Self::mentions_binding(expr, name),
+            FormulaExpression::BinaryOp { left, right, .. } => {
+                Self::mentions_binding(left, name) || Self::mentions_binding(right, name)
+            }
+            FormulaExpression::FunctionCall { args, .. } => {
+                args.iter().any(|a| Self::mentions_binding(a, name))
+            }
+            FormulaExpression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::mentions_binding(condition, name)
+                    || Self::mentions_binding(then_branch, name)
+                    || Self::mentions_binding(else_branch, name)
+            }
+            FormulaExpression::PathFollow { base, .. } => Self::mentions_binding(base, name),
+        }
+    }
+
+    /// The same value, written as an expression - so it can be put back into a predicate.
+    ///
+    /// Only the three kinds a literal can be. Anything else (a timestamp, a node) is left alone
+    /// and the caller falls back to evaluating it per element, which is what it did before.
+    fn as_literal(value: &OverseerValue) -> Option<FormulaExpression> {
+        match value {
+            OverseerValue::String(s) => Some(FormulaExpression::StringLiteral(s.clone())),
+            OverseerValue::Integer(i) => Some(FormulaExpression::Number(*i as f64)),
+            OverseerValue::Float(f) => Some(FormulaExpression::Number(*f)),
+            OverseerValue::Boolean(b) => Some(FormulaExpression::BooleanLiteral(*b)),
+            _ => None,
+        }
+    }
+
+    /// A predicate with the part that cannot change already worked out.
+    ///
+    /// `|x| x/handle == ../../food` compares something about the element against something about
+    /// the document, and only the first half differs from one element to the next. The second is
+    /// evaluated once here and substituted, so a scan of a hundred and thirty-five foods costs
+    /// one walk up the document instead of a hundred and thirty-five.
+    ///
+    /// Returns `None` when there is nothing to gain - either side mentioning the parameter, a
+    /// value that has no literal form, or an expression that is not a comparison at all - and the
+    /// caller evaluates the original, exactly as before.
+    fn with_invariant_side_resolved(
+        lambda: &FormulaExpression,
+        context: &EvaluationContext,
+    ) -> Option<FormulaExpression> {
+        let FormulaExpression::Lambda { params, body } = lambda else {
+            return None;
+        };
+        if params.len() != 1 {
+            return None;
+        }
+        let param = &params[0];
+        let FormulaExpression::BinaryOp {
+            left,
+            operator,
+            right,
+        } = body.as_ref()
+        else {
+            return None;
+        };
+        // Comparisons only. Arithmetic would be just as safe to fold, but a filter's predicate is
+        // a comparison in every document written so far and the narrower rule is easier to trust.
+        if !matches!(
+            operator,
+            BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::LessThan
+                | BinaryOperator::LessThanOrEqual
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterThanOrEqual
+        ) {
+            return None;
+        }
+
+        let left_varies = Self::mentions_binding(left, param);
+        let right_varies = Self::mentions_binding(right, param);
+        // One side must vary and the other must not, or there is nothing to hoist.
+        if left_varies == right_varies {
+            return None;
+        }
+
+        let invariant = if left_varies { right } else { left };
+        // A failure here is not an error: the predicate may be written so that this side only
+        // makes sense for some elements. Left alone, it behaves as it always did.
+        let resolved = Self::evaluate_expression(invariant, context).ok()?;
+        let literal = Self::as_literal(&resolved)?;
+
+        let (new_left, new_right) = if left_varies {
+            (left.clone(), Box::new(literal))
+        } else {
+            (Box::new(literal), right.clone())
+        };
+        Some(FormulaExpression::Lambda {
+            params: params.clone(),
+            body: Box::new(FormulaExpression::BinaryOp {
+                left: new_left,
+                operator: operator.clone(),
+                right: new_right,
+            }),
+        })
+    }
+
     fn eval_lambda(
         lambda_expr: &FormulaExpression,
         acc_value: Option<OverseerValue>,
@@ -3557,14 +3847,21 @@ impl FormulaEvaluator {
     ) -> Result<OverseerValue, OverseerError> {
         match lambda_expr {
             FormulaExpression::Lambda { params, body } => {
-                let mut ctx = context.clone();
+                // `with_var` builds a fresh context from this one, so cloning first and then
+                // calling it copied the bindings map and the path twice per element. Once each
+                // way down a list of a hundred and thirty-five, on every one of twenty-three
+                // lookups, on every meal.
+                let mut ctx;
                 if params.len() == 1 {
                     if let Some(n) = item_node {
-                        ctx = ctx.with_var(&params[0], BoundValue::Node(n));
+                        ctx = context.with_var(&params[0], BoundValue::Node(n));
                     } else if let Some(v) = item_value.clone() {
-                        ctx = ctx.with_var(&params[0], BoundValue::Value(v));
+                        ctx = context.with_var(&params[0], BoundValue::Value(v));
+                    } else {
+                        ctx = context.clone();
                     }
                 } else if params.len() == 2 {
+                    ctx = context.clone();
                     if let Some(acc) = acc_value.clone() {
                         ctx = ctx.with_var(&params[0], BoundValue::Value(acc));
                     }
@@ -3573,6 +3870,9 @@ impl FormulaEvaluator {
                     } else if let Some(v) = item_value.clone() {
                         ctx = ctx.with_var(&params[1], BoundValue::Value(v));
                     }
+                } else {
+                    // No parameters to bind, so nothing to add to what is already here.
+                    ctx = context.clone();
                 }
                 debug_evaluator!(
                     "[EVAL] eval_lambda with params {:?}, bindings {:?}",
