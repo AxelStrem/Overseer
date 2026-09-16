@@ -630,11 +630,34 @@ impl FormulaEvaluator {
     /// Start caching. Call once per pass; the previous contents are discarded.
     pub fn begin_pass_memo() {
         Self::with_memo(|slot| *slot = Some(std::collections::HashMap::new()));
+        Self::with_index_cache(|slot| *slot = Some(std::collections::HashMap::new()));
     }
 
     /// Stop caching. Anything evaluated after this is computed fresh.
     pub fn end_pass_memo() {
         Self::with_memo(|slot| *slot = None);
+        Self::with_index_cache(|slot| *slot = None);
+    }
+
+    /// The indexes built during this pass, by the list they describe and the field they key on.
+    ///
+    /// `None` outside a pass, for the same reason the formula memo is: an index is only sound
+    /// while the document is read from an unchanging snapshot, and the addresses keying it belong
+    /// to that snapshot. Discarded and rebuilt each pass, because each pass takes a fresh one.
+    ///
+    /// A stored `None` is a verdict rather than a gap - it records that this list cannot be
+    /// indexed, so a list of numbers is examined once instead of on each of thousands of calls.
+    fn with_index_cache<R>(
+        f: impl FnOnce(
+            &mut Option<std::collections::HashMap<(usize, String), Option<EqualityIndex>>>,
+        ) -> R,
+    ) -> R {
+        thread_local! {
+            static INDEXES: std::cell::RefCell<
+                Option<std::collections::HashMap<(usize, String), Option<EqualityIndex>>>,
+            > = const { std::cell::RefCell::new(None) };
+        }
+        INDEXES.with(|cell| f(&mut cell.borrow_mut()))
     }
 
     /// The answer, and what it was worked out from.
@@ -2961,6 +2984,15 @@ enum ListItem<'a> {
     Value(OverseerValue),
 }
 
+/// Where each entry of a list sits, by the string one of its fields holds.
+///
+/// Built once for a list and a field, then used by every `x/field == "..."` filter on it for the
+/// rest of the pass. Strings only: `compare_values` calls two strings equal exactly when they
+/// match byte for byte, so grouping by the string groups precisely what equality would. Across
+/// types it would not - `5` equals `"5"`, yet `5.0` does not equal `"5.0"` - and an index cannot
+/// stand in for a comparison that is not transitive.
+type EqualityIndex = std::collections::HashMap<String, Vec<usize>>;
+
 impl FormulaEvaluator {
     /// What a node offers to a method chain.
     ///
@@ -3001,6 +3033,10 @@ impl FormulaEvaluator {
             base,
             calls
         );
+        // Which node this list is the children of, so a filter over it can be answered from an
+        // index. Only meaningful for the first call in the chain - after that the list has been
+        // reshaped and no longer matches what any index was built against.
+        let mut came_from: Option<usize> = None;
         // Phase 1: special-case files(pattern) to support reducers without loading anything yet
         let mut list: Vec<ListItem> = if let FormulaExpression::FunctionCall { name, args } = base {
             if name == "files" {
@@ -3015,6 +3051,7 @@ impl FormulaEvaluator {
                     Some(n) => n,
                     None => return Ok(OverseerValue::String("null".to_string())),
                 };
+                came_from = Some(base_node as *const OverseerNode as usize);
                 Self::items_of(base_node)
             }
         } else {
@@ -3022,11 +3059,12 @@ impl FormulaEvaluator {
                 Some(n) => n,
                 None => return Ok(OverseerValue::String("null".to_string())),
             };
+            came_from = Some(base_node as *const OverseerNode as usize);
             Self::items_of(base_node)
         };
         debug_evaluator!("[EVAL] Initial list size: {}", list.len());
 
-        for call in calls {
+        for (position, call) in calls.iter().enumerate() {
             match call.name.as_str() {
                 "map" => {
                     let lambda = call.args.get(0).ok_or_else(|| {
@@ -3118,6 +3156,26 @@ impl FormulaEvaluator {
                     // `x/field == literal`, which is what the hoist leaves behind, can be
                     // answered by reading the field. Everything else goes the long way.
                     let direct = Self::direct_field_comparison(lambda);
+                    // Asking which entries hold a given string is a question an index answers
+                    // outright. The food tracker asks it constantly: fourteen nutrients, each
+                    // looked up through `Catalog.filter(|x| x/handle == ../food)`, for every
+                    // entry on every pass - a hundred and thirty-six foods walked some two
+                    // hundred thousand times to open one document.
+                    if position == 0 {
+                        if let (Some(base), Some((field, BinaryOperator::Equal, wanted, _))) =
+                            (came_from, &direct)
+                        {
+                            if let Some(at) = Self::positions_holding(base, field, wanted, || {
+                                Self::index_of_items(&list, field)
+                            }) {
+                                let found: Vec<ListItem> =
+                                    at.into_iter().filter_map(|i| list.get(i).cloned()).collect();
+                                debug_evaluator!("[EVAL] Indexed filter: {} of {}", found.len(), list.len());
+                                list = found;
+                                continue;
+                            }
+                        }
+                    }
                     let mut out: Vec<ListItem> = Vec::new();
                     for item in list.into_iter() {
                         if let (Some((field, operator, wanted, field_on_left)), ListItem::Node(n)) =
@@ -3537,7 +3595,11 @@ impl FormulaEvaluator {
                 // Start from base's accessible children
                 let mut nodes: Vec<&OverseerNode> = base_node.get_accessible_children();
                 let mut current_container = base_node;
-                for call in calls {
+                // Which node this list is the children of. Only the first call can be answered
+                // from an index; after that the list has been narrowed and no longer matches
+                // what the index was built against.
+                let came_from = base_node as *const OverseerNode as usize;
+                for (position, call) in calls.iter().enumerate() {
                     match call.name.as_str() {
                         "find" => {
                             // Evaluate key value to match
@@ -3584,8 +3646,58 @@ impl FormulaEvaluator {
                         "filter" => {
                             // Keep only nodes matching predicate; maintain current_container context
                             let lambda = call.args.get(0)?;
+                            // Whatever the predicate compares against does not change from one
+                            // entry to the next, so it is worked out once rather than once per
+                            // entry. `..` means the same here as in the per-item context below -
+                            // both carry the outer node path - so hoisting cannot move it.
+                            let hoisted = Self::with_invariant_side_resolved(lambda, context);
+                            let lambda = hoisted.as_ref().unwrap_or(lambda);
+                            // `x/field == literal`, which is what the hoist leaves behind.
+                            let direct = Self::direct_field_comparison(lambda);
+
+                            // Asking which entries hold a given string is a question an index
+                            // answers outright. This is where the food tracker spends its time:
+                            // fourteen nutrients, each reached through
+                            // `Catalog.filter(|x| x/handle == ../food)`, for every entry on every
+                            // pass - a hundred and thirty-six foods walked some two hundred
+                            // thousand times to open one document.
+                            if position == 0 {
+                                if let Some((field, BinaryOperator::Equal, wanted, _)) = &direct {
+                                    if let Some(at) =
+                                        Self::positions_holding(came_from, field, wanted, || {
+                                            Self::index_of_nodes(&nodes, field)
+                                        })
+                                    {
+                                        nodes = at
+                                            .into_iter()
+                                            .filter_map(|i| nodes.get(i).copied())
+                                            .collect();
+                                        continue;
+                                    }
+                                }
+                            }
+
                             let mut out: Vec<&OverseerNode> = Vec::new();
                             for n in nodes.into_iter() {
+                                // The same comparison without building a context for the entry
+                                // or evaluating the predicate, when the field is already known.
+                                if let Some((field, operator, wanted, field_on_left)) = &direct {
+                                    if let Some(held) = Self::field_already_known(n, field) {
+                                        let verdict = if *field_on_left {
+                                            Self::apply_binary_operator(&held, operator, wanted)
+                                        } else {
+                                            Self::apply_binary_operator(wanted, operator, &held)
+                                        };
+                                        if verdict
+                                            .ok()
+                                            .and_then(|v| Self::value_to_bool(&v).ok())
+                                            .unwrap_or(false)
+                                        {
+                                            out.push(n);
+                                        }
+                                        continue;
+                                    }
+                                }
                                 let item_ctx = EvaluationContext::new_with_current_and_parent(
                                     n,
                                     Some(current_container),
@@ -3784,6 +3896,67 @@ impl FormulaEvaluator {
     ///
     /// `None` means "ask the general path" - the field is not a child, or its value is a formula
     /// that has not been worked out yet. Both are handled there and neither is worth duplicating.
+    /// Which entries of a list hold `wanted` in `field`, by position.
+    ///
+    /// `None` means "walk it yourself", never "nothing matched", so a list the index cannot
+    /// describe is answered exactly as it was before this existed. `build` is only called the
+    /// first time this list and field are asked about during a pass.
+    fn positions_holding(
+        base: usize,
+        field: &str,
+        wanted: &OverseerValue,
+        build: impl FnOnce() -> Option<EqualityIndex>,
+    ) -> Option<Vec<usize>> {
+        let OverseerValue::String(wanted) = wanted else {
+            return None;
+        };
+        Self::with_index_cache(|slot| {
+            // No pass running: nothing is holding the document still, so nothing is indexed.
+            let cache = slot.as_mut()?;
+            let key = (base, field.to_string());
+            if !cache.contains_key(&key) {
+                cache.insert(key.clone(), build());
+            }
+            cache
+                .get(&key)?
+                .as_ref()
+                .map(|index| index.get(wanted).cloned().unwrap_or_default())
+        })
+    }
+
+    /// Group nodes by the string held in one of their fields.
+    ///
+    /// Gives up on the whole list as soon as one entry does not hold a string there - because it
+    /// has no value yet, or holds a number. Equality across types is not transitive, so an index
+    /// built over a mixture would answer differently from the walk it stands in for, and a filter
+    /// that quietly returns the wrong rows is worse than a slow one.
+    fn index_of_nodes(nodes: &[&OverseerNode], field: &str) -> Option<EqualityIndex> {
+        let mut index = EqualityIndex::new();
+        for (at, node) in nodes.iter().enumerate() {
+            match Self::field_already_known(node, field) {
+                Some(OverseerValue::String(held)) => index.entry(held).or_default().push(at),
+                _ => return None,
+            }
+        }
+        Some(index)
+    }
+
+    /// The same, for a chain that carries plain values alongside nodes. A value has no fields, so
+    /// one anywhere in the list means it cannot be indexed.
+    fn index_of_items(list: &[ListItem], field: &str) -> Option<EqualityIndex> {
+        let mut index = EqualityIndex::new();
+        for (at, item) in list.iter().enumerate() {
+            let ListItem::Node(node) = item else {
+                return None;
+            };
+            match Self::field_already_known(node, field) {
+                Some(OverseerValue::String(held)) => index.entry(held).or_default().push(at),
+                _ => return None,
+            }
+        }
+        Some(index)
+    }
+
     fn field_already_known(node: &OverseerNode, field: &str) -> Option<OverseerValue> {
         let child = Self::accessible_child(node, field)?;
         Self::get_effective_param(&child.parameters, "value").cloned()
