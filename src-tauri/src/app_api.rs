@@ -289,18 +289,46 @@ pub(crate) fn find_node_by_path_mut<'a>(
     None
 }
 
-/// Open a document and record what everything was worked out from.
+/// Open a document and record what everything was worked out from, whatever the setting says.
 ///
-/// For a caller that will edit the same document repeatedly and wants each edit answered from the
-/// graph. Costs this one resolve dearly - see the note in `load_document` - and pays for itself
-/// over a handful of edits.
+/// For tests that need a graph to exist regardless of how the build is configured. Ordinary
+/// callers want `load_document`, which records too.
 pub fn load_document_with_dependencies(content: String) -> Result<Vec<OverseerNode>> {
     load_document_maybe_recording(content, true)
 }
 
+/// Whether a resolve records what each value was worked out from.
+///
+/// On, now, everywhere. It used to be off unless asked for, and the desktop app asked while the
+/// server did not - because recording cost about seventy per cent more on every open, which was a
+/// good bargain for something that opens a document once and then edits it and a bad one for the
+/// bot, which opens a document afresh on every request.
+///
+/// That arithmetic no longer holds. With the food tracker showing three days rather than
+/// forty-three, recording costs a quarter of an open rather than seventy per cent - 1.31 seconds
+/// against 1.05, measured either way round so neither gets the benefit of a warm mount cache - and
+/// what it buys is a second open at 0.16 seconds instead of 1.05. The overhead is proportional to
+/// the work and there is far less of it, while the saving is most of a resolve.
+///
+/// That is a good bargain for the bot too: it opens a document afresh on every request, and the
+/// server is long-running, so the request that pays is the first one. And both builds doing the
+/// same thing is one fewer way for what runs on the server to differ from what was tested on a
+/// desktop.
+///
+/// `OVERSEER_DEPENDENCY_GRAPH=0` turns it off - for measuring against it, or if a graph is ever
+/// suspected of holding a stale answer.
+pub fn recording_is_on() -> bool {
+    match std::env::var("OVERSEER_DEPENDENCY_GRAPH") {
+        Ok(setting) => !matches!(
+            setting.trim().to_ascii_lowercase().as_str(),
+            "0" | "off" | "no" | "false"
+        ),
+        Err(_) => true,
+    }
+}
+
 pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
-    let asked = std::env::var("OVERSEER_DEPENDENCY_GRAPH").is_ok();
-    load_document_maybe_recording(content, asked)
+    load_document_maybe_recording(content, recording_is_on())
 }
 
 /// The document exactly as it was last worked out, when working it out again could not change it.
@@ -336,8 +364,19 @@ fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
 }
 
 fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<OverseerNode>> {
-    if let Some(unchanged) = already_worked_out(&content) {
-        return Ok(unchanged);
+    // A document with a list showing only part of itself is the same text for everyone and not the
+    // same document: a write names an address that has to stay in view, and a copy resolved for
+    // somebody else will have left it out. So a resolve holding something in view neither takes
+    // what is cached nor offers what it produces.
+    //
+    // This only became reachable when recording was turned on everywhere. Before that the server
+    // kept no graph, `already_worked_out` never had one to answer from, and every write resolved
+    // afresh by accident rather than on purpose.
+    let ordinary = !resolver::is_keeping_anything_in_view();
+    if ordinary {
+        if let Some(unchanged) = already_worked_out(&content) {
+            return Ok(unchanged);
+        }
     }
     match parse_document(&content) {
         Ok((_remaining, mut nodes)) => {
@@ -363,16 +402,19 @@ fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<Ov
             //
             // What makes it dear is a string built and kept for every read, and there are tens of
             // millions of them. Interning those is what would let this be the default.
-            if record {
+            let recording = record && ordinary;
+            if recording {
                 crate::dependencies::start_recording();
             }
             resolver::resolve_document(&mut nodes);
-            if record {
+            if recording {
                 remember_graph(&content, crate::dependencies::take_recording());
             }
             // The caller holds this text and this document, so the next interaction
             // can be answered with a change rather than with the document.
-            remember(&content, &nodes);
+            if ordinary {
+                remember(&content, &nodes);
+            }
             Ok(nodes)
         }
         Err(e) => Err(OverseerError::ParseError(format!("Parse error: {}", e))),

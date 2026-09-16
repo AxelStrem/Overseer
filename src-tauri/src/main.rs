@@ -8,6 +8,7 @@ mod addressing;
 mod delta;
 mod app_api;
 mod dependencies;
+mod document_cache;
 mod docmgr;
 mod file_ops;
 mod formula_evaluator;
@@ -118,12 +119,10 @@ fn serialize_overseer_nodes_raw(request: tauri::ipc::Request<'_>) -> Result<Stri
 
 #[command]
 async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
-    // Recorded here and not on the server, because the bargain differs. Opening a document while
-    // recording what everything was worked out from costs about seventy per cent more; an edit
-    // afterwards costs a fifteenth. Someone with a document open edits it, so it pays for itself
-    // on the first one - while the bot opens a document afresh for every request and would pay the
-    // recording each time for edits it mostly does not make.
-    app_api::load_document_with_dependencies(content)
+    // The same call the server makes. This used to record where the server did not, because the
+    // recording cost seventy per cent of an open and only an editor got that back; it now costs
+    // almost nothing and both want the graph. See `app_api::recording_is_on`.
+    app_api::load_document(content)
 }
 
 #[command]

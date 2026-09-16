@@ -261,6 +261,14 @@ impl Drop for KeptInView {
     }
 }
 
+/// Whether this interaction is holding anything in view.
+///
+/// A document resolved while something is held in view is not the document anyone else would have
+/// got, so it must not be taken from the cache or put into it - see `load_document_maybe_recording`.
+pub fn is_keeping_anything_in_view() -> bool {
+    WANTED.with(|wanted| !wanted.borrow().is_empty())
+}
+
 /// Whether some address this interaction is about names this entry.
 ///
 /// Compared segment by segment, so `tracker_v2/History/[2026-08-03]/intake` keeps the day it

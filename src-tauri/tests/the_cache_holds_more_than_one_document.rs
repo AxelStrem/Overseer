@@ -202,6 +202,11 @@ fn the_size_of_a_document_is_never_underestimated() {
     // keep something it could have - but an underestimate spends memory that was budgeted not to
     // be spent. Checked against the real documents rather than a fixture, since what made the
     // first attempt wrong was formula-heavy parameters.
+    //
+    // Under the same lock as the rest, even though it asserts nothing about the budget: loading a
+    // document puts it in the shared cache, and five real documents arriving while another test
+    // holds the budget at a megabyte will evict what that test just put there. It did.
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut checked = 0;
     for name in [
@@ -236,4 +241,7 @@ fn the_size_of_a_document_is_never_underestimated() {
         checked += 1;
     }
     assert!(checked > 0, "no documents were available to check");
+    // Not left behind for whatever runs next.
+    app_api::forget_dependencies();
+    app_api::forget_baseline();
 }

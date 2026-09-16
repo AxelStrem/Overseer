@@ -170,6 +170,11 @@ fn a_meal_can_be_logged_to_a_day_that_is_out_of_view() {
     meal.insert("food".to_string(), OverseerValue::String("apple".into()));
     meal.insert("portions".to_string(), OverseerValue::Float(1.0));
 
+    // Read first, and not only to count what is there. The read leaves a resolved copy in the
+    // cache, and that copy was resolved for a reader - with this day left out. The write has to
+    // notice that the cached document is not the one it needs. Doing the write on its own would
+    // pass while that was broken, which it was: turning recording on in both builds made the
+    // cache answer a question it had not been asked.
     let before = documents
         .read_at("tracker_v2.os", "tracker_v2/History/[2026-08-03]/intake")
         .expect("an out-of-view day should still be addressable by its key");

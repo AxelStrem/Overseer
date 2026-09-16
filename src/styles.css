@@ -1229,8 +1229,20 @@ body {
 /* How many of a windowed list's entries were left out of view.
  *
  * Quiet on purpose: it is a footnote about what is not there, and it sits under a list whose rows
- * are deliberately tight. Reads as part of the list rather than as a row of it. */
+ * are deliberately tight. Reads as part of the list rather than as a row of it.
+ *
+ * It has to claim a whole row in whatever the list turns out to be, which is not always a column.
+ * A list inherits its layout by alternating with its parent, so the food tracker's history is a
+ * *horizontal* list of day cards that wrap - and a footnote with no width of its own simply became
+ * the next card along, sitting to the right of the last day rather than under the list.
+ *
+ * `flex-basis` forces the wrap in a flex row and is harmless in a column; `grid-column` does the
+ * same for a list drawn as a table or as flow. All three together mean it never has to know which
+ * it is in. */
 .overseer-entries-left-out {
+    flex-basis: 100%;
+    width: 100%;
+    grid-column: 1 / -1;
     padding: 2px 6px;
     font-size: 11px;
     font-style: italic;

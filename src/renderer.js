@@ -806,8 +806,9 @@ export class OverseerRenderer {
     drawEntriesLeftOut(element, node) {
         try {
             element.querySelector(':scope > .overseer-entries-left-out')?.remove()
-            const left = node?.parameters?.['_left_out_of_view']
-            const count = typeof left === 'number' ? left : Number(left?.Integer ?? NaN)
+            const raw = node?.parameters?.['_left_out_of_view']
+            const left = (raw && typeof raw === 'object') ? (raw.Integer ?? raw.Float) : raw
+            const count = Number(left)
             if (!Number.isFinite(count) || count <= 0) return
             const note = document.createElement('div')
             note.className = 'overseer-entries-left-out'
@@ -829,9 +830,16 @@ export class OverseerRenderer {
         if (childType === 'plot') return false
 
         // A list entry the resolver left out of view. Not merely hidden: nothing was worked out
-        // for it and no template was copied onto it, so there is nothing here to draw. How many
-        // were left out is said once, under the list - see `drawEntriesLeftOut`.
-        if (childNode?.parameters?.['_out_of_view'] === true) return false
+        // for it and no template was copied onto it, so there is nothing here to draw - such a
+        // row comes out as unformatted text showing raw handles, which is exactly what it is.
+        // How many were left out is said once, under the list - see `drawEntriesLeftOut`.
+        //
+        // Read through `getParameterValue` because a parameter arrives tagged by its type -
+        // `{ Boolean: true }`, not `true`. Comparing against the raw value silently never matched.
+        try {
+            const left = this.getParameterValue(childNode, '_out_of_view')
+            if (left === true || String(left).toLowerCase() === 'true') return false
+        } catch (_) { /* a node without parameters is not out of view */ }
         
         // Respect hidden=true on child nodes
         try {

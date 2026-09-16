@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 
 // What the reader sees of a list that is only showing part of itself.
 //
@@ -46,9 +47,15 @@ const inView = (n) => Object.assign(base(`Day__${n}`, 'div'), {
   ],
 })
 
-/** A day out of view: as it was written, and marked. */
+/** A day out of view: as it was written, and marked.
+ *
+ * `{ Boolean: true }` rather than `true`, because that is what crosses the wire - every parameter
+ * arrives tagged by its type. Writing `true` here is what let the first version of this pass while
+ * the app drew all forty-three days: the fixture was made to match the code instead of the
+ * resolver, so both sides shared the same mistake and it cancelled out.
+ */
 const outOfView = (n) => Object.assign(base('-', '-'), {
-  parameters: { _out_of_view: true },
+  parameters: { _out_of_view: { Boolean: true } },
   children: [
     Object.assign(base('date', 'string'), {
       parameters: { value: { String: `2026-08-${String(n).padStart(2, '0')}` } },
@@ -94,13 +101,13 @@ describe('a list showing part of itself', () => {
   })
 
   it('says how many were left out', () => {
-    render([inView(12), outOfView(3), outOfView(4)], { _left_out_of_view: 40 })
+    render([inView(12), outOfView(3), outOfView(4)], { _left_out_of_view: { Integer: 40 } })
     expect(note()).not.toBeNull()
     expect(note().textContent).toContain('40')
   })
 
   it('says it in the singular when there is one', () => {
-    render([inView(12), outOfView(3)], { _left_out_of_view: 1 })
+    render([inView(12), outOfView(3)], { _left_out_of_view: { Integer: 1 } })
     expect(note().textContent).toBe('1 earlier entry not shown')
   })
 
@@ -113,14 +120,33 @@ describe('a list showing part of itself', () => {
   })
 
   it('says nothing when the count is zero', () => {
-    render([inView(12)], { _left_out_of_view: 0 })
+    render([inView(12)], { _left_out_of_view: { Integer: 0 } })
     expect(note()).toBeNull()
+  })
+
+  it('puts the note under a list that lays its entries out in a row', () => {
+    // The history is a *horizontal* list - a list inherits its layout by alternating with its
+    // parent - so its day cards wrap across the width. A footnote with no width of its own became
+    // the next card along and sat to the right of the last day instead of under the list.
+    //
+    // jsdom lays nothing out, so what is checked is that the rule exists to be applied.
+    const styles = readFileSync('src/styles.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = styles.match(/\.overseer-entries-left-out\s*\{([^}]*)\}/)
+    expect(rule, 'the note has no rule at all').not.toBeNull()
+    expect(rule[1]).toMatch(/flex-basis:\s*100%/)
+    expect(rule[1]).toMatch(/grid-column:\s*1\s*\/\s*-1/)
+  })
+
+  it('is the last thing in the list, not somewhere in the middle of it', () => {
+    render([inView(12), inView(13), outOfView(3)], { _left_out_of_view: { Integer: 40 } })
+    const children = Array.from(document.querySelector('.overseer-list').children)
+    expect(children[children.length - 1].className).toContain('overseer-entries-left-out')
   })
 
   it('does not leave two notes behind when the list is drawn again', () => {
     // A redraw is the ordinary case - every edit causes one - and a note appended each time would
     // stack up under the list.
-    const app = render([inView(12), outOfView(3)], { _left_out_of_view: 40 })
+    const app = render([inView(12), outOfView(3)], { _left_out_of_view: { Integer: 40 } })
     app.renderer.renderDocument(app.currentDocument)
     expect(document.querySelectorAll('.overseer-entries-left-out').length).toBe(1)
   })

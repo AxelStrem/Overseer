@@ -335,15 +335,6 @@ tab project (label="Overseer", mutable=true) {
             - commentary = "the alternative that makes segtree and much of prefix unnecessary"
         }
         - {
-            - added = "2026-09-16T09:11:00+04:00"
-            - handle = "desktop"
-            - title = "Turn the graph on everywhere, desktop and server alike"
-            - parent = "perf"
-            - labels = "perf, infra"
-            - points = 1
-            - commentary = "desktop records unconditionally, the server needs OVERSEER_DEPENDENCY_GRAPH=1. Same behaviour in both, once the flag has been lived with"
-        }
-        - {
             - added = "2026-09-16T09:20:00+04:00"
             - handle = "fix"
             - title = "Put right what is known to be wrong"
@@ -358,6 +349,24 @@ tab project (label="Overseer", mutable=true) {
             - labels = "correctness, dsl"
             - points = 2
             - commentary = "diary, shopping and blood_pressure all have them; only tracker_v2 is checked byte for byte, so nothing catches it. Either the serialiser keeps the authored shape or the documents go to one line"
+        }
+        - {
+            - added = "2026-09-16T21:00:00+04:00"
+            - handle = "onemodlist"
+            - title = "The desktop binary keeps its own list of modules"
+            - parent = "fix"
+            - labels = "correctness"
+            - points = 3
+            - commentary = "main.rs declares every module again instead of using the library, so a module added to lib.rs and forgotten there compiles everywhere except the app people actually run. A check in the test runner now catches it; having one list would mean it could not happen"
+        }
+        - {
+            - added = "2026-09-16T22:30:00+04:00"
+            - handle = "viewreach"
+            - title = "Formulas and actions cannot reach an entry out of view"
+            - parent = "fix"
+            - labels = "correctness, dsl, later"
+            - points = 5
+            - commentary = "only a write names its address in advance, so the bot can log to any day. A formula aggregating across the whole history, or an action addressing an old entry, finds it uninstantiated instead. The answer is to bring it into view when something reaches it and accept the evaluation that costs - which is the honest reading of a window as a display decision rather than a truncation. Bigger than viewnames and includes it"
         }
         - {
             - added = "2026-09-16T20:00:00+04:00"
@@ -410,6 +419,15 @@ tab project (label="Overseer", mutable=true) {
             - title = "Make the lists easier to read"
             - labels = "ui"
             - points = 1
+        }
+        - {
+            - added = "2026-09-16T22:35:00+04:00"
+            - handle = "pages"
+            - title = "A way to ask a windowed list for more"
+            - parent = "ui"
+            - labels = "ui, dsl, later"
+            - points = 3
+            - commentary = "the list already says how many it left out; this turns that line into something you can press. Wants a per-reader window rather than the one the document states, so asking for more does not edit the file - and it needs viewreach first, or a page brought into view would still be uninstantiated"
         }
         - {
             - added = "2026-09-16T09:31:00+04:00"
@@ -558,6 +576,36 @@ tab project (label="Overseer", mutable=true) {
             - labels = "perf, dsl"
             - points = 5
             - commentary = "window=3 on a list, applied before templates are resolved rather than before formulas - which is what saved the memory as well as the time: only 12% of what a resolve adds is worked-out values, the rest is a template copied onto every entry. Through the server, 10.3s to 1.8s cold and 8.8s to 1.3s on a repeat, at the 64 MB budget and no extra RAM. The cache entry fell from 241 MB to 45. A write names its address before the document is resolved, so the bot can still log a meal to a day nobody is looking at"
+        }
+        - {
+            - finished_at = "2026-09-16T21:15:00+04:00"
+            - added = "2026-09-16T21:00:00+04:00"
+            - title = "The desktop app stopped compiling and every test stayed green"
+            - handle = "deskcheck"
+            - parent = "fix"
+            - labels = "correctness"
+            - points = 1
+            - commentary = "cargo test never builds the desktop binary - it is gated behind required-features - so document_cache going into lib.rs and not into main.rs broke the app with 147 tests passing. npm test now runs cargo check --features desktop and says so. Verified by putting the fault back and watching it fail"
+        }
+        - {
+            - finished_at = "2026-09-16T22:00:00+04:00"
+            - added = "2026-09-16T21:45:00+04:00"
+            - title = "Days out of view were drawn anyway, as raw text"
+            - handle = "viewdraw"
+            - parent = "fix"
+            - labels = "correctness, ui"
+            - points = 1
+            - commentary = "the renderer compared the marker against `true` when a parameter arrives tagged as `{Boolean: true}`, so it never matched and all forty-three days were drawn - the forty with no template copied onto them showing food handles as unformatted text. The test passed because its fixture was written to match the code rather than the resolver, so both sides held the same mistake. Fixtures now carry the shape the resolver actually sends, and the test fails against the old check"
+        }
+        - {
+            - finished_at = "2026-09-16T23:30:00+04:00"
+            - added = "2026-09-16T09:11:00+04:00"
+            - title = "Turn the graph on everywhere, desktop and server alike"
+            - handle = "desktop"
+            - parent = "perf"
+            - labels = "perf, infra"
+            - points = 1
+            - commentary = "on by default in both builds now, OVERSEER_DEPENDENCY_GRAPH=0 to turn it off. Measured either way round so neither got a warm mount cache: recording costs a quarter of a first open, 1.31s against 1.05, and buys a second open at 0.16s. It also uncovered a real fault - a document held partly out of view was being served from the cache to a write that needed it in view, so the bot could not log to an old day whenever the cache happened to be warm. Such a resolve now neither reads the cache nor writes to it"
         }
     }
 }
