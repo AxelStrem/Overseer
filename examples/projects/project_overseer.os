@@ -281,15 +281,6 @@ tab project (label="Overseer", mutable=true) {
             - commentary = "eight seconds on tracker_v2, from sixty-seven; the rest is worth having but no longer urgent"
         }
         - {
-            - added = "2026-09-16T09:05:00+04:00"
-            - handle = "lazy3"
-            - title = "Show three days of history, and evaluate only those"
-            - parent = "perf"
-            - labels = "perf, dsl"
-            - points = 5
-            - commentary = "the biggest remaining win: 43 days down to 3. Needs a window parameter on lists and a resolver that honours it - hiding in the renderer saves nothing"
-        }
-        - {
             - added = "2026-09-16T09:06:00+04:00"
             - handle = "disk"
             - title = "Keep the graph and the worked-out values on disk"
@@ -297,6 +288,15 @@ tab project (label="Overseer", mutable=true) {
             - labels = "perf, infra"
             - points = 5
             - commentary = "the server pays the full cost on every request, so this is where the bot's slowness lives. Key must cover the mounted documents and a semantics version, or it serves stale numbers silently"
+        }
+        - {
+            - added = "2026-09-16T18:30:00+04:00"
+            - handle = "hibernate"
+            - title = "Put everything on disk and sleep when nothing is asking"
+            - parent = "perf"
+            - labels = "perf, infra, later"
+            - points = 5
+            - commentary = "billed by the gigabyte-hour and idle nearly all day, so the cache should cost nothing while nobody is using it. Builds on disk. Three things decide whether it works: freeing has to return the memory to the OS, which is what malloc_trim already does here; the format decides everything, since deserialising 150 MB of JSON would cost more than resolving from scratch and only a compact binary one gets near the second it wants to be; and files have to be evicted by document rather than by text, or every edit the bot makes leaves another 150 MB behind"
         }
         - {
             - added = "2026-09-16T09:07:00+04:00"
@@ -358,6 +358,15 @@ tab project (label="Overseer", mutable=true) {
             - labels = "correctness, dsl"
             - points = 2
             - commentary = "diary, shopping and blood_pressure all have them; only tracker_v2 is checked byte for byte, so nothing catches it. Either the serialiser keeps the authored shape or the documents go to one line"
+        }
+        - {
+            - added = "2026-09-16T20:00:00+04:00"
+            - handle = "viewnames"
+            - title = "An entry out of view has no name of its own"
+            - parent = "fix"
+            - labels = "correctness, dsl"
+            - points = 2
+            - commentary = "a list entry is named DayRecord__4 while it is being instantiated, so one left out of view is still called \"-\" and can only be addressed by key. Fine for the bot, which addresses by date, and a trap for anything addressing by name or position. Naming them in the window pass would cost one format! per entry"
         }
         - {
             - added = "2026-09-16T09:22:00+04:00"
@@ -539,6 +548,16 @@ tab project (label="Overseer", mutable=true) {
             - labels = "perf, correctness"
             - points = 2
             - commentary = "the suspicion was right: one slot for every document, so serving any other evicted it. Through the server, repeat requests went 8.79s to 0.99s. Bounded by bytes now - a resolved tracker_v2 and its graph are 150 MB measured, so counting documents would not have been safe"
+        }
+        - {
+            - finished_at = "2026-09-16T20:30:00+04:00"
+            - added = "2026-09-16T09:05:00+04:00"
+            - title = "Show three days of history, and evaluate only those"
+            - handle = "lazy3"
+            - parent = "perf"
+            - labels = "perf, dsl"
+            - points = 5
+            - commentary = "window=3 on a list, applied before templates are resolved rather than before formulas - which is what saved the memory as well as the time: only 12% of what a resolve adds is worked-out values, the rest is a template copied onto every entry. Through the server, 10.3s to 1.8s cold and 8.8s to 1.3s on a repeat, at the 64 MB budget and no extra RAM. The cache entry fell from 241 MB to 45. A write names its address before the document is resolved, so the bot can still log a meal to a day nobody is looking at"
         }
     }
 }

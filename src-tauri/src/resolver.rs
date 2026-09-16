@@ -97,6 +97,194 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
 }
 
 /// Public entry point to resolve all templates in a document AST.
+
+/// The parameter marking an entry as out of view, and therefore not worth working out.
+pub const OUT_OF_VIEW: &str = "_out_of_view";
+
+/// How many of a list's entries were left out of view.
+pub const LEFT_OUT: &str = "_left_out_of_view";
+
+/// Decide what each windowed list is showing, before anything is instantiated or evaluated.
+///
+/// A history grows without end and is read three days at a time. Everything below it - a template
+/// instance per entry, a formula per field of it, a graph node per formula - is paid for whether or
+/// not anyone looks. On the food tracker, forty of the forty-three days are never on screen.
+///
+/// This runs *before* template resolution rather than before formula evaluation, which is the whole
+/// point. Measured: a resolved `tracker_v2.os` holds 235,379 parameters against 53,791 parsed, and
+/// only 28,032 of the difference are worked-out values - the rest is a template copied onto every
+/// entry. Skipping evaluation alone would have saved the time and almost none of the memory.
+///
+/// Which entries are in view is decided the way the reader sees them: the first `window` in display
+/// order, which is `sort_by` if the list has one and the order they are written in if it does not.
+/// So a log meant to be read newest-first needs the sort it already wants - see `History` in the
+/// food tracker - and one without a sort shows the first few as authored.
+fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
+    let snapshot = nodes.clone();
+    fn walk(nodes: &mut Vec<OverseerNode>, root: &[OverseerNode], trail: &mut Vec<String>) {
+        for node in nodes.iter_mut() {
+            trail.push(node.name.clone());
+            if node.node_type == "list" {
+                if let Some(window) = window_of(node) {
+                    narrow(node, window, root, trail);
+                }
+            }
+            walk(&mut node.children, root, trail);
+            trail.pop();
+        }
+    }
+    walk(nodes, &snapshot, &mut Vec::new());
+}
+
+/// How many entries a list keeps in view, if it says.
+///
+/// Absent or nought means all of them, so a document says nothing and behaves as it always has.
+fn window_of(node: &OverseerNode) -> Option<usize> {
+    let asked = match node.parameters.get("window") {
+        Some(OverseerValue::Integer(n)) if *n > 0 => *n as usize,
+        Some(OverseerValue::Float(n)) if *n > 0.0 => *n as usize,
+        Some(OverseerValue::String(s)) => s.trim().parse::<usize>().ok().filter(|n| *n > 0)?,
+        _ => return None,
+    };
+    Some(asked)
+}
+
+/// Mark everything past the window, and say how many that was.
+fn narrow(
+    node: &mut OverseerNode,
+    window: usize,
+    root: &[OverseerNode],
+    trail: &mut Vec<String>,
+) {
+    let entries: Vec<usize> = node
+        .children
+        .iter()
+        .enumerate()
+        .filter(|(_, child)| child.node_type == "list_item" || child.node_type == "-")
+        .map(|(at, _)| at)
+        .collect();
+    if entries.len() <= window {
+        node.parameters.remove(LEFT_OUT);
+        return;
+    }
+
+    // Display order, worked out from what the entries were written with. A sort key that needs a
+    // value nothing has worked out yet cannot be answered here, and such an entry keeps its place
+    // in the file rather than being guessed at.
+    let sort_source = match node.parameters.get("sort_by") {
+        Some(OverseerValue::Formula(s)) | Some(OverseerValue::String(s)) => s.clone(),
+        _ => String::new(),
+    };
+    let mut order: Vec<(usize, Option<OverseerValue>)> = Vec::with_capacity(entries.len());
+    for at in &entries {
+        let key = if sort_source.is_empty() {
+            None
+        } else {
+            let child = &node.children[*at];
+            let mut path = trail.clone();
+            path.push(child.name.clone());
+            let context = EvaluationContext::new_with_current_and_parent(
+                child,
+                Some(&*node),
+                path,
+                root,
+            );
+            FormulaEvaluator::evaluate_lambda_on_item(&sort_source, &context, child).ok()
+        };
+        order.push((*at, key));
+    }
+    // Anything the sort could not answer sinks below everything it could, so a half-written entry
+    // does not take a place in view from one that says where it belongs.
+    order.sort_by(|a, b| match (&a.1, &b.1) {
+        (Some(x), Some(y)) => FormulaEvaluator::compare_for_sort(x, y).then(a.0.cmp(&b.0)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.0.cmp(&b.0),
+    });
+
+    // How each entry would be addressed, worked out before anything is marked. At this point a
+    // keyed list reads its keys from what the entries were written with, which is exactly what an
+    // address naming one of them was written against.
+    let segments = crate::addressing::child_segments(node);
+    let addressable: Vec<String> = crate::addressing::effective_children(node)
+        .into_iter()
+        .zip(segments)
+        .map(|((index_path, _), segment)| {
+            index_path.first().map_or(String::new(), |_| segment)
+        })
+        .collect();
+
+    let mut left_out = 0;
+    for (at, _) in order.into_iter().skip(window) {
+        // Named by this interaction, so it stays - see `keeping_in_view`.
+        if addressable.get(at).is_some_and(|segment| is_wanted(segment)) {
+            continue;
+        }
+        node.children[at]
+            .parameters
+            .insert(OUT_OF_VIEW.to_string(), OverseerValue::Boolean(true));
+        left_out += 1;
+    }
+    node.parameters.insert(
+        LEFT_OUT.to_string(),
+        OverseerValue::Integer(left_out as i64),
+    );
+}
+
+// Addresses this interaction is about, which stay in view whatever the window says.
+//
+// A window is a reading decision and must not become "this part of the document no longer works".
+// Someone says on Thursday that they forgot Monday's dinner, and Monday is long out of view; the
+// write still has to land.
+//
+// Decided before anything is resolved, rather than repaired afterwards. Bringing an entry back and
+// resolving a second time looks simpler and is not: the template's own `$(today())` gets worked out
+// over the entry's authored date on that second pass, so the day ends up addressable by the wrong
+// key - a long way to travel to break the thing being fixed.
+thread_local! {
+    static WANTED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Keep whatever this address names in view for as long as the guard lives.
+pub fn keeping_in_view(address: &str) -> KeptInView {
+    WANTED.with(|wanted| wanted.borrow_mut().push(address.to_string()));
+    KeptInView
+}
+
+pub struct KeptInView;
+
+impl Drop for KeptInView {
+    fn drop(&mut self) {
+        WANTED.with(|wanted| {
+            wanted.borrow_mut().pop();
+        });
+    }
+}
+
+/// Whether some address this interaction is about names this entry.
+///
+/// Compared segment by segment, so `tracker_v2/History/[2026-08-03]/intake` keeps the day it
+/// reaches through as well as the list inside it.
+fn is_wanted(segment: &str) -> bool {
+    WANTED.with(|wanted| {
+        wanted
+            .borrow()
+            .iter()
+            .any(|address| address.split('/').any(|part| part == segment))
+    })
+}
+
+/// Whether this node was left out of view, and so should be walked past entirely.
+///
+/// Entirely is the operative word: a day left out holds a list of meals of its own, and expanding
+/// those would give back most of the cost the window was for.
+pub fn out_of_view(node: &OverseerNode) -> bool {
+    matches!(
+        node.parameters.get(OUT_OF_VIEW),
+        Some(OverseerValue::Boolean(true))
+    )
+}
+
 /// Structural resolution: templates, layout and inheritance, but no formula evaluation.
 ///
 /// Callers that only need the tree to have its shape - so that a field belonging to a
@@ -105,6 +293,12 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
 /// feed them and evaluate again, is work thrown away.
 pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
     let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    // First, because everything after it is work that a list out of view does not want done.
+    let t = std::time::Instant::now();
+    apply_list_windows(nodes);
+    if profiling {
+        eprintln!("[PHASE]   windows {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
     let t = std::time::Instant::now();
     resolve_templates_multipass(nodes);
     if profiling {
@@ -738,6 +932,12 @@ fn resolve_node_templates(
 ) -> bool {
     let mut local_progress = false;
 
+    // Out of view: neither this nor anything under it is instantiated. Returning before the
+    // recursion is what makes the saving real - a day left out holds its own list of meals.
+    if out_of_view(node) {
+        return false;
+    }
+
     debug_resolver!(
         "[RESOLVER] Resolving node: {} (type: {})",
         node.name,
@@ -797,6 +997,16 @@ fn resolve_node_templates(
                         );
                         let mut resolved_children = Vec::new();
                         for (idx, list_item) in node.children.iter().enumerate() {
+                            // Out of view: kept exactly as it was written, with no template
+                            // copied onto it and nothing under it touched. This is where the
+                            // window earns most of what it saves - the guard in
+                            // `resolve_node_templates` only stops the walk from *descending*
+                            // into such an entry, and a list instantiates its own children here
+                            // rather than by walking into them.
+                            if out_of_view(list_item) {
+                                resolved_children.push(list_item.clone());
+                                continue;
+                            }
                             debug_resolver!(
                                 "[RESOLVER]   Processing list item {}: {} (type: {})",
                                 idx,
@@ -1192,6 +1402,10 @@ fn resolve_node_templates(
                     // Handle simple type entries like entry=string
                     let mut resolved_children = Vec::new();
                     for (_i, list_item) in node.children.iter().enumerate() {
+                        if out_of_view(list_item) {
+                            resolved_children.push(list_item.clone());
+                            continue;
+                        }
                         debug_resolver!(
                             "[RESOLVER]   Processing simple type list item {}: {} (type: {})",
                             _i,
@@ -2750,6 +2964,10 @@ unsafe fn recursively_evaluate_node_formulas_selective(
     // Track whether any _computed_* param mutated in this subtree so caller can record progress
     let mut subtree_changed = false;
     let node: &mut OverseerNode = &mut *node_ptr;
+    // Out of view, so not worked out. Nothing under it either - see `apply_list_windows`.
+    if out_of_view(node) {
+        return false;
+    }
     let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() {
         None
     } else {
@@ -2948,6 +3166,10 @@ unsafe fn recursively_compute_sort_keys(
     use crate::types::OverseerValue;
 
     let node: &mut OverseerNode = &mut *node_ptr;
+
+    if out_of_view(node) {
+        return;
+    }
 
     // For list nodes, if sort_by parameter is present (as Formula or String), compute per-item keys
     if node.node_type == "list" {

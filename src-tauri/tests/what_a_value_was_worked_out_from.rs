@@ -143,10 +143,13 @@ fn the_food_tracker_records_what_its_days_are_made_of() {
     // A day's totals must depend on the meals inside that day. Found by looking rather than by
     // naming a path: what the materialised tree calls things is the resolver's business, and a
     // test that hard-codes it fails for the wrong reason when that changes.
+    //
+    // Any day rather than the first, which is no longer one of them: `History` keeps three days in
+    // view and the first is the oldest. Naming it was the hard-coding this comment warns against.
     let day_totals: Vec<&String> = graph
         .values()
         .into_iter()
-        .filter(|v| v.contains("DayRecord__1") && v.contains("totals/") && v.contains("calories"))
+        .filter(|v| v.contains("DayRecord__") && v.contains("totals/") && v.contains("calories"))
         .collect();
     assert!(
         !day_totals.is_empty(),

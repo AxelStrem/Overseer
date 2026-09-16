@@ -160,7 +160,7 @@ impl DocumentRoot {
         address: &str,
         event: &str,
     ) -> std::result::Result<EventOutcome, RequestError> {
-        let (_, nodes) = self.edit(name, |nodes| {
+        let (_, nodes) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
@@ -881,9 +881,17 @@ impl DocumentRoot {
         Ok(serde_json::Value::Null)
     }
 
+    /// Load a document, change it, and write it back.
+    ///
+    /// `touching` is the address about to be written. A list may be showing only part of itself,
+    /// and what it leaves out has no template copied onto it - which is the point, and would also
+    /// mean a write to an older entry failing for a reason nobody could see. Naming the address
+    /// before the document is resolved keeps what the write is about in view, and costs nothing:
+    /// it is one more entry instantiated, not another resolve.
     fn edit<T>(
         &self,
         name: &str,
+        touching: &str,
         work: impl FnOnce(&mut Vec<OverseerNode>) -> std::result::Result<T, RequestError>,
     ) -> std::result::Result<(T, Vec<OverseerNode>), RequestError> {
         let path = self.resolve(name)?;
@@ -892,6 +900,9 @@ impl DocumentRoot {
         let dir = path.parent().map(|d| d.to_path_buf());
 
         let (outcome, nodes, serialized) = DocumentManager::with_document(dir, || {
+            // Named before the document is resolved, so a list showing only part of itself
+            // keeps whatever this write is about - see `resolver::keeping_in_view`.
+            let _in_view = crate::resolver::keeping_in_view(touching);
             let mut nodes = app_api::load_document(text).map_err(|e| {
                 RequestError::Failed(format!("could not resolve '{}': {:?}", name, e))
             })?;
@@ -958,7 +969,7 @@ impl DocumentRoot {
     ) -> std::result::Result<WriteOutcome, RequestError> {
         let overrides = entry_overrides(fields);
 
-        let (_, nodes) = self.edit(name, |nodes| {
+        let (_, nodes) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
@@ -1017,7 +1028,7 @@ impl DocumentRoot {
         address: &str,
         value: OverseerValue,
     ) -> std::result::Result<WriteOutcome, RequestError> {
-        let (_, nodes) = self.edit(name, |nodes| {
+        let (_, nodes) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
@@ -1075,7 +1086,7 @@ impl DocumentRoot {
                 ))
             })?;
 
-        let (_, nodes) = self.edit(name, |nodes| {
+        let (_, nodes) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;

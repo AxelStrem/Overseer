@@ -1904,6 +1904,14 @@ impl FormulaEvaluator {
         })
     }
 
+    /// The same comparison the formula language uses, for a caller putting things in order.
+    ///
+    /// Two values it cannot compare are called equal rather than refused, because the caller is
+    /// sorting and a sort wants an answer for every pair.
+    pub fn compare_for_sort(a: &OverseerValue, b: &OverseerValue) -> std::cmp::Ordering {
+        Self::compare_values(a, b).unwrap_or(std::cmp::Ordering::Equal)
+    }
+
     /// Compare values (numbers/strings/bools/dates/timestamps) with sensible defaults.
     fn compare_values(
         a: &OverseerValue,

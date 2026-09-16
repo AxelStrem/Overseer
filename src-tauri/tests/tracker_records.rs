@@ -32,13 +32,31 @@ fn source() -> String {
     std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("failed to read {:?}: {}", p, e))
 }
 
+/// The same document with its whole history in view.
+///
+/// `History` shows three days and leaves the rest uninstantiated, which is the point of the window
+/// and a nuisance here: the days these tests read are the two oldest, chosen because between them
+/// they exercise both ways of stating an amount. What is under test is how a record resolves, not
+/// which day is on screen, so the window is opened rather than the tests being re-pinned to
+/// whichever days happen to be newest - a pin that would come loose every time the bot logs a meal.
+fn source_with_everything_in_view() -> String {
+    let text = source();
+    let windowed = "key=\"date\", keyPrecision=\"day\", window=3,";
+    assert!(
+        text.contains(windowed),
+        "tracker_v2.os no longer windows its history the way this expected; if the window is gone          this helper can go with it"
+    );
+    text.replace(windowed, "key=\"date\", keyPrecision=\"day\",")
+}
+
 /// Mirrors opening the document in the app: the document's directory is registered, then
 /// parse -> resolve -> preload mounts -> resolve again.
 fn open() -> Vec<OverseerNode> {
     let host = examples_dir().join("tracker_v2.os");
     DocumentManager::set_current_document(Some(host.to_string_lossy().as_ref()));
     overseer::source_registry::SourceRegistry::reset();
-    let (_rest, mut nodes) = parser::parse_document(&source()).expect("tracker_v2.os should parse");
+    let (_rest, mut nodes) = parser::parse_document(&source_with_everything_in_view())
+        .expect("tracker_v2.os should parse");
     resolver::resolve_document(&mut nodes);
     ActionExecutor::preload_mounts(&mut nodes);
     resolver::resolve_document(&mut nodes);
@@ -119,7 +137,10 @@ fn as_refs(v: &[String]) -> Vec<&str> {
 #[test]
 fn document_parses_and_round_trips() {
     serialised(|| {
-        let original = source();
+        // Against the text `open` actually parsed, which is the document with its window opened.
+        // That the document round-trips *as authored* - window and all - is checked where every
+        // other save is, in app_load_save_cycle.rs.
+        let original = source_with_everything_in_view();
         let nodes = open();
         let out = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
         assert_eq!(out, original, "tracker_v2.os did not round-trip byte-for-byte");

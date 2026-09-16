@@ -150,6 +150,47 @@ fn adds_the_day_when_today_has_no_record_yet() {
     assert_eq!(entries(&outcome.node), 1);
 }
 
+/// A day the reader cannot see is still a day the bot can write to.
+///
+/// `History` keeps three days in view and leaves the rest uninstantiated, which is what makes the
+/// document open in a second rather than seven. But "not worked out" must not shade into "not
+/// there": someone says on Thursday that they forgot Monday's dinner, and Monday is long out of
+/// view. This is that write.
+///
+/// It works because the entry keeps everything it was *written* with - its `date`, and its `intake`
+/// list - and loses only what the template would have added. So it can still be found by key and
+/// appended to. A field that exists only on the template is the case this does not cover, and the
+/// test below says so.
+#[test]
+fn a_meal_can_be_logged_to_a_day_that_is_out_of_view() {
+    let (_sandbox, documents) = sandbox("outofview");
+
+    // Six days, three in view: the oldest is well past the window.
+    let mut meal = HashMap::new();
+    meal.insert("food".to_string(), OverseerValue::String("apple".into()));
+    meal.insert("portions".to_string(), OverseerValue::Float(1.0));
+
+    let before = documents
+        .read_at("tracker_v2.os", "tracker_v2/History/[2026-08-03]/intake")
+        .expect("an out-of-view day should still be addressable by its key");
+    let was = entries(&before.node);
+
+    let outcome = documents
+        .append_at("tracker_v2.os", "tracker_v2/History/[2026-08-03]/intake", &meal)
+        .expect("a day out of view should still accept a meal");
+    assert_eq!(
+        entries(&outcome.node),
+        was + 1,
+        "the meal was not added to the day out of view"
+    );
+
+    // And the document still opens afterwards, with the write on disk.
+    let again = documents
+        .read_at("tracker_v2.os", "tracker_v2/History/[2026-08-03]/intake")
+        .expect("the day should still be there");
+    assert_eq!(entries(&again.node), was + 1);
+}
+
 #[test]
 fn refuses_to_append_to_something_that_is_not_a_list() {
     let (_sandbox, documents) = sandbox("notalist");

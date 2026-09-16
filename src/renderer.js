@@ -797,6 +797,25 @@ export class OverseerRenderer {
         return actionNames.includes(n)
     }
 
+    /// Say how many of a list's entries were left out of view.
+    ///
+    /// A windowed list draws three of forty-three, and without a word about it the other forty
+    /// look deleted. The count comes from the resolver, which is the only thing that knows: the
+    /// entries are in the document but nothing was worked out for them, so counting the rows on
+    /// screen would not find them.
+    drawEntriesLeftOut(element, node) {
+        try {
+            element.querySelector(':scope > .overseer-entries-left-out')?.remove()
+            const left = node?.parameters?.['_left_out_of_view']
+            const count = typeof left === 'number' ? left : Number(left?.Integer ?? NaN)
+            if (!Number.isFinite(count) || count <= 0) return
+            const note = document.createElement('div')
+            note.className = 'overseer-entries-left-out'
+            note.textContent = count === 1 ? '1 earlier entry not shown' : `${count} earlier entries not shown`
+            element.appendChild(note)
+        } catch (_) { /* a missing note is not worth failing a render over */ }
+    }
+
     shouldRenderChild(parentNode, childNode) {
         const parentType = (parentNode?.node_type || parentNode?.type || '').toLowerCase()
         const childName = childNode?.name
@@ -808,6 +827,11 @@ export class OverseerRenderer {
         
         // Hide plot nodes - they are configuration for chart nodes, not visual elements
         if (childType === 'plot') return false
+
+        // A list entry the resolver left out of view. Not merely hidden: nothing was worked out
+        // for it and no template was copied onto it, so there is nothing here to draw. How many
+        // were left out is said once, under the list - see `drawEntriesLeftOut`.
+        if (childNode?.parameters?.['_out_of_view'] === true) return false
         
         // Respect hidden=true on child nodes
         try {
@@ -1548,7 +1572,10 @@ export class OverseerRenderer {
                         }
                     }
                     renderChildren()
-                    if (nodeTypeLower === 'list') this.setUpTable(element, node)
+                    if (nodeTypeLower === 'list') {
+                        this.setUpTable(element, node)
+                        this.drawEntriesLeftOut(element, node)
+                    }
                 } else {
                     if (DEBUG_MODE) console.log('No children for node:', node)
                     // An empty list still draws its heading, which is when a heading says most.

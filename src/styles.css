@@ -1225,3 +1225,14 @@ body {
     margin: 0;
     cursor: pointer;
 }
+
+/* How many of a windowed list's entries were left out of view.
+ *
+ * Quiet on purpose: it is a footnote about what is not there, and it sits under a list whose rows
+ * are deliberately tight. Reads as part of the list rather than as a row of it. */
+.overseer-entries-left-out {
+    padding: 2px 6px;
+    font-size: 11px;
+    font-style: italic;
+    opacity: 0.55;
+}

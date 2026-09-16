@@ -202,12 +202,6 @@ tab tracker_v2 (label="Calories", mutable=true) {
             }
 
                 // The most recent day recorded before this one. Worked out by date rather than by
-                // position, because the order of History cannot be relied on: days written here
-                // are prepended, days written by the bot are appended, and the file currently
-                // holds both. It is also the *previous recorded* day rather than yesterday, so a
-                // day nobody ate anything on does not break the chain.
-                timestamp previous_day (hidden=true) = $(/tracker_v2/History.filter(|x| x/date < ../date).map(|x| x/date).max())
-
                 // What the day is aiming at: the standing target at the top of the document.
                 //
                 // This used to be carried from the day before it, each day reading the one before
@@ -355,7 +349,17 @@ tab tracker_v2 (label="Calories", mutable=true) {
     // appended, so the stored order has never been the order to read them in.
     // On one line because the serialiser writes parameters on one line, and this document is
     // checked byte for byte across a save - see tests/app_load_save_cycle.rs.
-    list History (entry=<DayRecord>, key="date", keyPrecision="day", sort_by=$(|x| 0 - millis_since_epoch(x/date))) {
+    // Three days in view, and the rest costing nothing.
+    //
+    // `window` is applied before anything is instantiated, so a day out of view has no template
+    // copied onto it, no formula worked out, and no entry in the dependency graph - and neither
+    // does the list of meals inside it. The history is forty-three days and grows; three is what
+    // anyone reads.
+    //
+    // Which three depends on `sort_by` above, because that is the order they are shown in. Nothing
+    // here aggregates across the history - the charts are a pie per day - so a day out of view is
+    // genuinely unread rather than quietly wrong.
+    list History (entry=<DayRecord>, key="date", keyPrecision="day", window=3, sort_by=$(|x| 0 - millis_since_epoch(x/date))) {
         - {
             - date = "2026-08-03"
             list intake {
