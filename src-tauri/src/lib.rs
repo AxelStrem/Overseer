@@ -1,7 +1,7 @@
 pub mod actions;
 pub mod addressing;
 pub mod app_api;
-pub mod dependency_tracker;
+pub mod dependencies;
 pub mod delta;
 pub mod docmgr;
 pub mod file_ops;

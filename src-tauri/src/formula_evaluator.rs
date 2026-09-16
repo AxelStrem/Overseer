@@ -10,6 +10,9 @@ use nom::{
     sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
+/// What the clock is called in the dependency graph. Not a name any node can carry.
+pub const CLOCK: &str = "@clock";
+
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -137,6 +140,20 @@ impl FormulaEvaluator {
 
     pub fn get_time_override() -> Option<DateTime<Utc>> {
         Self::TIME_OVERRIDE_UTC.with(|cell| cell.borrow().clone())
+    }
+
+    /// The clock, read the way a field is.
+    ///
+    /// Every function that asks what time it is asks through here, so a value that depends on the
+    /// hour says so in the graph exactly as one depending on a field does. That is what lets a
+    /// document be told apart from one whose answers cannot go stale while nothing changes: an
+    /// open list of tasks reads the clock on every row, a shopping list never does.
+    pub fn now_utc() -> DateTime<Utc> {
+        crate::dependencies::note_read(&[CLOCK.to_string()]);
+        match Self::get_time_override() {
+            Some(pinned) => pinned,
+            None => Utc::now(),
+        }
     }
 
     fn guard_key(path: &[String], formula: &str) -> String {
@@ -318,6 +335,9 @@ impl FormulaEvaluator {
         match &expr {
             FormulaExpression::PathReference(_) => {
                 if let Some((p, base)) = resolve_base(&expr, context) {
+                    // The list an aggregate runs over, recorded as a whole - a change to any
+                    // entry has to reach whatever adds them up. See `dependencies`.
+                    crate::dependencies::note_read(&p);
                     let items = base.get_accessible_children();
                     return Ok((p, items));
                 }
@@ -327,6 +347,8 @@ impl FormulaEvaluator {
                 let (base_path, base_node) = resolve_base(base, context).ok_or_else(|| {
                     OverseerError::FormulaError("Base path not found".to_string())
                 })?;
+                // The same again for the other way a chain reaches its list.
+                crate::dependencies::note_read(&base_path);
                 let mut list: Vec<&OverseerNode> = base_node.get_accessible_children();
                 let current_container = base_node;
                 for call in calls {
@@ -533,6 +555,10 @@ impl FormulaEvaluator {
         path: &[String],
         document_root: &[OverseerNode],
     ) -> Result<OverseerValue, OverseerError> {
+        // Every read of another node's value arrives here with the path it was found at, whether
+        // it was named absolutely, relatively, or as a bare name found on an ancestor. One hook
+        // for all of them - see `dependencies`.
+        crate::dependencies::note_read(path);
         // 1) Computed shadow takes precedence
         if let Some(comp) = node.parameters.get("_computed_value") {
             return Ok(comp.clone());
@@ -588,10 +614,14 @@ impl FormulaEvaluator {
     /// goes through an immutable snapshot of the document; outside that window the document
     /// is being mutated and a cache would serve stale values. Thread-local because passes
     /// run on whichever thread the command arrived on.
-    fn with_memo<R>(f: impl FnOnce(&mut Option<std::collections::HashMap<(String, String), OverseerValue>>) -> R) -> R {
+    fn with_memo<R>(
+        f: impl FnOnce(
+            &mut Option<std::collections::HashMap<(String, String), (OverseerValue, Vec<String>)>>,
+        ) -> R,
+    ) -> R {
         thread_local! {
             static MEMO: std::cell::RefCell<
-                Option<std::collections::HashMap<(String, String), OverseerValue>>,
+                Option<std::collections::HashMap<(String, String), (OverseerValue, Vec<String>)>>,
             > = const { std::cell::RefCell::new(None) };
         }
         MEMO.with(|cell| f(&mut cell.borrow_mut()))
@@ -607,14 +637,15 @@ impl FormulaEvaluator {
         Self::with_memo(|slot| *slot = None);
     }
 
-    fn memo_lookup(key: &(String, String)) -> Option<OverseerValue> {
+    /// The answer, and what it was worked out from.
+    fn memo_lookup(key: &(String, String)) -> Option<(OverseerValue, Vec<String>)> {
         Self::with_memo(|slot| slot.as_ref().and_then(|m| m.get(key).cloned()))
     }
 
-    fn memo_store(key: &(String, String), value: OverseerValue) {
+    fn memo_store(key: &(String, String), value: OverseerValue, reads: Vec<String>) {
         Self::with_memo(|slot| {
             if let Some(m) = slot.as_mut() {
-                m.insert(key.clone(), value);
+                m.insert(key.clone(), (value, reads));
             }
         });
     }
@@ -639,13 +670,25 @@ impl FormulaEvaluator {
             None
         };
         if let Some(key) = memo_key.as_ref() {
-            if let Some(hit) = Self::memo_lookup(key) {
+            if let Some((hit, reads)) = Self::memo_lookup(key) {
+                // The answer came from the cache, so none of the reads that produced it happen
+                // again - and whatever asked for it would look as though it depends on nothing.
+                // Saying them again is what the second evaluation would have done.
+                crate::dependencies::replay_reads(&reads);
                 return Ok(hit);
             }
         }
-        let outcome = Self::evaluate_formula_uncached(formula, context);
+        // Worked out under its own name, so its reads can be kept with it as well as attributed
+        // to whatever asked. Costs nothing when no graph is being recorded.
+        let (outcome, reads) = crate::dependencies::reads_while(
+            // Built only when it will be used: this runs for every formula in the document on
+            // every pass, and joining a path and a formula into a string each time made opening
+            // the food tracker six times slower than resolving it.
+            || format!("{}${}", context.node_path.join("/"), formula),
+            || Self::evaluate_formula_uncached(formula, context),
+        );
         if let (Some(key), Ok(value)) = (memo_key, outcome.as_ref()) {
-            Self::memo_store(&key, value.clone());
+            Self::memo_store(&key, value.clone(), reads);
         }
         outcome
     }
@@ -926,7 +969,12 @@ impl FormulaEvaluator {
         {
             debug_evaluator!("[EVAL] Found child '{}' under current node", field_name);
             let mut path = context.node_path.clone();
-            path.push(child.name.clone());
+            let mut below = Vec::new();
+            if Self::trail_to_child(context.current_node, field_name, &mut below) {
+                path.extend(below);
+            } else {
+                path.push(child.name.clone());
+            }
             return FormulaEvaluator::get_effective_value_for_node(
                 child,
                 &path,
@@ -963,7 +1011,12 @@ impl FormulaEvaluator {
                             ancestor_path
                         );
                         let mut path = ancestor_path.to_vec();
-                        path.push(child.name.clone());
+                        let mut below = Vec::new();
+                        if Self::trail_to_child(ancestor, field_name, &mut below) {
+                            path.extend(below);
+                        } else {
+                            path.push(child.name.clone());
+                        }
                         return FormulaEvaluator::get_effective_value_for_node(
                             child,
                             &path,
@@ -971,9 +1024,13 @@ impl FormulaEvaluator {
                         );
                     }
                     // c) Deep search under ancestor (first match)
+                    let mut below: Vec<String> = Vec::new();
                     if let Some(val) =
-                        FormulaEvaluator::find_value_by_name_deep(ancestor, field_name)
+                        FormulaEvaluator::find_value_by_name_deep_from(ancestor, field_name, &mut below)
                     {
+                        let mut walked = ancestor_path.to_vec();
+                        walked.extend(below);
+                        crate::dependencies::note_read(&walked);
                         return Ok(val);
                     }
                 }
@@ -1096,6 +1153,10 @@ impl FormulaEvaluator {
                 }
             }
             let last = segments.last().unwrap();
+            // Where this read landed - see `dependencies`. Recorded here rather than at the path
+            // helper, which is also used to probe ancestors while looking for a base: recording
+            // those made every value look as though it read its own container.
+            crate::dependencies::note_read(&p);
             // Final segment can be either a parameter on current or a child node's value
             if let Some(val) = Self::get_effective_param(&current.parameters, last) {
                 if let OverseerValue::Formula(formula_expr) = val {
@@ -1112,6 +1173,7 @@ impl FormulaEvaluator {
             {
                 // Return the child's effective value (handles computed, raw, and fallback-on-demand)
                 p.push(child.name.clone());
+                crate::dependencies::note_read(&p);
                 return FormulaEvaluator::get_effective_value_for_node(
                     child,
                     &p,
@@ -1916,12 +1978,8 @@ impl FormulaEvaluator {
                         "today() function takes no arguments".to_string(),
                     ));
                 }
-                let today = if let Some(ovr) = Self::get_time_override() {
-                    let local_dt: DateTime<Local> = DateTime::<Local>::from(ovr);
-                    local_dt.format("%Y-%m-%d").to_string()
-                } else {
-                    chrono::Local::now().format("%Y-%m-%d").to_string()
-                };
+                let local_dt: DateTime<Local> = DateTime::<Local>::from(Self::now_utc());
+                let today = local_dt.format("%Y-%m-%d").to_string();
                 Ok(OverseerValue::Date(today))
             }
             "now" => {
@@ -1930,10 +1988,7 @@ impl FormulaEvaluator {
                         "now() takes no arguments".to_string(),
                     ));
                 }
-                let now = match Self::get_time_override() {
-                    Some(dt) => dt.to_rfc3339(),
-                    None => chrono::Utc::now().to_rfc3339(),
-                };
+                let now = Self::now_utc().to_rfc3339();
                 Ok(OverseerValue::Timestamp(now))
             }
             // days_since(ts): returns whole days between now() and the given timestamp/date/string
@@ -1945,10 +2000,7 @@ impl FormulaEvaluator {
                 }
                 let val = Self::evaluate_expression(&args[0], context)?;
                 if let Some(ts) = Self::to_utc(&val) {
-                    let now = match Self::get_time_override() {
-                        Some(dt) => dt,
-                        None => chrono::Utc::now(),
-                    };
+                    let now = Self::now_utc();
                     let dur = now.signed_duration_since(ts);
                     let days = dur.num_days();
                     Ok(OverseerValue::Integer(days))
@@ -1975,7 +2027,7 @@ impl FormulaEvaluator {
                 let val = Self::evaluate_expression(&args[0], context)?;
                 match Self::to_utc(&val) {
                     Some(ts) => {
-                        let now = Self::get_time_override().unwrap_or_else(chrono::Utc::now);
+                        let now = Self::now_utc();
                         Ok(OverseerValue::Integer(
                             now.signed_duration_since(ts).num_minutes(),
                         ))
@@ -2349,6 +2401,7 @@ impl FormulaEvaluator {
         if segments.is_empty() {
             return None;
         }
+
         // Helper: split a segment like "name#k" into (name, Some(k)) or (name, None)
         fn split_seg(seg: &str) -> (&str, Option<usize>) {
             if let Some((base, idx_str)) = seg.rsplit_once('#') {
@@ -2385,8 +2438,44 @@ impl FormulaEvaluator {
         Some(current)
     }
 
-    fn find_value_by_name_deep(node: &OverseerNode, name: &str) -> Option<OverseerValue> {
+    /// The trail of real child names from `node` down to `name`.
+    ///
+    /// `get_accessible_children` lifts a transparent wrapper's children into its parent, so a
+    /// field declared inside an unnamed div answers to the div's parent - and a path built by
+    /// putting the name straight after the parent names a node that is not where the resolver
+    /// thinks it is. Only transparent children are descended into, which is exactly the
+    /// flattening being undone.
+    fn trail_to_child(node: &OverseerNode, name: &str, trail: &mut Vec<String>) -> bool {
         for child in &node.children {
+            trail.push(child.name.clone());
+            if child.name == name {
+                return true;
+            }
+            if child.is_hierarchy_transparent && Self::trail_to_child(child, name, trail) {
+                return true;
+            }
+            trail.pop();
+        }
+        false
+    }
+
+    fn find_value_by_name_deep(node: &OverseerNode, name: &str) -> Option<OverseerValue> {
+        Self::find_value_by_name_deep_from(node, name, &mut Vec::new())
+    }
+
+    /// The same search, keeping the trail of names walked to get there.
+    ///
+    /// A bare name can name something nested several levels down - `due_minutes` sits beside a
+    /// div and reads `due_hour` inside it - and a read that cannot say where it landed cannot be
+    /// recorded. `under` is where the search started, and is prepended by the caller that knows
+    /// it; what is built here is the part below that.
+    fn find_value_by_name_deep_from(
+        node: &OverseerNode,
+        name: &str,
+        trail: &mut Vec<String>,
+    ) -> Option<OverseerValue> {
+        for child in &node.children {
+            trail.push(child.name.clone());
             if child.name == name {
                 // Prefer computed/effective value if present
                 if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
@@ -2397,9 +2486,10 @@ impl FormulaEvaluator {
                     return Some(fb.clone());
                 }
             }
-            if let Some(v) = Self::find_value_by_name_deep(child, name) {
+            if let Some(v) = Self::find_value_by_name_deep_from(child, name, trail) {
                 return Some(v);
             }
+            trail.pop();
         }
         None
     }
@@ -3365,7 +3455,13 @@ impl FormulaEvaluator {
         context: &'a EvaluationContext,
     ) -> Option<&'a OverseerNode> {
         match expr {
-            FormulaExpression::PathReference(path) => Self::resolve_path_to_node_any(path, context),
+            FormulaExpression::PathReference(path) => {
+                let (walked, node) = Self::resolve_path_and_node(path, context)?;
+                // The list an aggregate runs over is reached through here. Recording it is what
+                // makes a change to one entry reach whatever adds them up.
+                crate::dependencies::note_read(&walked);
+                Some(node)
+            }
             FormulaExpression::FieldReference(name) => {
                 if let Some(BoundValue::Node(n)) = context.var_bindings.get(name) {
                     return Some(*n);
@@ -3377,6 +3473,9 @@ impl FormulaEvaluator {
                     .into_iter()
                     .find(|c| &c.name == name)
                 {
+                    let mut walked = context.node_path.clone();
+                    walked.push(child.name.clone());
+                    crate::dependencies::note_read(&walked);
                     return Some(child);
                 }
                 // Next, try immediate parent for siblings
@@ -3386,6 +3485,11 @@ impl FormulaEvaluator {
                         .into_iter()
                         .find(|c| &c.name == name)
                     {
+                        if context.node_path.len() >= 1 {
+                            let mut walked = context.node_path[..context.node_path.len() - 1].to_vec();
+                            walked.push(sib.name.clone());
+                            crate::dependencies::note_read(&walked);
+                        }
                         return Some(sib);
                     }
                 }
@@ -3400,6 +3504,7 @@ impl FormulaEvaluator {
                             if let Some(found) =
                                 context.document_root.iter().find(|n| &n.name == name)
                             {
+                                crate::dependencies::note_read(&[found.name.clone()]);
                                 return Some(found);
                             }
                             break;
@@ -3413,6 +3518,11 @@ impl FormulaEvaluator {
                                 .into_iter()
                                 .find(|c| &c.name == name)
                             {
+                                // Where it was found, not where the search began - a list named
+                                // from three levels down is still that list.
+                                let mut walked = context.node_path[..parent_end].to_vec();
+                                walked.push(sib.name.clone());
+                                crate::dependencies::note_read(&walked);
                                 return Some(sib);
                             }
                         }
@@ -3518,20 +3628,28 @@ impl FormulaEvaluator {
         }
     }
 
-    fn resolve_path_to_node_any<'a>(
+    /// The node a reference names, and the path walked to reach it.
+    ///
+    /// The path is what lets a read be recorded against whatever is being worked out - see
+    /// `dependencies`. It comes back empty when there is nothing meaningful to record: a name
+    /// bound to a list element inside a lambda has no path of its own, and needs none, because
+    /// the list it came from was resolved by one of the other branches and a read of the list
+    /// covers everything in it.
+    fn resolve_path_and_node<'a>(
         path: &[String],
         context: &'a EvaluationContext,
-    ) -> Option<&'a OverseerNode> {
+    ) -> Option<(Vec<String>, &'a OverseerNode)> {
         if path.is_empty() {
             return None;
         }
         if path[0] == "/" {
-            // Find nearest ancestor containing first segment
+            // Nearest ancestor that has the first segment as a child, else the document root.
             let segments = &path[1..];
             if segments.is_empty() {
                 return None;
             }
             let mut start = context.current_node;
+            let mut walked: Vec<String> = context.node_path.clone();
             let mut p_end = context.node_path.len();
             let mut found = false;
             while p_end > 0 {
@@ -3545,6 +3663,7 @@ impl FormulaEvaluator {
                         .any(|c| c.name == segments[0])
                     {
                         start = candidate;
+                        walked = context.node_path[..p_end].to_vec();
                         found = true;
                         break;
                     }
@@ -3557,6 +3676,7 @@ impl FormulaEvaluator {
                     context.document_root.iter().find(|n| n.name == segments[0])
                 {
                     start = root_match;
+                    walked = vec![segments[0].clone()];
                     skip_first = true;
                 }
             }
@@ -3567,8 +3687,9 @@ impl FormulaEvaluator {
                     .get_accessible_children()
                     .into_iter()
                     .find(|c| &c.name == seg)?;
+                walked.push(current.name.clone());
             }
-            return Some(current);
+            return Some((walked, current));
         }
         if path[0] == ".." {
             let mut hops = 1usize;
@@ -3582,15 +3703,17 @@ impl FormulaEvaluator {
             }
             let ancestor_segments = &context.node_path[..context.node_path.len() - hops];
             let mut current = Self::resolve_path_to_node(ancestor_segments, context.document_root)?;
+            let mut walked: Vec<String> = ancestor_segments.to_vec();
             for seg in &path[idx..] {
                 current = current
                     .get_accessible_children()
                     .into_iter()
                     .find(|c| &c.name == seg)?;
+                walked.push(current.name.clone());
             }
-            return Some(current);
+            return Some((walked, current));
         }
-        // Identifier-based starting at a bound variable node, if present
+        // A name bound to a list element. No path, by design - see the note above.
         if let Some(BoundValue::Node(start)) = context.var_bindings.get(&path[0]) {
             let mut current = *start;
             for seg in &path[1..] {
@@ -3599,14 +3722,15 @@ impl FormulaEvaluator {
                     .into_iter()
                     .find(|c| &c.name == seg)?;
             }
-            return Some(current);
+            return Some((Vec::new(), current));
         }
-        // Fallback: search from nearest ancestor following child chain
+        // Nearest ancestor from which the whole path can be followed.
         let mut end = context.node_path.len();
         while end > 0 {
             if let Some(mut node) =
                 Self::resolve_path_to_node(&context.node_path[..end], context.document_root)
             {
+                let mut walked: Vec<String> = context.node_path[..end].to_vec();
                 let mut ok = true;
                 for seg in path {
                     if let Some(next) = node
@@ -3615,18 +3739,26 @@ impl FormulaEvaluator {
                         .find(|c| &c.name == seg)
                     {
                         node = next;
+                        walked.push(node.name.clone());
                     } else {
                         ok = false;
                         break;
                     }
                 }
                 if ok {
-                    return Some(node);
+                    return Some((walked, node));
                 }
             }
             end -= 1;
         }
         None
+    }
+
+    fn resolve_path_to_node_any<'a>(
+        path: &[String],
+        context: &'a EvaluationContext,
+    ) -> Option<&'a OverseerNode> {
+        Self::resolve_path_and_node(path, context).map(|(_, node)| node)
     }
 
 

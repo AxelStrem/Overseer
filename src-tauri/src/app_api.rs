@@ -289,7 +289,56 @@ pub(crate) fn find_node_by_path_mut<'a>(
     None
 }
 
+/// Open a document and record what everything was worked out from.
+///
+/// For a caller that will edit the same document repeatedly and wants each edit answered from the
+/// graph. Costs this one resolve dearly - see the note in `load_document` - and pays for itself
+/// over a handful of edits.
+pub fn load_document_with_dependencies(content: String) -> Result<Vec<OverseerNode>> {
+    load_document_maybe_recording(content, true)
+}
+
 pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
+    let asked = std::env::var("OVERSEER_DEPENDENCY_GRAPH").is_ok();
+    load_document_maybe_recording(content, asked)
+}
+
+/// The document exactly as it was last worked out, when working it out again could not change it.
+///
+/// Only when three things hold: this is the same text, a graph was recorded for it, and nothing in
+/// it read the clock. The last is the one that matters - most of what these documents compute is a
+/// function of their text, but a task's priority climbs by the day and its deadline passes, and
+/// handing back yesterday's answer for those would be wrong in the way nobody notices.
+fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
+    let graph = graph_for(content)?;
+    if graph.is_empty() {
+        return None;
+    }
+    let mut previous = baseline_copy(content)?;
+    if !graph.reads_the_clock() {
+        return Some(previous);
+    }
+
+    // It does read the clock - but the graph says *where*, and everything else in the document is
+    // a function of its text and has not moved. So only what descends from the clock is worked
+    // out again: on a list of tasks that is the priorities and the deadlines, not the rules, not
+    // the history, not the hundred fields that spell out what each one is.
+    let stale = graph.nodes_to_work_out_again(&[crate::formula_evaluator::CLOCK.to_string()]);
+    if stale.is_empty() {
+        return Some(previous);
+    }
+    let targets: std::collections::HashSet<String> = stale.into_iter().collect();
+    resolver::resolve_specific_fields(&mut previous, &targets);
+    // Charts outright, for the reason given where an edit does the same: a series hangs on a plot
+    // child while the reads are recorded against the chart.
+    resolver::compute_chart_series(&mut previous);
+    Some(previous)
+}
+
+fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<OverseerNode>> {
+    if let Some(unchanged) = already_worked_out(&content) {
+        return Ok(unchanged);
+    }
     match parse_document(&content) {
         Ok((_remaining, mut nodes)) => {
             // Mounted content is not part of the host document's text, so it has to be
@@ -302,7 +351,25 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
             // `preload` and `lazy` are read as written rather than as computed, which is what
             // lets this run before anything is resolved.
             ActionExecutor::preload_mounts(&mut nodes);
+            // Recorded while resolving, so an edit afterwards can be told what it reaches rather
+            // than having the whole document worked out again.
+            //
+            // Off unless asked for, because the trade is not the same for everyone. Measured on
+            // the food tracker: opening it goes from 27 seconds to 124 while recording, and an
+            // edit from 38 seconds to 3. That is a good bargain for something that opens a
+            // document once and then edits it - the desktop app - and a bad one for the bot,
+            // which opens the document afresh on every request and would pay the recording every
+            // time to save an edit it often does not make.
+            //
+            // What makes it dear is a string built and kept for every read, and there are tens of
+            // millions of them. Interning those is what would let this be the default.
+            if record {
+                crate::dependencies::start_recording();
+            }
             resolver::resolve_document(&mut nodes);
+            if record {
+                remember_graph(&content, crate::dependencies::take_recording());
+            }
             // The caller holds this text and this document, so the next interaction
             // can be answered with a change rather than with the document.
             remember(&content, &nodes);
@@ -323,6 +390,105 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
 /// whole point, since sending it back is what costs seconds.
 static LAST_RESOLVED: std::sync::Mutex<Option<(String, Vec<OverseerNode>)>> =
     std::sync::Mutex::new(None);
+
+/// What the document last resolved was worked out from, and the text it belongs to.
+///
+/// Held against the text so it cannot be used for a document it was not built for: the server
+/// serves several, and a graph applied to the wrong one would name nodes that do not exist and,
+/// worse, fail to name ones that do. A mismatch falls back to resolving everything.
+static LAST_GRAPH: std::sync::Mutex<Option<(String, crate::dependencies::Graph)>> =
+    std::sync::Mutex::new(None);
+
+fn remember_graph(text: &str, graph: crate::dependencies::Graph) {
+    if let Ok(mut slot) = LAST_GRAPH.lock() {
+        *slot = Some((text.to_string(), graph));
+    }
+}
+
+/// The graph for this text, if the one held is for this text.
+fn graph_for(text: &str) -> Option<crate::dependencies::Graph> {
+    LAST_GRAPH
+        .lock()
+        .ok()
+        .and_then(|slot| match slot.as_ref() {
+            Some((held, graph)) if held == text => Some(graph.clone()),
+            _ => None,
+        })
+}
+
+/// The document has been written out afresh; the graph still describes it, under its new text.
+fn regraph(text: &str) {
+    if let Ok(mut slot) = LAST_GRAPH.lock() {
+        if let Some((held, _)) = slot.as_mut() {
+            *held = text.to_string();
+        }
+    }
+}
+
+/// Drop the graph, so the next resolve works everything out. For tests that need the slow answer
+/// to compare against, and for anything that wants to be sure it is not reading a stale one.
+pub fn forget_dependencies() {
+    if let Ok(mut slot) = LAST_GRAPH.lock() {
+        *slot = None;
+    }
+}
+
+/// The document as it last stood for this text, without taking it.
+///
+/// `take_baseline` hands it over for the delta to consume; this only wants to read what was
+/// worked out last time.
+fn baseline_copy(content: &str) -> Option<Vec<OverseerNode>> {
+    LAST_RESOLVED
+        .lock()
+        .ok()
+        .and_then(|slot| match slot.as_ref() {
+            Some((text, nodes)) if text == content => Some(nodes.clone()),
+            _ => None,
+        })
+}
+
+/// Copy every worked-out value from one tree onto the other, matching node for node.
+///
+/// The two are the same document - one parsed afresh, one as it last stood - so they are walked
+/// together rather than by path. A shape that does not match is reported, and the caller works
+/// everything out instead of trusting a half-copied tree.
+fn carry_over_computed(
+    into: &mut [OverseerNode],
+    from: &[OverseerNode],
+    edited: &std::collections::HashSet<String>,
+    trail: &mut Vec<String>,
+) -> bool {
+    if into.len() != from.len() {
+        return false;
+    }
+    for (idx, (fresh, previous)) in into.iter_mut().zip(from.iter()).enumerate() {
+        if fresh.name != previous.name {
+            return false;
+        }
+        let repeats = from.iter().take(idx).filter(|c| c.name == fresh.name).count();
+        trail.push(if repeats > 0 {
+            format!("{}#{}", fresh.name, repeats)
+        } else {
+            fresh.name.clone()
+        });
+        // Not onto what the edit just changed. A field holding a plain value has no formula to
+        // work it out again, so copying the old answer over the new one would put the edit back -
+        // and everything reading it would agree, convincingly and wrongly.
+        if !edited.contains(&trail.join("/")) {
+            for (key, value) in &previous.parameters {
+                if key.starts_with("_computed_") {
+                    fresh.parameters.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        let ok = carry_over_computed(&mut fresh.children, &previous.children, edited, trail);
+        trail.pop();
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
 
 fn remember(text: &str, nodes: &[OverseerNode]) {
     if let Ok(mut slot) = LAST_RESOLVED.lock() {
@@ -413,6 +579,7 @@ fn finish_update_with(
         // The caller gets the changes, so the document itself can be handed to the cache
         // rather than copied into it.
         Some(changes) => {
+            regraph(&text);
             if let Ok(mut slot) = LAST_RESOLVED.lock() {
                 *slot = Some((text.clone(), resolved));
             }
@@ -423,6 +590,7 @@ fn finish_update_with(
             })
         }
         None => {
+            regraph(&text);
             remember(&text, &resolved);
             Ok(ResolvedUpdate {
                 text,
@@ -823,15 +991,53 @@ pub fn resolve_selective(
                     }
                 }
 
-                // Recompute everything the edit can reach. Dependency-directed updates ran
-                // here before, but they missed cascades through unnamed transparent wrappers,
-                // so the frontend compensated by following every selective resolve with a
-                // second full one - paying two resolves and four document transfers per edit
-                // to get what one pass can guarantee. The structure is already resolved above
-                // and only values have been written since, so resolving values is all that is
-                // outstanding; on a 15K-node document it also measures faster than building
-                // and walking the dependency graph.
-                resolver::resolve_values(&mut nodes);
+                // Recompute what the edit can reach, and nothing else.
+                //
+                // Dependency-directed updates ran here once and were taken out because they
+                // missed cascades through unnamed transparent wrappers - a field inside an
+                // unnamed div answers to the div's parent, so a read recorded a path to a node
+                // that is not where the resolver keeps it. That is fixed, and there is now a test
+                // that would have caught it: `the_cascade_covers_the_change` edits fields in the
+                // real documents, resolves everything the slow way, and insists that every value
+                // which moved was named by the graph first.
+                //
+                // Without a graph for this exact text - a document opened elsewhere, or one whose
+                // text has moved on - everything is resolved, which is what happened before and
+                // is never wrong.
+                let ready = graph_for(&content)
+                    .zip(baseline_copy(&content))
+                    .map(|(graph, previous)| {
+                        (graph.nodes_to_work_out_again(&changed_fields), graph, previous)
+                    })
+                    .filter(|(to_redo, _, _)| !to_redo.is_empty());
+
+                match ready {
+                    // Everything that was worked out last time, plus whatever this edit reaches.
+                    Some((to_redo, mut graph, previous))
+                        if carry_over_computed(
+                            &mut nodes,
+                            &previous,
+                            &changed_fields.iter().cloned().collect(),
+                            &mut Vec::new(),
+                        ) =>
+                    {
+                        let targets: std::collections::HashSet<String> =
+                            to_redo.into_iter().collect();
+                        // Recorded again, so whatever was worked out says what it read this time -
+                        // an edit that sends a lookup somewhere else leaves the graph describing
+                        // where it goes now.
+                        crate::dependencies::start_recording();
+                        resolver::resolve_specific_fields(&mut nodes, &targets);
+                        // Charts outright, not by the cascade: a series hangs on a plot child
+                        // while the reads are recorded against the chart, so the names do not
+                        // line up. Cheap enough that deciding is not worth the risk of a graph
+                        // drawn from last week's numbers.
+                        resolver::compute_chart_series(&mut nodes);
+                        graph.absorb(crate::dependencies::take_recording());
+                        remember_graph(&content, graph);
+                    }
+                    _ => resolver::resolve_values(&mut nodes),
+                }
             }
             if profiling {
                 eprintln!(
