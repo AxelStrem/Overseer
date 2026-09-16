@@ -288,21 +288,47 @@ tab t (label="T") {
 "#;
 
 #[test]
-fn a_row_with_nothing_in_the_field_fails_the_whole_filter() {
-    // Not what anyone would want, and not something the index did: with indexing switched off
-    // entirely this document gives the same answer, so it is recorded here rather than fixed
-    // under cover of a performance change.
+fn a_row_with_nothing_in_the_field_does_not_break_the_others() {
+    // One row has no `kind`, so the list cannot be indexed and is walked. The row that does hold
+    // "here" still has to be found.
     //
-    // The list cannot be indexed - one row holds no `kind` at all - so it is walked. The two
-    // walks then disagree with each other: the one that resolves a node skips a row whose
-    // predicate will not evaluate, while the one that produces a value propagates the failure
-    // with `?` and loses the whole formula. The row that does hold "here" is never reached, and
-    // a sum that should be 1 reads as an error instead.
+    // This used to read "invalid formula error": the walk that produces a value propagated the
+    // one row's failure and lost the whole sum, while the walk that resolves a node skipped it.
+    // A half-written row is ordinary, and one of them should not cost the other twelve.
+    assert_eq!(number(UNSET, "found"), 1.0);
+}
+
+const NOTHING_ANYWHERE: &str = r#"
+tab t (label="T") {
+    div (hidden=true) {
+        div Row (layout="horizontal") {
+            string kind (label="")
+            int n (label="") = 0
+        }
+    }
+
+    list Rows (entry=<Row>) {
+        - {
+            - n = 1
+        }
+        - {
+            - n = 2
+        }
+    }
+
+    int found (label="") = $(/t/Rows.filter(|x| x/kind == "here").map(|x| x/n).sum())
+    int missing_field (label="") = $(/t/Rows.filter(|x| x/nonexistent == "here").map(|x| x/n).sum())
+}
+"#;
+
+#[test]
+fn a_predicate_no_row_can_answer_matches_no_rows() {
+    // The other side of the same decision, stated so it is a choice on the record rather than a
+    // side effect. No row holds a `kind`, and none names a field called `nonexistent` at all -
+    // both now read as "nothing matched" rather than as an error.
     //
-    // Worth fixing on its own, with its own thought about what a predicate that cannot be
-    // answered should mean. When it is, this test should say `assert_eq!(number(..), 1.0)`.
-    assert_eq!(
-        value_of(UNSET, "found"),
-        OverseerValue::String("invalid formula error".to_string()),
-    );
+    // The cost is that a misspelt field name is quiet. It buys consistency with the filter that
+    // resolves a node, which has always answered this way.
+    assert_eq!(number(NOTHING_ANYWHERE, "found"), 0.0);
+    assert_eq!(number(NOTHING_ANYWHERE, "missing_field"), 0.0);
 }

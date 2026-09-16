@@ -3176,6 +3176,19 @@ impl FormulaEvaluator {
                             }
                         }
                     }
+                    // A row the predicate cannot answer for is a row that does not match, and
+                    // not a reason to lose the whole formula.
+                    //
+                    // The two filters used to disagree about this. Resolving a node skipped such
+                    // a row; producing a value propagated the failure, so a single entry with
+                    // nothing yet in the field it is asked about turned an entire sum into
+                    // "invalid formula error" - and one entry like that is ordinary, since a row
+                    // can be half-written, or written by a hand that left a field out.
+                    //
+                    // The cost of agreeing is that a predicate naming a field that does not exist
+                    // at all now reads as "nothing matched" rather than as an error. That was
+                    // already true of every filter that resolves a node, so this makes one
+                    // behaviour of two rather than a new one.
                     let mut out: Vec<ListItem> = Vec::new();
                     for item in list.into_iter() {
                         if let (Some((field, operator, wanted, field_on_left)), ListItem::Node(n)) =
@@ -3187,7 +3200,11 @@ impl FormulaEvaluator {
                                 } else {
                                     Self::apply_binary_operator(wanted, operator, &held)
                                 };
-                                if Self::value_to_bool(&verdict?).unwrap_or(false) {
+                                if verdict
+                                    .ok()
+                                    .and_then(|v| Self::value_to_bool(&v).ok())
+                                    .unwrap_or(false)
+                                {
                                     out.push(item);
                                 }
                                 continue;
@@ -3195,13 +3212,17 @@ impl FormulaEvaluator {
                         }
                         let keep_val = match &item {
                             ListItem::Node(n) => {
-                                Self::eval_lambda(lambda, None, Some(*n), None, context)?
+                                Self::eval_lambda(lambda, None, Some(*n), None, context)
                             }
                             ListItem::Value(val) => {
-                                Self::eval_lambda(lambda, None, None, Some(val.clone()), context)?
+                                Self::eval_lambda(lambda, None, None, Some(val.clone()), context)
                             }
                         };
-                        if Self::value_to_bool(&keep_val).unwrap_or(false) {
+                        if keep_val
+                            .ok()
+                            .and_then(|v| Self::value_to_bool(&v).ok())
+                            .unwrap_or(false)
+                        {
                             out.push(item);
                         }
                     }

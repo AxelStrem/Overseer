@@ -344,7 +344,18 @@ tab tracker_v2 (label="Calories", mutable=true) {
         float standing_protein (label="protein a day", suffix=" g", precision=0) = 100
     }
 
-    list History (entry=<DayRecord>, key="date", keyPrecision="day") {
+    // Newest first, so today is at the top and the scroll goes backwards in time. `sort_by`
+    // sorts ascending only, so the instant is negated - the same idiom the diary, the shopping
+    // list and the blood pressure log all use. `millis_since_epoch` rather than "how long ago",
+    // because a key that follows the clock changes every minute and would then put every entry
+    // into the delta of every interaction.
+    //
+    // Presentation only: the file keeps the days in whatever order they were written in, which
+    // matters here because days added through the UI are prepended and days added by the bot are
+    // appended, so the stored order has never been the order to read them in.
+    // On one line because the serialiser writes parameters on one line, and this document is
+    // checked byte for byte across a save - see tests/app_load_save_cycle.rs.
+    list History (entry=<DayRecord>, key="date", keyPrecision="day", sort_by=$(|x| 0 - millis_since_epoch(x/date))) {
         - {
             - date = "2026-08-03"
             list intake {
