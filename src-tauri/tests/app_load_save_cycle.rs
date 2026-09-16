@@ -201,6 +201,35 @@ fn repeated_reevaluation_and_save_is_stable() {
     });
 }
 
+/// The project tracker, which is edited through the interface rather than by hand.
+///
+/// Worth its own test for a reason the tracker's does not cover: a saved entry has its fields
+/// written in the order the template declares them, whatever order they were authored in. So a
+/// document whose entries are written in any other order reformats itself the first time a button
+/// is pressed - a large diff for no change, on a document meant to be pressed. This catches it
+/// while `drift` on that very list is still open.
+#[test]
+fn the_project_tracker_survives_repeated_saves() {
+    serialised(|| {
+        let examples =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/projects");
+        let host_path = examples.join("project_overseer.os");
+        let original = std::fs::read_to_string(&host_path).expect("project_overseer.os");
+        DocumentManager::set_current_document(Some(host_path.to_string_lossy().as_ref()));
+
+        let mut text = original.clone();
+        for pass in 1..=3 {
+            text = load_and_save(&text);
+            assert_eq!(
+                text, original,
+                "project_overseer.os drifted on save number {}",
+                pass
+            );
+        }
+        DocumentManager::set_current_document(None);
+    });
+}
+
 #[test]
 fn the_real_tracker_survives_reevaluation_and_save() {
     serialised(|| {

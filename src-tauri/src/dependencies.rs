@@ -304,6 +304,36 @@ impl Graph {
     /// is a function of the text alone - so it can be handed back as it was rather than worked out
     /// again. A list of tasks asks on every row, because a priority climbs by the day and a
     /// deadline passes; a shopping list never does.
+    /// Roughly what this graph occupies, erring high.
+    ///
+    /// Worth knowing because it is not a rounding error beside the document it describes: on the
+    /// food tracker the resolved tree is about 84 MB and this is another 66, so a cache that
+    /// counted only the tree would keep half again as much as it meant to. Every path appears
+    /// twice, once in each direction, which is where most of it goes.
+    ///
+    /// Same bias as `document_cache::footprint`, for the same reason - see the note there.
+    pub fn footprint(&self) -> usize {
+        fn table(entries: usize, per_entry: usize) -> usize {
+            if entries == 0 {
+                return 0;
+            }
+            (entries * 8 / 7 + 1).next_power_of_two() * (per_entry + 1)
+        }
+        let outer = std::mem::size_of::<(String, HashSet<String>)>();
+        let inner = std::mem::size_of::<String>();
+        let mut total = 0;
+        for side in [&self.reads, &self.read_by] {
+            total += table(side.len(), outer);
+            for (path, others) in side {
+                total += path.capacity() + table(others.len(), inner);
+                for other in others {
+                    total += other.capacity();
+                }
+            }
+        }
+        total * 7 / 4
+    }
+
     pub fn reads_the_clock(&self) -> bool {
         self.read_by.contains_key(crate::formula_evaluator::CLOCK)
     }

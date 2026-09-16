@@ -383,54 +383,26 @@ fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<Ov
 
 
 
-/// The last document that was resolved, with the text it was resolved from.
+/// Describing a change needs the state it changed from, and answering an edit from the graph needs
+/// what the last resolve read. Rust owns the document, so it keeps both rather than having the
+/// caller send them back - which is the whole point, since sending them back is what costs seconds.
 ///
-/// Describing a change needs the state it changed from. Rust owns the document, so it can
-/// simply keep the previous one rather than having the caller send it back - which is the
-/// whole point, since sending it back is what costs seconds.
-static LAST_RESOLVED: std::sync::Mutex<Option<(String, Vec<OverseerNode>)>> =
-    std::sync::Mutex::new(None);
-
-/// What the document last resolved was worked out from, and the text it belongs to.
-///
-/// Held against the text so it cannot be used for a document it was not built for: the server
-/// serves several, and a graph applied to the wrong one would name nodes that do not exist and,
-/// worse, fail to name ones that do. A mismatch falls back to resolving everything.
-static LAST_GRAPH: std::sync::Mutex<Option<(String, crate::dependencies::Graph)>> =
-    std::sync::Mutex::new(None);
-
+/// Both live in `document_cache`, which holds several documents within a memory budget. It used to
+/// be two single slots, and the server evicted each document by serving the next; see that module
+/// for what that cost and why the budget is in bytes.
 fn remember_graph(text: &str, graph: crate::dependencies::Graph) {
-    if let Ok(mut slot) = LAST_GRAPH.lock() {
-        *slot = Some((text.to_string(), graph));
-    }
+    crate::document_cache::put_graph(text, graph);
 }
 
-/// The graph for this text, if the one held is for this text.
+/// The graph for this text, if one is held for this text.
 fn graph_for(text: &str) -> Option<crate::dependencies::Graph> {
-    LAST_GRAPH
-        .lock()
-        .ok()
-        .and_then(|slot| match slot.as_ref() {
-            Some((held, graph)) if held == text => Some(graph.clone()),
-            _ => None,
-        })
+    crate::document_cache::graph_for(text)
 }
 
-/// The document has been written out afresh; the graph still describes it, under its new text.
-fn regraph(text: &str) {
-    if let Ok(mut slot) = LAST_GRAPH.lock() {
-        if let Some((held, _)) = slot.as_mut() {
-            *held = text.to_string();
-        }
-    }
-}
-
-/// Drop the graph, so the next resolve works everything out. For tests that need the slow answer
+/// Drop every graph, so the next resolve works everything out. For tests that need the slow answer
 /// to compare against, and for anything that wants to be sure it is not reading a stale one.
 pub fn forget_dependencies() {
-    if let Ok(mut slot) = LAST_GRAPH.lock() {
-        *slot = None;
-    }
+    crate::document_cache::forget_graphs();
 }
 
 /// The document as it last stood for this text, without taking it.
@@ -438,13 +410,7 @@ pub fn forget_dependencies() {
 /// `take_baseline` hands it over for the delta to consume; this only wants to read what was
 /// worked out last time.
 fn baseline_copy(content: &str) -> Option<Vec<OverseerNode>> {
-    LAST_RESOLVED
-        .lock()
-        .ok()
-        .and_then(|slot| match slot.as_ref() {
-            Some((text, nodes)) if text == content => Some(nodes.clone()),
-            _ => None,
-        })
+    crate::document_cache::nodes_for(content)
 }
 
 /// Copy every worked-out value from one tree onto the other, matching node for node.
@@ -491,21 +457,16 @@ fn carry_over_computed(
 }
 
 fn remember(text: &str, nodes: &[OverseerNode]) {
-    if let Ok(mut slot) = LAST_RESOLVED.lock() {
-        *slot = Some((text.to_string(), nodes.to_vec()));
-    }
+    crate::document_cache::put_nodes(text, nodes);
 }
 
-
-/// Drop the remembered document.
+/// Drop every remembered document.
 ///
 /// Nothing depends on this for correctness - a baseline is only used when its text matches
 /// what the caller sent, so a stale one is ignored rather than misapplied. It exists so a
 /// closed document does not sit in memory, and so tests can start from a known state.
 pub fn forget_baseline() {
-    if let Ok(mut slot) = LAST_RESOLVED.lock() {
-        *slot = None;
-    }
+    crate::document_cache::forget_nodes();
 }
 
 /// A resolved document, described as a change where that was possible.
@@ -526,13 +487,7 @@ pub struct ResolvedUpdate {
 /// anything else and the change would be described against a document the caller is not
 /// holding - so a baseline that does not match is put back untouched.
 fn take_baseline(content: &str) -> Option<Vec<OverseerNode>> {
-    LAST_RESOLVED.lock().ok().and_then(|mut slot| match slot.take() {
-        Some((text, nodes)) if text == content => Some(nodes),
-        other => {
-            *slot = other;
-            None
-        }
-    })
+    crate::document_cache::take_nodes(content)
 }
 
 /// The document as its own text reads, rather than as it happens to sit in memory.
@@ -559,18 +514,24 @@ fn as_its_text_reads(nodes: &[OverseerNode]) -> Result<(String, Vec<OverseerNode
 }
 
 /// Serialize a resolved document and describe it as a change where there was a baseline.
+///
+/// `was` is the text the interaction started from. What is held for it - the graph in particular -
+/// still describes this document, and is moved onto the new text rather than thrown away. It has
+/// to be named because the cache holds several documents now, and only this one has moved.
 fn finish_update(
+    was: &str,
     resolved: Vec<OverseerNode>,
     baseline: Option<Vec<OverseerNode>>,
 ) -> Result<ResolvedUpdate> {
     let text = OverseerFileHandler::serialize_nodes(&resolved).map_err(|e| {
         OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
     })?;
-    finish_update_with(text, resolved, baseline)
+    finish_update_with(was, text, resolved, baseline)
 }
 
 /// The same, when the text has already been worked out.
 fn finish_update_with(
+    was: &str,
     text: String,
     resolved: Vec<OverseerNode>,
     baseline: Option<Vec<OverseerNode>>,
@@ -579,10 +540,8 @@ fn finish_update_with(
         // The caller gets the changes, so the document itself can be handed to the cache
         // rather than copied into it.
         Some(changes) => {
-            regraph(&text);
-            if let Ok(mut slot) = LAST_RESOLVED.lock() {
-                *slot = Some((text.clone(), resolved));
-            }
+            crate::document_cache::rekey(was, &text);
+            crate::document_cache::own_nodes(&text, resolved);
             Ok(ResolvedUpdate {
                 text,
                 changes: Some(changes),
@@ -590,7 +549,7 @@ fn finish_update_with(
             })
         }
         None => {
-            regraph(&text);
+            crate::document_cache::rekey(was, &text);
             remember(&text, &resolved);
             Ok(ResolvedUpdate {
                 text,
@@ -608,8 +567,8 @@ pub fn resolve_selective_update(
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<ResolvedUpdate> {
     let baseline = take_baseline(&content);
-    let resolved = resolve_selective(content, changed_fields, changed_field_values)?;
-    finish_update(resolved, baseline)
+    let resolved = resolve_selective(content.clone(), changed_fields, changed_field_values)?;
+    finish_update(&content, resolved, baseline)
 }
 
 /// Run an event and answer with what changed rather than with the document.
@@ -619,6 +578,7 @@ pub fn execute_event_update(
     event_name: String,
 ) -> Result<ResolvedUpdate> {
     let baseline = take_baseline(&content);
+    let was = content.clone();
     // Rebuilding the document replaces the baseline with the pre-event state; the post-event
     // one is stored below, so what is remembered is what the caller ends up holding.
     let mut nodes = load_document(content)?;
@@ -627,7 +587,7 @@ pub fn execute_event_update(
     // entries, and a shape change is what puts the names out of step. An edit changes values,
     // costs one parse today, and should not be made to cost two.
     let (text, nodes) = as_its_text_reads(&nodes)?;
-    finish_update_with(text, nodes, baseline)
+    finish_update_with(&was, text, nodes, baseline)
 }
 
 /// A guarded field and the value the document authored for it.
