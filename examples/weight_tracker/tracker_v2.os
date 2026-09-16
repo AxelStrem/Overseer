@@ -24,6 +24,14 @@ tab tracker_v2 (label="Calories", mutable=true) {
     // The food catalog, mounted read-only and never shown. Preloaded so handle lookups
     // resolve as soon as the document opens rather than after a manual Load.
     mount FOODS (hidden=true, lazy=false, mutable=false, source="foods.os/food_catalog/Catalog") { }
+
+    // What the tags mean, for drawing them. A separate mount because FOODS brings in the
+    // catalogue and this is a different list in the same file; a mount names one thing.
+    //
+    // Only the renderer reads it, to turn a handle like "vegan" into a coloured chip saying so.
+    // A food carrying a tag this does not list still shows it, marked as unlisted - which is the
+    // honest thing, since the food really does carry it.
+    mount VOCAB (hidden=true, lazy=false, mutable=false, source="foods.os/food_catalog/Labels") { }
     div (hidden=true) {
 
 
@@ -108,6 +116,15 @@ tab tracker_v2 (label="Calories", mutable=true) {
                               width=8%, hidden=$(at == "")) = ""
 
                 string name (font-size=20px, width=24%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/name)
+
+                // What the food is, looked up the same way its name and its macros are.
+                //
+                // Not editable here, and that is the point rather than a restriction: these
+                // belong to the food, not to this meal. An editable field would write the tags
+                // onto the record, where the next resolve would overwrite them from the
+                // catalogue - a change that appears to work and then quietly does not. Change
+                // them in foods.os and every meal that ever ate it says the same new thing.
+                tags labels (label="", vocabulary="tracker_v2/VOCAB/Labels", mutable=false, width=16%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/labels)
 
                 // Whichever of these a record states, the other is derived. Both are null here
                 // so neither shadows the other; a record must state one of them.

@@ -230,6 +230,30 @@ fn the_project_tracker_survives_repeated_saves() {
     });
 }
 
+/// The food catalogue, which is edited by the bot and by hand more than anything else here.
+///
+/// Nothing guarded it until a tags field was added to every food and the line went in above `name`
+/// rather than below `portion_weight`. That is invisible until something saves: the serialiser
+/// writes a node's children in template order, so the first write would have moved a line in every
+/// one of a hundred and thirty-seven entries.
+#[test]
+fn the_food_catalogue_survives_repeated_saves() {
+    serialised(|| {
+        let examples =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/weight_tracker");
+        let host_path = examples.join("foods.os");
+        let original = std::fs::read_to_string(&host_path).expect("foods.os");
+        DocumentManager::set_current_document(Some(host_path.to_string_lossy().as_ref()));
+
+        let mut text = original.clone();
+        for pass in 1..=3 {
+            text = load_and_save(&text);
+            assert_eq!(text, original, "foods.os drifted on save number {}", pass);
+        }
+        DocumentManager::set_current_document(None);
+    });
+}
+
 #[test]
 fn the_real_tracker_survives_reevaluation_and_save() {
     serialised(|| {

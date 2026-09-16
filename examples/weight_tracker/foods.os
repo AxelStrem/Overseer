@@ -22,10 +22,23 @@ tab food_catalog (label="Food Catalog", mutable=true) {
 
     div (hidden=true) {
 
+
+        // One tag that a food can carry: the handle it is stored as, what to call it, and what
+        // colour to draw it.
+        div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
+            string tag (label="", width=25%) = ""
+            string name (label="", width=45%) = ""
+            string colour (label="", width=30%) = "#6b7280"
+        }
+
         div Food (layout="vertical", margin=0) {
             string handle (label="Handle", width=15%) = "unnamed"
             string name (label="Name", width=25%) = ""
             float portion_weight (label="Portion", suffix=" g", precision=0) = 100
+
+            // What this food is, as chips. Empty is a perfectly good answer - it means nobody
+            // has decided yet, not that the food is none of these.
+            tags labels (label="Tags", vocabulary="food_catalog/Labels", width=40%) = ""
 
             // Per 100 g - the canonical side. Defaults live here.
             div per_100g (label="Per 100 g", layout="horizontal", margin=0) {
@@ -88,11 +101,68 @@ tab food_catalog (label="Food Catalog", mutable=true) {
         }
     }
 
+
+    text labels_header (markdown=true) = "## Tags"
+
+    // What a food can be marked as.
+    //
+    // Kept here rather than in the tracker because the tags belong to the food: a record of
+    // eating something stores a handle and an amount, and everything else about it is looked up.
+    // The tracker mounts this list to draw the chips, the same way it mounts the catalogue for
+    // the macros.
+    //
+    // `vegan` and `vegetarian` are both put on a vegan food rather than one implying the other.
+    // Nothing here knows that vegan is narrower, so a search for vegetarian food would otherwise
+    // miss every vegan one - and the reader would have to remember the implication.
+    //
+    // `alcohol` and `caffeine` are the odd pair: `per_100g` already carries both as numbers, so
+    // these say nothing new. They are here to be *read* - a chip on a row, a filter by eye - and
+    // they were set from those numbers rather than typed, so the two agree. If one is ever
+    // changed without the other they will not, and the number is the one to believe.
+    list Labels (entry=<Label>, key="tag", layout="vertical", spacing=1) {
+        - {
+            - tag = "vegetarian"
+            - name = "vegetarian"
+            - colour = "#4caf50"
+        }
+        - {
+            - tag = "vegan"
+            - name = "vegan"
+            - colour = "#0e8a16"
+        }
+        - {
+            - tag = "meat"
+            - name = "meat"
+            - colour = "#b71c1c"
+        }
+        - {
+            - tag = "fish"
+            - name = "fish"
+            - colour = "#0277bd"
+        }
+        - {
+            - tag = "dairy"
+            - name = "dairy"
+            - colour = "#f9a825"
+        }
+        - {
+            - tag = "alcohol"
+            - name = "alcohol"
+            - colour = "#6a1b9a"
+        }
+        - {
+            - tag = "caffeine"
+            - name = "caffeine"
+            - colour = "#5d4037"
+        }
+    }
+
     list Catalog (entry=<Food>, key="handle", layout="vertical", width=100%) {
         - {
             - handle = "apple"
             - name = "Apple"
             - portion_weight = 180
+            - labels = "vegetarian, vegan"
             div per_100g {
                 - calories = 52
                 - protein = 0.3
@@ -108,6 +178,7 @@ tab food_catalog (label="Food Catalog", mutable=true) {
             - handle = "chicken_wrap"
             - name = "Chicken Wrap"
             - portion_weight = 300
+            - labels = "meat"
             div per_100g {
                 - calories = 137
                 - protein = 9
@@ -123,6 +194,7 @@ tab food_catalog (label="Food Catalog", mutable=true) {
             - handle = "coffee_latte"
             - name = "Coffee Latte"
             - portion_weight = 250
+            - labels = "vegetarian, dairy, caffeine"
             div per_100g {
                 - calories = 80
                 - protein = 0
@@ -132,6 +204,7 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 - sugar = 5
                 - fibre = 0
                 - salt = 0
+                - caffeine = 33
             }
         }
         - {
@@ -168,6 +241,7 @@ tab food_catalog (label="Food Catalog", mutable=true) {
             - handle = "banana"
             - name = "Banana"
             - portion_weight = 118
+            - labels = "vegetarian, vegan"
 
             // Per 100 g - the canonical side. Defaults live here.
             div per_100g {
@@ -176,6 +250,6 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 - fat = 0
                 - carbs = 22.9
             }
-    }
+        }
     }
 }

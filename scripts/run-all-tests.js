@@ -60,7 +60,7 @@ function run(cmd, args, options = {}) {
     }
   } catch {}
 
-  // Compile the desktop app, which `cargo test` does not.
+  // Build the desktop app, which `cargo test` does not.
   //
   // The desktop binary is gated behind `required-features = ["desktop"]`, so a plain `cargo test`
   // builds the library, the server binary and the tests - and not the one thing the app actually
@@ -68,18 +68,22 @@ function run(cmd, args, options = {}) {
   // to `lib.rs` and forgetting it there leaves every test green while the app refuses to start.
   // That happened: `document_cache` went in and the desktop build broke.
   //
-  // Checked rather than built, because the question is whether it compiles and a full link is slow.
+  // Built rather than checked, and that distinction has already earned its keep. `cargo check`
+  // stops before linking, so it reported the app as fine while it would not link: functions that
+  // had never been reachable from the binary became reachable, and stale incremental artifacts
+  // left their LLVM-internal symbols undefined. `cargo clean -p overseer` is the cure when that
+  // happens; a guard that cannot see it is worth little. A no-op build costs about ten seconds.
   const desktop = await run(
     process.platform === 'win32' ? 'cmd.exe' : 'sh',
     process.platform === 'win32'
-      ? ['/d', '/s', '/c', 'cd src-tauri && cargo check --features desktop']
-      : ['-lc', 'cd src-tauri && cargo check --features desktop'],
+      ? ['/d', '/s', '/c', 'cd src-tauri && cargo build --features desktop']
+      : ['-lc', 'cd src-tauri && cargo build --features desktop'],
   )
   const desktopBroken = (desktop.code || 0) !== 0
 
   const totalPassed = jsTests + rsPassed
   const totalFailed = jsFailed + rsFailed
   console.log(`\nAll tests summary: ${totalPassed} passed; ${totalFailed} failed; suites(js=${jsFiles})`)
-  console.log(`Desktop build: ${desktopBroken ? 'BROKEN - see above' : 'compiles'}`)
+  console.log(`Desktop build: ${desktopBroken ? 'BROKEN - see above' : 'builds and links'}`)
   process.exit((vitest.code || 0) !== 0 || (cargo.code || 0) !== 0 || desktopBroken ? 1 : 0)
 })().catch((e) => { console.error(e); process.exit(1) })

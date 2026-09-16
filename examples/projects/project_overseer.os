@@ -360,6 +360,15 @@ tab project (label="Overseer", mutable=true) {
             - commentary = "main.rs declares every module again instead of using the library, so a module added to lib.rs and forgotten there compiles everywhere except the app people actually run. A check in the test runner now catches it; having one list would mean it could not happen"
         }
         - {
+            - added = "2026-09-17T01:00:00+04:00"
+            - handle = "cleanup"
+            - title = "Clear the build warnings, and only the ones that are real"
+            - parent = "fix"
+            - labels = "correctness"
+            - points = 2
+            - commentary = "21 warnings across the three builds, and only three of them are what they look like: addressing::segment and FormulaEvaluator::resolve_path_to_node_any are genuinely unreachable, and server.rs takes a `headers` it never reads. The other eighteen are the desktop binary calling things unused that the server and the tests use every day - append_entry, name_path, forget_baseline, Graph::values - because main.rs compiles its own copy of every module and needs only some. Deleting those would break the server. Do onemodlist first and most of this goes with it; what is left is three small edits"
+        }
+        - {
             - added = "2026-09-16T22:30:00+04:00"
             - handle = "viewreach"
             - title = "Formulas and actions cannot reach an entry out of view"
@@ -376,6 +385,15 @@ tab project (label="Overseer", mutable=true) {
             - labels = "correctness, dsl"
             - points = 2
             - commentary = "a list entry is named DayRecord__4 while it is being instantiated, so one left out of view is still called \"-\" and can only be addressed by key. Fine for the bot, which addresses by date, and a trap for anything addressing by name or position. Naming them in the window pass would cost one format! per entry"
+        }
+        - {
+            - added = "2026-09-17T09:15:00+04:00"
+            - handle = "lostlookup"
+            - title = "A lookup that finds nothing reads as an error"
+            - parent = "fix"
+            - labels = "correctness, dsl"
+            - points = 2
+            - commentary = "a record whose food handle is not in the catalogue resolves to \"invalid formula error\" - three such records are in the history. Not new and not about tags: every field that looks a food up has always done this, and `name` says so where `food` is declared. It reads worse as a chip than as a field, which is what brought it up. Wants fixing where lookups fail, for all of them at once"
         }
         - {
             - added = "2026-09-16T09:22:00+04:00"
@@ -412,6 +430,23 @@ tab project (label="Overseer", mutable=true) {
             - labels = "correctness, later"
             - points = 3
             - commentary = "listed in KNOWN_UNSETTLED so the settling test can pass while they are wrong"
+        }
+        - {
+            - added = "2026-09-17T09:00:00+04:00"
+            - handle = "food"
+            - title = "Know more about what is eaten than its macros"
+            - labels = "dsl"
+            - points = 2
+            - commentary = "the catalogue is the place to say things about a food once; the tracker reads them for free"
+        }
+        - {
+            - added = "2026-09-17T09:30:00+04:00"
+            - handle = "catalogdata"
+            - title = "Finish classifying the catalogue"
+            - parent = "food"
+            - labels = "dsl"
+            - points = 2
+            - commentary = "seventeen foods left untagged because the answer was a guess - which pizza, which fries, what is in the Haribo. The caffeine gap the tags made visible is closed: a latte is 33 mg per 100 ml, black tea 20, Coke Zero 9.6, the energy drink 32, and the tags followed. The instant coffee was checked and left alone: 333 mg per 100 g over an 18 g sachet is 60 mg a portion, which is right for a 3-in-1 - the 100 mg it was thought to be would be unusually strong for one"
         }
         - {
             - added = "2026-09-16T09:30:00+04:00"
@@ -585,7 +620,7 @@ tab project (label="Overseer", mutable=true) {
             - parent = "fix"
             - labels = "correctness"
             - points = 1
-            - commentary = "cargo test never builds the desktop binary - it is gated behind required-features - so document_cache going into lib.rs and not into main.rs broke the app with 147 tests passing. npm test now runs cargo check --features desktop and says so. Verified by putting the fault back and watching it fail"
+            - commentary = "cargo test never builds the desktop binary - it is gated behind required-features - so document_cache going into lib.rs and not into main.rs broke the app with 147 tests passing. npm test now builds it and says so. It started as a cargo check, which was not enough: check stops before linking, and the next break was a link failure it reported as fine. A no-op build costs ten seconds and sees the whole way"
         }
         - {
             - finished_at = "2026-09-16T22:00:00+04:00"
@@ -606,6 +641,36 @@ tab project (label="Overseer", mutable=true) {
             - labels = "perf, infra"
             - points = 1
             - commentary = "on by default in both builds now, OVERSEER_DEPENDENCY_GRAPH=0 to turn it off. Measured either way round so neither got a warm mount cache: recording costs a quarter of a first open, 1.31s against 1.05, and buys a second open at 0.16s. It also uncovered a real fault - a document held partly out of view was being served from the cache to a write that needed it in view, so the bot could not log to an old day whenever the cache happened to be warm. Such a resolve now neither reads the cache nor writes to it"
+        }
+        - {
+            - finished_at = "2026-09-17T00:15:00+04:00"
+            - added = "2026-09-17T00:00:00+04:00"
+            - title = "The app would not link, and the guard said it was fine"
+            - handle = "linkguard"
+            - parent = "fix"
+            - labels = "correctness"
+            - points = 1
+            - commentary = "unresolved anon.<hash>.llvm symbols in addressing::segments_for and dependencies::WorkingOut::value - both newly reachable from the binary, both left with stale incremental artifacts from when they were not. Not our code: cargo clean -p overseer fixed it and both dev and release link. The blind spot was ours, and the guard builds rather than checks now"
+        }
+        - {
+            - finished_at = "2026-09-17T11:00:00+04:00"
+            - added = "2026-09-17T09:00:00+04:00"
+            - title = "A food says what it is, and every meal that ate it says so too"
+            - handle = "foodtags"
+            - parent = "food"
+            - labels = "dsl, ui"
+            - points = 5
+            - commentary = "no new machinery needed - a Labels list in foods.os, a tags field on Food, a second mount for the vocabulary, and the same catalogue lookup the macros already use. 120 of 137 foods tagged; alcohol and caffeine taken from the figures in per_100g rather than decided again, with a test that stops the two drifting. Not editable on the meal, because the tags belong to the food. Cost 0.25s on a tracker_v2 open, 1.69 to 1.94"
+        }
+        - {
+            - finished_at = "2026-09-17T13:00:00+04:00"
+            - added = "2026-09-17T12:00:00+04:00"
+            - title = "Nothing was checking that the catalogue survives a save"
+            - handle = "catalogguard"
+            - parent = "fix"
+            - labels = "correctness"
+            - points = 1
+            - commentary = "the file the bot edits most had no round-trip test, and adding a field to every food is exactly the change that needs one: the serialiser writes children in template order, so a line put in the wrong place moves in all 137 entries on the first save. Mine was in the wrong place. The guard also found a closing brace at four spaces where every other entry uses eight - there since before any of this, and invisible until something saved"
         }
     }
 }
