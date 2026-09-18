@@ -342,14 +342,6 @@ impl DocumentRoot {
                     })?,
                 )
             }
-            "get_next_timer_due_ms_from_text" => {
-                let content = arg_str(args, &["content"])
-                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
-                as_json(app_api::next_due_ms_on_text(content).map_err(|e| {
-                    RequestError::Failed(format!("could not read the timers: {:?}", e))
-                })?)
-            }
-            "get_next_timer_due_ms" => Ok(serde_json::Value::Null),
             "find_overseer_files" => as_json(self.list()),
             other => Err(RequestError::Rejected(format!("no command '{}'", other))),
         })

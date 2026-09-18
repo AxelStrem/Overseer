@@ -788,7 +788,7 @@ export class OverseerRenderer {
         const n = String(name).toLowerCase()
         // Common UI events supported by Overseer actions
         const eventNames = [
-            'click','change','timeout','submit','dblclick','hover','keydown','keyup','input','tick'
+            'click','change','submit','dblclick','hover','keydown','keyup','input'
         ]
         return eventNames.includes(n)
     }
@@ -1616,8 +1616,6 @@ export class OverseerRenderer {
             case '-':
                 // Simple list entry (dash) parsed form
                 return this.createListItemElement(node)
-            case 'timer':
-                return this.createTimerElement(node)
             case 'tab':
                 return this.createTabElement(node)
             case 'div':
@@ -3147,120 +3145,6 @@ export class OverseerRenderer {
         return container
     }
 
-    // Timer: show remaining time until 'at', updating live; optional label/format params
-    createTimerElement(node) {
-        const container = document.createElement('div')
-        container.className = 'overseer-field timer-field'
-
-        const labelText = this.getParameterValue(node, 'label')
-        if (labelText) {
-            const label = document.createElement('label')
-            label.textContent = labelText
-            container.appendChild(label)
-        }
-
-        const value = document.createElement('span')
-        value.className = 'field-value'
-        value.textContent = ''
-        container.appendChild(value)
-
-        const params = node.parameters || {}
-        const extractAt = () => {
-            const comp = params._computed_at
-            const raw = params.at
-            const pick = (x) => {
-                if (!x) return null
-                if (typeof x === 'string') return x
-                if (typeof x === 'object') {
-                    if (x.Timestamp) return x.Timestamp
-                    if (x.String) return x.String
-                    if (x.Date) return `${x.Date}T00:00:00Z`
-                }
-                return null
-            }
-            return pick(comp) || pick(raw)
-        }
-
-        const timerFormat = (this.getParameterValue(node, 'format') || '').toString().toLowerCase()
-        const elapsedMode = (this.getParameterValue(node, 'mode') || '').toString().toLowerCase() === 'elapsed'
-        const getOffsetMs = () => {
-            const raw = this.getParameterValue(node, 'offset')
-            if (raw === null || raw === undefined) return 0
-            if (typeof raw === 'number') return Math.floor(raw * 1000)
-            const s = String(raw).trim().toLowerCase()
-            if (s.endsWith('ms')) return parseInt(s.slice(0, -2), 10) || 0
-            if (s.endsWith('s')) return (parseInt(s.slice(0, -1), 10) || 0) * 1000
-            if (s.endsWith('m')) return (parseInt(s.slice(0, -1), 10) || 0) * 60_000
-            if (s.endsWith('h')) return (parseInt(s.slice(0, -1), 10) || 0) * 3_600_000
-            if (s.endsWith('d')) return (parseInt(s.slice(0, -1), 10) || 0) * 86_400_000
-            const n = parseInt(s, 10); if (!isNaN(n)) return n * 1000
-            return 0
-        }
-
-        const formatRemaining = (ms) => {
-            const sign = ms >= 0 ? 1 : -1
-            const absMs = Math.abs(ms)
-            if (absMs <= 0) return timerFormat === 'seconds' ? '0' : '00:00'
-            const totalSec = Math.ceil(absMs / 1000)
-            const days = Math.floor(totalSec / 86400)
-            const hrsTotal = Math.floor(totalSec / 3600)
-            const hrs = Math.floor((totalSec % 86400) / 3600)
-            const mins = Math.floor((totalSec % 3600) / 60)
-            const secs = totalSec % 60
-            const prefix = sign < 0 ? '-' : ''
-            switch (timerFormat) {
-                case 'seconds':
-                    return prefix + String(totalSec)
-                case 'hh:mm:ss':
-                    return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                case 'mm:ss':
-                case '': // default concise
-                    if (days > 0) return prefix + `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                    if (hrsTotal > 0) return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                    return prefix + `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                case 'long':
-                    return prefix + (days > 0
-                        ? `${days} day${days>1?'s':''} ${hrs} hour${hrs!==1?'s':''} ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                        : (hrsTotal > 0
-                            ? `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                            : `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`))
-                default:
-                    if (days > 0) return prefix + `${days}d ${hrs}h ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                    if (hrsTotal > 0) return prefix + `${String(hrsTotal).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-                    return prefix + `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`
-            }
-        }
-
-        const atStr = extractAt()
-        let intervalId = null
-        const update = () => {
-            // Respect active flag: show nothing when inactive
-            const activeParam = this.getParameterValue(node, 'active')
-            const isActive = activeParam === true || String(activeParam).toLowerCase() === 'true'
-            if (!isActive) { 
-                const placeholder = this.getParameterValue(node, 'placeholder')
-                value.textContent = (placeholder !== null && placeholder !== undefined) ? String(placeholder) : '\u2014'
-                return 
-            }
-            if (!atStr) { value.textContent = '—'; return }
-            const due = Date.parse(atStr)
-            if (isNaN(due)) { value.textContent = '—'; return }
-            if (elapsedMode) {
-                const elapsed = Date.now() - due
-                value.textContent = formatRemaining(elapsed)
-            } else {
-                const rem = (due + getOffsetMs()) - Date.now()
-                value.textContent = formatRemaining(rem)
-            }
-        }
-    update()
-    intervalId = this._registerInterval(setInterval(update, 1000))
-
-    this.applyLayoutStyles(container, node)
-    this.applyFieldDefaultStyles(container, node)
-        this.applyNodeStyles(container, node)
-        return container
-    }
 
     createBooleanElement(node) {
         const container = document.createElement('div')

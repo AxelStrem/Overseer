@@ -60,7 +60,6 @@ export class OverseerApp {
         this.isDocumentModified = false
         this.fileManager = new FileManager()
     this.renderer = new OverseerRenderer()
-    this._scheduler = { id: null, periodMs: 1000, cachedNextMs: null, inFlight: false, lastTickAt: 0 }
     // Keep the raw original text for comment/whitespace merge on save
     this._originalText = null
     // Track recent user edits to guard against stale backend overwrites during selective refresh
@@ -480,7 +479,6 @@ export class OverseerApp {
             if (DEBUG_MODE) this.setStatus('File loaded successfully - DEBUG VERSION')
             
             // Start periodic scheduler tick
-            this.startScheduler()
             
         } catch (error) {
             if (DEBUG_MODE) this.setStatus(`DEBUG: Error occurred - ${error.message}`)
@@ -1948,183 +1946,7 @@ tab Main {
         document.getElementById(screenId).classList.add('active')
     }
 
-    startScheduler() {
-        this.stopScheduler()
-        if (!this.currentDocument) return
 
-        const docsEqual = (a, b) => {
-            try { return JSON.stringify(a) === JSON.stringify(b) } catch (_) { return false }
-        }
-
-        // Scan currentDocument for active timers and compute the next due time
-        const extractAtMs = (params) => {
-            if (!params) return null
-            const comp = params._computed_at
-            const raw = params.at
-            const toMs = (s) => {
-                if (!s || typeof s !== 'string') return null
-                const ms = Date.parse(s)
-                return isNaN(ms) ? null : ms
-            }
-            // Prefer computed
-            if (comp !== undefined && comp !== null) {
-                if (typeof comp === 'string') return toMs(comp)
-                if (typeof comp === 'object') {
-                    if (comp.Timestamp) return toMs(comp.Timestamp)
-                    if (comp.String) return toMs(comp.String)
-                    if (comp.Date) return toMs(`${comp.Date}T00:00:00Z`)
-                }
-            }
-            // Fallback to raw param
-            if (raw !== undefined && raw !== null) {
-                if (typeof raw === 'string') return toMs(raw)
-                if (typeof raw === 'object') {
-                    if (raw.Timestamp) return toMs(raw.Timestamp)
-                    if (raw.String) return toMs(raw.String)
-                    if (raw.Date) return toMs(`${raw.Date}T00:00:00Z`)
-                }
-            }
-            return null
-        }
-
-    const findNextDue = (doc) => {
-            let nextTs = null
-            const walk = (nodes, ctxPath=[]) => {
-                for (const n of nodes || []) {
-                    const t = (n.node_type || n.type || '').toLowerCase()
-                    if (t === 'timer') {
-                        const params = n.parameters || {}
-                        const active = (params.active && (params.active.Boolean === true || params.active === true)) || false
-                        if (!active) { /* skip */ }
-                        else {
-                            const ms = extractAtMs(params)
-                            if (ms !== null) {
-                                if (nextTs === null || ms < nextTs) nextTs = ms
-                            }
-                        }
-                    }
-                    if (Array.isArray(n.children) && n.children.length) walk(n.children, ctxPath.concat(n.name||n.node_type||n.type||''))
-                }
-            }
-            walk(doc)
-            return nextTs
-        }
-
-    const scheduleNext = async () => {
-            if (!this.currentDocument) return
-        // Prefer backend calculation to stay consistent with formula evaluation.
-        // While actively editing, avoid spamming the backend — reuse a cached value when available.
-        let nextMs = null
-        // Asking the backend means sending it the whole document, which on a large one costs
-        // more than the answer is worth - and this runs after every event. A document with no
-        // timer in it has no next due time to compute, so look before making the trip.
-        const hasTimer = (nodes) => (nodes || []).some(n =>
-            (n.node_type || n.type || '').toLowerCase() === 'timer' || hasTimer(n.children))
-        if (!hasTimer(this.currentDocument)) {
-            if (DEBUG_MODE) console.log('[SCHED] document has no timers; idle')
-            return
-        }
-        // The text describes the document and is a fraction of its size, so ask with that
-        // when it is known; the document itself only travels when it is not.
-        if (typeof this._currentText === 'string') {
-            try { nextMs = await invoke('get_next_timer_due_ms_from_text', { content: this._currentText }) } catch(_) { nextMs = null }
-        }
-        if (nextMs == null) {
-            try { nextMs = await invoke('get_next_timer_due_ms', { nodes: this.currentDocument }) } catch(_) {}
-        }
-        if (nextMs == null) nextMs = findNextDue(this.currentDocument)
-                // With dependency tracking and live UI timers, periodic full refreshes are no longer needed.
-                // If there are no timers due, stay idle (no background refresh to avoid flicker/scroll resets).
-                if (!nextMs) { if (DEBUG_MODE) console.log('[SCHED] no timers; idle (no periodic refresh)'); return }
-        const now = Date.now()
-        if (DEBUG_MODE) console.log('[SCHED] next due ms from backend:', nextMs)
-        let delay = nextMs - now
-            // Only schedule for future; if due/past, process almost immediately (debounced)
-            if (delay < 0) delay = 0
-            // Add small debounce to let system settle
-            const baseDebounce = 700
-            delay += baseDebounce
-        // Enforce a minimal gap between ticks to avoid storms
-    const minGap = 500
-        if (this._scheduler && this._scheduler.lastTickAt) {
-            const sinceLast = now - this._scheduler.lastTickAt
-            if (sinceLast < minGap) delay += (minGap - sinceLast)
-        }
-    if (DEBUG_MODE) console.log('[SCHED] scheduling tick in', delay, 'ms')
-    this._scheduler.id = setTimeout(async () => {
-                try {
-            if (!this.currentDocument) return
-                    // Skip if a previous tick is still running
-                    if (this._scheduler && this._scheduler.inFlight) { if (DEBUG_MODE) console.log('[SCHED] tick skipped (in flight)'); return }
-                    if (this._scheduler) this._scheduler.inFlight = true
-                    if (DEBUG_MODE) console.log('[SCHED] tick invoking backend')
-                    let updated = null
-                    if (typeof this._currentText === 'string') {
-                        const answer = await invoke('scheduler_tick_with_text', { content: this._currentText }).catch(() => null)
-                        if (answer && Array.isArray(answer.nodes)) {
-                            updated = answer.nodes
-                            // The tick may have changed the document; this text describes the result.
-                            this._currentText = typeof answer.text === 'string' ? answer.text : null
-                        }
-                    }
-                    if (updated == null) {
-                        updated = await invoke('scheduler_tick', { nodes: this.currentDocument })
-                        // A tick can change the document, so the text no longer describes it.
-                        this._currentText = null
-                    }
-                    // Accept only shapes that look like a document
-                    const looksLikeDocArray = Array.isArray(updated) && updated.every(n => n && typeof n === 'object')
-                    const looksLikeDocObject = updated && typeof updated === 'object' && Array.isArray(updated.children)
-                    if (looksLikeDocArray || looksLikeDocObject) {
-                        const nextDoc = looksLikeDocArray ? updated : updated.children
-                        // Only re-render if there are actual changes to visible document
-                        if (!docsEqual(this.currentDocument, nextDoc)) {
-                            this._applyResolvedDocumentWithFormulaPreservation(nextDoc)
-                            try {
-                                this.renderer.renderDocument(this.currentDocument)
-                            } catch (e) {
-                                console.error('Render error during scheduler tick:', e)
-                                this.showError('Render error', e)
-                                return
-                            }
-                        }
-                        // Invalidate cached next due after a state change
-                        this._scheduler.cachedNextMs = null
-                    } else if (updated != null) {
-                        if (DEBUG_MODE) console.warn('[SCHED] scheduler_tick returned non-document value; ignoring:', updated)
-                    }
-                } catch (e) {
-                    const msg = e?.message || (typeof e === 'string' ? e : JSON.stringify(e))
-                    console.warn('scheduler tick error:', e)
-                    try { this.setStatus('Scheduler error', msg, 'error') } catch {}
-                } finally {
-                    if (this._scheduler) {
-                        this._scheduler.inFlight = false
-                        this._scheduler.lastTickAt = Date.now()
-                    }
-                    // Schedule again for the next due timer if any
-            scheduleNext()
-                }
-            }, delay)
-        }
-
-        // Kick off scheduling
-    scheduleNext()
-
-        // Re-schedule lifecycle with window focus/blur
-        window.addEventListener('blur', () => this.stopScheduler(), { once: true })
-        window.addEventListener('focus', () => this.startScheduler(), { once: true })
-    }
-
-    stopScheduler() {
-        if (this._scheduler && this._scheduler.id) {
-            clearTimeout(this._scheduler.id)
-            this._scheduler.id = null
-        }
-        if (this._scheduler) {
-            this._scheduler.cachedNextMs = null
-        }
-    }
 
     setStatus(message, info = '', type = 'info') {
         const statusMessage = document.getElementById('status-message')

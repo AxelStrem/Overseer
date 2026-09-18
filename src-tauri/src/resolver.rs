@@ -850,8 +850,8 @@ fn is_event_or_action_name(name: &str) -> bool {
     let n = name.to_lowercase();
     matches!(
         n.as_str(),
-        "click" | "change" | "timeout" | "submit" | "dblclick" | "hover" | "keydown" | "keyup"
-            | "input" | "tick"
+        "click" | "change" | "submit" | "dblclick" | "hover" | "keydown" | "keyup"
+            | "input"
             | "set" | "inc" | "dec" | "toggle" | "clear" | "clear_list" | "ensure_in_list"
             | "ensure" | "remove" | "append" | "move" | "sort" | "set_now" | "set_now_ts"
             | "activate" | "deactivate"
@@ -2833,7 +2833,7 @@ unsafe fn recursively_evaluate_node_formulas(
     } else {
         Some(&*_parent_ptr)
     };
-    // Skip evaluating formulas for nodes inside action handler blocks (on click/timeout)
+    // Skip evaluating formulas for nodes inside action handler blocks (on click)
     if let Some(p) = _parent_ref {
         if p.node_type == "on" {
             // Do not evaluate formulas in action payloads at load time; they'll be evaluated on action execution

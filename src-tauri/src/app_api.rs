@@ -701,17 +701,7 @@ pub fn execute_event_on_text(
     with_text(nodes)
 }
 
-/// A timer sweep over a document given as text.
-pub fn tick_on_text(content: String) -> Result<ResolvedDocument> {
-    let mut nodes = load_document(content)?;
-    ActionExecutor::tick(&mut nodes)?;
-    with_text(nodes)
-}
 
-/// When the next timer in a document given as text is due.
-pub fn next_due_ms_on_text(content: String) -> Result<Option<i64>> {
-    Ok(ActionExecutor::next_due_ms(&load_document(content)?))
-}
 
 fn with_text(nodes: Vec<OverseerNode>) -> Result<ResolvedDocument> {
     let text = OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {

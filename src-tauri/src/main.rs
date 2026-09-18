@@ -200,33 +200,9 @@ async fn execute_overseer_event_update(
     app_api::execute_event_update(content, node_path, event_name)
 }
 
-#[command]
-async fn scheduler_tick_with_text(content: String) -> Result<app_api::ResolvedDocument> {
-    app_api::tick_on_text(content)
-}
 
-/// `get_next_timer_due_ms` driven by the document's text.
-#[command]
-async fn get_next_timer_due_ms_from_text(content: String) -> Result<Option<i64>> {
-    app_api::next_due_ms_on_text(content)
-}
 
-#[command]
-async fn scheduler_tick(mut nodes: Vec<OverseerNode>) -> Result<Vec<OverseerNode>> {
-    // Run a timer sweep; this may mutate the document and re-resolve inside
-    match ActionExecutor::tick(&mut nodes) {
-        Ok(()) => Ok(nodes),
-        Err(e) => {
-            eprintln!("[TAURI] scheduler_tick error: {}", e);
-            Err(e)
-        }
-    }
-}
 
-#[command]
-async fn get_next_timer_due_ms(nodes: Vec<OverseerNode>) -> Result<Option<i64>> {
-    Ok(ActionExecutor::next_due_ms(&nodes))
-}
 
 fn main() {
     // Install a panic hook to surface detailed errors in the terminal during development
@@ -293,11 +269,7 @@ fn main() {
             find_overseer_files,
             execute_overseer_event,
             execute_overseer_event_with_text,
-            execute_overseer_event_update,
-            scheduler_tick_with_text,
-            get_next_timer_due_ms_from_text,
-            scheduler_tick,
-            get_next_timer_due_ms
+            execute_overseer_event_update
         ])
         .run(tauri::generate_context!())
     {

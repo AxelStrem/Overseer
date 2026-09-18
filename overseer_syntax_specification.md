@@ -149,7 +149,6 @@ list Priorities (entry=int) {
 #### Interactive Types:
 - `button`: Clickable button with actions
 - `checkbox`: Boolean toggle with actions
-- `timer`: Scheduled actions with time triggers
 - `chart`: Data visualization element (planned)
 
 #### Logic Types:
@@ -293,10 +292,6 @@ checkbox completed "Mark Complete" {
     action Add (target=../../stats/completed_count) = 1
 }
 
-// Timer for scheduled actions
-timer daily_backup (at="09:00", active=true) {
-    action Set (target=../last_backup) = $(today())
-}
 ```
 
 #### Conditional actions inside action blocks
@@ -323,6 +318,20 @@ Notes:
 - This conditional is available only within action contexts (e.g., inside `on click {}` or `on timeout {}` blocks).
 
 
+
+### Showing a time as a duration
+
+A `timestamp` draws as an absolute moment by default, or as a duration either side of now:
+
+```overseer
+timestamp last_done (mode="elapsed") = "2026-09-14T18:00:00+04:00"   // "4 days ago"
+timestamp deadline (mode="remaining") = "2026-09-20T09:00:00+04:00"  // "in 2 days"
+```
+
+Both redraw once a second without the document changing, which is the point: the value stored
+is the moment, and only its reading moves. There is no timer node - there was one, and it also
+fired actions on a schedule, which only worked while the app happened to be open. Anything that
+has to happen whether or not a document is open belongs outside the document.
 
 ### Tags
 
@@ -663,7 +672,6 @@ div Tasks {
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Content**: `markdown`, `hidden`, `entry`, `base`
 - **Actions**: `target`, `condition`, `template`, `active`, `at`
-- **Timers**: `active`, `at`, `interval`, `repeat`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
 - **Mounts**: `source`, `lazy`, `mutable`

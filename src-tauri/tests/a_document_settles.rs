@@ -165,16 +165,13 @@ fn the_documents_in_use_settle() {
     // resolver as it was, this fails on the food tracker and the exercise log. A document that
     // does not settle shows figures that depend on how it was opened, which is the kind of wrong
     // that is never noticed.
-    // Found by this test when it was first written, and left for their own investigation rather
-    // than folded into the fallback fix - they do not share its cause. Two are older copies of
-    // the task scheduler and one is a fixture for testing actions, so none of them is a document
-    // anyone reads; the ones that are read all settle. Listed rather than skipped silently, so
-    // the number can only go down.
-    const KNOWN_UNSETTLED: &[&str] = &[
-        "actions_feature_test.os",
-        "task_scheduler.os",
-        "task_scheduler_updated.os",
-    ];
+    // Empty, and it took removing timers to get there. All three documents that never reached a
+    // fixed point were the three that used one: the two task schedulers were built around a
+    // timer generator and went with it, and the actions fixture held a `timestamp T = $(now())`
+    // for its timers to fire against - a value that is different on every pass, which is what
+    // never settling means. Kept as a list rather than deleted, so a document that stops
+    // settling has somewhere to be recorded, and so the number can only go down.
+    const KNOWN_UNSETTLED: &[&str] = &[];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
     let mut checked = 0;
