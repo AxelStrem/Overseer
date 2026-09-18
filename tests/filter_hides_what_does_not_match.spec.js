@@ -335,3 +335,71 @@ describe('the rule that hides a filtered row', () => {
     ).toBeGreaterThan(worst.weight)
   })
 })
+
+// A field the row never draws is still a field the filter can match.
+//
+// Every task in the project tracker carries a `handle` - `unsettled`, `actionreports` - which is
+// how items refer to one another in their commentary and how they are talked about. It is
+// `hidden=true`, so it is nowhere on screen, and typing it into the filter found nothing.
+//
+// Nothing needed changing to fix that: the filter reads the fields off the document rather than
+// off the page, so naming `handle` in `text` is enough. This pins that, because the obvious
+// implementation - reading what the row shows - would pass every other test in this file and
+// fail this one.
+describe('a filter matching a field that is never drawn', () => {
+  let app
+
+  const withHandle = (n, title, handle) => Object.assign(base(`Item__${n}`, 'div'), {
+    children: [
+      valued('title', 'string', 'String', title),
+      Object.assign(valued('handle', 'string', 'String', handle), {
+        parameters: { value: { String: handle }, hidden: { Boolean: true } },
+      }),
+      valued('labels', 'tags', 'String', ''),
+      valued('commentary', 'string', 'String', ''),
+      valued('done', 'int', 'Integer', 0),
+    ],
+  })
+
+  const render = (textFields) => {
+    const doc = docOf([
+      withHandle(1, 'Three documents never reach a fixed point', 'unsettled'),
+      withHandle(2, 'An action does not say what it changed', 'actionreports'),
+    ])
+    doc[0].children[1].parameters.text = { String: textFields }
+    app = new OverseerApp()
+    app.currentDocument = doc
+    app._currentText = 'TEXT'
+    app.renderer._filters = new Map()
+    app.renderer.renderDocument(doc)
+  }
+
+  beforeEach(setupDOM)
+
+  it('finds nothing by handle when the handle is not named', () => {
+    // The state that prompted this: the handle is in the document and matched by nothing.
+    render('title, commentary')
+    type('unsettled')
+    expect(visible()).toEqual([])
+  })
+
+  it('finds the row by its handle once the handle is named', () => {
+    render('title, commentary, handle')
+    type('unsettled')
+    expect(visible()).toEqual(['Three documents never reach a fixed point'])
+  })
+
+  it('still matches the title, and matches either way round', () => {
+    render('title, commentary, handle')
+    type('fixed point')
+    expect(visible()).toEqual(['Three documents never reach a fixed point'])
+    type('actionreports')
+    expect(visible()).toEqual(['An action does not say what it changed'])
+  })
+
+  it('matches a handle by part of it, as it does a title', () => {
+    render('title, commentary, handle')
+    type('action')
+    expect(visible()).toEqual(['An action does not say what it changed'])
+  })
+})

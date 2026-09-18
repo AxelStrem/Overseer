@@ -256,7 +256,7 @@ tab project (label="Project", mutable=true) {
     // it finds exactly the goals whose work is all done and which are waiting to be closed.
     div (layout="horizontal", margin=0, spacing=10, alignment="center") {
 
-        filter (target="/project/Items", text="title, commentary", tags="labels",
+        filter (target="/project/Items", text="title, commentary, handle", tags="labels",
                 status="done", vocabulary="/project/Labels", label="find", width=80%) { }
 
         // A new task, without editing the document or asking the bot.

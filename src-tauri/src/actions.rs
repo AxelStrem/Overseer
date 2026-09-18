@@ -41,6 +41,70 @@ impl Drop for MountResolveSuspended {
     }
 }
 
+/// What an action touched.
+///
+/// An action reported nothing until now, so the only safe thing to do after one was to serialize
+/// the document, parse it again and resolve the lot - because an append or a remove moves the
+/// addresses of everything after it, and nothing said whether this action was that kind. Most are
+/// not: a `set`, an `inc`, a `toggle` change one value, and the dependency graph already knows
+/// what reads it.
+#[derive(Default, Debug, Clone)]
+pub struct Changed {
+    /// The addresses whose values moved, named the way the dependency graph names them.
+    pub fields: Vec<String>,
+    /// Whether the shape of the document changed - an entry added, removed or reordered. When it
+    /// did, every address after the change may mean something else, so the graph is no use and
+    /// the whole document is worked out again.
+    pub structural: bool,
+}
+
+thread_local! {
+    /// Collected here rather than returned, because an action runs six levels down through
+    /// `if` blocks and mount handlers, and threading a return through all of them would touch
+    /// every arm to say nothing. The same shape as `dependencies::start_recording`.
+    static REPORT: std::cell::RefCell<Option<Changed>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Start noting what actions change. Anything previously noted is discarded.
+pub fn start_reporting() {
+    REPORT.with(|r| *r.borrow_mut() = Some(Changed::default()));
+}
+
+/// Stop, and take what was noted. `None` when nobody asked.
+pub fn take_report() -> Option<Changed> {
+    REPORT.with(|r| r.borrow_mut().take())
+}
+
+/// One value moved, at this address.
+fn note_field(address: String) {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            if !changed.fields.contains(&address) {
+                changed.fields.push(address);
+            }
+        }
+    });
+}
+
+/// Whether a caller is collecting a report and nothing has moved the document's shape.
+///
+/// Both of `execute_event_update`'s endings resolve - selectively when the graph can say what
+/// the change reaches, and by parsing the serialized document when it cannot - so the final
+/// resolve inside the event is work done twice. Only for that caller: anything that runs an
+/// event without asking for a report still settles the document itself.
+fn caller_will_settle_it() -> bool {
+    REPORT.with(|r| r.borrow().as_ref().map_or(false, |c| !c.structural))
+}
+
+/// The document's shape moved, so no address can be trusted to still mean what it did.
+fn note_structural() {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.structural = true;
+        }
+    });
+}
+
 pub struct ActionExecutor;
 
 impl ActionExecutor {
@@ -245,7 +309,7 @@ impl ActionExecutor {
         // one-step lag for formulas that depend on several actions in a block. Skipped when
         // the last action was structural and already resolved with nothing written since -
         // resolving twice over an unchanged document produces the same answer twice.
-        if pending_changes {
+        if pending_changes && !caller_will_settle_it() {
             resolver::resolve_document(nodes);
         }
 
@@ -1347,12 +1411,19 @@ impl ActionExecutor {
                 )));
             }
         };
+        // Named before the borrow, in the form the dependency graph uses, so whatever reads
+        // this value can be found without working the document out again.
+        let address = Self::build_disambiguated_path(nodes, &indices).join("/");
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
         let key = explicit_param.unwrap_or_else(|| "value".to_string());
         // Equality-aware override: don't mark as override if value is unchanged
         let same = node.parameters.get(&key).map_or(false, |v| v == &value);
+        if !same {
+            // Only when it moved. A set that writes what was already there reaches nothing.
+            note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
+        }
         node.parameters.insert(key.clone(), value.clone());
         if !same {
             // The serializer replays a node from its source snapshot while the
@@ -1802,6 +1873,7 @@ impl ActionExecutor {
                 )));
             }
         };
+        let address = Self::build_disambiguated_path(nodes, &indices).join("/");
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
@@ -1827,7 +1899,15 @@ impl ActionExecutor {
                 ))
             }
         };
-        node.parameters.insert(key, new_val);
+        node.parameters.insert(key.clone(), new_val);
+        // The serializer replays a node from its source text while the fingerprint it was
+        // parsed with still matches, and that fingerprint says nothing about what was just
+        // written here. Without this the increment lands in memory, the document is written
+        // back as exactly what it was read from, and the press reports success having changed
+        // nothing. `set`, `toggle` and `clear` have always done this; `inc` never did.
+        node.source_fingerprint = None;
+        node.parameters.remove(&format!("_template_{}", key));
+        note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
         Ok(())
     }
 
@@ -1850,6 +1930,7 @@ impl ActionExecutor {
             }
         };
         Self::invalidate_source_fingerprints(nodes, &indices);
+        let address = Self::build_disambiguated_path(nodes, &indices).join("/");
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
@@ -1869,6 +1950,7 @@ impl ActionExecutor {
         };
     node.parameters.insert(key.clone(), new_val);
     node.source_fingerprint = None;
+        note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
         // Mark explicit override if this is a template-derived child and we're toggling its value
         if key == "value" {
             node.parameters.insert(
@@ -1947,11 +2029,17 @@ impl ActionExecutor {
                 )));
             }
         };
+        let address = Self::build_disambiguated_path(nodes, &indices).join("/");
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
         let key = explicit_param.unwrap_or_else(|| "value".to_string());
         node.parameters.remove(&key);
+        // Same fault `inc` had: without clearing the fingerprint the serializer writes the node
+        // back as the text it was read from, so clearing a field changes nothing on disk.
+        node.source_fingerprint = None;
+        node.parameters.remove(&format!("_template_{}", key));
+        note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
         Ok(())
     }
 
@@ -2245,6 +2333,9 @@ impl ActionExecutor {
         key_field: &str,
         key_value: OverseerValue,
     ) -> Result<(), OverseerError> {
+        // Shape, not value: what this does moves the addresses of everything after
+        // it, so nothing the graph knows survives it.
+        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         // Clone nodes snapshot for immutable searches to avoid aliasing
         let snapshot = nodes.clone();
@@ -2319,6 +2410,9 @@ impl ActionExecutor {
         key_field: &str,
         key_value: &OverseerValue,
     ) -> Result<(), OverseerError> {
+        // Shape, not value: what this does moves the addresses of everything after
+        // it, so nothing the graph knows survives it.
+        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let indices = Self::resolve_target_indices(&nodes, owner_path, anchored, &segments)
             .ok_or_else(|| {
@@ -2436,6 +2530,9 @@ impl ActionExecutor {
         value_opt: Option<OverseerValue>,
         overrides: &Vec<OverseerNode>,
     ) -> Result<(), OverseerError> {
+        // Shape, not value: what this does moves the addresses of everything after
+        // it, so nothing the graph knows survives it.
+        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let snapshot = nodes.clone();
         let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
@@ -3220,6 +3317,9 @@ impl ActionExecutor {
         order: &str,
         stable: bool,
     ) -> Result<(), OverseerError> {
+        // Shape, not value: what this does moves the addresses of everything after
+        // it, so nothing the graph knows survives it.
+        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let snapshot = nodes.clone();
         let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)

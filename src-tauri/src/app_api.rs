@@ -522,16 +522,6 @@ pub struct ResolvedUpdate {
     pub nodes: Option<Vec<OverseerNode>>,
 }
 
-/// Take the remembered document, if it is the one this text produced.
-///
-/// Taken rather than copied: it is about to be replaced either way, and on a large document a
-/// copy costs more than the diff it feeds. Only the document this text produced will do -
-/// anything else and the change would be described against a document the caller is not
-/// holding - so a baseline that does not match is put back untouched.
-fn take_baseline(content: &str) -> Option<Vec<OverseerNode>> {
-    crate::document_cache::take_nodes(content)
-}
-
 /// The document as its own text reads, rather than as it happens to sit in memory.
 ///
 /// List entries are named by position - `Task__5` - and that name is given when a document is
@@ -608,7 +598,11 @@ pub fn resolve_selective_update(
     changed_fields: Vec<String>,
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<ResolvedUpdate> {
-    let baseline = take_baseline(&content);
+    // Copied rather than taken, for the same reason the event path copies: `resolve_selective`
+    // asks for this very baseline a moment later to decide what the edit can reach, and taking
+    // it meant that question always answered no - so every edit fell back to working out every
+    // value in the document, which is the thing the dependency graph exists to avoid.
+    let baseline = baseline_copy(&content);
     let resolved = resolve_selective(content.clone(), changed_fields, changed_field_values)?;
     finish_update(&content, resolved, baseline)
 }
@@ -619,17 +613,92 @@ pub fn execute_event_update(
     node_path: Vec<String>,
     event_name: String,
 ) -> Result<ResolvedUpdate> {
-    let baseline = take_baseline(&content);
+    // Copied, not taken. Taking it emptied the cache entry for this exact text, and the very
+    // next line asked for that document back - so every press paid a full parse and resolve to
+    // rebuild what had just been thrown away, to save one clone. On the food tracker that was
+    // 1.6 seconds of a 2.2 second press.
+    let baseline = baseline_copy(&content);
     let was = content.clone();
-    // Rebuilding the document replaces the baseline with the pre-event state; the post-event
-    // one is stored below, so what is remembered is what the caller ends up holding.
+    // The post-event document is stored below, so what is remembered is what the caller holds.
+    let phase = std::time::Instant::now();
     let mut nodes = load_document(content)?;
-    ActionExecutor::execute_event(&mut nodes, &node_path, &event_name)?;
-    // Only here, and not on the edit path: an event is the thing that can add or remove list
-    // entries, and a shape change is what puts the names out of step. An edit changes values,
-    // costs one parse today, and should not be made to cost two.
-    let (text, nodes) = as_its_text_reads(&nodes)?;
-    finish_update_with(&was, text, nodes, baseline)
+    if resolver::profile_enabled() {
+        eprintln!("[PHASE] press load {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    crate::actions::start_reporting();
+    let phase = std::time::Instant::now();
+    let outcome = ActionExecutor::execute_event(&mut nodes, &node_path, &event_name);
+    if resolver::profile_enabled() {
+        eprintln!("[PHASE] press act {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
+    }
+    let report = crate::actions::take_report();
+    outcome?;
+
+    // An event that only wrote values can be finished the way an edit is: ask the graph what
+    // reads them, work those out, and serialize once. Anything that moved the document's shape
+    // still takes the long way - serialize, parse again, resolve the lot - because an append or
+    // a remove renames everything after it and the graph is describing the document as it was.
+    //
+    // Without a graph for this text, or with nothing reported, the long way is also what
+    // happens, which is what happened before this existed and is never wrong.
+    let quick = report
+        .filter(|changed| !changed.structural && !changed.fields.is_empty())
+        .and_then(|changed| graph_for(&was).map(|graph| (changed, graph)))
+        .and_then(|(changed, graph)| {
+            let to_redo = graph.nodes_to_work_out_again(&changed.fields);
+            if to_redo.is_empty() {
+                return None;
+            }
+            if resolver::profile_enabled() {
+                eprintln!("[PHASE] press changed {:?} and reaches {} values",
+                          changed.fields, to_redo.len());
+            }
+            // The graph is left exactly as it was, rather than absorbing what this resolve
+            // recorded. `absorb` replaces a value's sources with the newer ones, and a
+            // selective resolve only re-reads what it recomputed - so a value that was reached
+            // but settled without reading again came back with fewer sources than it has, and
+            // the graph shrank a little on every press. Two presses in, the cascade stopped
+            // reaching `quadrupled` and it held the previous press's answer.
+            //
+            // Nothing here changes what reads what: an action wrote a value, not a formula.
+            // A press that redirects a lookup is the case this does not cover, and it is the
+            // same case the edit path does not cover either; `topo` is where that gets settled.
+            let phase = std::time::Instant::now();
+            resolver::resolve_specific_fields(&mut nodes, &to_redo.into_iter().collect());
+            if resolver::profile_enabled() {
+                eprintln!("[PHASE] press resolve {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
+            }
+            // Charts outright rather than by the cascade, for the reason the edit path gives:
+            // a series hangs on a plot child while the reads are recorded against the chart.
+            resolver::compute_chart_series(&mut nodes);
+            let phase = std::time::Instant::now();
+            let text = OverseerFileHandler::serialize_nodes(&nodes).ok()?;
+            if resolver::profile_enabled() {
+                eprintln!("[PHASE] press serialize {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
+            }
+            // Under the text this started from, not the one it produced: `finish_update_with`
+            // moves the whole entry onto the new text, and moving it discards whatever was
+            // already held there - so a graph stored under the new text is deleted a moment
+            // later, and the press after this one pays a full resolve. The edit path has
+            // always done it this way round.
+            remember_graph(&was, graph);
+            Some(text)
+        });
+
+    if resolver::profile_enabled() {
+        eprintln!("[PHASE] press took the {} way", if quick.is_some() { "short" } else { "long" });
+    }
+    let (text, nodes) = match quick {
+        Some(text) => (text, nodes),
+        None => as_its_text_reads(&nodes)?,
+    };
+    let phase = std::time::Instant::now();
+    let done = finish_update_with(&was, text, nodes, baseline);
+    if resolver::profile_enabled() {
+        eprintln!("[PHASE] press finish {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
+    }
+    done
 }
 
 /// A guarded field and the value the document authored for it.
