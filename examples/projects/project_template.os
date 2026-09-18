@@ -287,9 +287,7 @@ tab project (label="Project", mutable=true) {
     // look at: both things under it are finished, so it reads 100%, offers `finish` and waits.
     // Its own two points are not paid until that is pressed - and until it is, more work can go
     // under it.
-    list Items (entry=<Item>, key="added", layout="vertical", spacing=1,
-                view="table", header=true, sticky=true, lines="vertical",
-                sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
+    list Items (entry=<Item>, key="added", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
         - {
             - added = "2026-09-01T09:00:00+04:00"
             - handle = "editor"
@@ -300,16 +298,16 @@ tab project (label="Project", mutable=true) {
         - {
             - added = "2026-09-01T09:05:00+04:00"
             - handle = "parser"
-            - parent = "editor"
             - title = "Parser mishandles nested blocks"
+            - parent = "editor"
             - labels = "bug"
             - points = 2
         }
         - {
             - added = "2026-09-01T09:10:00+04:00"
             - handle = "brace"
-            - parent = "parser"
             - title = "A body after a value closes the block early"
+            - parent = "parser"
             - labels = "bug"
             - points = 2
             - commentary = "only when the value comes first; a body on its own is fine"
@@ -317,16 +315,16 @@ tab project (label="Project", mutable=true) {
         - {
             - added = "2026-09-02T10:00:00+04:00"
             - handle = "rows"
-            - parent = "editor"
             - title = "Tighten the row layout"
+            - parent = "editor"
             - labels = "ui"
             - points = 4
         }
         - {
             - added = "2026-09-02T10:30:00+04:00"
             - handle = "undo"
-            - parent = "editor"
             - title = "Undo survives a repaint"
+            - parent = "editor"
             - labels = "bug, later"
             - points = 5
         }
@@ -398,41 +396,40 @@ tab project (label="Project", mutable=true) {
     // been finished under it is counted at full weight, or a task would fall back towards nought
     // as its children were completed. `roundtrip` is three quarters of `parser`; `gfilter` and
     // `gparent` are all of `docs`, which is why `docs` offers its `finish`.
-    list History (entry=<Finished>, layout="vertical", spacing=1,
-                  sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) {
+    list History (entry=<Finished>, layout="vertical", spacing=1, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) {
         - {
             - finished_at = "2026-09-05T17:20:00+04:00"
             - added = "2026-09-01T09:20:00+04:00"
+            - title = "Escape quotes and newlines when saving"
             - handle = "escape"
             - parent = "editor"
-            - title = "Escape quotes and newlines when saving"
             - labels = "bug"
             - points = 5
         }
         - {
             - finished_at = "2026-09-09T09:30:00+04:00"
             - added = "2026-09-03T11:05:00+04:00"
+            - title = "Document the filter"
             - handle = "gfilter"
             - parent = "docs"
-            - title = "Document the filter"
             - labels = "docs"
             - points = 2
         }
         - {
             - finished_at = "2026-09-09T11:00:00+04:00"
             - added = "2026-09-01T09:15:00+04:00"
+            - title = "Round-trip every real document in a test"
             - handle = "roundtrip"
             - parent = "parser"
-            - title = "Round-trip every real document in a test"
             - labels = "bug, docs"
             - points = 6
         }
         - {
             - finished_at = "2026-09-10T15:10:00+04:00"
             - added = "2026-09-03T11:10:00+04:00"
+            - title = "Document how a task becomes a larger one"
             - handle = "gparent"
             - parent = "docs"
-            - title = "Document how a task becomes a larger one"
             - labels = "docs"
             - points = 1
         }

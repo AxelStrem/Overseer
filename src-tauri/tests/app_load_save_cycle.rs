@@ -201,20 +201,25 @@ fn repeated_reevaluation_and_save_is_stable() {
     });
 }
 
-/// The project tracker, which is edited through the interface rather than by hand.
+/// The project template, which every project document is a copy of.
 ///
 /// Worth its own test for a reason the tracker's does not cover: a saved entry has its fields
 /// written in the order the template declares them, whatever order they were authored in. So a
 /// document whose entries are written in any other order reformats itself the first time a button
 /// is pressed - a large diff for no change, on a document meant to be pressed. This catches it
 /// while `drift` on that very list is still open.
+///
+/// The template rather than a filled-in copy of it, and deliberately: a real project tracker now
+/// lives with the deployed documents, where this suite cannot reach it, and the machinery is the
+/// same machinery either way. What the guard needs is entries - fifteen of them here, across both
+/// lists - because a document with none cannot reformat one.
 #[test]
-fn the_project_tracker_survives_repeated_saves() {
+fn the_project_template_survives_repeated_saves() {
     serialised(|| {
         let examples =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/projects");
-        let host_path = examples.join("project_overseer.os");
-        let original = std::fs::read_to_string(&host_path).expect("project_overseer.os");
+        let host_path = examples.join("project_template.os");
+        let original = std::fs::read_to_string(&host_path).expect("project_template.os");
         DocumentManager::set_current_document(Some(host_path.to_string_lossy().as_ref()));
 
         let mut text = original.clone();
@@ -222,7 +227,7 @@ fn the_project_tracker_survives_repeated_saves() {
             text = load_and_save(&text);
             assert_eq!(
                 text, original,
-                "project_overseer.os drifted on save number {}",
+                "project_template.os drifted on save number {}",
                 pass
             );
         }

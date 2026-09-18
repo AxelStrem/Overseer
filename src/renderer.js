@@ -2736,6 +2736,15 @@ export class OverseerRenderer {
         }
         paint()
 
+        // The same baseline a string, a number, a date and a timestamp all get, and the one
+        // value field that was not asking for it. Without it the chips sat flush against the
+        // edge of whatever held them while every value beside them was inset - plain as soon as
+        // a tags field was the leftmost thing in a row.
+        //
+        // Not the `margin`/`padding` fault recorded separately: that one is a stated padding
+        // failing to reach a wrapped value. This was a missing call.
+        this.applyLayoutStyles(container, node)
+        this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }
@@ -4315,6 +4324,21 @@ export class OverseerRenderer {
                 if (!valueEl.style.minHeight) {
                     valueEl.style.minHeight = OverseerRenderer.VALUE_MIN_HEIGHT
                     valueEl.dataset.minHeightIsDefault = '1'
+                }
+
+                // What the value's own box is padded by, where the document says so.
+                //
+                // `padding` on a field styles the container around the value, not the box the
+                // text sits in - and that box carries `padding: 6px 8px` from the stylesheet.
+                // Two fields stacked in a column therefore keep twelve pixels between their
+                // lines, six under one and six over the next, with nothing able to say
+                // otherwise. A name with a smaller sub-name beneath it wants those two sides
+                // closed and the sides kept, which is a sentence only the document can say.
+                //
+                // Any CSS padding will do - `0`, `0 8px`, `2px 8px 0`.
+                const padding = this.getParameterValue(node, 'value-padding')
+                if (padding !== undefined && padding !== null && String(padding) !== '') {
+                    valueEl.style.padding = String(padding)
                 }
                 // Keep inline-block so borders/padding wrap text nicely - except where the
                 // value is meant to line up under its heading. An inline-block is only as wide

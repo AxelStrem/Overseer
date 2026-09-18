@@ -116,7 +116,21 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // and `format` decides how much of one is shown, not how much is kept.
                 timestamp at (label="", format="time", precision="minutes", font-size=13px,
                               width=8%, hidden=$(at == "")) = ""
-                string name (font-size=20px, width=62%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/name)
+                // The name, and under it the rest of the name.
+                //
+                // A column, so the qualifier sits directly beneath what it qualifies and reads as
+                // part of the same thing rather than as another field. `spacing=0` because the
+                // two are one label in two sizes - any gap at all and they read as two.
+                div (layout="vertical", margin=0, spacing=0, width=62%) {
+                // `margin=0, padding=0` on both, and it is the whole reason the two sit together.
+                // A field carries eight pixels of padding and eight of margin above and below by
+                // default, so two stacked ones put thirty-two pixels of nothing between two lines
+                // that want two. `spacing` on the column does not help: it never becomes a gap.
+                    string name (font-size=20px, margin=0, padding=0, value-padding="0 8px") = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/name)
+                    // The part of the name that is not the name - a flavour, a crust, a cut.
+                    // Smaller and under it, and drawn at all only when the food has one.
+                    string sub_name (label="", font-size=12px, margin=0, padding=0, value-padding="0 8px", hidden=$(sub_name == "")) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/sub_name)
+                }
                 // The one figure most meals are read for, at a size to match. It sits beside
                 // the grade rather than in the table below, where it was one number among
                 // thirteen.
@@ -128,10 +142,6 @@ tab tracker_v2 (label="Calories", mutable=true) {
             // Centred because the chips have no label above them and the amounts do, and without
             // it the chips ride up against the top of the row while the numbers sit lower.
             div (layout="horizontal", margin=0, alignment="center") {
-                // The part of the name that is not the name - a flavour, a crust, a cut.
-                // Smaller and under it, and drawn at all only when the food has one.
-                string sub_name (label="", font-size=12px, width=38%, hidden=$(sub_name == "")) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/sub_name)
-
                 // What the food is, looked up the same way its name and its macros are.
                 //
                 // Not editable here, and that is the point rather than a restriction: these
@@ -139,11 +149,11 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // onto the record, where the next resolve would overwrite them from the
                 // catalogue - a change that appears to work and then quietly does not. Change
                 // them in foods.os and every meal that ever ate it says the same new thing.
-                tags labels (label="", vocabulary="tracker_v2/VOCAB/Labels", mutable=false, width=26%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/labels)
+                tags labels (label="", vocabulary="tracker_v2/VOCAB/Labels", mutable=false, width=36%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/labels)
                 // Whichever of these a record states, the other is derived. Both are null here
                 // so neither shadows the other; a record must state one of them.
-                float portions (label="portions", precision=2, format="trim", width=16%, fallback=$(grams / portion_weight), default=1) = null
-                float grams (label="weight", suffix=" g", precision=0, width=18%, fallback=$(portions * portion_weight)) = null
+                float portions (label="portions", precision=2, format="trim", width=18%, fallback=$(grams / portion_weight), default=1) = null
+                float grams (label="weight", suffix=" g", precision=0, width=20%, fallback=$(portions * portion_weight)) = null
             }
             // The detail, and the grade beside it rather than above it. The grade is worked out
             // from these very figures, so reading them together is reading one thing; and the
@@ -152,8 +162,13 @@ tab tracker_v2 (label="Calories", mutable=true) {
             div (layout="horizontal", margin=0, alignment="center") {
             // Two even rows rather than one long one, so a meal is a filled block
             // instead of a line of figures trailing off the side of the card.
-                div macros (layout="vertical", margin=0, border-style=none, shadow="none", width=88%) {
-                    div (layout="horizontal", margin=0) {
+                // `padding=0` here and on the two rows inside, so the figures start where the
+                // tag chips above them do. Every level of nesting adds eight pixels: the chips are
+                // a field inside a row and sit at sixteen, while these were a field inside a row
+                // inside this wrapper inside a row, at thirty-two - which read as the chips being
+                // badly inset when it was the macros being doubly indented.
+                div macros (layout="vertical", margin=0, padding=0, border-style=none, shadow="none", width=88%) {
+                    div (layout="horizontal", margin=0, padding=0) {
                         float protein (label="Protein", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/protein * 0.01)
                         float fat (label="Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/fat * 0.01)
                         float saturated_fat (label="Sat. Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/saturated_fat * 0.01)
@@ -166,7 +181,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                         // 7 kcal a gram, and a day with any in it is not read the same way.
                         float alcohol (label="Alcohol", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/alcohol * 0.01)
                     }
-                    div (layout="horizontal", margin=0) {
+                    div (layout="horizontal", margin=0, padding=0) {
                         float fibre (label="Fibre", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/fibre * 0.01)
                         float salt (label="Salt", suffix=" g", precision=2) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/salt * 0.01)
                         float vitamin_d (label="Vit. D", suffix=" µg", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/vitamin_d * 0.01)
