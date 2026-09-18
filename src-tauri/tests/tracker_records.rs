@@ -597,9 +597,11 @@ fn the_meal_record_template_has_no_stray_children() {
         // `at` is when it was eaten: the clock only, since the day is the entry it sits in.
         // `labels` is what the food is - vegan, dairy, alcohol - read from the catalogue rather
         // than stored here, like `name` beside it.
+        // `sub_name` is the rest of the name - a flavour, a crust - kept apart so the name has a
+        // line to itself instead of wrapping four times inside a quarter of one.
         let expected = [
-            "food", "portion_weight", "at", "portions", "grams", "name", "labels", "calories",
-            "quality", "macros",
+            "food", "portion_weight", "at", "portions", "grams", "name", "sub_name", "labels",
+            "calories", "quality", "macros",
         ];
         // Through any layout grouping: what this is looking for is a node nobody declared,
         // and a `div` used to arrange the fields is not one.

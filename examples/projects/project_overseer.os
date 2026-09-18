@@ -387,6 +387,15 @@ tab project (label="Overseer", mutable=true) {
             - commentary = "a list entry is named DayRecord__4 while it is being instantiated, so one left out of view is still called \"-\" and can only be addressed by key. Fine for the bot, which addresses by date, and a trap for anything addressing by name or position. Naming them in the window pass would cost one format! per entry"
         }
         - {
+            - added = "2026-09-18T19:00:00+04:00"
+            - handle = "silentwrite"
+            - title = "A write can report success and change nothing"
+            - parent = "fix"
+            - labels = "correctness"
+            - points = 3
+            - commentary = "set_value on tracker_v2/History/[date]/targets/target_calories returns Ok, reads back null, and leaves the file untouched. Not nesting in general: on foods.os the same call corrected apple's sugar and created vitamin_d and sugar_added overrides that were never there, all landing on disk. The difference is that targets sits one level deeper, inside the unnamed wrapper div the day uses for layout - so the leading suspect is writing through a hierarchy-transparent wrapper. Worst part is the Ok: a write that fails loudly costs a retry, one that fails quietly costs the data"
+        }
+        - {
             - added = "2026-09-17T09:15:00+04:00"
             - handle = "lostlookup"
             - title = "A lookup that finds nothing reads as an error"
@@ -411,7 +420,7 @@ tab project (label="Overseer", mutable=true) {
             - parent = "fix"
             - labels = "correctness, dsl"
             - points = 2
-            - commentary = "every past day reads today's standing target. Blocked on nested-div overrides doing nothing, so the fields have to leave the targets div first"
+            - commentary = "every past day reads today's standing target. Not blocked the way this used to say: a day that states its own target works, and the calorie bar picks it up without any change - a hand-written div targets { - target_calories = 1900 } reads 1900 and the bar's limit becomes 1900. Nested overrides in general are fine; foods.os has always used them. What blocks it is that a *write* to that address reports success and changes nothing - see silentwrite - so nothing can set the value except a person editing the file"
         }
         - {
             - added = "2026-09-16T09:24:00+04:00"
@@ -440,13 +449,22 @@ tab project (label="Overseer", mutable=true) {
             - commentary = "the catalogue is the place to say things about a food once; the tracker reads them for free"
         }
         - {
+            - added = "2026-09-19T10:30:00+04:00"
+            - handle = "commanames"
+            - title = "Eight food names still carry their qualifier in the name"
+            - parent = "food"
+            - labels = "dsl"
+            - points = 1
+            - commentary = "forty-two names split cleanly on a trailing parenthesis into a name and a sub_name. Eight more qualify with a comma instead - Butter, salted; Tomato, raw; Apple cider, semi-dry - and read just as well split, but a comma is part of a name often enough that they were left for a person to confirm rather than done by pattern"
+        }
+        - {
             - added = "2026-09-17T09:30:00+04:00"
             - handle = "catalogdata"
             - title = "Finish classifying the catalogue"
             - parent = "food"
             - labels = "dsl"
             - points = 2
-            - commentary = "seventeen foods left untagged because the answer was a guess - which pizza, which fries, what is in the Haribo. The caffeine gap the tags made visible is closed: a latte is 33 mg per 100 ml, black tea 20, Coke Zero 9.6, the energy drink 32, and the tags followed. The instant coffee was checked and left alone: 333 mg per 100 g over an 18 g sachet is 60 mg a portion, which is right for a 3-in-1 - the 100 mg it was thought to be would be unusually strong for one"
+            - commentary = "seventeen foods left untagged because the answer was a guess - which pizza, which fries, what is in the Haribo. The caffeine gap the tags made visible is closed: a latte is 33 mg per 100 ml, black tea 20, Coke Zero 9.6, the energy drink 32, and the tags followed. Added sugar is the new gap and the useful one: every food falls back to two fifths of its total until someone says otherwise, and the foods worth stating first are the fruit (nought) and the sweets (nearly all of it). The instant coffee was checked and left alone: 333 mg per 100 g over an 18 g sachet is 60 mg a portion, which is right for a 3-in-1 - the 100 mg it was thought to be would be unusually strong for one"
         }
         - {
             - added = "2026-09-16T09:30:00+04:00"
@@ -454,6 +472,15 @@ tab project (label="Overseer", mutable=true) {
             - title = "Make the lists easier to read"
             - labels = "ui"
             - points = 1
+        }
+        - {
+            - added = "2026-09-19T10:00:00+04:00"
+            - handle = "icons"
+            - title = "Icons on food cards and on tag chips"
+            - parent = "ui"
+            - labels = "ui, dsl, later"
+            - points = 3
+            - commentary = "an svg per food and per tag, the chip ones usable instead of the name or beside it. The card layout was rearranged with this in mind: the first row is time, name and calories, so an icon slot goes in front of the name without moving anything, and a chip already draws its label through one code path. Wants a way to name an svg from a document - probably a file beside it - which is the part that does not exist"
         }
         - {
             - added = "2026-09-16T22:35:00+04:00"
@@ -671,6 +698,56 @@ tab project (label="Overseer", mutable=true) {
             - labels = "correctness"
             - points = 1
             - commentary = "the file the bot edits most had no round-trip test, and adding a field to every food is exactly the change that needs one: the serialiser writes children in template order, so a line put in the wrong place moves in all 137 entries on the first save. Mine was in the wrong place. The guard also found a closing brace at four spaces where every other entry uses eight - there since before any of this, and invisible until something saved"
+        }
+        - {
+            - finished_at = "2026-09-17T15:00:00+04:00"
+            - added = "2026-09-17T14:00:00+04:00"
+            - title = "The bot can tag a food, and now knows to"
+            - handle = "bottags"
+            - parent = "food"
+            - labels = "dsl, infra"
+            - points = 2
+            - commentary = "the tooling already did all of it - read the vocabulary, set labels on a food, create a food with tags in one call, add a tag to the vocabulary - so nothing was built. What was missing was the guides: nutrition.md gained a section on what a food is, weight_tracker.md gained the address and a warning that a meal's tags are its food's. Eight tests over the guide text, because the one mistake the tooling cannot catch is tagging the meal"
+        }
+        - {
+            - finished_at = "2026-09-17T17:00:00+04:00"
+            - added = "2026-09-17T16:00:00+04:00"
+            - title = "A second pie: where the day's calories came from"
+            - handle = "sourcepie"
+            - parent = "food"
+            - labels = "dsl, ui"
+            - points = 3
+            - commentary = "vegan, strict vegetarian, meat, and the rest, beside the macros pie. Possible because a tags field hands its tags to a method chain as a list, so a predicate can ask whether a meal's food carries one - no new machinery, and no measurable cost. The tag test is nested in the predicate rather than worked out per meal, which keeps a meal row as it was. `other` is the remainder rather than its own predicate, so the four slices always come to the day - the one thing a pie must not get wrong. Both charts narrowed to 220px to sit side by side"
+        }
+        - {
+            - finished_at = "2026-09-18T11:00:00+04:00"
+            - added = "2026-09-18T10:00:00+04:00"
+            - title = "The morning recap read every timestamp four hours early"
+            - handle = "readlocal"
+            - parent = "fix"
+            - labels = "correctness, infra"
+            - points = 2
+            - commentary = "the documents were right and so was the screen. Overseer's now() is UTC, so anything a document stamps for itself - a task's done_at, a workout's time - is stored with +00:00; 251 of 251 in exercise.os, 693 in tasks.os. The interface converts before drawing and nothing did the same for the model, which read the wall clock off the front of the string. The food tracker escaped it because the bot writes those stamps itself with the prompt's offset. Converted in projection.py, the one layer everything the model reads passes through, with a test that the offset it is shown matches the one it is told to write"
+        }
+        - {
+            - finished_at = "2026-09-18T16:00:00+04:00"
+            - added = "2026-09-18T14:00:00+04:00"
+            - title = "A bar chart: how much of the day's allowances went"
+            - handle = "limitbars"
+            - parent = "food"
+            - labels = "dsl, ui"
+            - points = 3
+            - commentary = "kind=\"bar\" in the renderer, and nothing in Rust: a plot already gets a computed shadow for any parameter, so limit= came free. Each bar is a share of its own limit, which is the only way salt in grams and caffeine in milligrams are comparable, with one dashed line meaning every limit at once and a red bar when past it. The axis is the real decision - the sugar figure reaches four times its limit on a real day, so it grows with the data and stops at three times over rather than squashing the other four bars"
+        }
+        - {
+            - finished_at = "2026-09-18T18:00:00+04:00"
+            - added = "2026-09-18T17:00:00+04:00"
+            - title = "The sugar bar measures the sugar the limit is about"
+            - handle = "addedsugar"
+            - parent = "food"
+            - labels = "dsl, correctness"
+            - points = 2
+            - commentary = "410% of the sugar limit turned out to be 240 g of dried prunes, whose sugar WHO does not count at all - the limit is about free sugars and the bar was measuring total. per_100g/sugar_added now carries it, unset by default and falling back to two fifths of the total, which while nothing is stated is arithmetically the same as leaving the bar on total sugar and raising the limit to 125 g. So it cost nothing to adopt and improves one food at a time. Verified that the fallback survives the catalogue lookup and that a written nought beats it - which is the case it all turns on, since fruit is where the fallback is most wrong"
         }
     }
 }

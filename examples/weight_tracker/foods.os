@@ -34,6 +34,14 @@ tab food_catalog (label="Food Catalog", mutable=true) {
         div Food (layout="vertical", margin=0) {
             string handle (label="Handle", width=15%) = "unnamed"
             string name (label="Name", width=25%) = ""
+                // The part of the name that is not the name: a flavour, a cut, a crust, how it was
+                // cooked. "Paloma ice cream (pistachio & crushed chocolate)" is one food whose
+                // name is three words and whose qualifier is four, and on a card the whole thing
+                // wrapped four times and left the row mostly empty.
+                //
+                // Shown smaller and under the name, so a card reads as one thing with a note
+                // rather than as a sentence. Empty for most foods, and then nothing is drawn.
+                string sub_name (label="Also", width=30%) = ""
             float portion_weight (label="Portion", suffix=" g", precision=0) = 100
 
             // What this food is, as chips. Empty is a perfectly good answer - it means nobody
@@ -49,6 +57,28 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 float trans_fat (label="Trans Fat", suffix=" g", precision=1) = 0
                 float carbs (label="Carbs", suffix=" g", precision=1) = 10
                 float sugar (label="Sugar", suffix=" g", precision=1) = 2
+
+                // Of that sugar, how much was put there rather than grown there.
+                //
+                // The figure the guidance is actually about. WHO's ten per cent of energy means
+                // *free* sugars - what is added, plus honey, syrup and juice - and counts the
+                // sugar in whole and dried fruit, and the lactose in milk, as none of its
+                // business. Measured against total sugar the limit is meaningless: a day with
+                // 240 g of dried prunes in it read four times over, and almost all of that was
+                // sugar the guidance excludes.
+                //
+                // Unset by default, falling back to two fifths of the total. A European label
+                // gives "of which sugars" and nothing more, so for most foods this has to be
+                // estimated - and while every food is unstated, two fifths of everything is
+                // arithmetically the same as leaving the limit at total sugar and raising it to
+                // 125 g. That is the point of the fallback: it costs nothing to add and it
+                // improves one food at a time.
+                //
+                // Where it errs is not evenly. Whole and dried fruit are nought and read as two
+                // fifths; confectionery is nearly all of it and reads as two fifths as well. So
+                // the foods worth a real figure first are the sweetest and the fruitiest - the
+                // ones at the top of a day's sugar, either way.
+                float sugar_added (label="Added sugar", suffix=" g", precision=1, fallback=$(sugar * 0.4)) = null
                 float fibre (label="Fibre", suffix=" g", precision=1) = 1
                 float salt (label="Salt", suffix=" g", precision=2) = 0.2
                 float vitamin_d (label="Vit. D", suffix=" µg", precision=1) = 0.1
@@ -73,6 +103,7 @@ tab food_catalog (label="Food Catalog", mutable=true) {
                 float trans_fat (label="Trans Fat", suffix=" g", precision=1) = $(per_100g/trans_fat * portion_weight * 0.01)
                 float carbs (label="Carbs", suffix=" g", precision=1) = $(per_100g/carbs * portion_weight * 0.01)
                 float sugar (label="Sugar", suffix=" g", precision=1) = $(per_100g/sugar * portion_weight * 0.01)
+                float sugar_added (label="Added sugar", suffix=" g", precision=1) = $(per_100g/sugar_added * portion_weight * 0.01)
                 float fibre (label="Fibre", suffix=" g", precision=1) = $(per_100g/fibre * portion_weight * 0.01)
                 float salt (label="Salt", suffix=" g", precision=2) = $(per_100g/salt * portion_weight * 0.01)
                 float vitamin_d (label="Vit. D", suffix=" µg", precision=1) = $(per_100g/vitamin_d * portion_weight * 0.01)

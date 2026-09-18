@@ -88,7 +88,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
             // document then shows a letter that its own numbers contradict. Only the
             // point fields are read here, and those settle with the figures they
             // come from.
-            string grade (font-size=44px, width=14%, font-color=$(((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= -1 ? "#038141" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 2 ? "#85bb2f" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 10 ? "#fecb02" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 18 ? "#ee8100" : ("#e63e11"))))), width=10%) = $(((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= -1 ? "A" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 2 ? "B" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 10 ? "C" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 18 ? "D" : ("E")))))
+            string grade (font-size=44px, width=100%, font-color=$(((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= -1 ? "#038141" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 2 ? "#85bb2f" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 10 ? "#fecb02" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 18 ? "#ee8100" : ("#e63e11"))))), width=10%) = $(((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= -1 ? "A" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 2 ? "B" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 10 ? "C" : (((p_energy + p_sugar + p_sat_fat + p_sodium) >= 11 ? (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre : (p_energy + p_sugar + p_sat_fat + p_sodium) - p_fibre - p_protein) <= 18 ? "D" : ("E")))))
         }
         div MealRecord (layout="vertical", margin=0, background-color="#16203a", border-radius=0, shadow="lifted") {
             // What the record actually stores, and the reason a correction to a food reaches
@@ -106,7 +106,9 @@ tab tracker_v2 (label="Calories", mutable=true) {
             // What the record is, on one line: which food, how much of it, and how good it is.
             // The macros go underneath, so a meal reads as a heading with its detail below.
             // The group has no name, so it changes the layout and nothing else.
-            div (layout="horizontal", margin=0) {
+            // When it was eaten, what it was, and what it cost. One row, because a
+            // name that has the width to itself does not wrap.
+            div (layout="horizontal", margin=0, alignment="center") {
                 // When it was eaten. The clock only: the day is the entry this record sits in,
                 // and repeating it on every mouthful would say nothing thirteen times a day.
                 //
@@ -114,8 +116,21 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // and `format` decides how much of one is shown, not how much is kept.
                 timestamp at (label="", format="time", precision="minutes", font-size=13px,
                               width=8%, hidden=$(at == "")) = ""
-
-                string name (font-size=20px, width=24%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/name)
+                string name (font-size=20px, width=62%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/name)
+                // The one figure most meals are read for, at a size to match. It sits beside
+                // the grade rather than in the table below, where it was one number among
+                // thirteen.
+                float calories (suffix=" kcal", precision=0, font-size=32px, width=30%) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/calories * 0.01)
+            }
+            // What qualifies the meal: which kind of the food it was, what the food is, and how
+            // much of it. Kept off the first row so a long name has the width to itself.
+            //
+            // Centred because the chips have no label above them and the amounts do, and without
+            // it the chips ride up against the top of the row while the numbers sit lower.
+            div (layout="horizontal", margin=0, alignment="center") {
+                // The part of the name that is not the name - a flavour, a crust, a cut.
+                // Smaller and under it, and drawn at all only when the food has one.
+                string sub_name (label="", font-size=12px, width=38%, hidden=$(sub_name == "")) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/sub_name)
 
                 // What the food is, looked up the same way its name and its macros are.
                 //
@@ -124,20 +139,51 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // onto the record, where the next resolve would overwrite them from the
                 // catalogue - a change that appears to work and then quietly does not. Change
                 // them in foods.os and every meal that ever ate it says the same new thing.
-                tags labels (label="", vocabulary="tracker_v2/VOCAB/Labels", mutable=false, width=16%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/labels)
-
+                tags labels (label="", vocabulary="tracker_v2/VOCAB/Labels", mutable=false, width=26%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/labels)
                 // Whichever of these a record states, the other is derived. Both are null here
                 // so neither shadows the other; a record must state one of them.
-                float portions (precision=2, format="trim", suffix=" ×", width=10%, fallback=$(grams / portion_weight), default=1) = null
-                float grams (suffix=" g", precision=0, width=10%, fallback=$(portions * portion_weight)) = null
+                float portions (label="portions", precision=2, format="trim", width=16%, fallback=$(grams / portion_weight), default=1) = null
+                float grams (label="weight", suffix=" g", precision=0, width=18%, fallback=$(portions * portion_weight)) = null
+            }
+            // The detail, and the grade beside it rather than above it. The grade is worked out
+            // from these very figures, so reading them together is reading one thing; and the
+            // macro rows stop short of the right edge, which is exactly the space a single large
+            // letter wants.
+            div (layout="horizontal", margin=0, alignment="center") {
+            // Two even rows rather than one long one, so a meal is a filled block
+            // instead of a line of figures trailing off the side of the card.
+                div macros (layout="vertical", margin=0, border-style=none, shadow="none", width=88%) {
+                    div (layout="horizontal", margin=0) {
+                        float protein (label="Protein", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/protein * 0.01)
+                        float fat (label="Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/fat * 0.01)
+                        float saturated_fat (label="Sat. Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/saturated_fat * 0.01)
+                        float trans_fat (label="Trans Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/trans_fat * 0.01)
+                        float carbs (label="Carbs", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/carbs * 0.01)
+                        float sugar (label="Sugar", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/sugar * 0.01)
+                        float sugar_added (label="Added", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/sugar_added * 0.01)
 
-                // The one figure most meals are read for, at a size to match. It sits beside
-                // the grade rather than in the table below, where it was one number among
-                // thirteen.
-                float calories (suffix=" kcal", precision=0, font-size=34px, width=30%) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/calories * 0.01)
+                        // Beside the energy macros because that is what it is: alcohol carries
+                        // 7 kcal a gram, and a day with any in it is not read the same way.
+                        float alcohol (label="Alcohol", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/alcohol * 0.01)
+                    }
+                    div (layout="horizontal", margin=0) {
+                        float fibre (label="Fibre", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/fibre * 0.01)
+                        float salt (label="Salt", suffix=" g", precision=2) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/salt * 0.01)
+                        float vitamin_d (label="Vit. D", suffix=" µg", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/vitamin_d * 0.01)
+                        float calcium (label="Calcium", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/calcium * 0.01)
+                        float iron (label="Iron", suffix=" mg", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/iron * 0.01)
+                        float potassium (label="Potassium", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/potassium * 0.01)
 
-                // The food's own grade. Its figures are per 100 g already, which is the side
-                // the scheme is defined on, so the amount eaten does not come into it.
+                        // The other row, because caffeine is not an energy macro - it is the one
+                        // figure here that says something about the shape of a day rather than
+                        // about what was in it.
+                        float caffeine (label="Caffeine", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/caffeine * 0.01)
+                    }
+                }
+
+                // The food's own grade, in the space the macro rows leave. Its own figures are
+                // per 100 g already, which is the side the scheme is defined on, so how much was
+                // eaten does not come into it.
                 <NutriScore> quality {
                     - kcal = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/calories)
                     - sugar = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/sugar)
@@ -145,35 +191,6 @@ tab tracker_v2 (label="Calories", mutable=true) {
                     - salt = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/salt)
                     - fibre = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/fibre)
                     - protein = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/protein)
-                }
-            }
-            // Two even rows rather than one long one, so a meal is a filled block
-            // instead of a line of figures trailing off the side of the card.
-            div macros (layout="vertical", margin=0, border-style=none, shadow="none") {
-                div (layout="horizontal", margin=0) {
-                    float protein (label="Protein", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/protein * 0.01)
-                    float fat (label="Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/fat * 0.01)
-                    float saturated_fat (label="Sat. Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/saturated_fat * 0.01)
-                    float trans_fat (label="Trans Fat", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/trans_fat * 0.01)
-                    float carbs (label="Carbs", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/carbs * 0.01)
-                    float sugar (label="Sugar", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/sugar * 0.01)
-
-                    // Beside the energy macros because that is what it is: alcohol carries
-                    // 7 kcal a gram, and a day with any in it is not read the same way.
-                    float alcohol (label="Alcohol", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/alcohol * 0.01)
-                }
-                div (layout="horizontal", margin=0) {
-                    float fibre (label="Fibre", suffix=" g", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/fibre * 0.01)
-                    float salt (label="Salt", suffix=" g", precision=2) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/salt * 0.01)
-                    float vitamin_d (label="Vit. D", suffix=" µg", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/vitamin_d * 0.01)
-                    float calcium (label="Calcium", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/calcium * 0.01)
-                    float iron (label="Iron", suffix=" mg", precision=1) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/iron * 0.01)
-                    float potassium (label="Potassium", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/potassium * 0.01)
-
-                    // The other row, because caffeine is not an energy macro - it is the one
-                    // figure here that says something about the shape of a day rather than
-                    // about what was in it.
-                    float caffeine (label="Caffeine", suffix=" mg", precision=0) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/caffeine * 0.01)
                 }
             }
         }
@@ -205,6 +222,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                     float saturated_fat (label="Sat. Fat", suffix=" g", precision=1) = $(intake.map(|x| x/macros/saturated_fat).sum())
                     float carbs (label="Carbs", suffix=" g", precision=1) = $(intake.map(|x| x/macros/carbs).sum())
                     float sugar (label="Sugar", suffix=" g", precision=1) = $(intake.map(|x| x/macros/sugar).sum())
+                    float sugar_added (label="Added sugar", suffix=" g", precision=1) = $(intake.map(|x| x/macros/sugar_added).sum())
                     float alcohol (label="Alcohol", suffix=" g", precision=1) = $(intake.map(|x| x/macros/alcohol).sum())
                 }
                 div (layout="horizontal", margin=0) {
@@ -216,6 +234,36 @@ tab tracker_v2 (label="Calories", mutable=true) {
                     float potassium (label="Potassium", suffix=" mg", precision=0) = $(intake.map(|x| x/macros/potassium).sum())
                     float caffeine (label="Caffeine", suffix=" mg", precision=0) = $(intake.map(|x| x/macros/caffeine).sum())
                 }
+
+                // Where the day's calories came from, by what the food was.
+                //
+                // Hidden because the pie beside the macros is how these are read; they are here
+                // rather than in the chart so that anything else - a month's average, the bot
+                // answering "how much meat this week" - can have them without repeating the
+                // arithmetic.
+                //
+                // The tag test is nested inside the predicate rather than worked out on each
+                // meal. A `tags` field offers its tags to a method chain as a list, so
+                // `x/labels.filter(|tag| tag == "meat").count() > 0` asks whether a meal's food
+                // carries one. Doing it here keeps a meal row as it was - three more hidden
+                // fields on every meal would cost more than these four formulas do.
+                //
+                // `vegetarian` is strict: vegetarian and not vegan, so the two slices do not
+                // count the same food twice. Every vegan food carries `vegetarian` as well, and
+                // without the second half of that test every vegan meal would appear in both.
+                //
+                // Nothing here pretends a portion of beef is entirely beef. A tagged food puts
+                // all of its calories in one slice, which is wrong in detail and right enough
+                // for the only question being asked: whether this is going up or down.
+                float vegan_calories (hidden=true) = $(intake.filter(|x| x/labels.filter(|tag| tag == "vegan").count() > 0).map(|x| x/calories).sum())
+                float vegetarian_calories (hidden=true) = $(intake.filter(|x| x/labels.filter(|tag| tag == "vegetarian").count() > 0 && x/labels.filter(|tag| tag == "vegan").count() == 0).map(|x| x/calories).sum())
+                float meat_calories (hidden=true) = $(intake.filter(|x| x/labels.filter(|tag| tag == "meat").count() > 0).map(|x| x/calories).sum())
+
+                // Whatever the three above did not claim: fish, a food carrying only `dairy`,
+                // and everything nobody has classified yet. Taken as the remainder rather than
+                // worked out from its own predicate, so the four always add up to the day - a
+                // pie whose slices do not is worse than no pie.
+                float other_calories (hidden=true) = $(calories - vegan_calories - vegetarian_calories - meat_calories)
             }
 
                 // The most recent day recorded before this one. Worked out by date rather than by
@@ -288,10 +336,41 @@ tab tracker_v2 (label="Calories", mutable=true) {
 
                     // Energy, not weight: a gram of fat carries nine calories and a gram of
                     // protein four, so shares by weight would say something else entirely.
-                    chart day_macros (kind="pie", width=260px, height=150px) {
+                    chart day_macros (kind="pie", width=220px, height=150px) {
                         plot protein (label="Protein", color="#4A90E2", amount=$(totals/protein * 4))
                         plot fat (label="Fat", color="#e2a24a", amount=$(totals/fat * 9))
                         plot carbs (label="Carbs", color="#7ed321", amount=$(totals/carbs * 4))
+                    }
+
+                    // And where they came from. Same day, same calories, cut a different way:
+                    // the macros pie asks what the energy was made of, this one asks what it was
+                    // made from. Reduction is the point of it - a wedge that shrinks week on
+                    // week is the whole reading.
+                    chart day_sources (kind="pie", width=220px, height=150px) {
+                        plot vegan (label="Vegan", color="#0e8a16", amount=$(totals/vegan_calories))
+                        plot vegetarian (label="Vegetarian", color="#4caf50", amount=$(totals/vegetarian_calories))
+                        plot meat (label="Meat", color="#b71c1c", amount=$(totals/meat_calories))
+                        plot other (label="Other", color="#6b7280", amount=$(totals/other_calories))
+                    }
+
+                    // And how much of the day's allowances went. A third question about the same
+                    // day: the pies ask what the energy was and where it came from, this asks
+                    // what is nearly used up.
+                    //
+                    // Each bar is a share of its own limit, which is the only way these are
+                    // comparable - salt is in grams and caffeine in milligrams, and on one axis
+                    // the salt bar would be a thousandth the height and say nothing. The dashed
+                    // line is every limit at once, and a bar past it turns red.
+                    //
+                    // Alcohol is deliberately absent. A day is the wrong window for it: nothing
+                    // useful is said by "you were under the limit today" when the figure worth
+                    // watching is the week. It wants a rolling total, which is a different chart.
+                    chart day_allowances (kind="bar", width=240px, height=150px) {
+                        plot calories (label="kcal", color="#4A90E2", amount=$(totals/calories), limit=$(targets/target_calories), suffix=" kcal")
+                        plot salt (label="Salt", color="#e2a24a", amount=$(totals/salt), limit=$(/tracker_v2/limits/limit_salt), suffix=" g")
+                        plot sat_fat (label="Sat. fat", color="#d0a34a", amount=$(totals/saturated_fat), limit=$(/tracker_v2/limits/limit_saturated_fat), suffix=" g")
+                        plot sugar (label="Added sugar", color="#c77dd6", amount=$(totals/sugar_added), limit=$(/tracker_v2/limits/limit_sugar), suffix=" g")
+                        plot caffeine (label="Caffeine", color="#5d4037", amount=$(totals/caffeine), limit=$(/tracker_v2/limits/limit_caffeine), suffix=" mg")
                     }
                 }
 
@@ -353,6 +432,32 @@ tab tracker_v2 (label="Calories", mutable=true) {
     div standing (label="Standing targets", layout="horizontal", margin=0) {
         float standing_calories (label="kcal a day", precision=0) = 1800
         float standing_protein (label="protein a day", suffix=" g", precision=0) = 100
+    }
+
+    // What a day is meant to stay under.
+    //
+    // Editable like everything else, and worth editing: these are general figures, not advice
+    // for one person. Where each comes from, so a figure can be argued with rather than merely
+    // changed - the WHO and EFSA ones are population guidance for adults:
+    //
+    //   - salt            5 g          WHO, less than five grams a day
+    //   - saturated fat   20 g         under a tenth of the energy in a 1,800 kcal day
+    //   - sugar           50 g         WHO, under a tenth of the energy - see the caveat below
+    //   - caffeine        400 mg       EFSA, without safety concern for a healthy adult
+    //
+    // Calories have no figure here on purpose: `standing_calories` above is already the number
+    // being aimed at, and two places to state the same thing is one place to get it wrong.
+    //
+    // The sugar figure is the loose one, and knowingly so. WHO's ten per cent is about *free*
+    // sugars - what is added, plus juice - and the catalogue records *total* sugar, which counts
+    // the sugar in fruit and milk as well. So the sugar bar reads higher than the guidance it is
+    // named after, and a day of fruit can fill it without anything being wrong. Kept because the
+    // trend still means something; drop it if it reads as an accusation.
+    div limits (label="Daily limits", layout="horizontal", margin=0) {
+        float limit_salt (label="salt", suffix=" g", precision=1) = 5
+        float limit_saturated_fat (label="sat. fat", suffix=" g", precision=0) = 20
+        float limit_sugar (label="sugar", suffix=" g", precision=0) = 50
+        float limit_caffeine (label="caffeine", suffix=" mg", precision=0) = 400
     }
 
     // Newest first, so today is at the top and the scroll goes backwards in time. `sort_by`

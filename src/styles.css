@@ -1050,6 +1050,11 @@ body {
     flex-wrap: wrap;
     /* So a long row of tags wraps inside its column instead of stretching the row. */
     min-width: 0;
+    /* A little air above and below. A tags field carries no label, so in a row beside fields
+     * that do, its chips were the one thing touching the top edge - and when they wrap onto a
+     * second line the two lines want separating anyway. Vertical only: the gap above already
+     * spaces them sideways. */
+    padding-block: 3px;
 }
 
 .tag-chip {

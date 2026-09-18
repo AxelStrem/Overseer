@@ -22,6 +22,8 @@ import {
     ArcElement,
     PieController,
     DoughnutController,
+    BarElement,
+    BarController,
     Title,
     Tooltip,
     Legend
@@ -40,6 +42,10 @@ Chart.register(
     ArcElement,
     PieController,
     DoughnutController,
+    // A chart that says `kind="bar"` draws its figures against a limit each - see the branch
+    // in `createChartElement`. Same reason these are listed: unregistered fails at draw time.
+    BarElement,
+    BarController,
     Title,
     Tooltip,
     Legend
@@ -3604,6 +3610,124 @@ export class OverseerRenderer {
             container._chartInstance = pie
             return container
         }
+
+        // A bar chart against a limit. Not a series and not parts of a whole: a handful of
+        // figures that are each supposed to stay under a number of their own.
+        //
+        // The bars are normalised, so what is drawn is the *share of the limit used* rather than
+        // the figure itself. That is the whole point of it: salt in grams and caffeine in
+        // milligrams differ by a factor of a thousand, and on a shared axis the salt bar is
+        // invisible and the chart says nothing. Against their own limits they are comparable,
+        // and the limit line is the one thing worth reading - a bar over it is over it, whatever
+        // the units were.
+        //
+        // The real figures are kept for the tooltip, because "84% of the salt you are allowed"
+        // is the reading and "4.2 g of 5 g" is the fact behind it.
+        if (kind === 'bar') {
+            const labels = []
+            const shares = []
+            const colors = []
+            const facts = []
+            for (const plot of plotsAll) {
+                const rawAmount = this.getParameterValue(plot, '_computed_amount')
+                const amount = Number(rawAmount !== undefined && rawAmount !== null
+                    ? rawAmount : this.getParameterValue(plot, 'amount'))
+                const rawLimit = this.getParameterValue(plot, '_computed_limit')
+                const limit = Number(rawLimit !== undefined && rawLimit !== null
+                    ? rawLimit : this.getParameterValue(plot, 'limit'))
+                // A plot with no limit has nothing to be a share of. Skipped rather than drawn
+                // against the others, which would put it on an axis it does not belong to.
+                if (!isFinite(amount) || !isFinite(limit) || limit <= 0) continue
+                const suffix = (this.getParameterValue(plot, 'suffix') || '').toString()
+                const share = amount / limit
+                labels.push(this.getParameterValue(plot, 'label') || plot.name || 'Bar')
+                shares.push(share)
+                // Over the limit is the thing the chart exists to show, so it is not left to the
+                // reader to compare a bar against a line: it changes colour.
+                colors.push(share > 1
+                    ? this.convertColorValue('#e63e11')
+                    : this.convertColorValue(this.getParameterValue(plot, 'color') || '#4A90E2'))
+                facts.push({ amount, limit, suffix })
+            }
+            if (shares.length === 0) return container
+
+            // How tall to make the axis, which is the one real design decision here.
+            //
+            // Not simply the tallest bar: on real days the sugar figure reaches four times its
+            // limit, and an axis that fits it leaves the other four bars a few pixels high and
+            // the limit line down in the noise. Not a fixed ceiling either, or a day when
+            // everything came in under would draw five stubs against a line near the top.
+            //
+            // So: always leave room above the line, always keep the line in the upper half, and
+            // stop growing at three times over. A bar past that is clipped, stays red, and says
+            // the real figure when pointed at - by then "a lot" is the whole reading anyway.
+            const tallest = Math.max(1.5, Math.min(3, Math.max(...shares) * 1.1))
+
+            const bars = new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            data: shares,
+                            backgroundColor: colors,
+                            borderWidth: 0,
+                            order: 2,
+                        },
+                        {
+                            // The limit, as a line across every bar. A dataset rather than an
+                            // annotation because the annotation plugin is not loaded, and one
+                            // flat dataset says the same thing with nothing new to register.
+                            type: 'line',
+                            data: labels.map(() => 1),
+                            borderColor: 'rgba(230, 62, 17, 0.75)',
+                            borderWidth: 1,
+                            borderDash: [4, 3],
+                            pointRadius: 0,
+                            fill: false,
+                            order: 1,
+                        },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+                        y: {
+                            beginAtZero: true,
+                            max: tallest,
+                            grid: { display: false },
+                            ticks: {
+                                font: { size: 10 },
+                                // As shares of the limit, since that is what the heights are.
+                                callback: (value) => Math.round(value * 100) + '%',
+                            },
+                        },
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            filter: (item) => item.datasetIndex === 0,
+                            callbacks: {
+                                label: (item) => {
+                                    const fact = facts[item.dataIndex]
+                                    if (!fact) return item.label
+                                    const round = (n) => (n >= 100 ? Math.round(n) : Math.round(n * 10) / 10)
+                                    const share = Math.round(item.parsed.y * 100)
+                                    return `${item.label}: ${round(fact.amount)}${fact.suffix} of `
+                                        + `${round(fact.limit)}${fact.suffix} (${share}%)`
+                                },
+                            },
+                        },
+                    },
+                },
+            })
+            canvas._chartInstance = bars
+            container._chartInstance = bars
+            return container
+        }
+
 
         
         // Check if we have computed series data
