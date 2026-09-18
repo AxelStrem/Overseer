@@ -302,6 +302,24 @@ async fn run_event(
     Ok(Json(json!(outcome)))
 }
 
+/// Take back the last write to a document.
+async fn undo(
+    State(service): State<Service>,
+    axum::extract::Query(which): axum::extract::Query<Which>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let outcome = tokio::task::spawn_blocking(move || documents.undo(&which.document))
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("the undo panicked: {}", e))))?
+        .map_err(respond)?;
+    Ok(Json(outcome))
+}
+
+#[derive(serde::Deserialize)]
+struct Which {
+    document: String,
+}
+
 /// Report what went wrong without describing the filesystem to whoever asked.
 fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match error {
@@ -540,6 +558,7 @@ async fn serve() {
         .route("/v1/append", post(append_at))
         .route("/v1/remove", post(remove_at))
         .route("/v1/event", post(run_event))
+        .route("/v1/undo", post(undo))
         .route("/__overseer/bridge.js", get(bridge))
         .route("/", get(index));
     if let Some(dir) = frontend.as_ref() {

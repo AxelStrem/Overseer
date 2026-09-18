@@ -12,6 +12,7 @@ pub mod resolver;
 pub mod server;
 pub mod source_registry;
 pub mod types;
+pub mod undo;
 
 // Re-export common types for convenience in integration tests
 pub use file_ops::OverseerFileHandler;

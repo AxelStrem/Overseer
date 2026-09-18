@@ -815,24 +815,17 @@ impl DocumentRoot {
                 // What the page was working from. If the file no longer says that, something
                 // else has written since - the bot, or another tab - and this text was built
                 // without it. Refusing is the only answer that cannot lose the other write.
-                if let Some(original) = arg_str(args, &["original"]) {
-                    let on_disk = std::fs::read_to_string(&path).map_err(|e| {
-                        RequestError::Failed(format!("could not read '{}': {}", name, e))
-                    })?;
-                    if crate::app_api::canonicalize_document(&on_disk)
-                        != crate::app_api::canonicalize_document(&original)
-                    {
-                        return Err(RequestError::Rejected(format!(
-                            "'{}' changed since this page loaded it, so saving would discard                              that change. Reload and try again.",
-                            name
-                        )));
-                    }
-                }
+                Self::refuse_if_moved_on(&path, &name, arg_str(args, &["original"]).as_deref())?;
                 crate::app_api::canonicalize_document(&regenerated)
             }
             "save_overseer_file_from_text" => {
                 let content = arg_str(args, &["content"])
                     .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                // The check was written for `save_overseer_file_with_original` and then the
+                // page stopped using that command: sending the text already in hand is far
+                // cheaper than uploading the document, so every save has come through here,
+                // where nothing was checked. Same question, asked here too.
+                Self::refuse_if_moved_on(&path, &name, arg_str(args, &["original"]).as_deref())?;
                 let guarded: Vec<crate::app_api::GuardedRevert> = args
                     .get("guarded")
                     .and_then(|g| serde_json::from_value(g.clone()).ok())
@@ -844,6 +837,7 @@ impl DocumentRoot {
             "save_overseer_file" => {
                 let content = arg_str(args, &["content"])
                     .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                Self::refuse_if_moved_on(&path, &name, arg_str(args, &["original"]).as_deref())?;
                 crate::app_api::canonicalize_document(&content)
             }
             other => {
@@ -854,14 +848,7 @@ impl DocumentRoot {
             }
         };
 
-        // Written beside the file and renamed over it, so a reader never sees half a document.
-        let temporary = path.with_extension("os.writing");
-        std::fs::write(&temporary, text.as_bytes())
-            .map_err(|e| RequestError::Failed(format!("could not write '{}': {}", name, e)))?;
-        std::fs::rename(&temporary, &path).map_err(|e| {
-            let _ = std::fs::remove_file(&temporary);
-            RequestError::Failed(format!("could not replace '{}': {}", name, e))
-        })?;
+        self.write_document(&path, &name, &text)?;
 
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
@@ -907,18 +894,96 @@ impl DocumentRoot {
             Ok::<_, RequestError>((outcome, nodes, serialized))
         })?;
 
+        self.write_document(&path, name, &serialized)?;
+        Ok((outcome, nodes))
+    }
+
+    /// Refuse a save built on a document that has since moved on.
+    ///
+    /// A page holds the text it loaded and sends it back to be written; if the file no longer
+    /// says that, something else has written since - the bot, or another tab - and this text
+    /// was built without it. There is no merge to attempt here and no safe overwrite: the
+    /// honest answer is to say so and let the person reload.
+    fn refuse_if_moved_on(
+        path: &std::path::Path,
+        name: &str,
+        was: Option<&str>,
+    ) -> std::result::Result<(), RequestError> {
+        let Some(was) = was else { return Ok(()) };
+        // A document being written for the first time has nothing to have moved on from.
+        let Ok(on_disk) = std::fs::read_to_string(path) else {
+            return Ok(());
+        };
+        if crate::app_api::still_says_what_it_did(&on_disk, Some(was)) {
+            return Ok(());
+        }
+        Err(RequestError::Rejected(format!(
+            "'{}' has changed since this page loaded it. Saving now would throw that change away, so nothing has been written. Reload the document and make the edit again.",
+            name
+        )))
+    }
+
+    /// Put a document back the way it was before the last write.
+    ///
+    /// Not a reversal of what was done - the previous text is simply written back, which is why
+    /// an append, a remove and a re-parent all cost the same and why a change of shape costs
+    /// nothing extra. The step is taken off the history rather than copied, so undoing twice
+    /// walks back two writes instead of swapping between the same two states.
+    ///
+    /// This write does not record an undo point of its own: the state it is taking back would
+    /// otherwise become the newest step, and the history would never move.
+    pub fn undo(&self, name: &str) -> std::result::Result<serde_json::Value, RequestError> {
+        let path = self.resolve(name)?;
+        let Some(previous) = crate::undo::take(&self.root, name) else {
+            return Err(RequestError::Rejected(format!(
+                "there is nothing to take back for '{}'",
+                name
+            )));
+        };
         let temporary = path.with_extension("os.writing");
-        std::fs::write(&temporary, serialized.as_bytes())
+        std::fs::write(&temporary, previous.as_bytes())
             .map_err(|e| RequestError::Failed(format!("could not write '{}': {}", name, e)))?;
         std::fs::rename(&temporary, &path).map_err(|e| {
             let _ = std::fs::remove_file(&temporary);
             RequestError::Failed(format!("could not replace '{}': {}", name, e))
         })?;
-        Ok((outcome, nodes))
+        self.journal(serde_json::json!({
+            "at": chrono::Utc::now().to_rfc3339(),
+            "document": name,
+            "operation": "undo",
+        }));
+        Ok(serde_json::json!({
+            "undone": name,
+            "steps_left": crate::undo::depth(&self.root, name),
+        }))
     }
 
-    /// Record what was done, so a mistake made from outside the app can be found afterwards.
+    /// Write a document, keeping what it said so the write can be taken back.
     ///
+    /// Both ways of writing come through here - the addressed edits the bot makes and the saves
+    /// a page sends - so there is one place that knows a document is about to change, and one
+    /// place that records the step. Written beside the file and renamed over it, so a reader
+    /// never sees half a document.
+    fn write_document(
+        &self,
+        path: &std::path::Path,
+        name: &str,
+        text: &str,
+    ) -> std::result::Result<(), RequestError> {
+        // Before the write, and only when there is something to keep: a document being created
+        // has nothing to go back to.
+        if let Ok(previous) = std::fs::read_to_string(path) {
+            crate::undo::remember(&self.root, name, &previous);
+        }
+        let temporary = path.with_extension("os.writing");
+        std::fs::write(&temporary, text.as_bytes())
+            .map_err(|e| RequestError::Failed(format!("could not write '{}': {}", name, e)))?;
+        std::fs::rename(&temporary, path).map_err(|e| {
+            let _ = std::fs::remove_file(&temporary);
+            RequestError::Failed(format!("could not replace '{}': {}", name, e))
+        })
+    }
+
     /// One line per write, next to the documents. Not a transaction log - the document itself
     /// is the state - but enough to answer "what did the bot put here, and when".
     fn journal(&self, entry: serde_json::Value) {

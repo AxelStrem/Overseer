@@ -71,7 +71,21 @@ async fn save_overseer_file_from_text(
     path: String,
     content: String,
     guarded: Option<Vec<app_api::GuardedRevert>>,
+    original: Option<String>,
 ) -> Result<()> {
+    // What the window was working from. If the file no longer says that, something else has
+    // written since - the server, the bot, another window - and this text was built without
+    // it. Writing anyway discards that write and says nothing.
+    if let Some(was) = original.as_deref() {
+        if let Ok(on_disk) = std::fs::read_to_string(&path) {
+            if !app_api::still_says_what_it_did(&on_disk, Some(was)) {
+                return Err(OverseerError::ValidationError(format!(
+                    "'{}' has changed since it was opened here. Saving now would throw that change away, so nothing has been written. Reload and make the edit again.",
+                    path
+                )));
+            }
+        }
+    }
     let text = app_api::save_document_from_text(content, guarded.unwrap_or_default())?;
     FileOperations::write_file(&path, &text)
         .await

@@ -712,6 +712,23 @@ pub struct GuardedRevert {
     pub value: Option<OverseerValue>,
 }
 
+/// Whether the file still says what the caller was working from.
+///
+/// A page holds the document as text and sends that text back to be written. If the file has
+/// moved on since it was loaded - the bot logged a meal, another tab saved - then the text in
+/// hand was built without that write, and writing it discards the other one silently. Refusing
+/// is the only answer that cannot lose somebody's work.
+///
+/// Compared after canonicalizing, so a difference that is only formatting is not a conflict.
+/// `None` for `was` means the caller did not say what it started from, and nothing is checked -
+/// which is what a document being saved for the first time looks like.
+pub fn still_says_what_it_did(on_disk: &str, was: Option<&str>) -> bool {
+    match was {
+        None => true,
+        Some(was) => canonicalize_document(on_disk) == canonicalize_document(was),
+    }
+}
+
 /// Serialize a document held as text, restoring guarded fields to what the document authored.
 ///
 /// `mutable="guarded"` means a field can be changed in the open document and the change is

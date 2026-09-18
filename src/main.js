@@ -593,7 +593,11 @@ tab Main {
                 await invoke('save_overseer_file_from_text', {
                     path: this.currentFile,
                     content,
-                    guarded
+                    guarded,
+                    // What the file said when this page loaded it. The backend refuses the
+                    // write if the file has moved on since, because the text being sent was
+                    // built without whatever moved it - and overwriting is silent.
+                    original: this._originalText ?? null
                 })
                 try {
                     this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
@@ -612,6 +616,7 @@ tab Main {
             } else {
                 // Fallback if no baseline is available (e.g., new unsaved file in memory)
                 await invoke('save_overseer_file', { 
+                    original: this._originalText ?? null,
                     path: this.currentFile, 
                     content 
                 })

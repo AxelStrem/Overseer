@@ -15,7 +15,6 @@
 //! written: 2153ms a press became 453ms, and an edit 1326ms became 562ms.
 
 use overseer::app_api;
-use overseer::docmgr::manager::DocumentManager;
 use overseer::types::{OverseerNode, OverseerValue};
 
 /// Documents are worked out into a process-wide cache, and these tests empty it deliberately.
