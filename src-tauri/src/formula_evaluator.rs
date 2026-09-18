@@ -3895,12 +3895,6 @@ impl FormulaEvaluator {
         None
     }
 
-    fn resolve_path_to_node_any<'a>(
-        path: &[String],
-        context: &'a EvaluationContext,
-    ) -> Option<&'a OverseerNode> {
-        Self::resolve_path_and_node(path, context).map(|(_, node)| node)
-    }
 
 
 

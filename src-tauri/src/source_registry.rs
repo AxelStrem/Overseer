@@ -286,14 +286,6 @@ impl SourceRegistry {
         CURRENT_SCOPE.with(|s| s.borrow_mut().clear());
     }
 
-    pub fn reset_document_trailing() {
-        if let (Some(scope), Ok(mut scopes)) = (Self::current_scope(), SCOPES.write()) {
-            if let Some(data) = scopes.get_mut(&scope) {
-                data.trailing.clear();
-            }
-        }
-    }
-
     pub fn append_document_trailing(chunk: &str) {
         if chunk.is_empty() {
             return;

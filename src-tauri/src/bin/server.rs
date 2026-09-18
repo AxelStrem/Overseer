@@ -71,7 +71,7 @@ async fn document_or_page(
     if wants_a_page(&headers) && service.frontend.is_some() {
         return index(State(service)).await;
     }
-    match document(State(service), headers, Path(name)).await {
+    match document(State(service), Path(name)).await {
         Ok(json) => json.into_response(),
         Err(err) => err.into_response(),
     }
@@ -332,7 +332,6 @@ fn wants_a_page(headers: &HeaderMap) -> bool {
 
 async fn document(
     State(service): State<Service>,
-    headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Resolving is CPU work rather than IO, and long enough on a large document to block the

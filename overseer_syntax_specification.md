@@ -232,6 +232,22 @@ float AvgPriority = $(../Tasks/Data.average(Priority))
 
 ---
 
+
+#### Showing part of a list
+
+A long history costs what it costs to resolve, and most of it is not on screen. `window` says
+how many entries to keep, `sort_by` says which ones those are — and the window is applied
+before the entries are instantiated, so the rest is work never done rather than work thrown
+away.
+
+```overseer
+list History (entry=<Day>, key="day", window=3,
+              sort_by=$(|x| 0 - millis_since_epoch(x/day))) { }
+```
+
+What is left out is still in the file and still saved; it is simply not resolved. A note under
+the list says how many entries that was.
+
 ## Advanced Features
 
 ### 1. Templates and Inheritance
@@ -306,6 +322,49 @@ Notes:
 - Nested content of `if { ... }` must be actions; field assignments inside action blocks follow the usual `- field = value` rules when used within `append`/`prepend` object initializers.
 - This conditional is available only within action contexts (e.g., inside `on click {}` or `on timeout {}` blocks).
 
+
+
+### Tags
+
+A `tags` field holds several labels in one string, drawn as chips and matched against a
+vocabulary elsewhere in the document. A label not in the vocabulary still shows, marked as no
+longer listed — the field really does hold it.
+
+```overseer
+div Label (layout="horizontal") {          // the vocabulary: a handle, a name, a colour
+    string tag = ""
+    string name = ""
+    string colour = "#6b7280"
+}
+list Labels (entry=<Label>, key="tag") { }
+
+tags labels (vocabulary="/project/Labels", width=24%) = "perf, correctness"
+```
+
+Handed to a formula, a `tags` field reads as a list, so a document can ask what it holds:
+
+```overseer
+bool is_vegan = $(labels.filter(|t| t == "vegan").count() > 0)
+```
+
+### Filter
+
+A view over a list, and nothing more: it writes nothing and the document never changes. What
+is typed is matched against the fields named in `text` — the fields, not what is on screen,
+because what is on screen is formatted and sometimes hidden.
+
+```overseer
+filter (target="/project/Items", text="title, commentary", tags="labels",
+        status="done", vocabulary="/project/Labels", label="find") { }
+```
+
+| parameter | |
+| --- | --- |
+| `target` | the list it narrows |
+| `text` | which fields the typed text is matched against |
+| `tags` | the field holding labels, so labels can be picked to narrow by |
+| `vocabulary` | where those labels are listed |
+| `status` | a field to offer as a third narrowing, by value |
 
 ### 3. Layout and Styling
 
@@ -548,29 +607,27 @@ div Tasks {
 }
 ```
 
-### Multi-File References
+### Mounting another document
+
+A `mount` pulls a node from another file in under a name of your own, and from then on it is
+addressed like anything else. A catalogue shared between documents that each keep their own
+history is what this is for.
+
 ```overseer
-// main.os
-div Dashboard {
-    int TaskCount = $(../tasks.os/Tasks/Data.count())
-}
+mount FOODS (source="foods.os/food_catalog/Catalog", lazy=false, mutable=false, hidden=true) { }
 
-// tasks.os
-div Tasks {
-    // task definitions
-}
+// and then, anywhere below:
+string name = $(FOODS.filter(|f| f/handle == ../food).map(|f| f/name).first())
 ```
 
-### Hidden Cache Directory
-```
-project/
-├── main.os
-├── tasks.os
-├── statistics.os
-└── .overseer/
-    ├── cache.json
-    └── computed_values.json
-```
+| parameter | |
+| --- | --- |
+| `source` | the file, then the path to the node inside it |
+| `lazy` | resolve it when something asks rather than on open |
+| `mutable` | whether writes through the mount are allowed |
+| `hidden` | mount it without drawing it, which is usual for a catalogue |
+
+`source` is relative to the document that declares the mount, not to the working directory.
 
 ---
 
@@ -607,8 +664,11 @@ div Tasks {
 - **Content**: `markdown`, `hidden`, `entry`, `base`
 - **Actions**: `target`, `condition`, `template`, `active`, `at`
 - **Timers**: `active`, `at`, `interval`, `repeat`
-- **Charts**: `data`, `labels`, `title`, `color` (planned)
-- **Lists**: `sort`, `direction` (planned)
+- **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
+- **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
+- **Mounts**: `source`, `lazy`, `mutable`
+- **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`
+- **Tags**: `vocabulary`
 
 ---
 

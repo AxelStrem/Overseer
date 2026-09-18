@@ -46,3 +46,15 @@ Thumbs.db
 
 .npm-cache/
 .cache/
+
+# Things that were committed once and should not be again
+#
+# A saved browser page of a document, captured output from a test run, and the log the app
+# writes beside itself. Between them they were most of the repository's weight.
+*.os - Overseer.html
+*.os _ - Overseer.html
+*_ - Overseer_files/
+* - Overseer_files/
+test_output.txt
+src-tauri/log.txt
+src-tauri/debug_regenerated_weight.os

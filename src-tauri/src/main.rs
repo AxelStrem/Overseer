@@ -3,23 +3,15 @@
 
 use tauri::command;
 
-mod actions;
-mod addressing;
-mod delta;
-mod app_api;
-mod dependencies;
-mod document_cache;
-mod docmgr;
-mod file_ops;
-mod formula_evaluator;
-mod parser;
-pub mod resolver;
-mod source_registry;
-mod types;
-
-use actions::ActionExecutor;
-use file_ops::FileOperations;
-use types::*;
+// From the library rather than declared again here. Listing the modules in both places
+// compiled every one of them twice - once into `liboverseer`, which the tests link against,
+// and once into this binary - so the two could drift, and a helper used only by a test was
+// reported as dead code because this half of the build did not call it. That was most of the
+// build's warnings, and it hid the real ones among them.
+use overseer::actions::ActionExecutor;
+use overseer::file_ops::FileOperations;
+use overseer::types::*;
+use overseer::{app_api, docmgr, file_ops};
 
 #[command]
 async fn load_overseer_file(path: String) -> Result<String> {

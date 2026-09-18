@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 
+// A selective update once re-rendered a list subtree as generic '-' items, losing the
+// styling every entry took from its template. This is the guard against that returning.
+
 // Minimal DOM container expected by renderer
 function setupDOM() {
   document.body.innerHTML = `

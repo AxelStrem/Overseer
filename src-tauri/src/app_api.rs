@@ -758,7 +758,7 @@ pub fn resolve_selective(
     );
 
     // Phase timings for one interaction, with OVERSEER_PROFILE=1.
-    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    let profiling = resolver::profile_enabled();
     let phase = std::time::Instant::now();
 
     match parse_document(&content) {

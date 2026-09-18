@@ -110,13 +110,14 @@ fn weight_tracker_round_trip_preserves_text() {
 
     let regenerated = OverseerFileHandler::serialize_nodes(&nodes).expect("serialize nodes");
 
-    std::fs::write(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("debug_regenerated_weight.os"),
-        &regenerated,
-    )
-    .expect("write debug regenerated output");
-
     if regenerated != original {
+        // What was produced, so the difference can be looked at with a diff tool rather than
+        // read out of the test output. Written only on failure: this ran on every green pass
+        // too, dropping a file into the source tree that was then committed.
+        let _ = std::fs::write(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("debug_regenerated_weight.os"),
+            &regenerated,
+        );
         let diff = diff_snapshot(&original, &regenerated);
         println!("Original lines 80-90:");
         for (idx, line) in original.lines().enumerate().skip(79).take(10) {

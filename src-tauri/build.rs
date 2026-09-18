@@ -16,7 +16,7 @@ fn main() {
         if !webview2_path.exists() {
             eprintln!("⚠️  WebView2 Fixed Version Runtime not found!");
             eprintln!("📁 Expected location: {}", webview2_path.display());
-            eprintln!("📖 Please follow WEBVIEW2_SETUP.md instructions to set up WebView2 runtime");
+            eprintln!("📖 Please follow DEVELOPMENT.md to set up the WebView2 runtime");
             eprintln!();
             eprintln!("Quick setup:");
             eprintln!("1. Download WebView2 Fixed Version Runtime (.cab file) from Microsoft");

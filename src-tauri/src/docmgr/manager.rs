@@ -89,15 +89,6 @@ impl DocumentManager {
         abs.parent().map(|d| d.to_path_buf())
     }
 
-    pub fn resolve_path(base: &Path, relative: &str) -> PathBuf {
-        let p = Path::new(relative);
-        if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            base.join(p)
-        }
-    }
-
     /// Resolve a path written inside a document. Absolute paths are used as-is; relative
     /// ones resolve against the open document's directory, falling back to the process
     /// working directory when no document is open (which is the case in most tests).

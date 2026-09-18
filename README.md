@@ -1,247 +1,87 @@
 # Overseer
 
-> A minimalistic personal data management framework using a custom domain-specific language
+Personal data kept in plain text, in files you own, described by a small language.
 
-Overseer is a cross-platform desktop application that helps you manage personal statistics, projects, tasks, journals, and other data using a human-readable, hierarchical syntax. It prioritizes open standards, local data storage, and complete user control over your information.
+A document is a `.os` file. It says what the data is, how it is laid out, what is computed from
+it and what the buttons do — all in one place, all human-readable, all in your working copy.
+There is no database and no service in the middle.
 
-## ✨ Features
-
-- **Custom DSL**: Human-readable syntax for defining data structures, logic, and styling
-- **Advanced Layout System**: Flexible horizontal/vertical layouts with spacing and margin controls
-- **Rich Styling**: Colors, fonts, borders, and sizing with inheritance
-- **Markdown Support**: Full markdown formatting with dual edit/view modes
-- **Grid Layouts**: Fixed sizing and table-like structures
-- **Local Storage**: All data stored in plain-text `.os` files
-- **Cross-Platform**: Built with Tauri for Windows, macOS, and Linux
-- **Live Updates**: Real-time file watching and auto-refresh
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) (v16 or later)
-- [Rust](https://rustup.rs/) (latest stable)
-- [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (Windows only)
-
-### Installation
-
-1. **Clone the repository:**
-   ```powershell
-   git clone https://github.com/AxelStrem/Overseer.git
-   cd Overseer
-   ```
-
-2. **Install dependencies:**
-   ```powershell
-   npm install
-   ```
-
-3. **Run in development mode:**
-   ```powershell
-   npm run tauri:dev
-   ```
-
-### Building for Release
-
-```powershell
-# Build with WebView2 runtime bundled (recommended)
-npm run tauri:build:release
-
-# Quick build (requires WebView2 installed separately)
-npm run tauri:build
 ```
+tab tracker (label="Today", mutable=true) {
+    list History (entry=<Day>, key="day", window=3, sort_by=$(|x| 0 - millis_since_epoch(x/day))) { }
 
-The built application will be in `src-tauri/target/release/bundle/`.
-
-## 📝 Basic Tutorial
-
-### Your First Document
-
-Create a file called `my-tasks.os`:
-
-```overseer
-tab "My Tasks" {
-    text welcome = "Welcome to Overseer!"
-    
-    div task_list (background-color=#F5F5F5, layout=vertical, spacing=10) {
-        div task1 (border-style=solid 1px gray, background-color=white) {
-            string title = "Learn Overseer syntax"
-            text description = "Understand the basic node types and parameters"
-            int priority = 5
-            bool completed = false
-        }
-        
-        div task2 (border-style=solid 1px gray, background-color=white) {
-            string title = "Create a personal dashboard"
-            text description (markdown=true) = "Build a **custom dashboard** with:
-- Task tracking
-- Statistics
-- Project notes"
-            int priority = 3
-            bool completed = false
-        }
+    div Day (layout="horizontal", spacing=6) {
+        timestamp day (format="date") = "2026-01-01T00:00:00Z"
+        float calories (format="trim") = 0
+        float share (label="of goal") = $(calories / 2000 * 100)
     }
 }
 ```
 
-### Key Concepts
+## Two ways to run it
 
-**Node Types:**
-- `div` - Container for grouping and styling
-- `string` - Single-line text
-- `text` - Multi-line text (supports markdown)
-- `int` - Numbers
-- `bool` - True/false values
-- `list` - Collections with templates
-- `tab` - UI tabs for organization
+**As a desktop app.** Tauri wraps the renderer and the resolver in one window.
 
-**Layout System:**
-```overseer
-div container (layout=horizontal, spacing=15, margin=10) {
-    // Children arranged horizontally with 15px gaps and 10px margin
-}
+```bash
+npm install
+npm run tauri:dev
 ```
 
-**Styling:**
-```overseer
-div styled_box (
-    background-color=lightblue,
-    font-size=18px,
-    font-color=darkblue,
-    width=200px,
-    height=100px,
-    border-style=solid 2px navy,
-    border-radius=8px
-) {
-    text content = "A styled container"
-}
+**As a server.** The same resolver over HTTP, so something other than a person can read and
+write the documents — which is what the companion bot does.
+
+```bash
+npm run server                                   # or, directly:
+cargo run --features server --bin overseer-server -- --root <documents>
 ```
 
-**Markdown Text:**
-```overseer
-text docs (markdown=true) = "# Project Notes
-**Important:** This supports *formatting* and `code`!
+It binds to loopback unless told otherwise. Reachable from outside, it refuses to start without
+`OVERSEER_TOKEN` — a document set is someone's diary, and an open port is an open diary.
 
-- Feature list
-- Progress tracking
-- Documentation"
+## The language
+
+Nodes are typed and nest. Containers are `tab`, `div` and `list`; values are `string`, `int`,
+`float`, `bool` and `timestamp`; the rest draw or do something — `text`, `button`, `chart`,
+`plot`, `tags`, `filter`, `timer`, `checkbox`, `mount`.
+
+Four ideas carry most of the weight:
+
+- **Templates.** A `div` declared with a name becomes the shape of a list's entries, and each
+  entry says only what differs from it.
+- **Formulas.** `$(...)` computes a value from others, addressed by path. `..` walks up until it
+  finds the name, so moving a field between wrappers does not break what reads it.
+- **Actions.** A `button` holds `on click { append ... }` or `remove`, so a document changes
+  itself without anything outside it knowing its shape.
+- **Mounts.** `mount` pulls another document in, so a catalogue can be shared between documents
+  that each keep their own history.
+
+[overseer_syntax_specification.md](overseer_syntax_specification.md) is the reference.
+
+## Where things are
+
+| | |
+| --- | --- |
+| `src/` | the renderer: DOM, charts, styling |
+| `src-tauri/src/` | the language: parser, resolver, formula evaluator, actions, serializer |
+| `src-tauri/src/bin/server.rs` | the HTTP server |
+| `examples/` | real documents, several of which the tests resolve |
+| `tests/`, `src-tauri/tests/` | the two suites |
+
+## Testing
+
+```bash
+npm test          # both suites, and a desktop build that must link
+npm run test:js   # the renderer, under jsdom
+npm run test:rust # the language core
 ```
 
-**Interactive Elements:**
-```overseer
-// Button with actions
-button save_data "Save Progress" {
-    action Set (target=../last_saved) = $(today())
-    action Add (target=../save_count) = 1
-}
+See [TESTING.md](TESTING.md). The one rule worth knowing up front: a save must give back the
+bytes it was given, and several real documents are checked that way, because a document that
+reformats itself on the first button press is a diff nobody can review.
 
-// Checkbox with automatic actions
-checkbox task_complete "Mark Done" {
-    action Set (target=../completed) = true
-    action Set (target=../completion_date) = $(today())
-}
+## Reading further
 
-// Scheduled timer
-timer daily_reminder (at="09:00", active=true) {
-    action Set (target=../reminder_sent) = true
-}
-```
-
-## 🔧 Development
-
-### Running Tests
-
-```powershell
-# Run all tests
-npm test
-
-# Run tests in watch mode
-npm run test:rust:watch
-
-# Verbose test output
-npm run test:verbose
-```
-
-### Debug Modes
-
-```powershell
-# Debug parser
-npm run tauri:dev:debug-parser
-
-# Debug resolver
-npm run tauri:dev:debug-resolver
-
-# Debug evaluator
-npm run tauri:dev:debug-evaluator
-
-# Debug all systems
-npm run tauri:dev:debug
-```
-
-### Project Structure
-
-```
-overseer/
-├── src/            # Frontend: renderer, app shell, styles
-├── src-tauri/      # Backend: the language core and file I/O
-├── tests/          # Frontend specs (Vitest + jsdom)
-├── examples/       # Example and personal .os documents
-└── feature-plans/  # Design docs for individual subsystems
-```
-
-A document flows through the backend in one direction:
-
-**parse** (`parser.rs` — text to AST, retaining each node's source span and
-surrounding trivia) → **resolve** (`resolver.rs` — parameter inheritance, layout,
-template instantiation) → **evaluate** (`formula_evaluator.rs` with
-`dependency_tracker.rs` deciding what actually needs recomputing) → **serialize**
-(`file_ops.rs`).
-
-The serializer is a *patcher*, not a generator: it replays each node's original
-source text unless that node's fingerprint changed, so an edit to one field
-rewrites one line and leaves the rest of the file — comments, spacing, parameter
-order — byte-identical. Keeping that property is the reason for most of the
-complexity in the parse and serialize stages.
-
-## 📚 Documentation
-
-- [Syntax Specification](overseer_syntax_specification.md) - Complete language reference
-- [Technical Architecture](technical_architecture.md) - System design details
-- [Development Plan](DEVELOPMENT_PLAN.os) - Current roadmap and progress
-- [Product Description](product_description.md) - Vision and use cases
-
-## 🎯 Current Status
-
-Overseer is usable for real personal tracking — the documents under `examples/`
-are live data, not demos. The DSL, styling, layout, formulas, actions and charts
-all work; the parser, resolver and serializer are the mature parts of the system.
-
-Progress is tracked in the project's own format rather than restated here:
-
-- [DEVELOPMENT_PLAN.os](DEVELOPMENT_PLAN.os) — phases and their tasks, each with
-  `complete` and `tested` flags. This is the authoritative roadmap.
-- [KNOWN_BUGS.os](KNOWN_BUGS.os) — open bugs and requested features. Entries with
-  `fixed = false` are the live ones.
-- [feature-plans/](feature-plans/) — design and progress notes per subsystem.
-
-Broadly: **multi-file support** (imports, mounts, cross-file queries) is designed
-in `feature-plans/MULTI_DOCUMENT_SUPPORT_PLAN.md` but not yet implemented, and
-advanced UI components and performance work are still open.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes and test thoroughly
-4. Commit with clear messages: `git commit -m "Add feature description"`
-5. Push and create a pull request
-
-## 🛟 Support
-
-- Check the [examples/](examples/) directory for sample files
-- Review [KNOWN_BUGS.os](KNOWN_BUGS.os) for current issues
-- See [DEVELOPMENT_SETUP.md](DEVELOPMENT_SETUP.md) for detailed setup instructions
-
----
-
-**Built with ❤️ using [Tauri](https://tauri.app/) • A modern approach to personal data management**
+- [overseer_syntax_specification.md](overseer_syntax_specification.md) — the DSL, node by node
+- [technical_architecture.md](technical_architecture.md) — how a document becomes a screen
+- [DEVELOPMENT.md](DEVELOPMENT.md) — toolchain, debug builds, WebView2
+- [product_description.md](product_description.md) — what this is for, written before it existed

@@ -11,7 +11,9 @@ Overseer is tested from both sides of the Tauri IPC boundary:
   Vitest. These drive the real DOM the app builds and assert on what the user
   would see, with the backend stubbed.
 
-`npm test` runs both and prints a combined summary.
+`npm test` runs both, builds the desktop app, and prints a combined summary. The build is
+there because the desktop binary is gated behind a feature `cargo test` does not turn on -
+so the suite once stayed green while the app would not link.
 
 ```bash
 npm test              # both suites

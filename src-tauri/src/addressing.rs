@@ -81,23 +81,6 @@ fn key_of(node: &OverseerNode, field: &str) -> Option<String> {
         .and_then(key_text)
 }
 
-/// The address segment for `siblings[index]`.
-fn segment(parent: Option<&OverseerNode>, siblings: &[OverseerNode], index: usize) -> String {
-    let node = &siblings[index];
-    if let Some(field) = parent.and_then(key_field) {
-        if let Some(key) = key_of(node, field) {
-            return format!("[{}]", escape(&key));
-        }
-    }
-    let name = &node.name;
-    let ordinal = siblings[..index].iter().filter(|s| &s.name == name).count();
-    if ordinal == 0 {
-        escape(name)
-    } else {
-        format!("{}#{}", escape(name), ordinal)
-    }
-}
-
 
 /// Whether a node is a wrapper rather than something a reader would name.
 ///
@@ -183,11 +166,6 @@ pub fn segments_for(
 /// The address segment of each immediate child of `parent`, in order.
 pub fn child_segments(parent: &OverseerNode) -> Vec<String> {
     segments_for(Some(parent), &effective_children(parent))
-}
-
-/// The address segment of each root node, in order.
-pub fn root_segments(nodes: &[OverseerNode]) -> Vec<String> {
-    segments_for(None, &effective_roots(nodes))
 }
 
 /// Visit every node with its address, outermost first.

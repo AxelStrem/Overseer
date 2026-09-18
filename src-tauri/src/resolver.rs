@@ -57,7 +57,7 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
         debug_resolver!("[RESOLVER] Template resolution pass {}", pass);
 
         // Create a snapshot of nodes for template lookup (immutable reference)
-        let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+        let profiling = profile_enabled();
         let t_clone = std::time::Instant::now();
         let nodes_snapshot = nodes.clone(); // We need this for template lookup
         let clone_ms = t_clone.elapsed().as_secs_f64() * 1000.0;
@@ -300,7 +300,7 @@ pub fn out_of_view(node: &OverseerNode) -> bool {
 /// Evaluating formulas and rebuilding chart series first, only to overwrite the values that
 /// feed them and evaluate again, is work thrown away.
 pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
-    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    let profiling = profile_enabled();
     // First, because everything after it is work that a list out of view does not want done.
     let t = std::time::Instant::now();
     apply_list_windows(nodes);
@@ -331,7 +331,7 @@ pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
 /// resolution at that point walks and clones the whole tree to arrive at the shape it
 /// already has.
 pub fn resolve_values(nodes: &mut Vec<OverseerNode>) {
-    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    let profiling = profile_enabled();
 
     let t = std::time::Instant::now();
     evaluate_formulas_in_document_multi_pass(nodes);
@@ -353,7 +353,7 @@ pub fn resolve_values(nodes: &mut Vec<OverseerNode>) {
 }
 
 pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
-    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    let profiling = profile_enabled();
     resolve_structure(nodes);
 
     // After parameter inheritance, evaluate formulas (multi-pass so aggregates whose inputs appear later update)
@@ -2124,7 +2124,7 @@ static PROFILE_FORMULAS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<String, (u64, f64)>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-fn profile_enabled() -> bool {
+pub fn profile_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("OVERSEER_PROFILE").is_ok())
 }
@@ -2185,7 +2185,7 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
     // Set OVERSEER_PROFILE=1 to see where an interaction's time goes: how many passes ran,
     // and what each cost. This is the hot path - it runs on every edit - so guessing at its
     // shape from wall-clock totals has proven unreliable.
-    let profiling = std::env::var("OVERSEER_PROFILE").is_ok();
+    let profiling = profile_enabled();
     let started = std::time::Instant::now();
 
     while pass < MAX_PASSES && progress {
@@ -2238,6 +2238,10 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
             pass,
             started.elapsed().as_secs_f64() * 1000.0
         );
+        // What the passes actually spent their time on. Recorded per formula all along, and
+        // until now discarded at the end of the run - which left the profile saying that the
+        // evaluator was slow without saying which formula was.
+        profile_report_formulas("formulas");
     }
     debug_resolver!(
         "[RESOLVER] Multi-pass formula evaluation completed in {} pass(es)",

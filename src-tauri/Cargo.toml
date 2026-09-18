@@ -71,7 +71,6 @@ debug-evaluator = []
 # Serving documents over HTTP. Off by default and confined to its own binary, so the desktop
 # app neither compiles nor ships an HTTP stack it has no use for.
 server = ["dep:axum", "dep:tower-http"]
-debug-deps = []
 
 # The backend does heavy tree work on every interaction, and an unoptimized build makes that
 # take seconds rather than milliseconds - `tauri dev` is unusable for editing documents
