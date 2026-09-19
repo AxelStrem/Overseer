@@ -23,18 +23,15 @@ fn comment_block_split_by_blank_line_survives_round_trip() {
     assert_eq!(round_trip(source), source);
 }
 
-/// Known bug: from the *third* blank-line-separated leading comment block onwards, a blank
-/// line is prepended to the top of the document - N blocks yield N-2 leading blank lines,
-/// and since saving rewrites the file they accumulate on every save.
+/// From the third blank-line-separated leading comment block onwards, a blank line used to be
+/// prepended to the top of the document - N blocks yielded N-2 of them - and since saving
+/// rewrites the file they accumulated, one more on every save.
 ///
-/// Two blocks round-trip cleanly, which is why `comment_block_split_by_blank_line_...`
-/// above does not catch it. A file header of several paragraphs is the natural shape that
-/// trips it; `examples/weight_tracker/foods.os` had to be written as one contiguous block
-/// to avoid it.
-///
-/// Remove the `#[ignore]` once the leading-trivia handling is fixed.
+/// The blank lines between the blocks are part of the trivia's own text. The count of them was
+/// emitted in front of it as well, which is that spacing said twice. Two blocks round-trip
+/// either way, which is why `comment_block_split_by_blank_line_...` above never caught it, and
+/// why `examples/weight_tracker/foods.os` had to be written as one contiguous block.
 #[test]
-#[ignore = "known bug: 3+ blank-separated leading comment blocks prepend blank lines on every save"]
 fn several_leading_comment_blocks_survive_round_trip() {
     let source = "// one\n\n// two\n\n// three\ndiv root {\n    int a = 1\n}\n";
     let out = round_trip(source);
@@ -44,6 +41,34 @@ fn several_leading_comment_blocks_survive_round_trip() {
         "{} blank line(s) were prepended",
         out.chars().take_while(|c| *c == '\n').count()
     );
+}
+
+#[test]
+fn a_header_of_many_paragraphs_survives_too() {
+    // It grew with the number of blocks, so the fix has to hold for more than three.
+    let mut source = String::new();
+    for n in 1..=6 {
+        source.push_str(&format!("// paragraph {}\n// second line of it\n\n", n));
+    }
+    source.push_str("div root {\n    int a = 1\n}\n");
+    assert_eq!(round_trip(&source), source);
+}
+
+#[test]
+fn saving_repeatedly_does_not_accumulate_blank_lines() {
+    // The part that made it expensive rather than untidy: every save added one more, so a
+    // document written to by the bot grew a taller and taller gap above its first line.
+    let source = "// one\n\n// two\n\n// three\n\n// four\ndiv root {\n    int a = 1\n}\n";
+    let mut text = source.to_string();
+    for save in 1..=5 {
+        text = round_trip(&text);
+        assert_eq!(
+            text, source,
+            "save number {} left {} blank line(s) at the top",
+            save,
+            text.chars().take_while(|c| *c == '\n').count()
+        );
+    }
 }
 
 /// A bare `//` used as a separator must survive a round trip.

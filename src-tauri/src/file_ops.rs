@@ -226,6 +226,14 @@ impl FileOperations {
         let trivia_is_whitespace = trivia.trim().is_empty();
         if in_list_body {
             allowed_blank_lines = 0;
+        } else if output.is_empty() && !trivia_is_whitespace {
+            // Nothing has been written yet and the trivia is the top of the file. Its own text
+            // already holds whatever blank lines separate the comment blocks in it, so a count
+            // of them emitted in front is that spacing a second time - and since every save
+            // rewrites the file, the blank lines accumulated one per save. Three blocks were
+            // enough to start it, which is why a two-paragraph header never showed it and a
+            // three-paragraph one did.
+            allowed_blank_lines = 0;
         } else if !output.is_empty() {
             if indent_level == 0 {
                 allowed_blank_lines = 0;
@@ -822,6 +830,16 @@ impl FileOperations {
                 if let Some(hint) = list_indent_hint {
                     required_indent = Some(required_indent.map(|val| val.max(hint)).unwrap_or(hint));
                 }
+                // Nothing to copy from: no neighbour to line up with, and no text of its own to
+                // read one out of. That is the first entry appended to a list, and the honest
+                // answer for it is how deep the node actually is - which `indent` already says.
+                //
+                // Saying it here rather than leaving it unset matters because the entry's line
+                // has usually been opened already, at whatever depth the enclosing block left
+                // the cursor at. Unset, the correction below had nothing to correct to and the
+                // entry stayed where the cursor happened to be: for a list nested inside a
+                // template entry, its parent list's depth, two levels short.
+                let required_indent = required_indent.or(Some(indent.len()));
                 if let Some(required_indent) = required_indent {
                     entry_indent = Some(" ".repeat(required_indent));
                     let line_start = output.rfind('\n').map(|idx| idx + 1).unwrap_or(0);

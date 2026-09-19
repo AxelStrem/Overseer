@@ -2790,16 +2790,24 @@ impl ActionExecutor {
         list_node: &OverseerNode,
         inserting_at_front: bool,
     ) -> ListEntryStyleGuide {
+        // Deliberately not seeded from the list's own indentation. That is where the list
+        // sits, and an entry sits one level inside it - so seeding from there wrote every new
+        // entry at its list's depth. An entry lines up with the entries around it, and when
+        // there are none it is left unsaid, so the serializer works it out from how deep the
+        // node actually is.
+        //
+        // It went unnoticed for as long as it did because a list with entries already in it
+        // supplies the right answer from the loop below, and because a second mechanism in the
+        // serializer lines entries up with their neighbours after the fact. Neither helps the
+        // first entry of a list nested inside a template entry - a day's notes, a reading - and
+        // those came out at their parent list's depth, four levels wrong.
         let mut guide = ListEntryStyleGuide {
             leading_blank_lines: 1,
             newline: list_node
                 .source_snapshot
                 .as_ref()
                 .and_then(|snap| snap.newline.clone()),
-            indent_unit: list_node
-                .source_snapshot
-                .as_ref()
-                .and_then(|snap| snap.indent_unit.clone()),
+            indent_unit: None,
         };
 
         let iter: Box<dyn Iterator<Item = &OverseerNode>> = if inserting_at_front {
@@ -2844,10 +2852,8 @@ impl ActionExecutor {
             }
         }
 
-        if guide.indent_unit.is_none() {
-            guide.indent_unit = Some("    ".to_string());
-        }
-
+        // No default here either. One indent unit is not an indentation, and stamping it on
+        // the entry hid the depth the serializer would otherwise have computed correctly.
         guide
     }
 
