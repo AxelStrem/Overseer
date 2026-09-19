@@ -17,11 +17,33 @@
         return new URLSearchParams(window.location.search).get('doc')
     })()
 
+    // Who is asking, for as long as this tab is open.
+    //
+    // The server keeps what each viewer is looking at - which day, what is folded - apart from
+    // the documents, so two tabs can look at different days without writing over each other.
+    // It cannot do that without being told them apart. Kept in sessionStorage so a reload keeps
+    // the day it was on, and so a second tab is genuinely a second viewer.
+    const session = (() => {
+        const minted = () => (crypto.randomUUID ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
+        try {
+            const held = sessionStorage.getItem('overseer.session')
+            if (held) return held
+            const fresh = minted()
+            sessionStorage.setItem('overseer.session', fresh)
+            return fresh
+        } catch (_) {
+            // Private windows and blocked storage: a session that lasts as long as the page is
+            // still better than everyone sharing one.
+            return minted()
+        }
+    })()
+
     async function call(cmd, args) {
         const response = await fetch(`/api/${encodeURIComponent(cmd)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ document: documentName, args: args || {} }),
+            body: JSON.stringify({ document: documentName, session, args: args || {} }),
         })
         const body = await response.json().catch(() => null)
         if (!response.ok) {

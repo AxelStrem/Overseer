@@ -43,6 +43,10 @@ struct CommandBody {
     /// The document the caller is working on, so what it mounts can be resolved.
     #[serde(default)]
     document: Option<String>,
+    /// Which viewer is asking, so what they are looking at is kept apart from what everyone
+    /// else is. Absent means a caller with no view of its own - a script, or the bot.
+    #[serde(default)]
+    session: Option<String>,
     #[serde(default)]
     args: serde_json::Value,
 }
@@ -55,7 +59,12 @@ async fn command(
     let documents = service.documents.clone();
     // Resolving is CPU work, long enough on a large document to block the thread it lands on.
     let outcome = tokio::task::spawn_blocking(move || {
-        documents.command(body.document.as_deref(), &cmd, &body.args)
+        documents.command_for(
+            body.session.as_deref().unwrap_or(""),
+            body.document.as_deref(),
+            &cmd,
+            &body.args,
+        )
     })
     .await
     .map_err(|e| respond(RequestError::Failed(format!("command panicked: {}", e))))?;

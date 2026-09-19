@@ -156,6 +156,74 @@ export class OverseerApp {
         return out
     }
 
+    /// The values the person looking has set that the file does not hold.
+    ///
+    /// `mutable="guarded"` means a field belongs to whoever is looking rather than to the
+    /// document - the day a page is showing, a section folded shut - so it never reaches the
+    /// file. Which also means reading the file back cannot recover it: every one of them
+    /// silently returns to what the document authored.
+    ///
+    /// Undo reads the file back, and that is how one undo came to look as though it took back
+    /// several changes at once. It took back the one write there was; the reload then discarded
+    /// every guarded value set since the document was opened, and they all appeared to revert
+    /// together. So they are carried across it.
+    collectViewerValues(doc) {
+        const out = new Map()
+        const isTrue = (v) => v === true || (v && typeof v === 'object' && v.Boolean === true)
+        const visit = (nodes, prefix) => {
+            const seen = new Map()
+            for (const n of nodes || []) {
+                if (!n || typeof n !== 'object') continue
+                const name = n.name || ''
+                const ordinal = seen.get(name) || 0
+                seen.set(name, ordinal + 1)
+                const path = prefix.concat(ordinal === 0 ? name : `${name}#${ordinal}`)
+                const p = n.parameters || {}
+                if (isTrue(p._guarded_edit)) {
+                    out.set(path.join('/'), {
+                        value: p.value,
+                        original: p._guarded_original_value,
+                        wasNew: p._guarded_was_new_override
+                    })
+                }
+                if (Array.isArray(n.children)) visit(n.children, path)
+            }
+        }
+        visit(Array.isArray(doc) ? doc : [doc], [])
+        return out
+    }
+
+    /// Put them back on a document just read from the file. Answers with how many.
+    ///
+    /// The bookkeeping travels with the value: what the document authored has to keep being
+    /// known, or the next save would write the viewer's value as though the document said it.
+    restoreViewerValues(doc, kept) {
+        if (!kept || kept.size === 0) return 0
+        let put = 0
+        const visit = (nodes, prefix) => {
+            const seen = new Map()
+            for (const n of nodes || []) {
+                if (!n || typeof n !== 'object') continue
+                const name = n.name || ''
+                const ordinal = seen.get(name) || 0
+                seen.set(name, ordinal + 1)
+                const path = prefix.concat(ordinal === 0 ? name : `${name}#${ordinal}`)
+                const held = kept.get(path.join('/'))
+                if (held) {
+                    if (!n.parameters) n.parameters = {}
+                    n.parameters.value = held.value
+                    n.parameters._guarded_edit = { Boolean: true }
+                    if (held.original !== undefined) n.parameters._guarded_original_value = held.original
+                    if (held.wasNew !== undefined) n.parameters._guarded_was_new_override = held.wasNew
+                    put += 1
+                }
+                if (Array.isArray(n.children)) visit(n.children, path)
+            }
+        }
+        visit(Array.isArray(doc) ? doc : [doc], [])
+        return put
+    }
+
     // Keep a guarded field's bookkeeping across a change that replaces its parameters.
     //
     // `mutable="guarded"` means a change lives in the open document and is restored to what
@@ -347,10 +415,22 @@ export class OverseerApp {
     if (openBtn) openBtn.addEventListener('click', () => this.openFile())
     const newBtn = document.getElementById('new-file-btn')
     if (newBtn) newBtn.addEventListener('click', () => this.newFile())
-    const saveBtn = document.getElementById('save-file-btn')
-    if (saveBtn) saveBtn.addEventListener('click', () => this.saveFile())
-    const reloadBtn = document.getElementById('reload-file-btn')
-    if (reloadBtn) reloadBtn.addEventListener('click', () => this.reloadFile())
+    // There is no Save and no Reload. Every change writes itself, so Save could only ask for
+    // what had already happened, and "discard unsaved changes and reload" named a state that
+    // can no longer arise. Undo is what stands in for both: the way back from a change is a
+    // step, not a re-read.
+    const undoBtn = document.getElementById('undo-file-btn')
+    if (undoBtn) undoBtn.addEventListener('click', () => this.undoLastChange())
+    // Ctrl+Z, unless something is being typed into - inside a field the browser's own undo is
+    // the one wanted, and taking the whole document back mid-word would be a surprise.
+    document.addEventListener('keydown', (event) => {
+        if (!(event.ctrlKey || event.metaKey) || event.key !== 'z' || event.shiftKey) return
+        const typing = document.activeElement
+        if (typing && ['INPUT', 'TEXTAREA'].includes(typing.tagName)) return
+        if (typing && typing.isContentEditable) return
+        event.preventDefault()
+        this.undoLastChange()
+    })
         
         // Welcome screen
     const welcomeOpen = document.getElementById('welcome-open-btn')
@@ -369,10 +449,6 @@ export class OverseerApp {
                     case 'o':
                         e.preventDefault()
                         this.openFile()
-                        break
-                    case 's':
-                        e.preventDefault()
-                        this.saveFile()
                         break
                     case 'n':
                         e.preventDefault()
@@ -452,9 +528,8 @@ export class OverseerApp {
             this._originalText = content
             this.isDocumentModified = false
 
-            // Update UI - remove direct file path update since updateTitle handles it now
-            document.getElementById('save-file-btn').disabled = false
-            document.getElementById('reload-file-btn').disabled = false
+            const undoBtn = document.getElementById('undo-file-btn')
+            if (undoBtn) undoBtn.disabled = false
             this.updateTitle()
 
             // Clear any previous content; avoid injecting bulky debug blocks into the document area
@@ -1867,33 +1942,103 @@ tab Main {
         }
     }
 
-    markDocumentModified() {
+    /// Something changed. `atOnce` for a change that is one thing a person did.
+    ///
+    /// Typing is a stream and wants collecting: a word should be one step to take back, not
+    /// eight. A press is a single act, and waiting after one only risks it being swept into the
+    /// same step as whatever gets typed next - which is what made undo look as though it took
+    /// back two changes at a time.
+    markDocumentModified(atOnce = false) {
         if (!this.isDocumentModified) {
             this.isDocumentModified = true
             this.updateTitle()
-            
-            // Enable save button if it was disabled
-            document.getElementById('save-file-btn').disabled = false
+        }
+        this.saveSoon(atOnce)
+    }
+
+    /// Write what has changed, shortly.
+    ///
+    /// Open, edit, save was right when a document was a local file and this app was the only way
+    /// in. The server owns them now, they are reached from a browser and from a bot, and a
+    /// change that is not written is one that is going to be lost - to a forgotten Save, or to
+    /// the bot writing over it. So every change writes itself, and the Save button is only there
+    /// for reassurance.
+    ///
+    /// Put here rather than in either backend because there are two of them - the desktop app's
+    /// commands and the server's dispatcher - and one of anything is better than two that can
+    /// disagree. It also means the write goes through the save path that already knows to keep
+    /// the viewer's own fields out of the file.
+    ///
+    /// Waited on briefly, because typing into a field marks the document changed on every
+    /// keystroke and a write per keystroke would be absurd. A press lands within the blink.
+    saveSoon(atOnce = false) {
+        if (!this.currentFile || this._autosave === false) return
+        clearTimeout(this._saveSoonTimer)
+        this._saveSoonTimer = setTimeout(() => {
+            // A save already running is left to finish; whatever came after it marks the
+            // document again and asks for another.
+            if (this._saving) { this.saveSoon(); return }
+            this._saving = true
+            Promise.resolve(this.saveFile())
+                .catch((e) => {
+                    // Refusals are the interesting case - somebody else wrote - and `saveFile`
+                    // has already said so on the status bar.
+                    if (DEBUG_MODE) console.warn('[Overseer] autosave did not go through', e)
+                })
+                .finally(() => { this._saving = false })
+        }, atOnce ? 0 : 400)
+    }
+
+    /// Take back the last change to this document, and say what happened.
+    ///
+    /// Not the browser's undo and not a stack of edits held here: the backend keeps what the
+    /// document said before each write, and taking one back is putting that text back. So it
+    /// takes back whatever wrote last - a press here, or the bot recording a meal - which is
+    /// the honest thing for a document two things are writing to, and the reason this says what
+    /// it did rather than quietly changing the page.
+    async undoLastChange() {
+        if (!this.currentFile) {
+            this.setStatus('No document open', '', 'warning')
+            return
+        }
+        // What the person looking has set, which the file does not hold and the reload below
+        // would otherwise drop. See `collectViewerValues`.
+        const viewers = this.collectViewerValues(this.currentDocument)
+        try {
+            const outcome = await invoke('undo_overseer_file', { path: this.currentFile })
+            await this.rereadFromDisk()
+            if (this.restoreViewerValues(this.currentDocument, viewers) > 0) {
+                // The text just read from the file does not hold these, and the next press
+                // works from that text. Letting it go makes the document the one source again,
+                // at the cost of serializing it once.
+                this._currentText = null
+                try { this.renderer.renderDocument(this.currentDocument) } catch (_) { /* best-effort */ }
+            }
+            const left = outcome && typeof outcome.steps_left === 'number'
+                ? ` (${outcome.steps_left} more to take back)`
+                : ''
+            this.setStatus(`Took back the last change${left}`, this.currentFile, 'info')
+        } catch (error) {
+            // Nothing to take back is the ordinary case, not a failure worth alarming about.
+            const said = String(error && error.message ? error.message : error)
+            const nothing = said.includes('nothing to take back')
+            this.setStatus(nothing ? 'Nothing left to take back' : `Could not undo: ${said}`,
+                           this.currentFile, nothing ? 'info' : 'error')
         }
     }
 
-    async reloadFile() {
-        if (!this.currentFile) {
-            this.setStatus('No file to reload', '', 'warning')
-            return
-        }
-
-        // If there are unsaved changes, confirm with the user
-        if (this.isDocumentModified) {
-            const confirmDiscard = confirm('Discard unsaved changes and reload from disk?')
-            if (!confirmDiscard) {
-                return
-            }
-        }
-
-    await this.loadFile(this.currentFile)
-    // Update baseline from disk
-    try { this._originalText = await invoke('load_overseer_file', { path: this.currentFile }) } catch(_) {}
+    /// Read the document back from the file and take its text as the baseline again.
+    ///
+    /// Undo is the only caller: taking a write back happens in the file, so the page has to be
+    /// told. This used to ask whether to discard unsaved changes, and asked without waiting for
+    /// the answer - so the re-read began either way. With every change written as it is made
+    /// there is nothing to discard, which is what removed the question rather than fixing it.
+    async rereadFromDisk() {
+        if (!this.currentFile) return
+        await this.loadFile(this.currentFile)
+        try {
+            this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+        } catch (_) { /* non-fatal */ }
     }
 
     updateTitle() {
@@ -1901,7 +2046,11 @@ tab Main {
         
         if (this.currentFile) {
             const fileName = this.currentFile.split('\\').pop() || this.currentFile.split('/').pop()
-            const modifiedMarker = this.isDocumentModified ? ' *' : ''
+            // No unsaved marker. It was true for a fraction of a second between a change
+            // and the write that follows it - long enough to flicker, not long enough to
+            // mean anything. Nobody closes a document inside that window, and a mark that
+            // is always about to go away teaches you to ignore marks.
+            const modifiedMarker = ''
             
             // Update window title
             document.title = `${fileName}${modifiedMarker} - Overseer`

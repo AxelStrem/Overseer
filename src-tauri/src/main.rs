@@ -43,25 +43,15 @@ async fn save_overseer_file_with_original(
     _original: String,
 ) -> Result<()> {
     let regenerated_canonical = app_api::canonicalize_document(&regenerated);
-    match FileOperations::write_file(&path, &regenerated_canonical).await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(OverseerError::IoError(format!(
-            "Failed to save file: {}",
-            e
-        ))),
-    }
+    app_api::write_file_keeping_a_step_back(&path, &regenerated_canonical)
+        .map_err(|e| OverseerError::IoError(format!("Failed to save file: {}", e)))
 }
 
 #[command]
 async fn save_overseer_file(path: String, content: String) -> Result<()> {
     let regenerated = app_api::canonicalize_document(&content);
-    match FileOperations::write_file(&path, &regenerated).await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(OverseerError::IoError(format!(
-            "Failed to save file: {}",
-            e
-        ))),
-    }
+    app_api::write_file_keeping_a_step_back(&path, &regenerated)
+        .map_err(|e| OverseerError::IoError(format!("Failed to save file: {}", e)))
 }
 
 
@@ -80,15 +70,14 @@ async fn save_overseer_file_from_text(
         if let Ok(on_disk) = std::fs::read_to_string(&path) {
             if !app_api::still_says_what_it_did(&on_disk, Some(was)) {
                 return Err(OverseerError::ValidationError(format!(
-                    "'{}' has changed since it was opened here. Saving now would throw that change away, so nothing has been written. Reload and make the edit again.",
+                    "'{}' has changed since it was opened here. Saving now would throw that change away, so nothing has been written. Open it again and make the edit.",
                     path
                 )));
             }
         }
     }
     let text = app_api::save_document_from_text(content, guarded.unwrap_or_default())?;
-    FileOperations::write_file(&path, &text)
-        .await
+    app_api::write_file_keeping_a_step_back(&path, &text)
         .map_err(|e| OverseerError::IoError(format!("Failed to save file: {}", e)))
 }
 
@@ -167,6 +156,13 @@ async fn parse_overseer_content_selective_update(
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<app_api::ResolvedUpdate> {
     app_api::resolve_selective_update(content, changed_fields, changed_field_values)
+}
+
+/// Put the document back the way it was before the last write.
+#[command]
+async fn undo_overseer_file(path: String) -> Result<serde_json::Value> {
+    let left = app_api::undo_document(&path)?;
+    Ok(serde_json::json!({ "undone": path, "steps_left": left }))
 }
 
 #[command]
@@ -281,6 +277,7 @@ fn main() {
             parse_overseer_content_selective_with_text,
             parse_overseer_content_selective_update,
             find_overseer_files,
+            undo_overseer_file,
             execute_overseer_event,
             execute_overseer_event_with_text,
             execute_overseer_event_update

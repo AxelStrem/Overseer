@@ -10,8 +10,6 @@ function setupDOM() {
       <div id="toolbar">
         <button id="open-file-btn"></button>
         <button id="new-file-btn"></button>
-        <button id="save-file-btn"></button>
-        <button id="reload-file-btn"></button>
       </div>
       <div id="tab-container"></div>
       <div id="content-display"></div>

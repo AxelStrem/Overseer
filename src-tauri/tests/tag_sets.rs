@@ -3,7 +3,7 @@
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::parser;
 use overseer::resolver;
-use overseer::types::{OverseerNode, OverseerValue};
+use overseer::types::OverseerValue;
 
 const DOCUMENT: &str = r#"tab t (label="T", mutable=true) {
     string selected = "edeka"

@@ -9,7 +9,6 @@
 
 use overseer::app_api;
 use overseer::docmgr::manager::DocumentManager;
-use overseer::file_ops::OverseerFileHandler;
 use overseer::types::*;
 
 // Provenance ids are minted per parse, so they always differ; what matters is whether the

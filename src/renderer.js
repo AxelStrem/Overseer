@@ -6039,8 +6039,11 @@ export class OverseerRenderer {
                         console.error('Render error (event repaint):', e)
                         try { this.renderDocument(window.app.currentDocument) } catch(_) {}
                     }
-                    window.app.markDocumentModified && window.app.markDocumentModified()
-                    try { window.app.startScheduler && window.app.startScheduler() } catch(_) {}
+                    // A press is one act, so it is written at once rather than waiting out the
+                    // typing debounce: waiting risks it being swept into the same step as
+                    // whatever is typed next, which is what made undo look as though it took
+                    // back two changes at a time.
+                    window.app.markDocumentModified && window.app.markDocumentModified(true)
                     return
                 }
                 if (update && Array.isArray(update.nodes)) {
@@ -6094,7 +6097,11 @@ export class OverseerRenderer {
             // Adopt using app’s preservation logic (formulas, flags), then render
             try { if (typeof window.app._applyResolvedDocumentWithFormulaPreservation === 'function') { window.app._applyResolvedDocumentWithFormulaPreservation(newDoc) } else { window.app.currentDocument = newDoc } } catch(_) { window.app.currentDocument = newDoc }
             window.app.renderer.renderDocument(window.app.currentDocument)
-            window.app.markDocumentModified && window.app.markDocumentModified()
+            // A press is one act, so it is written at once rather than waiting out the
+            // typing debounce: waiting risks it being swept into the same step as
+            // whatever is typed next, which is what made undo look as though it took
+            // back two changes at a time.
+            window.app.markDocumentModified && window.app.markDocumentModified(true)
         } else {
             // Backend returned a status/boolean or unexpected shape; keep current document
             if (DEBUG_MODE) console.warn('[Overseer] emitEvent returned non-document value; preserving current document:', updated)
@@ -6102,7 +6109,6 @@ export class OverseerRenderer {
             try { window.app.renderer.renderDocument(window.app.currentDocument) } catch (_) {}
         }
     // Reschedule timers based on the new document state
-    try { window.app.startScheduler && window.app.startScheduler() } catch(_) {}
     }
 
     // Helper function to update a node's value in the document structure by path

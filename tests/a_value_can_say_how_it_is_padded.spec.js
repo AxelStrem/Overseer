@@ -16,7 +16,7 @@ function setupDOM() {
   document.body.innerHTML = `
     <div id="app">
       <div id="toolbar"><button id="open-file-btn"></button><button id="new-file-btn"></button>
-        <button id="save-file-btn"></button><button id="reload-file-btn"></button></div>
+        </div>
       <button id="welcome-open-btn"></button><button id="welcome-new-btn"></button>
       <button id="error-back-btn"></button>
       <div id="tab-container"></div><div id="content-display"></div>

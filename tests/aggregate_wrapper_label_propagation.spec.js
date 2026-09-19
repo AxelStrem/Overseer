@@ -13,7 +13,6 @@ function setupDOM(){
       <span id="status-info"></span>
     </div>
     <span id="file-path"></span>
-    <button id="save-file-btn"></button>
   `
 }
 

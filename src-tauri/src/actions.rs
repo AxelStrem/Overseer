@@ -56,6 +56,11 @@ pub struct Changed {
     /// did, every address after the change may mean something else, so the graph is no use and
     /// the whole document is worked out again.
     pub structural: bool,
+    /// Writes the document said belong to whoever is looking rather than to the document -
+    /// `mutable="guarded"`, in force here or anywhere above. They are named and their values
+    /// carried out rather than written down, and the caller decides where a viewer's state
+    /// lives. The document is left exactly as it was.
+    pub view_state: Vec<(String, OverseerValue)>,
 }
 
 thread_local! {
@@ -94,6 +99,15 @@ fn note_field(address: String) {
 /// event without asking for a report still settles the document itself.
 fn caller_will_settle_it() -> bool {
     REPORT.with(|r| r.borrow().as_ref().map_or(false, |c| !c.structural))
+}
+
+/// A write the document says is the viewer's. Noted and not made.
+fn note_view_state(address: String, value: OverseerValue) {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.view_state.push((address, value));
+        }
+    });
 }
 
 /// The document's shape moved, so no address can be trusted to still mean what it did.
@@ -1414,6 +1428,11 @@ impl ActionExecutor {
         // Named before the borrow, in the form the dependency graph uses, so whatever reads
         // this value can be found without working the document out again.
         let address = Self::build_disambiguated_path(nodes, &indices).join("/");
+        // A field the document says is the viewer's is not written down. The value is carried
+        // out in the report instead, and the caller decides where a viewer's state lives - which
+        // is nowhere near the file. Doing this here rather than at the caller is what keeps the
+        // document untouched: there is nothing to undo afterwards, and nothing to serialize.
+        let viewers = crate::mutability::along(nodes, &indices).is_guarded();
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
@@ -1421,8 +1440,16 @@ impl ActionExecutor {
         // Equality-aware override: don't mark as override if value is unchanged
         let same = node.parameters.get(&key).map_or(false, |v| v == &value);
         if !same {
-            // Only when it moved. A set that writes what was already there reaches nothing.
-            note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
+            let named = if key == "value" { address } else { format!("{}/{}", address, key) };
+            if viewers {
+                // Written, because whoever asked for this is looking at the result and the day
+                // has to move. Named as the viewer's, because it must not reach the file: the
+                // caller takes it back out before writing, and keeps it against the session.
+                note_view_state(named, value.clone());
+            } else {
+                // Only when it moved. A set that writes what was already there reaches nothing.
+                note_field(named);
+            }
         }
         node.parameters.insert(key.clone(), value.clone());
         if !same {

@@ -520,6 +520,13 @@ pub struct ResolvedUpdate {
     pub changes: Option<Vec<crate::delta::DocumentChange>>,
     /// The whole document, when it was not and there is nothing to describe a change against.
     pub nodes: Option<Vec<OverseerNode>>,
+    /// Addresses the press wrote that belong to whoever is looking rather than to the document.
+    ///
+    /// The text above has them applied, because the caller's view is that text and the day it is
+    /// showing has to move. Anything about to write that text to a file has to take them out
+    /// again, and this says which.
+    #[serde(default)]
+    pub view_state: Vec<String>,
 }
 
 /// The document as its own text reads, rather than as it happens to sit in memory.
@@ -578,6 +585,7 @@ fn finish_update_with(
                 text,
                 changes: Some(changes),
                 nodes: None,
+                view_state: Vec::new(),
             })
         }
         None => {
@@ -587,6 +595,7 @@ fn finish_update_with(
                 text,
                 changes: None,
                 nodes: Some(resolved),
+                view_state: Vec::new(),
             })
         }
     }
@@ -635,6 +644,14 @@ pub fn execute_event_update(
     let report = crate::actions::take_report();
     outcome?;
 
+    // What the document said belongs to the viewer is applied here rather than left out.
+    //
+    // This caller is the page, and the page's view *is* the document it holds: the day it is
+    // showing has to move for the press to have done anything. It holds the result as text,
+    // sends that text back to be saved, and the save restores the authored values - which is
+    // how `guarded` has always worked on this path. The server's own path does the opposite
+    // and keeps these against a session, because there the write is the file.
+
     // An event that only wrote values can be finished the way an edit is: ask the graph what
     // reads them, work those out, and serialize once. Anything that moved the document's shape
     // still takes the long way - serialize, parse again, resolve the lot - because an append or
@@ -642,6 +659,11 @@ pub fn execute_event_update(
     //
     // Without a graph for this text, or with nothing reported, the long way is also what
     // happens, which is what happened before this existed and is never wrong.
+    let viewers: Vec<String> = report
+        .as_ref()
+        .map(|changed| changed.view_state.iter().map(|(a, _)| a.clone()).collect())
+        .unwrap_or_default();
+
     let quick = report
         .filter(|changed| !changed.structural && !changed.fields.is_empty())
         .and_then(|changed| graph_for(&was).map(|graph| (changed, graph)))
@@ -694,7 +716,10 @@ pub fn execute_event_update(
         None => as_its_text_reads(&nodes)?,
     };
     let phase = std::time::Instant::now();
-    let done = finish_update_with(&was, text, nodes, baseline);
+    let done = finish_update_with(&was, text, nodes, baseline).map(|mut update| {
+        update.view_state = viewers;
+        update
+    });
     if resolver::profile_enabled() {
         eprintln!("[PHASE] press finish {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
     }
@@ -727,6 +752,92 @@ pub fn still_says_what_it_did(on_disk: &str, was: Option<&str>) -> bool {
         None => true,
         Some(was) => canonicalize_document(on_disk) == canonicalize_document(was),
     }
+}
+
+/// Write a document, keeping what it said so the write can be taken back.
+///
+/// The server has its own version of this, because it has a root directory and a document name.
+/// The desktop app has a path and nothing else, so the undo history sits beside the document -
+/// which is where the server puts it too.
+pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result<()> {
+    let at = std::path::Path::new(path);
+    if let (Some(beside), Some(named)) = (at.parent(), at.file_name()) {
+        if let Ok(previous) = std::fs::read_to_string(at) {
+            // A write that says what the file already says is not a change, and recording a step
+            // for it makes an undo that does nothing. That was not rare once every change began
+            // saving itself: a button that moves a `guarded` field does something visible and
+            // correctly leaves the file alone, so every press left an empty step behind and the
+            // count stopped meaning how many undos would move anything.
+            if previous == text {
+                return Ok(());
+            }
+            crate::undo::remember(beside, &named.to_string_lossy(), &previous);
+        }
+    }
+    let temporary = at.with_extension("os.writing");
+    std::fs::write(&temporary, text.as_bytes())?;
+    std::fs::rename(&temporary, at).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temporary);
+    })
+}
+
+/// Put a document back the way it was before the last write. Answers with the steps remaining.
+///
+/// The undo write records no step of its own, so undoing twice walks back two writes rather than
+/// swapping between the same two states.
+pub fn undo_document(path: &str) -> Result<usize> {
+    let at = std::path::Path::new(path);
+    let (Some(beside), Some(named)) = (at.parent(), at.file_name()) else {
+        return Err(OverseerError::ValidationError(format!("'{}' has no directory", path)));
+    };
+    let named = named.to_string_lossy().to_string();
+    let Some(previous) = crate::undo::take(beside, &named) else {
+        return Err(OverseerError::ValidationError(format!(
+            "there is nothing to take back for '{}'",
+            named
+        )));
+    };
+    let temporary = at.with_extension("os.writing");
+    std::fs::write(&temporary, previous.as_bytes())
+        .and_then(|_| std::fs::rename(&temporary, at))
+        .map_err(|e| OverseerError::IoError(format!("could not write '{}': {}", named, e)))?;
+    Ok(crate::undo::depth(beside, &named))
+}
+
+/// What a document's text says at one address, without working the whole thing out.
+///
+/// For reading back what a press put in a viewer's field: the value is already in the text the
+/// press produced, and parsing is enough to find it. Resolving would be the wrong answer as well
+/// as the slower one - what is wanted is the value that was written, not what it computes to.
+pub fn value_at(text: &str, address: &str) -> Option<OverseerValue> {
+    let (_rest, nodes) = parse_document(text).ok()?;
+    get_field_value_by_path(&nodes, address)
+}
+
+/// The document to write, with the viewer's fields put back to what the document authored.
+///
+/// For a press that moved both something real and something that is only the viewer's: the real
+/// change has to be written and the viewer's must not be. What was authored for those fields is
+/// in the text as it stood, so it is read from there - parsed and not resolved, because what is
+/// wanted is the formula the document holds rather than the number it came to.
+///
+/// `None` when the text cannot be parsed, which leaves the caller writing what it had.
+pub fn without_the_viewers_values(
+    serialized: &str,
+    as_it_stood: &str,
+    addresses: &[String],
+) -> Option<String> {
+    let (_rest, authored) = parse_document(as_it_stood).ok()?;
+    let reverts: Vec<GuardedRevert> = addresses
+        .iter()
+        .map(|path| GuardedRevert {
+            path: path.clone(),
+            // Absent means the field had no authored value at all, and the override should
+            // simply go - which is what `save_document_from_text` does with `None`.
+            value: get_field_value_by_path(&authored, path),
+        })
+        .collect();
+    save_document_from_text(serialized.to_string(), reverts).ok()
 }
 
 /// Serialize a document held as text, restoring guarded fields to what the document authored.
@@ -783,7 +894,13 @@ pub fn execute_event_on_text(
     event_name: String,
 ) -> Result<ResolvedDocument> {
     let mut nodes = load_document(content)?;
-    ActionExecutor::execute_event(&mut nodes, &node_path, &event_name)?;
+    crate::actions::start_reporting();
+    let outcome = ActionExecutor::execute_event(&mut nodes, &node_path, &event_name);
+    let report = crate::actions::take_report();
+    outcome?;
+    // The value stays where the action put it: this caller's view *is* the document it holds,
+    // and the day it is showing has to move.
+    drop(report);
     with_text(nodes)
 }
 

@@ -119,14 +119,40 @@ impl DocumentRoot {
 
     /// Read and resolve a document, the way opening it in the app would.
     pub fn open(&self, name: &str) -> std::result::Result<Vec<OverseerNode>, RequestError> {
+        self.open_for("", name)
+    }
+
+    /// The document as one viewer sees it.
+    ///
+    /// The file is the same for everyone; what differs is the handful of fields the document
+    /// marked as the viewer's - which day is being shown, what is folded. Those are held apart
+    /// from the text and applied here, so two people can look at different days and neither
+    /// writes their looking into the record.
+    ///
+    /// An empty session is a viewer with no view of its own, which is what the bot is.
+    pub fn open_for(
+        &self,
+        session: &str,
+        name: &str,
+    ) -> std::result::Result<Vec<OverseerNode>, RequestError> {
         let path = self.resolve(name)?;
         let text = std::fs::read_to_string(&path)
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
         // Naming the document is what lets its mounts resolve against its own directory, and
         // what keeps two documents being served at once from deciding for each other.
         let dir = path.parent().map(|d| d.to_path_buf());
-        DocumentManager::with_document(dir, || app_api::load_document(text))
-            .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))
+        let looking_at = crate::viewstate::overlay(session, name);
+        DocumentManager::with_document(dir, || {
+            if looking_at.is_empty() {
+                app_api::load_document(text)
+            } else {
+                // The same call an edit makes: apply these values, then work out what reads
+                // them. The overlay is exactly a set of edits that are never written down.
+                let addresses = looking_at.keys().cloned().collect();
+                app_api::resolve_selective(text, addresses, Some(looking_at))
+            }
+        })
+        .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))
     }
 }
 
@@ -265,6 +291,22 @@ impl DocumentRoot {
         cmd: &str,
         args: &serde_json::Value,
     ) -> std::result::Result<serde_json::Value, RequestError> {
+        self.command_for("", document, cmd, args)
+    }
+
+    /// The same, on behalf of one viewer.
+    ///
+    /// Only some commands care. What a viewer is looking at matters to anything that works the
+    /// document out or writes it; parsing a string the caller supplied does not know or need to
+    /// know who asked.
+    pub fn command_for(
+        &self,
+        session: &str,
+        document: Option<&str>,
+        cmd: &str,
+        args: &serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, RequestError> {
+        let _ = session;
         // Saving is the browser's way of writing: it runs the action, serializes the whole
         // document, and sends the text back. The write API the bot uses is finer-grained and
         // safer, but nothing in the page speaks it - a button press there is an ordinary save.
@@ -328,11 +370,14 @@ impl DocumentRoot {
                 let path = arg_strings(args, &["node_path", "nodePath"]);
                 let event = arg_str(args, &["event_name", "eventName"])
                     .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
-                as_json(
-                    app_api::execute_event_update(content, path, event).map_err(|e| {
-                        RequestError::Failed(format!("could not run the event: {:?}", e))
-                    })?,
-                )
+                // The write is not done here. A press is saved by the page, which asks for it
+                // immediately now rather than waiting for somebody to press Save - and doing it
+                // there rather than here is what makes the app and the browser behave the same,
+                // since the app has its own set of commands and never comes through this one.
+                let _ = session;
+                as_json(app_api::execute_event_update(content, path, event).map_err(|e| {
+                    RequestError::Failed(format!("could not run the event: {:?}", e))
+                })?)
             }
             "serialize_overseer_nodes" | "serialize_overseer_nodes_raw" => {
                 let nodes: Vec<OverseerNode> = from_value(args, "nodes")?;
@@ -341,6 +386,60 @@ impl DocumentRoot {
                         RequestError::Failed(format!("could not serialize the document: {}", e))
                     })?,
                 )
+            }
+            "execute_overseer_event_with_text" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                let path = arg_strings(args, &["node_path", "nodePath"]);
+                let event = arg_str(args, &["event_name", "eventName"])
+                    .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
+                as_json(app_api::execute_event_on_text(content, path, event).map_err(|e| {
+                    RequestError::Failed(format!("could not run the event: {:?}", e))
+                })?)
+            }
+            "execute_overseer_event" => {
+                let mut nodes: Vec<OverseerNode> = from_value(args, "nodes")?;
+                let path = arg_strings(args, &["node_path", "nodePath"]);
+                let event = arg_str(args, &["event_name", "eventName"])
+                    .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
+                app_api::execute_event(&mut nodes, &path, &event).map_err(|e| {
+                    RequestError::Failed(format!("could not run the event: {:?}", e))
+                })?;
+                as_json(nodes)
+            }
+            "parse_overseer_content_selective" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                let changed = arg_strings(args, &["changed_fields", "changedFields"]);
+                let values = args
+                    .get("changedFieldValues")
+                    .or_else(|| args.get("changed_field_values"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                as_json(app_api::resolve_selective(content, changed, values).map_err(|e| {
+                    RequestError::Failed(format!("could not resolve the document: {:?}", e))
+                })?)
+            }
+            "parse_overseer_content_selective_with_text" => {
+                let content = arg_str(args, &["content"])
+                    .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
+                let changed = arg_strings(args, &["changed_fields", "changedFields"]);
+                let values = args
+                    .get("changedFieldValues")
+                    .or_else(|| args.get("changed_field_values"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                as_json(
+                    app_api::resolve_selective_with_text(content, changed, values).map_err(|e| {
+                        RequestError::Failed(format!("could not resolve the document: {:?}", e))
+                    })?,
+                )
+            }
+            "undo_overseer_file" => {
+                // The page speaks this surface and not /v1, so the command exists here too
+                // rather than the page learning a second way to talk.
+                let name = arg_str(args, &["path", "document"])
+                    .or_else(|| document.map(|d| d.to_string()))
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                Ok(self.undo(&name)?)
             }
             "find_overseer_files" => as_json(self.list()),
             other => Err(RequestError::Rejected(format!("no command '{}'", other))),
@@ -873,18 +972,43 @@ impl DocumentRoot {
         touching: &str,
         work: impl FnOnce(&mut Vec<OverseerNode>) -> std::result::Result<T, RequestError>,
     ) -> std::result::Result<(T, Vec<OverseerNode>), RequestError> {
+        self.edit_for("", name, touching, work)
+    }
+
+    /// The same, on behalf of one viewer.
+    ///
+    /// What the work writes to a field the document marked as the viewer's does not reach the
+    /// file: the action reports it instead, and it is kept against this session. So pressing
+    /// "previous day" changes what this page sees and nothing else - no write, no undo point,
+    /// nothing for the backup to commit, and another page still looking at its own day.
+    fn edit_for<T>(
+        &self,
+        session: &str,
+        name: &str,
+        touching: &str,
+        work: impl FnOnce(&mut Vec<OverseerNode>) -> std::result::Result<T, RequestError>,
+    ) -> std::result::Result<(T, Vec<OverseerNode>), RequestError> {
         let path = self.resolve(name)?;
         let text = std::fs::read_to_string(&path)
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
+        let text_before = text.clone();
         let dir = path.parent().map(|d| d.to_path_buf());
+        let looking_at = crate::viewstate::overlay(session, name);
 
+        crate::actions::start_reporting();
         let (outcome, nodes, serialized) = DocumentManager::with_document(dir, || {
             // Named before the document is resolved, so a list showing only part of itself
             // keeps whatever this write is about - see `resolver::keeping_in_view`.
             let _in_view = crate::resolver::keeping_in_view(touching);
-            let mut nodes = app_api::load_document(text).map_err(|e| {
-                RequestError::Failed(format!("could not resolve '{}': {:?}", name, e))
-            })?;
+            // Worked out as this viewer sees it, or a second press on a day button would start
+            // from what the file says again and never get past the first step back.
+            let mut nodes = if looking_at.is_empty() {
+                app_api::load_document(text)
+            } else {
+                let addresses = looking_at.keys().cloned().collect();
+                app_api::resolve_selective(text, addresses, Some(looking_at))
+            }
+            .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))?;
             let outcome = work(&mut nodes)?;
             // Resolve again: what was written changes what derives from it, and the caller is
             // about to be shown the result.
@@ -894,7 +1018,45 @@ impl DocumentRoot {
             Ok::<_, RequestError>((outcome, nodes, serialized))
         })?;
 
-        self.write_document(&path, name, &serialized)?;
+        // Whatever the work said belongs to the viewer is kept against this session, and taken
+        // back out of what is about to be written.
+        //
+        // Out rather than never in: the action writes it, because the document being handed
+        // back has to show the day that was asked for. It is the *file* that must not have it.
+        // Removing the override is what `save_document_from_text` already does for a page's
+        // save - the authored formula stands again - so the same call does it here.
+        let mut serialized = serialized;
+        let mut only_the_viewers = false;
+        if let Some(report) = crate::actions::take_report() {
+            if !report.view_state.is_empty() {
+                // When the press moved nothing else, the file is already right and the cheapest
+                // correct thing is to leave it alone. This is the ordinary case - a day button,
+                // a fold - and it means such a press costs no write, no undo point and no commit.
+                only_the_viewers = report.fields.is_empty() && !report.structural;
+                if !only_the_viewers {
+                    // A press that moved both. What the document authored for these fields is in
+                    // the text as it stood, so it is read from there - parsed rather than
+                    // resolved, because the authored value is what is wanted and resolving would
+                    // give the worked-out one.
+                    serialized = crate::app_api::without_the_viewers_values(
+                        &serialized,
+                        &text_before,
+                        &report.view_state.iter().map(|(a, _)| a.clone()).collect::<Vec<_>>(),
+                    )
+                    .unwrap_or(serialized);
+                }
+                for (address, value) in report.view_state {
+                    crate::viewstate::set(session, name, &address, value);
+                }
+            }
+        }
+
+        // Only if anything actually changed the document. A press that moved nothing but the
+        // viewer's own state has left the text exactly as it was, and writing it back would
+        // make an undo point out of nothing and a commit out of somebody looking.
+        if !only_the_viewers && serialized != text_before {
+            self.write_document(&path, name, &serialized)?;
+        }
         Ok((outcome, nodes))
     }
 
@@ -918,7 +1080,7 @@ impl DocumentRoot {
             return Ok(());
         }
         Err(RequestError::Rejected(format!(
-            "'{}' has changed since this page loaded it. Saving now would throw that change away, so nothing has been written. Reload the document and make the edit again.",
+            "'{}' has changed since this page loaded it. Saving now would throw that change away, so nothing has been written. Open the document again and make the edit.",
             name
         )))
     }
@@ -973,6 +1135,12 @@ impl DocumentRoot {
         // Before the write, and only when there is something to keep: a document being created
         // has nothing to go back to.
         if let Ok(previous) = std::fs::read_to_string(path) {
+            // And only when something moved. A write that says what the file already says is
+            // not a change; a step recorded for it is an undo that does nothing, and it makes
+            // the count of what is left mean something other than how many will.
+            if previous == text {
+                return Ok(());
+            }
             crate::undo::remember(&self.root, name, &previous);
         }
         let temporary = path.with_extension("os.writing");
