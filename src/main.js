@@ -1442,12 +1442,38 @@ tab Main {
                 } catch(_) {}
                 return map
             })()
-            // Ask for what changed. The backend keeps the document it last produced, so it
-            // can describe an edit against it - a couple of nodes instead of the ~14 MB the
-            // whole document costs to move and to rebuild. It answers with the document only
-            // when it has no such baseline, which is the case right after something else
-            // changed the document out from under it.
-            const update = await invoke('parse_overseer_content_selective_update', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+            // Say what changed, rather than sending the document that changed.
+            //
+            // The whole document used to go up on every edit and come back written over the
+            // file, so anything that had written in between - the bot recording a meal, another
+            // tab - was gone without a word. Naming the field and the value instead means the
+            // change is applied to whatever the file says at that moment, which is how the bot
+            // has always written and why it cannot lose somebody else's work.
+            //
+            // Only for one field at a time, which is what typing into one is. A cascade naming
+            // several still goes the old way; it is rare, and it is not where the fault was.
+            // Counted from what the person actually changed, not from `changedFieldPaths`: that
+            // gains the fields the change cascades into as it goes, and those are worked out
+            // rather than written.
+            const named = Object.keys(changedValuesMap)
+            const instruction = (this.currentFile && named.length === 1)
+                ? {
+                    path: this.currentFile,
+                    node_path: named[0].split('/').filter(Boolean),
+                    nodePath: named[0].split('/').filter(Boolean),
+                    value: changedValuesMap[named[0]]
+                }
+                : null
+            // The backend keeps the document it last produced, so it can describe the edit
+            // against it - a couple of nodes instead of the ~14 MB the whole document costs to
+            // move and to rebuild. It answers with the document only when it has no such
+            // baseline, which is the case right after something else changed it underneath.
+            const update = instruction
+                ? await invoke('write_overseer_value', instruction).catch(() => null)
+                : await invoke('parse_overseer_content_selective_update', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+            if (instruction && update) {
+                this.alreadyWritten()
+            }
             if (update && Array.isArray(update.changes)) {
                 this._currentText = typeof update.text === 'string' ? update.text : null
                 profileAt = profileMark(`resolve (${update.changes.length} changes)`, profileAt)
@@ -1954,6 +1980,17 @@ tab Main {
             this.updateTitle()
         }
         this.saveSoon(atOnce)
+    }
+
+    /// The change has been written where it was made, so nothing is waiting to be saved.
+    ///
+    /// An edit sent as an instruction is written by the backend as part of applying it. The save
+    /// that would otherwise follow would send the whole document up to say the same thing, which
+    /// is the cost and the danger this removes - so the one that was scheduled is called off.
+    alreadyWritten() {
+        clearTimeout(this._saveSoonTimer)
+        this.isDocumentModified = false
+        this.updateTitle()
     }
 
     /// Write what has changed, shortly.

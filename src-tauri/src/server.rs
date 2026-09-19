@@ -379,6 +379,44 @@ impl DocumentRoot {
                     RequestError::Failed(format!("could not run the event: {:?}", e))
                 })?)
             }
+            // The two that send an instruction rather than a document. The page names what to
+            // change and the backend changes what is on disk, so a write made in between - the
+            // bot recording a meal, another tab - is still there afterwards.
+            "write_overseer_value" => {
+                let named = document.ok_or_else(|| {
+                    RequestError::Rejected("'document' is required".into())
+                })?;
+                let at = self.resolve(named)?;
+                let path = arg_strings(args, &["node_path", "nodePath"]);
+                let value: OverseerValue = from_value(args, "value")?;
+                as_json(
+                    app_api::write_value_at(
+                        at.to_string_lossy().as_ref(),
+                        path,
+                        value,
+                        session,
+                    )
+                    .map_err(|e| RequestError::Failed(format!("could not write: {:?}", e)))?,
+                )
+            }
+            "run_overseer_event" => {
+                let named = document.ok_or_else(|| {
+                    RequestError::Rejected("'document' is required".into())
+                })?;
+                let at = self.resolve(named)?;
+                let path = arg_strings(args, &["node_path", "nodePath"]);
+                let event = arg_str(args, &["event_name", "eventName"])
+                    .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
+                as_json(
+                    app_api::run_event_at(
+                        at.to_string_lossy().as_ref(),
+                        path,
+                        event,
+                        session,
+                    )
+                    .map_err(|e| RequestError::Failed(format!("could not run the event: {:?}", e)))?,
+                )
+            }
             "serialize_overseer_nodes" | "serialize_overseer_nodes_raw" => {
                 let nodes: Vec<OverseerNode> = from_value(args, "nodes")?;
                 as_json(
@@ -1025,37 +1063,15 @@ impl DocumentRoot {
         // back has to show the day that was asked for. It is the *file* that must not have it.
         // Removing the override is what `save_document_from_text` already does for a page's
         // save - the authored formula stands again - so the same call does it here.
-        let mut serialized = serialized;
-        let mut only_the_viewers = false;
-        if let Some(report) = crate::actions::take_report() {
-            if !report.view_state.is_empty() {
-                // When the press moved nothing else, the file is already right and the cheapest
-                // correct thing is to leave it alone. This is the ordinary case - a day button,
-                // a fold - and it means such a press costs no write, no undo point and no commit.
-                only_the_viewers = report.fields.is_empty() && !report.structural;
-                if !only_the_viewers {
-                    // A press that moved both. What the document authored for these fields is in
-                    // the text as it stood, so it is read from there - parsed rather than
-                    // resolved, because the authored value is what is wanted and resolving would
-                    // give the worked-out one.
-                    serialized = crate::app_api::without_the_viewers_values(
-                        &serialized,
-                        &text_before,
-                        &report.view_state.iter().map(|(a, _)| a.clone()).collect::<Vec<_>>(),
-                    )
-                    .unwrap_or(serialized);
-                }
-                for (address, value) in report.view_state {
-                    crate::viewstate::set(session, name, &address, value);
-                }
-            }
+        // The same rules the desktop's own writes follow: what the viewer moved is taken back
+        // out of the text, kept against their session instead, and a press that moved nothing
+        // else leaves the file alone - no write, no undo point, nothing for the backup to commit.
+        let settled = crate::app_api::settle_the_viewers_values(serialized, &text_before);
+        for (address, value) in settled.viewers {
+            crate::viewstate::set(session, name, &address, value);
         }
-
-        // Only if anything actually changed the document. A press that moved nothing but the
-        // viewer's own state has left the text exactly as it was, and writing it back would
-        // make an undo point out of nothing and a commit out of somebody looking.
-        if !only_the_viewers && serialized != text_before {
-            self.write_document(&path, name, &serialized)?;
+        if settled.worth_writing && settled.text != text_before {
+            self.write_document(&path, name, &settled.text)?;
         }
         Ok((outcome, nodes))
     }

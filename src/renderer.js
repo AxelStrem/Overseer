@@ -6019,17 +6019,38 @@ export class OverseerRenderer {
             const knownText = (!materializedForThisEvent && typeof window.app._currentText === 'string')
                 ? window.app._currentText
                 : null
-            if (knownText !== null) {
-                // Ask for what changed. An event that moves one field - a day-navigation
-                // button, say - costs a couple of nodes instead of the whole document, both
-                // to send and to repaint.
-                const update = await invoke('execute_overseer_event_update', {
-                    content: knownText,
+            // Say which button was pressed, rather than sending the document it sits in.
+            //
+            // The backend runs the handler against what the file says at that moment and writes
+            // the result, so a meal the bot logged while this page was open is still there
+            // afterwards. It is also the only way the press can be one step to take back: a
+            // press followed by a save of the whole document was two writes saying one thing.
+            const asAnInstruction = window.app.currentFile
+                ? {
+                    path: window.app.currentFile,
                     node_path: path,
                     nodePath: path,
                     event_name: eventName,
                     eventName
-                }).catch(() => null)
+                }
+                : null
+            if (asAnInstruction || knownText !== null) {
+                // Ask for what changed. An event that moves one field - a day-navigation
+                // button, say - costs a couple of nodes instead of the whole document, both
+                // to send and to repaint.
+                const update = asAnInstruction
+                    ? await invoke('run_overseer_event', asAnInstruction).catch(() => null)
+                    : await invoke('execute_overseer_event_update', {
+                        content: knownText,
+                        node_path: path,
+                        nodePath: path,
+                        event_name: eventName,
+                        eventName
+                    }).catch(() => null)
+                if (asAnInstruction && update) {
+                    // Written as part of running it, so nothing is waiting to be saved.
+                    window.app.alreadyWritten && window.app.alreadyWritten()
+                }
                 if (update && Array.isArray(update.changes)) {
                     window.app._currentText = typeof update.text === 'string' ? update.text : null
                     const touched = window.app.applyDocumentChanges(window.app.currentDocument, update.changes)
@@ -6042,8 +6063,11 @@ export class OverseerRenderer {
                     // A press is one act, so it is written at once rather than waiting out the
                     // typing debounce: waiting risks it being swept into the same step as
                     // whatever is typed next, which is what made undo look as though it took
-                    // back two changes at a time.
-                    window.app.markDocumentModified && window.app.markDocumentModified(true)
+                    // back two changes at a time. When it went as an instruction it is written
+                    // already, and asking again would send the whole document to say so.
+                    if (!asAnInstruction) {
+                        window.app.markDocumentModified && window.app.markDocumentModified(true)
+                    }
                     return
                 }
                 if (update && Array.isArray(update.nodes)) {

@@ -83,7 +83,7 @@ describe('a link proxy whose target depends on a changed value', () => {
     setupDOM()
     const { invoke } = await import('@tauri-apps/api/core')
     invoke.mockImplementation(async (cmd) => {
-      if (cmd === 'execute_overseer_event_update') {
+      if ((cmd === 'execute_overseer_event_update' || cmd === 'run_overseer_event')) {
         // What the backend reports for a day-navigation click: the date moved, and nothing
         // else in the document did. The proxy is not mentioned, and correctly so.
         return {

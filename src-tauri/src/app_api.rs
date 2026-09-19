@@ -737,6 +737,123 @@ pub struct GuardedRevert {
     pub value: Option<OverseerValue>,
 }
 
+/// What a write should leave in the file, once the viewer's own values are taken back out.
+pub struct WhatToWrite {
+    /// The text for the file: the viewer's values removed, what the document authored restored.
+    pub text: String,
+    /// False when nothing but the viewer moved. The file is already right, and writing it would
+    /// make an undo step out of nothing and a commit out of somebody looking.
+    pub worth_writing: bool,
+    /// What belonged to the viewer, for the caller to keep against their session.
+    pub viewers: Vec<(String, OverseerValue)>,
+}
+
+/// Take the report an action left, and settle the viewer's values out of the text to be written.
+///
+/// An action writes a field the document marks `mutable="guarded"` like any other, because
+/// whoever asked for it is looking at the result and the day has to move. It is the *file* that
+/// must not have it. So the report says which addresses were the viewer's, those are put back to
+/// what the document authored - read by parsing the text as it stood, since the authored value is
+/// wanted rather than the worked-out one - and the caller is told whether anything is left worth
+/// writing at all.
+///
+/// Shared because both hosts have to agree about it. The server had this inside its own edit
+/// path, and a second copy written for the desktop would be a second set of rules about what
+/// reaches a file.
+pub fn settle_the_viewers_values(serialized: String, as_it_stood: &str) -> WhatToWrite {
+    let Some(report) = crate::actions::take_report() else {
+        return WhatToWrite { text: serialized, worth_writing: true, viewers: Vec::new() };
+    };
+    if report.view_state.is_empty() {
+        return WhatToWrite { text: serialized, worth_writing: true, viewers: Vec::new() };
+    }
+    let only_the_viewers = report.fields.is_empty() && !report.structural;
+    let text = if only_the_viewers {
+        serialized
+    } else {
+        let named: Vec<String> = report.view_state.iter().map(|(a, _)| a.clone()).collect();
+        let settled = without_the_viewers_values(&serialized, as_it_stood, &named);
+        settled.unwrap_or(serialized)
+    };
+    WhatToWrite { text, worth_writing: !only_the_viewers, viewers: report.view_state }
+}
+
+/// Make one change to a document on disk, and answer with what the caller should now show.
+///
+/// The page used to send the whole document back with every change and have that text written
+/// over the file. Whatever else had written in between - the bot recording a meal, another tab -
+/// was gone, and nothing said so. This reads what the file says now, applies the one change to
+/// that, and writes it: the way `/v1` has always worked, and the reason the bot cannot lose a
+/// change it did not make.
+///
+/// It also means the document never travels upward. Sending one back measured about 5.5 seconds
+/// on a large one, against 250 KB of text coming the other way, and that was on every change.
+fn change_document(
+    path: &str,
+    session: &str,
+    work: impl FnOnce(&mut Vec<OverseerNode>) -> Result<()>,
+) -> Result<ResolvedUpdate> {
+    let as_it_stood = std::fs::read_to_string(path)
+        .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
+    let baseline = baseline_copy(&as_it_stood);
+    // Worked out as this viewer sees it, or a second press on a day button would start from what
+    // the file says again and never get past the first step back.
+    let looking_at = crate::viewstate::overlay(session, path);
+    let mut nodes = if looking_at.is_empty() {
+        load_document(as_it_stood.clone())?
+    } else {
+        let addresses = looking_at.keys().cloned().collect();
+        resolve_selective(as_it_stood.clone(), addresses, Some(looking_at))?
+    };
+
+    crate::actions::start_reporting();
+    work(&mut nodes)?;
+    // What was written changes what derives from it, and the caller is about to be shown it.
+    crate::resolver::resolve_document(&mut nodes);
+    let serialized = OverseerFileHandler::serialize_nodes(&nodes)
+        .map_err(|e| OverseerError::SerializationError(format!("could not serialize: {}", e)))?;
+
+    let settled = settle_the_viewers_values(serialized.clone(), &as_it_stood);
+    for (address, value) in settled.viewers {
+        crate::viewstate::set(session, path, &address, value);
+    }
+    if settled.worth_writing && settled.text != as_it_stood {
+        write_file_keeping_a_step_back(path, &settled.text)
+            .map_err(|e| OverseerError::IoError(format!("could not write the document: {}", e)))?;
+    }
+
+    // The caller is shown what it asked for, viewer's values and all. Only the file goes without.
+    finish_update_with(&as_it_stood, serialized, nodes, baseline)
+}
+
+/// Set one value, named by the path of node names the page already speaks in.
+pub fn write_value_at(
+    path: &str,
+    node_path: Vec<String>,
+    value: OverseerValue,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    change_document(path, session, move |nodes| {
+        crate::actions::ActionExecutor::assign_value(
+            nodes,
+            &format!("/{}", node_path.join("/")),
+            value,
+        )
+    })
+}
+
+/// Run one handler, named the same way.
+pub fn run_event_at(
+    path: &str,
+    node_path: Vec<String>,
+    event_name: String,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    change_document(path, session, move |nodes| {
+        crate::actions::ActionExecutor::execute_event(nodes, &node_path, &event_name).map(|_| ())
+    })
+}
+
 /// Whether the file still says what the caller was working from.
 ///
 /// A page holds the document as text and sends that text back to be written. If the file has

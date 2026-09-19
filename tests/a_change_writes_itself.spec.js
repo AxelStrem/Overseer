@@ -229,3 +229,89 @@ describe('undo keeps what the viewer was looking at', () => {
     expect(showing.parameters.value, 'a field nobody had moved was carried across').toEqual({ Integer: 1 })
   })
 })
+
+describe('a change goes up as an instruction, not as a document', () => {
+  // The page used to send the whole document with every change and have that text written over
+  // the file, so anything that had written in between was gone without a word. It names what
+  // changed instead, and the backend applies that to whatever the file says at the time.
+  beforeEach(() => {
+    setupDOM()
+    invoke.mockReset()
+    invoke.mockResolvedValue(null)
+  })
+
+  const withAField = () => {
+    const app = anApp()
+    app.currentDocument = [{
+      name: 'day', node_type: 'tab', parameters: {}, children: [
+        { name: 'n', node_type: 'int', parameters: { value: { Integer: 1 } }, children: [] }
+      ]
+    }]
+    return app
+  }
+
+  const callsTo = (name) => invoke.mock.calls.filter(([cmd]) => cmd === name)
+
+  it('names the field and the value rather than sending the document', async () => {
+    const app = withAField()
+    invoke.mockImplementation((cmd) =>
+      cmd === 'write_overseer_value'
+        ? Promise.resolve({ text: 'TEXT', changes: [], nodes: null })
+        : Promise.resolve(null))
+
+    await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
+
+    const sent = callsTo('write_overseer_value')
+    expect(sent, 'the edit did not go as an instruction').toHaveLength(1)
+    expect(sent[0][1].node_path).toEqual(['day', 'n'])
+    expect(sent[0][1].value).toEqual({ Integer: 2 })
+  })
+
+  it('sends no document text with it', async () => {
+    // The point of the change. A document measured about 5.5 seconds to send on the desktop,
+    // and sending it is what made the write able to overwrite somebody else's.
+    const app = withAField()
+    invoke.mockImplementation((cmd) =>
+      cmd === 'write_overseer_value'
+        ? Promise.resolve({ text: 'TEXT', changes: [], nodes: null })
+        : Promise.resolve(null))
+
+    await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
+
+    const [, args] = callsTo('write_overseer_value')[0]
+    expect(Object.keys(args)).not.toContain('content')
+    expect(callsTo('parse_overseer_content_selective_update'), 'the document went up as well')
+      .toHaveLength(0)
+  })
+
+  it('does not then save the whole document to say the same thing', async () => {
+    // The write happened as part of applying it. A save afterwards would send the document up
+    // to repeat it, and would be a second undo step for one change.
+    vi.useFakeTimers()
+    try {
+      const app = withAField()
+      invoke.mockImplementation((cmd) =>
+        cmd === 'write_overseer_value'
+          ? Promise.resolve({ text: 'TEXT', changes: [], nodes: null })
+          : Promise.resolve(null))
+
+      app.markDocumentModified()
+      await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
+      await vi.runAllTimersAsync()
+
+      expect(wrote(), 'the change was written twice').toHaveLength(0)
+      expect(app.isDocumentModified, 'it still thinks something is unsaved').toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still sends the document when there is no file to name', async () => {
+    // A document being edited before it has been saved anywhere has no address to write to, so
+    // the old path is still what answers for it.
+    const app = withAField()
+    app.currentFile = null
+    await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
+    expect(callsTo('write_overseer_value')).toHaveLength(0)
+  })
+})

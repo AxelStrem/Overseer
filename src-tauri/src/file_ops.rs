@@ -263,6 +263,87 @@ impl FileOperations {
         true
     }
 
+    /// The value a node carries because something wrote it, rather than because its template
+    /// said so.
+    ///
+    /// Only an explicit override counts. "Differs from what the template said" would also catch
+    /// a formula whose worked-out value naturally differs from the formula it was written as,
+    /// and writing that into an entry would freeze a computed number into the document.
+    fn value_written_into(node: &OverseerNode) -> Option<&OverseerValue> {
+        if !matches!(
+            node.parameters.get("_explicit_child_override"),
+            Some(OverseerValue::Boolean(true))
+        ) {
+            return None;
+        }
+        let value = node.parameters.get("value")?;
+        // A node carrying parameters of its own needs more than `- name = value` to describe it,
+        // and that is a shape this does not attempt.
+        let says_more = node.parameters.iter().any(|(k, _)| {
+            let key = k.as_str();
+            !key.starts_with('_')
+                && key != "value"
+                && !node.parameters.contains_key(&format!("_template_{}", key))
+        });
+        if says_more || !node.children.is_empty() {
+            return None;
+        }
+        Some(value)
+    }
+
+    /// Write what was written inside `node` as the body of an entry override, and say whether
+    /// there was anything at all.
+    ///
+    /// Leaves come out as `- name = value`. A container that stands for itself comes out as a
+    /// block naming it, holding the same again - the form an entry already uses for a nested
+    /// list. Transparent wrappers are looked straight through, because an address does not name
+    /// them and the entry writes their contents as its own.
+    fn write_overrides_inside(
+        node: &OverseerNode,
+        output: &mut String,
+        indent: &str,
+        unit: &str,
+    ) -> bool {
+        let mut wrote = false;
+        for child in &node.children {
+            if crate::addressing::is_wrapper(child) {
+                if Self::write_overrides_inside(child, output, indent, unit) {
+                    wrote = true;
+                }
+                continue;
+            }
+            if child.children.is_empty() {
+                if let Some(value) = Self::value_written_into(child) {
+                    output.push_str(&format!(
+                        "{}- {} = {}\n",
+                        indent,
+                        child.name,
+                        Self::serialize_value_with_node(child, value)
+                    ));
+                    wrote = true;
+                }
+                continue;
+            }
+            // Only into a plain container. A node standing for an instance of some other
+            // template - `NutriScore quality` inside a meal record - holds its template's own
+            // body, and what is in there belongs to that template rather than to this entry.
+            // Walking into one copies its formulas into every record that uses it, which says
+            // something the entry never said and could not have meant.
+            if child.node_type != "div" {
+                continue;
+            }
+            let mut inside = String::new();
+            let deeper = format!("{}{}", indent, unit);
+            if Self::write_overrides_inside(child, &mut inside, &deeper, unit) {
+                output.push_str(&format!("{}{} {} {{\n", indent, child.node_type, child.name));
+                output.push_str(&inside);
+                output.push_str(&format!("{}}}\n", indent));
+                wrote = true;
+            }
+        }
+        wrote
+    }
+
     fn drop_trailing_whitespace_line(buffer: &mut String) {
         loop {
             if buffer.is_empty() {
@@ -926,8 +1007,54 @@ impl FileOperations {
                             continue; // Skip normal emission of the transparent wrapper
                         }
                     }
-                    // Skip template-derived children that are not explicitly overridden
+                    // Skip template-derived children that are not explicitly overridden - but
+                    // not before asking whether anything was written *inside* one.
+                    //
+                    // A container standing for itself - a named div, a nested record - carries no
+                    // override of its own when a field within it is set, because the marker goes
+                    // on the field. So the container was skipped and everything written into it
+                    // went with it: the write landed in memory, the action reported the address it
+                    // had written, and the document was serialized without it. That is a write
+                    // reporting success and changing nothing, and it is why setting a day's target
+                    // in tracker_v2 - two containers below the entry - never reached the file,
+                    // while a field the entry holds directly always did.
+                    //
+                    // An entry cannot say `- target_calories = 2000` for this: that names a child
+                    // of the entry, and this one is a child of `targets`. It says it the way a
+                    // nested list is already said - the container named, the overrides inside.
                     if suppress_template_children && is_template_child && (!has_explicit_override) {
+                        if !child.children.is_empty() && child.node_type == "div" {
+                            // A wrapper stands for nothing and is not named, so what is inside it
+                            // is written as the entry's own - which is what its address says too.
+                            let names_itself = !crate::addressing::is_wrapper(child);
+                            let body_indent = if names_itself {
+                                format!("{}{}", child_indent, fallback_indent_unit)
+                            } else {
+                                child_indent.clone()
+                            };
+                            let mut inside = String::new();
+                            if Self::write_overrides_inside(
+                                child,
+                                &mut inside,
+                                &body_indent,
+                                fallback_indent_unit,
+                            ) {
+                                Self::drop_trailing_whitespace_line(output);
+                                if !output.ends_with('\n') {
+                                    output.push('\n');
+                                }
+                                if names_itself {
+                                    output.push_str(&format!(
+                                        "{}{} {} {{\n",
+                                        child_indent, child.node_type, child.name
+                                    ));
+                                }
+                                output.push_str(&inside);
+                                if names_itself {
+                                    output.push_str(&format!("{}}}\n", child_indent));
+                                }
+                            }
+                        }
                         continue;
                     }
                     if suppress_template_children {

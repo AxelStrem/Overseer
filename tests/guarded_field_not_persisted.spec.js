@@ -246,7 +246,7 @@ describe('a guarded field changed by an action', () => {
     let click = 0
     let savedGuarded = null
     invoke.mockImplementation((cmd, args) => {
-      if (cmd === 'execute_overseer_event_update') {
+      if ((cmd === 'execute_overseer_event_update' || cmd === 'run_overseer_event')) {
         const value = { String: days[Math.min(click++, days.length - 1)] }
         return Promise.resolve({
           text: `TEXT-${click}`,

@@ -81,6 +81,36 @@ async fn save_overseer_file_from_text(
         .map_err(|e| OverseerError::IoError(format!("Failed to save file: {}", e)))
 }
 
+/// The window is the viewer, so its guarded fields are kept under one name.
+///
+/// The server keeps a viewer's own values against the session its page minted, because several
+/// pages reach it. The app has one window, and that window is the only viewer there is.
+const THE_WINDOW: &str = "desktop";
+
+/// Set one value, named by the path of node names the page already speaks in.
+///
+/// The document is read, changed and written here, rather than being sent up as text to be
+/// written over the file. That is what stops a change made elsewhere in the meantime from being
+/// thrown away without a word.
+#[command]
+async fn write_overseer_value(
+    path: String,
+    node_path: Vec<String>,
+    value: OverseerValue,
+) -> Result<app_api::ResolvedUpdate> {
+    app_api::write_value_at(&path, node_path, value, THE_WINDOW)
+}
+
+/// Run one handler, the same way.
+#[command]
+async fn run_overseer_event(
+    path: String,
+    node_path: Vec<String>,
+    event_name: String,
+) -> Result<app_api::ResolvedUpdate> {
+    app_api::run_event_at(&path, node_path, event_name, THE_WINDOW)
+}
+
 #[command]
 async fn serialize_overseer_nodes(nodes: Vec<OverseerNode>) -> Result<String> {
     match file_ops::OverseerFileHandler::serialize_nodes(&nodes) {
@@ -280,7 +310,9 @@ fn main() {
             undo_overseer_file,
             execute_overseer_event,
             execute_overseer_event_with_text,
-            execute_overseer_event_update
+            execute_overseer_event_update,
+            write_overseer_value,
+            run_overseer_event
         ])
         .run(tauri::generate_context!())
     {
