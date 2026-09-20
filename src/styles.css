@@ -574,7 +574,9 @@ body {
     padding: 8px 16px;
     /* Balanced margins so controls are not glued to the top in rows */
     margin: 6px 8px 6px 0;  /* top right bottom left */
-    background: var(--primary-color);
+    /* What the renderer worked out for this button, or the stylesheet's own answer when it had
+       nothing to work from - a named colour, or no colour on the parent at all. */
+    background: var(--overseer-button-bg, var(--primary-color));
     color: white;
     border: 1px solid var(--border-color); /* restore visible border */
     border-radius: 6px;
@@ -635,8 +637,13 @@ body {
 }
 
 .overseer-button:hover {
-    background: #1d4ed8;
+    background: var(--overseer-button-hover, #1d4ed8);
     border-color: var(--primary-color);
+}
+
+/* Darker while held, so a press reads as a press. */
+.overseer-button:active {
+    background: var(--overseer-button-press, #1b3fa8);
 }
 
 .overseer-button:focus,

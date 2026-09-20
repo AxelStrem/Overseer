@@ -1130,6 +1130,48 @@ export class OverseerRenderer {
                     try { element.style.backgroundColor = effectiveBg } catch (_) {}
                 }
 
+                // A button that takes its parent's colour disappears into it.
+                //
+                // `background-color` is inherited down the tree, so a button sitting on a
+                // coloured div is handed exactly that colour - and then this renderer applies
+                // it as though the button had asked for it, leaving the button the same shade
+                // as the thing it sits on. Brightened instead, with hover brighter again and
+                // press darker, so it reads as a raised thing that answers being pressed.
+                //
+                // Only when the colour was handed down. A document that says what colour a
+                // button is gets that colour, which is the point of saying it - and all three
+                // can be said: `background-color`, `hover-color`, `press-color`.
+                if (nodeTypeLower === 'button') {
+                    try {
+                        const stated = (name) => {
+                            const raw = this.getParameterValue(node, name)
+                            if (raw === null || raw === undefined) return null
+                            const asColour = this.convertColorValue(raw)
+                            return typeof asColour === 'string' ? asColour : null
+                        }
+                        const handedDown = !!(node && node.parameters
+                            && node.parameters['_template_background-color'] !== undefined)
+                        const ownColour = handedDown ? null : stated('background-color')
+                        const base = ownColour || this.shiftedBy(effectiveBg, 0.2)
+                        const hover = stated('hover-color') || this.shiftedBy(base, 0.12)
+                        const press = stated('press-color') || this.shiftedBy(base, -0.12)
+                        if (base) {
+                            element.style.backgroundColor = base
+                            element.style.setProperty('--overseer-button-bg', base)
+                            // Readable on whatever it turned out to be, and only when the
+                            // document has not said - the same rule the colour itself follows.
+                            const saidTheText = !!(node && node.parameters
+                                && node.parameters['font-color'] !== undefined
+                                && node.parameters['_template_font-color'] === undefined)
+                            if (!saidTheText) {
+                                element.style.color = this.wantsDarkText(base) ? '#1a1a1a' : '#ffffff'
+                            }
+                        }
+                        if (hover) element.style.setProperty('--overseer-button-hover', hover)
+                        if (press) element.style.setProperty('--overseer-button-press', press)
+                    } catch (_) { /* a button left the stylesheet's colour is no disaster */ }
+                }
+
                 // Prepare styles to pass to children (inherit current effective bg)
                 const nextInherited = {
                     backgroundColor: effectiveBg,
@@ -4281,6 +4323,69 @@ export class OverseerRenderer {
         setSize('marginBottom', get('margin-bottom'))
         setSize('marginLeft', get('margin-left'))
         setSize('marginRight', get('margin-right'))
+    }
+
+    /// A colour read as numbers, or nothing when it cannot be.
+    ///
+    /// Hex in three, six or eight digits, and `rgb()`/`rgba()`. A named colour, `inherit`, or a
+    /// `var(...)` is left alone: arithmetic on something whose value is not known here would
+    /// invent a shade rather than derive one, and the stylesheet's own answer beats a guess.
+    asChannels(colour) {
+        if (typeof colour !== 'string') return null
+        const said = colour.trim()
+        const hex = /^#([0-9a-fA-F]{3,8})$/.exec(said)
+        if (hex) {
+            const h = hex[1]
+            const wide = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+            if (wide.length !== 6 && wide.length !== 8) return null
+            return {
+                r: parseInt(wide.slice(0, 2), 16),
+                g: parseInt(wide.slice(2, 4), 16),
+                b: parseInt(wide.slice(4, 6), 16),
+                a: wide.length === 8 ? parseInt(wide.slice(6, 8), 16) / 255 : 1,
+            }
+        }
+        const fn = /^rgba?\(\s*([0-9.]+)[,\s]+([0-9.]+)[,\s]+([0-9.]+)(?:[,/\s]+([0-9.%]+))?\s*\)$/.exec(said)
+        if (fn) {
+            const alpha = fn[4] === undefined
+                ? 1
+                : (String(fn[4]).endsWith('%') ? parseFloat(fn[4]) / 100 : parseFloat(fn[4]))
+            return {
+                r: parseFloat(fn[1]),
+                g: parseFloat(fn[2]),
+                b: parseFloat(fn[3]),
+                a: isNaN(alpha) ? 1 : alpha,
+            }
+        }
+        return null
+    }
+
+    /// A colour moved towards white or black, by a proportion of the distance it has left to go.
+    ///
+    /// Proportional rather than a fixed step, so it behaves at both ends: twenty per cent
+    /// brighter than a near-black is still dark, and twenty per cent brighter than a near-white
+    /// does not clip to white and lose the difference it was asked for.
+    shiftedBy(colour, proportion) {
+        const c = this.asChannels(colour)
+        if (!c) return null
+        const move = (v) => proportion >= 0
+            ? Math.round(v + (255 - v) * proportion)
+            : Math.round(v * (1 + proportion))
+        const clamp = (v) => Math.max(0, Math.min(255, v))
+        const r = clamp(move(c.r))
+        const g = clamp(move(c.g))
+        const b = clamp(move(c.b))
+        return c.a >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${c.a})`
+    }
+
+    /// Whether text on this colour should be dark.
+    ///
+    /// Perceived brightness rather than the plain average: the eye weights green far above blue,
+    /// so a mid blue takes white text while a mid yellow of the same average takes black.
+    wantsDarkText(colour) {
+        const c = this.asChannels(colour)
+        if (!c) return false
+        return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 150
     }
 
     convertColorValue(colorParam) {
