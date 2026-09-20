@@ -623,6 +623,7 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     );
 
     let header_end_ptr = cur.as_ptr() as usize;
+    let straight_after_the_header = cur;
     let (next, _) = multispace0(cur)?;
     let header_gap_end_ptr = next.as_ptr() as usize;
     if header_gap_end_ptr > header_end_ptr {
@@ -656,6 +657,20 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     } else {
         BodyKind::None
     };
+    // A declaration with no body never had a gap after its header.
+    //
+    // The whitespace was read as one on the way to looking for a `{`, which is right for
+    // `list intake (...) {` - and wrong for `list intake (...)` and nothing, where that
+    // whitespace is what separates this declaration from whatever comes next. Kept here it
+    // belonged to nobody: not to this node's trailing trivia, and not to the next node's
+    // leading trivia, which then began at the first thing it found - so a comment after a
+    // bodiless list arrived with no blank lines and no indentation, and was written out hard
+    // against the left margin. Only visible when something else in the block stopped it being
+    // replayed from the source verbatim, which is why it went unnoticed.
+    if matches!(body_kind, BodyKind::None) {
+        header_gap_span = None;
+        cur = straight_after_the_header;
+    }
     let body_end_ptr = cur.as_ptr() as usize;
     let trailing_start_ptr = body_end_ptr;
     debug_parser!(
