@@ -346,9 +346,15 @@ impl DocumentRoot {
                         "say which document this is, so what it mounts can be found".into(),
                     ));
                 }
-                as_json(app_api::load_document(content).map_err(|e| {
-                    RequestError::Failed(format!("could not resolve the document: {:?}", e))
-                })?)
+                as_json(
+                    app_api::load_document_for(content, document.unwrap_or_default(), session)
+                        .map_err(|e| {
+                            RequestError::Failed(format!(
+                                "could not resolve the document: {:?}",
+                                e
+                            ))
+                        })?,
+                )
             }
             "parse_overseer_content_selective_update" => {
                 let content = arg_str(args, &["content"])
@@ -392,6 +398,7 @@ impl DocumentRoot {
                 as_json(
                     app_api::write_value_at(
                         at.to_string_lossy().as_ref(),
+                        named,
                         path,
                         value,
                         session,
@@ -410,6 +417,7 @@ impl DocumentRoot {
                 as_json(
                     app_api::run_event_at(
                         at.to_string_lossy().as_ref(),
+                        named,
                         path,
                         event,
                         session,
@@ -1032,6 +1040,7 @@ impl DocumentRoot {
         let text_before = text.clone();
         let dir = path.parent().map(|d| d.to_path_buf());
         let looking_at = crate::viewstate::overlay(session, name);
+        let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
 
         crate::actions::start_reporting();
         let (outcome, nodes, serialized) = DocumentManager::with_document(dir, || {
@@ -1066,7 +1075,11 @@ impl DocumentRoot {
         // The same rules the desktop's own writes follow: what the viewer moved is taken back
         // out of the text, kept against their session instead, and a press that moved nothing
         // else leaves the file alone - no write, no undo point, nothing for the backup to commit.
-        let settled = crate::app_api::settle_the_viewers_values(serialized, &text_before);
+        let settled = crate::app_api::settle_the_viewers_values(
+            serialized,
+            &text_before,
+            &held_for_the_viewer,
+        );
         for (address, value) in settled.viewers {
             crate::viewstate::set(session, name, &address, value);
         }

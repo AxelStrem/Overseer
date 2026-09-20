@@ -5972,6 +5972,9 @@ export class OverseerRenderer {
             }
             if (Array.isArray(nodesArg)) nodesArg.forEach(wrapBooleanParams)
         } catch(errNorm) { try { console.warn('[Overseer] boolean normalization failed', errNorm) } catch(_) {} }
+        // Whether this press was sent as an instruction and is therefore already written. Both
+        // endings of the press need to know, and they are in different scopes.
+        let writtenAsAnInstruction = false
         let updated = null
         try {
             // Sanitize nodes: deep clone shallowly to strip any live references / accidental arrays in fields.
@@ -6038,18 +6041,34 @@ export class OverseerRenderer {
                 // Ask for what changed. An event that moves one field - a day-navigation
                 // button, say - costs a couple of nodes instead of the whole document, both
                 // to send and to repaint.
-                const update = asAnInstruction
-                    ? await invoke('run_overseer_event', asAnInstruction).catch(() => null)
-                    : await invoke('execute_overseer_event_update', {
+                let update = null
+                if (asAnInstruction) {
+                    // Said out loud for the same reason the edit path says it: a save left over
+                    // from an earlier change must not go out on top of this write.
+                    window.app._writingByInstruction = (window.app._writingByInstruction || 0) + 1
+                    try {
+                        update = await invoke('run_overseer_event', asAnInstruction).catch((e) => {
+                            if (DEBUG_MODE) console.warn('[Overseer] the press was refused', e)
+                            return null
+                        })
+                    } finally {
+                        window.app._writingByInstruction -= 1
+                    }
+                } else {
+                    update = await invoke('execute_overseer_event_update', {
                         content: knownText,
                         node_path: path,
                         nodePath: path,
                         event_name: eventName,
                         eventName
                     }).catch(() => null)
+                }
                 if (asAnInstruction && update) {
-                    // Written as part of running it, so nothing is waiting to be saved.
-                    window.app.alreadyWritten && window.app.alreadyWritten()
+                    // Written as part of running it, so nothing is waiting to be saved - and
+                    // the answer says what the file now holds, which the page has to take on
+                    // or its next save is refused for being built on a document it moved.
+                    writtenAsAnInstruction = true
+                    window.app.alreadyWritten && window.app.alreadyWritten(update)
                 }
                 if (update && Array.isArray(update.changes)) {
                     window.app._currentText = typeof update.text === 'string' ? update.text : null
@@ -6125,7 +6144,16 @@ export class OverseerRenderer {
             // typing debounce: waiting risks it being swept into the same step as
             // whatever is typed next, which is what made undo look as though it took
             // back two changes at a time.
-            window.app.markDocumentModified && window.app.markDocumentModified(true)
+            //
+            // The other ending of a press that went as an instruction: the backend answered
+            // with the whole document rather than with described changes. It is written either
+            // way, and asking for a save here sent the document back up to repeat a write that
+            // had already happened - which was then refused for contradicting a baseline this
+            // very press had moved. That is the second half of the message about the document
+            // having changed since the page opened it.
+            if (!writtenAsAnInstruction) {
+                window.app.markDocumentModified && window.app.markDocumentModified(true)
+            }
         } else {
             // Backend returned a status/boolean or unexpected shape; keep current document
             if (DEBUG_MODE) console.warn('[Overseer] emitEvent returned non-document value; preserving current document:', updated)

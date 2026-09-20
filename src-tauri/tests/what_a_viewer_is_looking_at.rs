@@ -220,3 +220,81 @@ fn two_viewers_are_looking_at_their_own_days() {
         assert_eq!(day_for("bob"), "2026-06-15");
     });
 }
+
+/// Opening the document again shows the day this viewer is on, not the one it authored.
+///
+/// The overlay was applied when a press was run and when a value was written, but not when the
+/// page simply asked for the document to be worked out. So reloading put the viewer back to
+/// today while their real day was still being remembered - and the next press stepped back from
+/// the remembered day, so the display jumped two days at once. What somebody is looking at has
+/// to be applied on the way in as well as on the way out.
+#[test]
+fn opening_it_again_shows_the_day_this_viewer_is_on() {
+    serialised(|| {
+        let root = a_root("reopen");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        let text = std::fs::read_to_string(root.join("day.os")).expect("read");
+
+        // As the page opens a document: read the file, then ask for it to be worked out.
+        let opened = |session: &str| {
+            let nodes = overseer::app_api::load_document_for(text.clone(), "day.os", session)
+                .expect("resolve");
+            let node = overseer::addressing::find(&nodes, "day/showing").expect("no field");
+            let held = node
+                .parameters
+                .get("_computed_value")
+                .or_else(|| node.parameters.get("value"))
+                .expect("no value");
+            match held {
+                OverseerValue::Date(d) => d.clone(),
+                OverseerValue::Timestamp(t) => t.clone(),
+                other => format!("{:?}", other),
+            }
+        };
+
+        // What this viewer is shown, read the way the rest of these tests read it - through
+        // `open_for`, which has always applied the overlay.
+        let through_open_for = |session: &str| {
+            let nodes = service.open_for(session, "day.os").expect("open");
+            let node = overseer::addressing::find(&nodes, "day/showing").expect("no field");
+            match node
+                .parameters
+                .get("_computed_value")
+                .or_else(|| node.parameters.get("value"))
+            {
+                Some(OverseerValue::Date(d)) => d.clone(),
+                Some(OverseerValue::Timestamp(t)) => t.clone(),
+                other => format!("{:?}", other),
+            }
+        };
+
+        let today = opened("alice");
+        let button = overseer::addressing::name_path(
+            &service.open("day.os").expect("open"),
+            "day/back",
+        )
+        .expect("no back button");
+        service
+            .command_for(
+                "alice",
+                Some("day.os"),
+                "run_overseer_event",
+                &serde_json::json!({ "node_path": button, "event_name": "click" }),
+            )
+            .expect("the press was refused");
+
+        let moved = through_open_for("alice");
+        assert_ne!(moved, today, "the press did not move this viewer's day");
+
+        assert_eq!(
+            opened("alice"),
+            moved,
+            "opening it again put the viewer back to what the document authored"
+        );
+        assert_eq!(
+            opened("bob"),
+            today,
+            "a viewer who has moved nothing should still be shown today"
+        );
+    });
+}

@@ -98,7 +98,7 @@ async fn write_overseer_value(
     node_path: Vec<String>,
     value: OverseerValue,
 ) -> Result<app_api::ResolvedUpdate> {
-    app_api::write_value_at(&path, node_path, value, THE_WINDOW)
+    app_api::write_value_at(&path, &path, node_path, value, THE_WINDOW)
 }
 
 /// Run one handler, the same way.
@@ -108,7 +108,7 @@ async fn run_overseer_event(
     node_path: Vec<String>,
     event_name: String,
 ) -> Result<app_api::ResolvedUpdate> {
-    app_api::run_event_at(&path, node_path, event_name, THE_WINDOW)
+    app_api::run_event_at(&path, &path, node_path, event_name, THE_WINDOW)
 }
 
 #[command]
@@ -143,11 +143,18 @@ fn serialize_overseer_nodes_raw(request: tauri::ipc::Request<'_>) -> Result<Stri
 }
 
 #[command]
-async fn parse_overseer_content(content: String) -> Result<Vec<OverseerNode>> {
+async fn parse_overseer_content(content: String, path: Option<String>) -> Result<Vec<OverseerNode>> {
     // The same call the server makes. This used to record where the server did not, because the
     // recording cost seventy per cent of an open and only an editor got that back; it now costs
     // almost nothing and both want the graph. See `app_api::recording_is_on`.
-    app_api::load_document(content)
+    //
+    // Worked out as this window sees it. Without that, opening a document showed what it
+    // authored while the day this window had moved to was still being remembered - so the next
+    // press stepped back from the remembered day and the display jumped a day at once.
+    match path.as_deref() {
+        Some(named) => app_api::load_document_for(content, named, THE_WINDOW),
+        None => app_api::load_document(content),
+    }
 }
 
 #[command]

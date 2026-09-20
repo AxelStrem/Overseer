@@ -315,3 +315,151 @@ describe('a change goes up as an instruction, not as a document', () => {
     expect(callsTo('write_overseer_value')).toHaveLength(0)
   })
 })
+
+describe('keeping up with what the file says', () => {
+  // The page holds the text the file had when it last heard, and a save built on a document
+  // something else has written since is refused rather than allowed to overwrite it. A write
+  // made by naming a change moves the file without the page sending anything - so unless the
+  // page is told, that baseline is stale from the first change onwards and every later save is
+  // refused. Which is exactly what happened in use: a third edit in a row, or a second tag, and
+  // the page insisted the document had changed since it was opened.
+  beforeEach(() => {
+    setupDOM()
+    invoke.mockReset()
+    invoke.mockResolvedValue(null)
+  })
+
+  it('takes on what the answer says the file now holds', () => {
+    const app = anApp()
+    app._originalText = 'STALE'
+    app.alreadyWritten({ wrote: true, text: 'WHAT THE PAGE SEES' })
+    expect(app._originalText).toBe('WHAT THE PAGE SEES')
+  })
+
+  it('prefers the file text when the file and the page differ', () => {
+    // They differ when a guarded field is in play: the page is shown the day it moved to, and
+    // the file keeps what the document authored. The baseline has to be the file's version.
+    const app = anApp()
+    app.alreadyWritten({
+      wrote: true,
+      text: 'WITH THE VIEWERS DAY',
+      file_text: 'WHAT THE DOCUMENT AUTHORED'
+    })
+    expect(app._originalText).toBe('WHAT THE DOCUMENT AUTHORED')
+  })
+
+  it('leaves the baseline alone when nothing was written', () => {
+    // A press that moved only the viewer. The file is untouched, so what the page already holds
+    // is still right - and adopting the text it was shown would make the next save disagree
+    // with the file for no reason.
+    const app = anApp()
+    app._originalText = 'WHAT THE FILE SAYS'
+    app.alreadyWritten({ wrote: false, text: 'WITH THE VIEWERS DAY' })
+    expect(app._originalText).toBe('WHAT THE FILE SAYS')
+  })
+
+  it('survives an answer that says nothing about it', () => {
+    const app = anApp()
+    app._originalText = 'WHAT THE FILE SAYS'
+    expect(() => app.alreadyWritten(undefined)).not.toThrow()
+    expect(app._originalText).toBe('WHAT THE FILE SAYS')
+  })
+
+  it('stops a following save from being built on a baseline the page itself moved', async () => {
+    // The whole point, end to end: a change goes as an instruction, and then something that
+    // still saves text - a cascade, a list button - does so against what the file now says.
+    vi.useFakeTimers()
+    try {
+      const app = anApp()
+      app.currentDocument = [{
+        name: 'day', node_type: 'tab', parameters: {}, children: [
+          { name: 'n', node_type: 'int', parameters: { value: { Integer: 1 } }, children: [] }
+        ]
+      }]
+      invoke.mockImplementation((cmd) =>
+        cmd === 'write_overseer_value'
+          ? Promise.resolve({ wrote: true, text: 'AFTER THE WRITE', changes: [], nodes: null })
+          : Promise.resolve(null))
+
+      await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
+      expect(app._originalText, 'the page kept a baseline the file no longer has')
+        .toBe('AFTER THE WRITE')
+
+      // Now a save that does send text. It must say it is working from the current file.
+      app._currentText = 'AFTER THE WRITE'
+      await app.saveFile()
+      const sent = invoke.mock.calls.filter(([cmd]) => cmd === 'save_overseer_file_from_text')
+      expect(sent).toHaveLength(1)
+      expect(sent[0][1].original).toBe('AFTER THE WRITE')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('a write in flight is not overtaken by a save', () => {
+  // The field handler marks the document changed - which schedules a save of the whole text -
+  // and only then asks for the change to be written. On a small document the write answers well
+  // inside the wait and calls the save off. On a large one it does not: the save fires while the
+  // write is still in flight, sends the text as it was *before* the edit, and whichever lands
+  // second wins. That is why an edit to a big document appeared to apply, took a second or two
+  // doing it, and was gone after a refresh - while the same edit to a small one stuck, and while
+  // presses were fine throughout, a press scheduling no save at all.
+  beforeEach(() => {
+    setupDOM()
+    invoke.mockReset()
+    invoke.mockResolvedValue(null)
+    vi.useFakeTimers()
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  const anAppWithAField = () => {
+    const app = anApp()
+    app.currentDocument = [{
+      name: 'day', node_type: 'tab', parameters: {}, children: [
+        { name: 'n', node_type: 'int', parameters: { value: { Integer: 1 } }, children: [] }
+      ]
+    }]
+    return app
+  }
+
+  /// A backend that takes its time, as a large document does.
+  const slowToAnswer = (ms) => {
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'write_overseer_value') {
+        return new Promise((resolve) => setTimeout(
+          () => resolve({ wrote: true, text: 'AFTER THE WRITE', changes: [], nodes: null }), ms))
+      }
+      return Promise.resolve(null)
+    })
+  }
+
+  it('does not send the pre-edit text while the write is still going', async () => {
+    const app = anAppWithAField()
+    slowToAnswer(1500)
+
+    app.markDocumentModified()
+    const editing = app.reevaluateDocumentSelective(
+      ['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
+
+    // Past the wait the save would otherwise keep, and well short of the answer.
+    await vi.advanceTimersByTimeAsync(900)
+    expect(wrote(), 'a save of the old text went out while the write was in flight')
+      .toHaveLength(0)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await editing
+    expect(wrote(), 'and none afterwards either, the write having done it').toHaveLength(0)
+  })
+
+  it('still saves when the change was never going to be written for us', async () => {
+    // A document with no file behind it has no address to write to, so the save is all there is
+    // and holding it back would lose the change.
+    const app = anAppWithAField()
+    slowToAnswer(1500)
+    app.currentFile = null
+    app.markDocumentModified()
+    await vi.runAllTimersAsync()
+    expect(wrote()).toHaveLength(0)
+  })
+})

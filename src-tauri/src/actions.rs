@@ -1933,9 +1933,36 @@ impl ActionExecutor {
         // back as exactly what it was read from, and the press reports success having changed
         // nothing. `set`, `toggle` and `clear` have always done this; `inc` never did.
         node.source_fingerprint = None;
-        node.parameters.remove(&format!("_template_{}", key));
+        Self::record_an_override(node, &key);
         note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
         Ok(())
+    }
+
+    /// Say that this value was written here rather than inherited from a template.
+    ///
+    /// An entry made from a template is written out as only what distinguishes it from that
+    /// template, and the serializer decides what that is by looking for this marker. Without it
+    /// a write into such an entry lands in memory, is reported as a change, answers Ok - and is
+    /// then dropped on the way to the file. A write that reports success and does nothing.
+    ///
+    /// `set` and `toggle` have always left the marker. `inc` never did, so a button counting
+    /// something up worked everywhere except on a list entry, which is where such buttons
+    /// mostly are. Kept in one place now so the next action added cannot quietly omit it.
+    fn record_an_override(node: &mut OverseerNode, key: &str) {
+        node.parameters.remove(&format!("_template_{}", key));
+        if key != "value" {
+            return;
+        }
+        node.parameters.insert(
+            "_override_present".to_string(),
+            OverseerValue::Boolean(true),
+        );
+        node.parameters.insert(
+            "_explicit_child_override".to_string(),
+            OverseerValue::Boolean(true),
+        );
+        // A value written here is no longer one worked out from a formula.
+        node.parameters.remove("_computed_value");
     }
 
     fn toggle_value(

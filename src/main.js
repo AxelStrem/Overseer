@@ -493,7 +493,7 @@ export class OverseerApp {
             if (DEBUG_MODE) this.setStatus(`DEBUG: File content loaded, length: ${content?.length || 'unknown'}`)
 
             // Parse the content
-            const overseerDocument = await invoke('parse_overseer_content', { content })
+            const overseerDocument = await invoke('parse_overseer_content', { content, path: filePath })
             // The text a resolve starts from, so the first edit need not upload the document.
             this._currentText = content
             if (DEBUG_MODE) this.setStatus(`DEBUG: Document parsed, type: ${typeof overseerDocument}, length: ${overseerDocument?.length || 'unknown'}`)
@@ -1468,11 +1468,25 @@ tab Main {
             // against it - a couple of nodes instead of the ~14 MB the whole document costs to
             // move and to rebuild. It answers with the document only when it has no such
             // baseline, which is the case right after something else changed it underneath.
-            const update = instruction
-                ? await invoke('write_overseer_value', instruction).catch(() => null)
-                : await invoke('parse_overseer_content_selective_update', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+            let update = null
+            if (instruction) {
+                this._writingByInstruction = (this._writingByInstruction || 0) + 1
+                try {
+                    update = await invoke('write_overseer_value', instruction).catch((e) => {
+                        // Swallowing this is what let a whole class of trouble look like a
+                        // backend fault: the page falls back to sending the document, shows the
+                        // new value, and nothing is written. Say so at least.
+                        if (DEBUG_MODE) console.warn('[Overseer] the write was refused', e)
+                        return null
+                    })
+                } finally {
+                    this._writingByInstruction -= 1
+                }
+            } else {
+                update = await invoke('parse_overseer_content_selective_update', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+            }
             if (instruction && update) {
-                this.alreadyWritten()
+                this.alreadyWritten(update)
             }
             if (update && Array.isArray(update.changes)) {
                 this._currentText = typeof update.text === 'string' ? update.text : null
@@ -1987,10 +2001,28 @@ tab Main {
     /// An edit sent as an instruction is written by the backend as part of applying it. The save
     /// that would otherwise follow would send the whole document up to say the same thing, which
     /// is the cost and the danger this removes - so the one that was scheduled is called off.
-    alreadyWritten() {
+    alreadyWritten(update) {
         clearTimeout(this._saveSoonTimer)
         this.isDocumentModified = false
         this.updateTitle()
+        // And take note of what the file says now.
+        //
+        // The baseline is what the file held when this page last heard, and it is what lets a
+        // save built on a document something else has written since be refused instead of
+        // overwriting it. A write made by naming a change moves the file without this page
+        // sending anything, so unless it is told, the baseline is stale from the first change
+        // onwards and every save that still sends text is refused - which is exactly what
+        // happened: a third edit in a row, or a second tag, and the page insisted the document
+        // had changed since it was opened.
+        //
+        // Nothing was written means the baseline still stands. `file_text` appears only when
+        // the file differs from what is being shown, which is when a guarded field is in play.
+        if (!update || update.wrote !== true) return
+        if (typeof update.file_text === 'string') {
+            this._originalText = update.file_text
+        } else if (typeof update.text === 'string') {
+            this._originalText = update.text
+        }
     }
 
     /// Write what has changed, shortly.
@@ -2012,6 +2044,14 @@ tab Main {
         if (!this.currentFile || this._autosave === false) return
         clearTimeout(this._saveSoonTimer)
         this._saveSoonTimer = setTimeout(() => {
+            // A change already on its way to being written is not one to send the document
+            // for. The field handler marks the document changed and only then asks for the
+            // write, so this timer is running while that write is in flight - and firing it
+            // sends the text as it was *before* the edit. On a small document the write
+            // answers well inside the wait and calls the save off; on a large one it does not,
+            // and whichever landed second won. That is an edit that applies on screen, takes a
+            // second doing it, and is gone after a refresh.
+            if (this._writingByInstruction) { this.saveSoon(); return }
             // A save already running is left to finish; whatever came after it marks the
             // document again and asks for another.
             if (this._saving) { this.saveSoon(); return }
