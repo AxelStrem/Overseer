@@ -809,6 +809,68 @@ fn resolve_path_from<'a>(
     }
 }
 
+/// A field the creating marked to freeze states the value it would otherwise have shown.
+///
+/// Called where that value has just been worked out, and from both paths that work one out - the
+/// full resolve and the selective one - because either can be the pass that first materialises a
+/// new entry, and a rule honoured by only one of them would hold or not hold depending on how
+/// the document happened to be opened.
+///
+/// Once. A field that has been frozen states a value, and a field that states a value is never
+/// frozen again, so the marker on the entry can be left where it is: it is internal, so it never
+/// reaches the file, and it is gone the next time the document is read.
+fn freeze_if_it_was_asked_for(
+    node: &mut OverseerNode,
+    document_root: &[OverseerNode],
+    current_path: &[String],
+) {
+    let asked_to_freeze = matches!(
+        node.parameters.get("freeze"),
+        Some(OverseerValue::Boolean(true))
+    );
+    if !asked_to_freeze
+        || FormulaEvaluator::states_a_value(&node.parameters)
+        || !inside_something_just_created(document_root, current_path)
+    {
+        return;
+    }
+    let settled = node
+        .parameters
+        .get("_computed_fallback")
+        .or_else(|| node.parameters.get("_computed_default"))
+        .filter(|v| !matches!(v, OverseerValue::String(s) if s == "invalid formula error"))
+        .cloned();
+    let Some(settled) = settled else { return };
+    node.parameters.insert("value".to_string(), settled);
+    // Said the way an edit says it, or the serializer treats the value as the template's and
+    // leaves it out - which is the fault `silentwrite` was.
+    node.parameters
+        .insert("_override_present".to_string(), OverseerValue::Boolean(true));
+    node.parameters.insert(
+        "_explicit_child_override".to_string(),
+        OverseerValue::Boolean(true),
+    );
+    node.parameters.remove("_computed_value");
+    node.source_fingerprint = None;
+}
+
+/// Whether this node sits inside an entry that was created a moment ago.
+///
+/// The creating marks the entry, because that is the only place that knows. By the time a field
+/// the template supplies exists at all, the entry has been materialised and the marker is the
+/// only remaining trace of how new it is - so the ancestors are what gets asked, rather than the
+/// field, which cannot know.
+fn inside_something_just_created(document_root: &[OverseerNode], current_path: &[String]) -> bool {
+    for depth in (1..current_path.len()).rev() {
+        if let Some(above) = resolve_path_vec_to_node(document_root, &current_path[..depth]) {
+            if above.parameters.contains_key("_freeze_pending") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn resolve_path_vec_to_node<'a>(
     root: &'a [OverseerNode],
     segments: &[String],
@@ -2923,6 +2985,8 @@ unsafe fn recursively_evaluate_node_formulas(
         }
     }
 
+    freeze_if_it_was_asked_for(node, document_root, current_path);
+
     // Recursively evaluate formulas in children
     let child_len = node.children.len();
     for idx in 0..child_len {
@@ -3105,6 +3169,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                 }
                 node.parameters.insert(k, v); // k could be _computed_value or _computed_paramName
             }
+            freeze_if_it_was_asked_for(node, document_root, current_path);
         }
     }
 

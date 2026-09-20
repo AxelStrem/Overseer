@@ -2650,6 +2650,7 @@ impl ActionExecutor {
                         &snapshot,
                     )?;
                     Self::apply_list_entry_style(&mut new_item, &style_guide);
+                    Self::mark_the_entry_as_new(&mut new_item);
                     list_node.children.push(new_item);
                     Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
@@ -2680,6 +2681,7 @@ impl ActionExecutor {
                     };
                     item.parameters.insert("value".to_string(), val);
                     Self::apply_list_entry_style(&mut item, &style_guide);
+                    Self::mark_the_entry_as_new(&mut item);
                     list_node.children.push(item);
                     Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
@@ -2765,6 +2767,7 @@ impl ActionExecutor {
                         &snapshot,
                     )?;
                     Self::apply_list_entry_style(&mut new_item, &style_guide);
+                    Self::mark_the_entry_as_new(&mut new_item);
                     list_node.children.insert(0, new_item);
                     Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
@@ -2794,6 +2797,7 @@ impl ActionExecutor {
                     };
                     item.parameters.insert("value".to_string(), val);
                     Self::apply_list_entry_style(&mut item, &style_guide);
+                    Self::mark_the_entry_as_new(&mut item);
                     list_node.children.insert(0, item);
                     Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
@@ -2882,6 +2886,29 @@ impl ActionExecutor {
         // No default here either. One indent unit is not an indentation, and stamping it on
         // the entry hid the depth the serializer would otherwise have computed correctly.
         guide
+    }
+
+    /// Say that this entry has just been created.
+    ///
+    /// A field can fall back to a figure kept elsewhere - a day's calorie target to the standing
+    /// one - and then it reads that figure for ever, which is wrong for anything past: the
+    /// history ends up claiming every day was aiming at whatever the standing figure is today.
+    /// What such a day wants is the figure as it stood when the day began, and no formula can
+    /// say that, because a formula is re-read every time it is looked at.
+    ///
+    /// `freeze=true` on a field says to write the value in instead, once, when the entry is
+    /// created. Only the creating knows when that is, so it says so here and the resolver acts
+    /// on it - which has to be that way round, because at this moment the entry holds only what
+    /// it was given. Everything the template supplies, the field in question included, is
+    /// materialised later while the document is worked out.
+    ///
+    /// Left on rather than taken off. It is an internal marker, so it is never written to the
+    /// file and is gone the next time the document is read; and within this process it cannot
+    /// fire twice, because a field that has been frozen states a value and a field that states
+    /// a value is not frozen again.
+    fn mark_the_entry_as_new(node: &mut OverseerNode) {
+        node.parameters
+            .insert("_freeze_pending".to_string(), OverseerValue::Boolean(true));
     }
 
     fn apply_list_entry_style(node: &mut OverseerNode, style: &ListEntryStyleGuide) {
