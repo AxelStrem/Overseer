@@ -101,6 +101,31 @@ async fn write_overseer_value(
     app_api::write_value_at(&path, &path, node_path, value, THE_WINDOW)
 }
 
+/// Add an entry to a list, with whatever fields the page has for it.
+#[command]
+async fn append_overseer_entry(
+    path: String,
+    list_path: Vec<String>,
+    fields: Option<std::collections::HashMap<String, OverseerValue>>,
+) -> Result<app_api::ResolvedUpdate> {
+    app_api::append_entry_at(
+        &path,
+        &path,
+        list_path,
+        fields.unwrap_or_default(),
+        THE_WINDOW,
+    )
+}
+
+/// And take one out.
+#[command]
+async fn remove_overseer_entry(
+    path: String,
+    entry_path: Vec<String>,
+) -> Result<app_api::ResolvedUpdate> {
+    app_api::remove_entry_at(&path, &path, entry_path, THE_WINDOW)
+}
+
 /// Run one handler, the same way.
 #[command]
 async fn run_overseer_event(
@@ -319,7 +344,9 @@ fn main() {
             execute_overseer_event_with_text,
             execute_overseer_event_update,
             write_overseer_value,
-            run_overseer_event
+            run_overseer_event,
+            append_overseer_entry,
+            remove_overseer_entry
         ])
         .run(tauri::generate_context!())
     {

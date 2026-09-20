@@ -936,6 +936,88 @@ pub fn load_document_for(content: String, document: &str, session: &str) -> Resu
     resolve_selective(content, addresses, Some(looking_at))
 }
 
+/// The override nodes for an entry, from a map of field name to value.
+///
+/// A field name may be a path - `macros/protein` - so a value can be given for something the
+/// template keeps one level in, and the nodes for the levels between are made as needed. Shared
+/// rather than kept with the bot's door, because the page appends entries the same way now.
+pub fn entry_overrides(
+    fields: &std::collections::HashMap<String, OverseerValue>,
+) -> Vec<OverseerNode> {
+    let mut roots: Vec<OverseerNode> = Vec::new();
+    for (field, value) in fields {
+        let mut segments = field.split('/').filter(|s| !s.is_empty()).peekable();
+        let mut level = &mut roots;
+        while let Some(segment) = segments.next() {
+            let leaf = segments.peek().is_none();
+            let existing = level.iter().position(|n| n.name == segment);
+            let index = match existing {
+                Some(i) => i,
+                None => {
+                    let mut node = if leaf {
+                        let mut n =
+                            OverseerNode::new_with_type("-".to_string(), Some(segment.to_string()));
+                        n.authored_dash = true;
+                        n
+                    } else {
+                        OverseerNode::new_with_type("div".to_string(), Some(segment.to_string()))
+                    };
+                    node.name = segment.to_string();
+                    level.push(node);
+                    level.len() - 1
+                }
+            };
+            if leaf {
+                level[index]
+                    .parameters
+                    .insert("value".to_string(), value.clone());
+            }
+            level = &mut level[index].children;
+        }
+    }
+    roots
+}
+
+/// Add an entry to a list, named by the path of node names the page already speaks in.
+///
+/// The last thing the page did by sending the whole document and having it written over the
+/// file. A value could be named and written; a change of shape could not, so adding an entry
+/// meant building it in the page and letting the save carry it - which is the pattern that lost
+/// somebody else's writes, and the reason `instructions` was filed.
+///
+/// What comes back is the whole document rather than a list of changes, and that is not a
+/// shortcoming: an entry added or taken out renames every entry after it, so the addresses the
+/// page holds no longer mean what they did. Saying so plainly is cheaper than a page acting on
+/// names that have moved under it.
+pub fn append_entry_at(
+    path: &str,
+    document: &str,
+    list_path: Vec<String>,
+    fields: std::collections::HashMap<String, OverseerValue>,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    let overrides = entry_overrides(&fields);
+    change_document(path, document, session, move |nodes| {
+        crate::actions::ActionExecutor::append_entry(
+            nodes,
+            &format!("/{}", list_path.join("/")),
+            &overrides,
+        )
+    })
+}
+
+/// And take one out again.
+pub fn remove_entry_at(
+    path: &str,
+    document: &str,
+    entry_path: Vec<String>,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    change_document(path, document, session, move |nodes| {
+        crate::actions::ActionExecutor::remove_entry(nodes, &format!("/{}", entry_path.join("/")))
+    })
+}
+
 /// Set one value, named by the path of node names the page already speaks in.
 pub fn write_value_at(
     path: &str,

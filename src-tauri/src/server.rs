@@ -385,9 +385,47 @@ impl DocumentRoot {
                     RequestError::Failed(format!("could not run the event: {:?}", e))
                 })?)
             }
-            // The two that send an instruction rather than a document. The page names what to
+            // The four that send an instruction rather than a document. The page names what to
             // change and the backend changes what is on disk, so a write made in between - the
             // bot recording a meal, another tab - is still there afterwards.
+            "append_overseer_entry" => {
+                let named = document
+                    .ok_or_else(|| RequestError::Rejected("'document' is required".into()))?;
+                let at = self.resolve(named)?;
+                let list = arg_strings(args, &["list_path", "listPath"]);
+                let fields: std::collections::HashMap<String, OverseerValue> =
+                    match args.get("fields") {
+                        Some(serde_json::Value::Null) | None => Default::default(),
+                        Some(given) => serde_json::from_value(given.clone()).map_err(|e| {
+                            RequestError::Rejected(format!("'fields' is not field to value: {}", e))
+                        })?,
+                    };
+                as_json(
+                    app_api::append_entry_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        list,
+                        fields,
+                        session,
+                    )
+                    .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))?,
+                )
+            }
+            "remove_overseer_entry" => {
+                let named = document
+                    .ok_or_else(|| RequestError::Rejected("'document' is required".into()))?;
+                let at = self.resolve(named)?;
+                let entry = arg_strings(args, &["entry_path", "entryPath"]);
+                as_json(
+                    app_api::remove_entry_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        entry,
+                        session,
+                    )
+                    .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))?,
+                )
+            }
             "write_overseer_value" => {
                 let named = document.ok_or_else(|| {
                     RequestError::Rejected("'document' is required".into())
@@ -864,39 +902,6 @@ fn reject_unknown_fields(
     )))
 }
 
-fn entry_overrides(fields: &std::collections::HashMap<String, OverseerValue>) -> Vec<OverseerNode> {
-    let mut roots: Vec<OverseerNode> = Vec::new();
-    for (field, value) in fields {
-        let mut segments = field.split('/').filter(|s| !s.is_empty()).peekable();
-        let mut level = &mut roots;
-        while let Some(segment) = segments.next() {
-            let leaf = segments.peek().is_none();
-            let existing = level.iter().position(|n| n.name == segment);
-            let index = match existing {
-                Some(i) => i,
-                None => {
-                    let mut node = if leaf {
-                        let mut n = OverseerNode::new_with_type("-".to_string(), Some(segment.to_string()));
-                        n.authored_dash = true;
-                        n
-                    } else {
-                        OverseerNode::new_with_type("div".to_string(), Some(segment.to_string()))
-                    };
-                    node.name = segment.to_string();
-                    level.push(node);
-                    level.len() - 1
-                }
-            };
-            if leaf {
-                level[index]
-                    .parameters
-                    .insert("value".to_string(), value.clone());
-            }
-            level = &mut level[index].children;
-        }
-    }
-    roots
-}
 
 /// What a write did, for the caller to report or check.
 #[derive(serde::Serialize)]
@@ -1223,7 +1228,7 @@ impl DocumentRoot {
         address: &str,
         fields: &std::collections::HashMap<String, OverseerValue>,
     ) -> std::result::Result<WriteOutcome, RequestError> {
-        let overrides = entry_overrides(fields);
+        let overrides = crate::app_api::entry_overrides(fields);
 
         let (_, nodes) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
