@@ -1075,10 +1075,12 @@ impl DocumentRoot {
         // The same rules the desktop's own writes follow: what the viewer moved is taken back
         // out of the text, kept against their session instead, and a press that moved nothing
         // else leaves the file alone - no write, no undo point, nothing for the backup to commit.
+        let report = crate::actions::take_report();
         let settled = crate::app_api::settle_the_viewers_values(
             serialized,
             &text_before,
             &held_for_the_viewer,
+            report.as_ref(),
         );
         for (address, value) in settled.viewers {
             crate::viewstate::set(session, name, &address, value);

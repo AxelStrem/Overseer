@@ -215,3 +215,56 @@ fn every_change_is_one_step_to_take_back() {
         assert!(on_disk(&root).contains("int recorded = 1"), "{}", on_disk(&root));
     });
 }
+
+/// The quick way of answering a write agrees with the plain one.
+///
+/// A write used to parse and work the document out from scratch and then work all of it out
+/// again afterwards, which on `tasks.os` was most of the second each edit took - and that second
+/// is what made a 400 ms save timer able to overtake the write and undo it. So when the document
+/// has already been worked out for exactly this text it is reused, and only what the change
+/// reaches is worked out again, which the dependency graph can say.
+///
+/// Both are still there: the plain way answers whenever there is no such document to reuse, or
+/// when the change moved the document's shape and the graph is describing one that no longer
+/// exists. Two ways of answering the same question is a thing to be nervous about, so this
+/// checks they agree - on the file, on what the caller is shown, and on what derives from the
+/// change.
+#[test]
+fn reusing_the_worked_out_document_answers_the_same() {
+    serialised(|| {
+        // Nothing to reuse: the long way.
+        let cold_root = a_root("cold");
+        let cold = DocumentRoot::new(&cold_root).expect("open the root");
+        overseer::app_api::forget_baseline();
+        let cold_answer = set(&cold, "alice", &["day", "recorded"], 5);
+
+        // Opened first, so the document for this text is there to be reused: the short way.
+        let warm_root = a_root("warm");
+        let warm = DocumentRoot::new(&warm_root).expect("open the root");
+        warm.open_for("alice", "day.os").expect("open it as a page does");
+        let warm_answer = set(&warm, "alice", &["day", "recorded"], 5);
+
+        assert_eq!(
+            on_disk(&cold_root),
+            on_disk(&warm_root),
+            "the two ways wrote different files"
+        );
+        assert_eq!(
+            text_of(&cold_answer),
+            text_of(&warm_answer),
+            "the two ways showed the caller different documents"
+        );
+        assert!(
+            on_disk(&warm_root).contains("int recorded = 5"),
+            "the write did not land:\n{}",
+            on_disk(&warm_root)
+        );
+        // `doubled` is $(recorded * 2), and it is the graph that has to say so on the short way.
+        assert!(
+            text_of(&warm_answer).contains("int doubled = 10")
+                || warm_answer.to_string().contains("\"Integer\":10"),
+            "what derives from the change was not worked out:\n{}",
+            text_of(&warm_answer)
+        );
+    });
+}

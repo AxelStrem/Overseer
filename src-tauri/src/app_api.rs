@@ -785,17 +785,15 @@ pub fn settle_the_viewers_values(
     serialized: String,
     as_it_stood: &str,
     already_the_viewers: &[String],
+    report: Option<&crate::actions::Changed>,
 ) -> WhatToWrite {
-    let report = crate::actions::take_report();
     let reported: Vec<(String, OverseerValue)> =
-        report.as_ref().map(|r| r.view_state.clone()).unwrap_or_default();
+        report.map(|r| r.view_state.clone()).unwrap_or_default();
 
     // A press that moved nothing but the viewer leaves the file alone entirely: no write, no
     // undo point, nothing for the backup to commit.
     let only_the_viewers = !reported.is_empty()
-        && report
-            .as_ref()
-            .map_or(false, |r| r.fields.is_empty() && !r.structural);
+        && report.map_or(false, |r| r.fields.is_empty() && !r.structural);
 
     // Everything this viewer holds, not only what this action happened to move.
     //
@@ -844,21 +842,63 @@ fn change_document(
     // the file says again and never get past the first step back.
     let looking_at = crate::viewstate::overlay(session, document);
     let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
-    let mut nodes = if looking_at.is_empty() {
-        load_document(as_it_stood.clone())?
-    } else {
+    let mut nodes = if !looking_at.is_empty() {
         resolve_selective(as_it_stood.clone(), held_for_the_viewer.clone(), Some(looking_at))?
+    } else if let Some(already) = baseline.clone() {
+        // The document as it was last worked out, for exactly this text. Parsing and resolving
+        // it again produces the same thing and costs what opening it cost - which on tasks.os
+        // was most of the second every edit took. The cache is keyed by the text, so a hit means
+        // the file has not moved since, and the graph for it is held under the same key.
+        already
+    } else {
+        load_document(as_it_stood.clone())?
     };
 
     crate::actions::start_reporting();
     work(&mut nodes)?;
-    // What was written changes what derives from it, and the caller is about to be shown it.
-    crate::resolver::resolve_document(&mut nodes);
+    let report = crate::actions::take_report();
+
+    // What was written changes what derives from it, and the caller is about to be shown it -
+    // but working the whole document out again to find out costs as much as opening it did. The
+    // graph already knows what reads what, so it is asked instead, exactly as the press path
+    // asks it. On tasks.os that was most of a second per edit.
+    //
+    // The long way when the graph cannot say: a change of shape renames everything after it, so
+    // the graph is describing a document that no longer exists. Also when there is no graph for
+    // this text, which is what happens when the document was worked out for a viewer rather
+    // than plainly. Never wrong, only slower.
+    let settled_what_it_reached = report
+        .as_ref()
+        .filter(|changed| !changed.structural && !changed.fields.is_empty())
+        .and_then(|changed| graph_for(&as_it_stood).map(|graph| (changed, graph)))
+        .and_then(|(changed, graph)| {
+            let to_redo = graph.nodes_to_work_out_again(&changed.fields);
+            if to_redo.is_empty() {
+                return None;
+            }
+            crate::resolver::resolve_specific_fields(&mut nodes, &to_redo.into_iter().collect());
+            // A series hangs on a plot child while the reads are recorded against the chart, so
+            // the cascade does not reach it. The other two paths say the same.
+            crate::resolver::compute_chart_series(&mut nodes);
+            // Left as it was rather than absorbing what this resolve recorded: a selective
+            // resolve only re-reads what it recomputed, so absorbing shrinks the graph a little
+            // every time. See the press path, where that cost a value its cascade.
+            remember_graph(&as_it_stood, graph);
+            Some(())
+        });
+    if settled_what_it_reached.is_none() {
+        crate::resolver::resolve_document(&mut nodes);
+    }
+
     let serialized = OverseerFileHandler::serialize_nodes(&nodes)
         .map_err(|e| OverseerError::SerializationError(format!("could not serialize: {}", e)))?;
 
-    let settled =
-        settle_the_viewers_values(serialized.clone(), &as_it_stood, &held_for_the_viewer);
+    let settled = settle_the_viewers_values(
+        serialized.clone(),
+        &as_it_stood,
+        &held_for_the_viewer,
+        report.as_ref(),
+    );
     for (address, value) in settled.viewers {
         crate::viewstate::set(session, document, &address, value);
     }
