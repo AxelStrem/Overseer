@@ -7,25 +7,36 @@ pub type Result<T> = std::result::Result<T, OverseerError>;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OverseerNode {
     pub name: String,
-    pub node_type: String,        // The original type (tab, div, etc.)
+    pub node_type: String, // The original type (tab, div, etc.)
+    // Every field below that is usually at its default is left out of the wire form rather than
+    // sent as `null`, `false`, `0` or `[]`. They all read back as their default, so nothing is
+    // lost - what is saved is a fixed toll on every node, and a document is mostly nodes.
+    //
+    // It is a fixed toll worth minding: opening tasks.os hands back 5801 nodes, and seven such
+    // fields at twenty-odd bytes each came to most of a megabyte of the four it sent. That is
+    // paid on every open, over whatever connection the person happens to be on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>, // Path to a template node, e.g., "../TaskTemplate"
     pub parameters: HashMap<String, OverseerValue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<OverseerNode>,
-    pub is_hierarchy_transparent: bool, // If true, children are accessible as if they belong to parent
+    // If true, children are accessible as if they belong to parent
+    #[serde(default, skip_serializing_if = "not_so")]
+    pub is_hierarchy_transparent: bool,
     // Parameter insertion order as authored (list of keys) - used to preserve ordering fidelity
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_order: Vec<String>,
     // Raw literal for this node's value (if it was an explicitly authored numeric with formatting such as trailing zeros)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_value_literal: Option<String>,
     // Whether this node's value line was authored using dash shorthand (- name = value)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "not_so")]
     pub authored_dash: bool,
     // Original child order index relative to its siblings as parsed (used for stable round-trip ordering)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_original_index: Option<usize>,
     // Number of blank (empty) lines that preceded this node in the source
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "none_of_them")]
     pub leading_blank_lines: u8,
     // Snapshot of original source trivia and spans (runtime metadata only)
     #[serde(skip)]
@@ -34,6 +45,16 @@ pub struct OverseerNode {
     pub source_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_fingerprint: Option<u64>,
+}
+
+/// For `skip_serializing_if` on a flag that is usually off.
+fn not_so(flag: &bool) -> bool {
+    !*flag
+}
+
+/// The same, for a count that is usually nought.
+fn none_of_them(count: &u8) -> bool {
+    *count == 0
 }
 
 impl OverseerNode {
@@ -101,6 +122,33 @@ impl OverseerNode {
     }
 
     /// Get all accessible children, including transparent children's children
+    /// The child of this name, looking through the wrappers an address does not mention.
+    ///
+    /// `get_accessible_children` builds a vector of every child - and another for every
+    /// transparent one it looks through - which is a great deal of work to then scan for one
+    /// name. Path resolution did exactly that at every level, so it does this instead. Same
+    /// answer: children in order, a transparent one contributing what is inside it rather than
+    /// itself, first match wins.
+    ///
+    /// Written while looking for why a relative lookup is expensive, and worth saying that it
+    /// was not the answer: `../has_deadline == false` costs 0.145 ms a call against 0.003 ms
+    /// for a plain name in the same scope, and this made no measurable difference to that. The
+    /// cost is that `has_deadline` is itself a formula, so reading it evaluates one - see
+    /// `topo`. This is kept because not building a vector to find one item is simply better,
+    /// not because it made anything faster.
+    pub fn accessible_child(&self, name: &str) -> Option<&OverseerNode> {
+        for child in &self.children {
+            if child.is_hierarchy_transparent {
+                if let Some(found) = child.accessible_child(name) {
+                    return Some(found);
+                }
+            } else if child.name == name {
+                return Some(child);
+            }
+        }
+        None
+    }
+
     pub fn get_accessible_children(&self) -> Vec<&OverseerNode> {
         let mut result = Vec::new();
 

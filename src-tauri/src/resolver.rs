@@ -768,11 +768,7 @@ fn resolve_path_from<'a>(
             if seg.is_empty() {
                 continue;
             }
-            if let Some(next) = current
-                .get_accessible_children()
-                .into_iter()
-                .find(|c| c.name == *seg)
-            {
+            if let Some(next) = current.accessible_child(seg) {
                 out.push(seg.to_string());
                 current = next;
             } else {
@@ -802,11 +798,7 @@ fn resolve_path_from<'a>(
             if seg.is_empty() {
                 continue;
             }
-            if let Some(next) = current
-                .get_accessible_children()
-                .into_iter()
-                .find(|c| c.name == *seg)
-            {
+            if let Some(next) = current.accessible_child(seg) {
                 out.push(seg.to_string());
                 current = next;
             } else {
@@ -826,11 +818,7 @@ fn resolve_path_vec_to_node<'a>(
     }
     let mut current = root.iter().find(|n| n.name == segments[0])?;
     for seg in &segments[1..] {
-        if let Some(next) = current
-            .get_accessible_children()
-            .into_iter()
-            .find(|c| c.name == *seg)
-        {
+        if let Some(next) = current.accessible_child(seg) {
             current = next;
         } else {
             return None;
