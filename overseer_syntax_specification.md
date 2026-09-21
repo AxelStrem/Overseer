@@ -446,6 +446,30 @@ div RoundedBox (border-radius=8px) {                // Rounded corners
 div SharpBox (border-radius=0px) {                  // Sharp corners
 ```
 
+#### Hiding Labels:
+
+A field shows its `label` beside or above its value. A container can say once that the fields
+inside it do not, which is what a list drawn as a table wants: the heading names the columns, so
+a cell repeating the name says everything twice.
+
+```overseer
+list rows (entry=<Row>, view="table", header=true) { }
+
+div Row (layout="horizontal", hide-labels=true) {
+    string title (label="Title") = ""      // the label names the column, not the cell
+    int points (label="Points") = 0
+}
+```
+
+It reaches every descendant, so it need not be repeated on groups nested inside, and a container
+within that says `hide-labels=false` shows its own fields' labels again - the nearest ancestor to
+state anything wins. Like the inherited styling parameters, the copy handed to a descendant is
+not written back to the document.
+
+The label is still part of the field, hidden rather than left out. Writing `label=""` instead
+takes the name away altogether, which is worth knowing when nothing else on the screen carries
+it: outside a table there is no heading, so a hidden label is not shown anywhere.
+
 #### Markdown Text Formatting:
 ```overseer
 text MarkdownContent (markdown=true) = "# Heading
@@ -668,7 +692,7 @@ div Tasks {
 ## Reserved Keywords
 
 - **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
-- **Styling**: `background-color`, `font-size`, `font-color`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
+- **Styling**: `background-color`, `font-size`, `font-color`, `hide-labels`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Content**: `markdown`, `hidden`, `entry`, `base`
 - **Actions**: `target`, `condition`, `template`, `active`, `at`

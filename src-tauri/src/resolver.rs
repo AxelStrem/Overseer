@@ -1809,13 +1809,33 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
     }
 }
 
+/// Parameters a container passes down to everything inside it.
+///
+/// Said once on a div and true of every field within, unless one of them says otherwise -
+/// which falls out of how they are copied: a node's own value replaces what it was given
+/// before its children are handed the map, so the nearest ancestor that states anything wins.
+/// CSS cannot express that for a descendant selector, which is why this is done here.
+///
+/// Each one is copied onto the descendant *and* marked `_template_<name>`, so that the
+/// serializer knows the value was not written there and does not write it to disk. Adding a
+/// name here without that marker being understood would persist the copy into every entry;
+/// `file_ops::marks_a_template_node` reads this same list for exactly that reason.
+pub const INHERITABLE_PARAMS: [&str; 4] = [
+    "background-color",
+    "font-color",
+    "font-size",
+    // Whether the fields inside show their labels. A table's heading already names its
+    // columns, so a table-shaped list repeating every label on every row says everything
+    // twice; and a field whose name is obvious from where it sits does not need saying at all.
+    "hide-labels",
+];
+
 fn resolve_parameter_inheritance(
     nodes: &mut Vec<OverseerNode>,
     parent_params: &HashMap<String, OverseerValue>,
 ) {
     for node in nodes.iter_mut() {
-        // List of inheritable styling parameters
-        let inheritable_params = ["background-color", "font-color", "font-size"];
+        let inheritable_params = INHERITABLE_PARAMS;
 
         // Inherit each styling parameter from parent if not explicitly set
         for param_name in &inheritable_params {

@@ -4215,6 +4215,22 @@ export class OverseerRenderer {
         // Add more style mappings as needed
     }
 
+    /// Whether this field is somewhere that has asked for labels not to be shown.
+    ///
+    /// `hide-labels` is said on a container and meant for everything inside it - a list drawn
+    /// as a table whose heading already names the columns, or a group of fields whose names
+    /// are obvious from where they sit. The resolver copies it down to every descendant, so
+    /// the question is answered from this node alone, and a div within that says
+    /// `hide-labels=false` gets its labels back because the nearest ancestor to state anything
+    /// is the one that was copied.
+    ///
+    /// Two shapes arrive here depending on how the parameter was written - `true` and `"true"`
+    /// - and both mean the same thing.
+    labelsAreHidden(node) {
+        const said = this.getParameterValue(node, 'hide-labels')
+        return said === true || said === 'true'
+    }
+
     // Apply conservative default styles for fields (string/number/text/date/timestamp/bool/checkbox)
     // without overriding explicit parameters. This mainly ensures labels/values are readable
     // and laid out consistently even when no styling parameters are provided.
@@ -4234,7 +4250,20 @@ export class OverseerRenderer {
             // alone, and making its container a flex row would change how that value sizes for
             // no reason at all.
             const label = container.querySelector('label')
-            if (label) {
+            if (label && this.labelsAreHidden(node)) {
+                // Hidden, not left out. The text is still the only place this field says what
+                // it is, and something will want to read it - a heading above the column, or
+                // the popup that appears when the mouse rests here. Taking it out of the page
+                // would mean putting it back from somewhere else.
+                //
+                // A checkbox sits inside its own label, so that clicking the words toggles it.
+                // Hiding the label around it would hide the box as well; it moves out first
+                // and loses that affordance, which is the price of not showing the words.
+                const inside = label.querySelector('input')
+                if (inside) container.insertBefore(inside, label)
+                label.classList.add('label-hidden')
+                label.style.display = 'none'
+            } else if (label) {
                 const beside = this.getParameterValue(node, '_label_layout') === 'horizontal'
                 container.classList.add(beside ? 'label-beside' : 'label-above')
                 // Inline, because these are inline already and an inline style wins: leaving

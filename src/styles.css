@@ -453,6 +453,17 @@ body {
     font-size: 14px;
 }
 
+/* A label the container asked not to show. It stays in the page: the text is the only place the
+ * field says what it is, and something above the column or under the mouse will want to read it.
+ *
+ * The renderer sets `display: none` inline as well, because it sets the label's display inline
+ * in the ordinary case and an inline style would overrule this. Keeping the rule means a label
+ * that gains the class later is hidden without needing that.
+ */
+.overseer-field > label.label-hidden {
+    display: none;
+}
+
 /* The field becomes the row that holds the two of them. `baseline` rather than `center` so the
  * label sits on the same line as the value's text instead of on the middle of its padding box.
  */

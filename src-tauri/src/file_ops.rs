@@ -162,7 +162,7 @@ impl FileOperations {
     /// Whether a marker says the *node* came from a template, rather than saying where one of
     /// its parameters got its value.
     ///
-    /// `_template_background-color` and its two companions are written by styling inheritance:
+    /// `_template_background-color` and its companions are written by parameter inheritance:
     /// a colour set on an ancestor is copied onto every descendant so the renderer can read it,
     /// and marked so it is not written back to disk. That is a fact about one parameter.
     ///
@@ -170,13 +170,15 @@ impl FileOperations {
     /// serializer answers it by writing the node without its contents. Colouring a template
     /// therefore emptied the group inside it: twenty-three lines of a meal card replaced by
     /// `div (layout="horizontal", margin=0) {}`, on the first save after the colour was added.
+    ///
+    /// Which names those are is asked of the resolver rather than repeated here. Listed twice,
+    /// a fourth inheritable parameter would be understood by the half that copies it and not by
+    /// the half that reads it, and the meal card would empty again.
     fn marks_a_template_node(key: &str) -> bool {
-        const INHERITED_STYLING: [&str; 3] = [
-            "_template_background-color",
-            "_template_font-color",
-            "_template_font-size",
-        ];
-        key.starts_with("_template_") && !INHERITED_STYLING.contains(&key)
+        let Some(param) = key.strip_prefix("_template_") else {
+            return false;
+        };
+        !crate::resolver::INHERITABLE_PARAMS.contains(&param)
     }
 
     fn push_trivia(output: &mut String, trivia: &str) {
