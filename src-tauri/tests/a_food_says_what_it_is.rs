@@ -141,17 +141,20 @@ fn a_food_nobody_has_classified_yet_says_nothing() {
 }
 
 #[test]
-fn a_handle_the_catalogue_does_not_have_reads_as_an_error() {
+fn a_handle_the_catalogue_does_not_have_reads_as_nothing() {
     // Records with a lost handle exist in the history - three of them, which is why `food` has no
     // default worth eating. What matters most is here: such a record does not resolve into
     // somebody else's tags, and it does not take the document down.
     //
-    // What it does instead is read "invalid formula error", because a lookup that finds nothing
-    // is a failed formula. That is not new and not special to tags - the `name` beside it has
-    // always done the same, and the document says as much where `food` is declared. It reads
-    // worse here, since a chip saying it is louder than a field saying it. Worth fixing at the
-    // level of "a lookup that finds nothing", for every field that does one, rather than here.
-    assert_eq!(meals()[3], "invalid formula error");
+    // It used to read "invalid formula error", on the grounds that a lookup finding nothing is a
+    // failed formula. It is not: it is an answered question - there is no such food - and the
+    // answer to "what are its tags" is nothing. Fixed where the note here said it should be, at
+    // the level of a lookup that finds nothing, so every field that does one reads the same way
+    // rather than each being patched where it shows.
+    //
+    // A field that names something the entry does not have is a different matter and still an
+    // error, because that is a mistake in the document rather than a fact about the data.
+    assert_eq!(meals()[3], "Null");
 }
 
 #[test]

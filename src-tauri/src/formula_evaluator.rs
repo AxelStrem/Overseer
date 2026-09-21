@@ -919,7 +919,31 @@ impl FormulaEvaluator {
             }
             FormulaExpression::PathFollow { base, segments } => {
                 // Resolve base to a node, then follow child segments and return final node's effective value
-                if let Some(mut cur) = Self::eval_expr_to_node(base, context) {
+                //
+                // Nothing to follow from is not a broken formula. A lookup that matched no entry
+                // has answered the question - there is no such shop, no such food - and a field
+                // read from that answer is nothing, not an error. Records written before a list
+                // existed read "invalid formula error" in that column otherwise, for ever.
+                //
+                // Still an error when the base names several: which one `/name` meant is a
+                // question the document has not answered, and guessing at it would be worse than
+                // saying so. Still an error when a segment names something that is not there,
+                // which is a mistake in the document rather than a fact about the data - that is
+                // handled below and deliberately left alone.
+                let found = Self::eval_expr_to_nodes(base, context);
+                if let Some(matched) = &found {
+                    if matched.is_empty() {
+                        return Ok(OverseerValue::Null);
+                    }
+                    if matched.len() > 1 {
+                        return Err(OverseerError::FormulaError(format!(
+                            "{} things match, so which one is meant by /{} is not said",
+                            matched.len(),
+                            segments.join("/")
+                        )));
+                    }
+                }
+                if let Some(mut cur) = found.and_then(|m| m.into_iter().next()) {
                     let mut p = context.node_path.clone();
                     for seg in segments {
                         if let Some(next) = cur
@@ -3537,21 +3561,44 @@ impl FormulaEvaluator {
         }
     }
 
+    /// The one node an expression names, when it names exactly one.
+    ///
+    /// Kept as it was for every caller that only wants a node or nothing. What it cannot say is
+    /// *why* there is nothing, and one caller needs to know - see `eval_expr_to_nodes`.
     fn eval_expr_to_node<'a>(
         expr: &FormulaExpression,
         context: &'a EvaluationContext,
     ) -> Option<&'a OverseerNode> {
+        match Self::eval_expr_to_nodes(expr, context) {
+            Some(found) if found.len() == 1 => Some(found[0]),
+            _ => None,
+        }
+    }
+
+    /// Every node an expression names, or nothing when the expression makes no sense here.
+    ///
+    /// The distinction matters where a field is read through a lookup. `Shops.filter(...)/name`
+    /// on a shop that is not in the list found nothing, and a field read from nothing used to be
+    /// an error - so a record written before the shops existed read "invalid formula error" in
+    /// its shop column for ever. An empty answer is not a broken formula; it is the answer.
+    ///
+    /// Several matches is different again, and still an error: which of them `/name` meant is a
+    /// question the document has not answered.
+    fn eval_expr_to_nodes<'a>(
+        expr: &FormulaExpression,
+        context: &'a EvaluationContext,
+    ) -> Option<Vec<&'a OverseerNode>> {
         match expr {
             FormulaExpression::PathReference(path) => {
                 let (walked, node) = Self::resolve_path_and_node(path, context)?;
                 // The list an aggregate runs over is reached through here. Recording it is what
                 // makes a change to one entry reach whatever adds them up.
                 crate::dependencies::note_read(&walked);
-                Some(node)
+                Some(vec![node])
             }
             FormulaExpression::FieldReference(name) => {
                 if let Some(BoundValue::Node(n)) = context.var_bindings.get(name) {
-                    return Some(*n);
+                    return Some(vec![*n]);
                 }
                 // First, try child of the current node (rare but valid)
                 if let Some(child) = context
@@ -3563,7 +3610,7 @@ impl FormulaEvaluator {
                     let mut walked = context.node_path.clone();
                     walked.push(child.name.clone());
                     crate::dependencies::note_read(&walked);
-                    return Some(child);
+                    return Some(vec![child]);
                 }
                 // Next, try immediate parent for siblings
                 if let Some(parent) = context.parent_node {
@@ -3577,7 +3624,7 @@ impl FormulaEvaluator {
                             walked.push(sib.name.clone());
                             crate::dependencies::note_read(&walked);
                         }
-                        return Some(sib);
+                        return Some(vec![sib]);
                     }
                 }
                 // Then, walk ancestors using node_path in the document snapshot and search each ancestor's children
@@ -3592,7 +3639,7 @@ impl FormulaEvaluator {
                                 context.document_root.iter().find(|n| &n.name == name)
                             {
                                 crate::dependencies::note_read(&[found.name.clone()]);
-                                return Some(found);
+                                return Some(vec![found]);
                             }
                             break;
                         }
@@ -3610,7 +3657,7 @@ impl FormulaEvaluator {
                                 let mut walked = context.node_path[..parent_end].to_vec();
                                 walked.push(sib.name.clone());
                                 crate::dependencies::note_read(&walked);
-                                return Some(sib);
+                                return Some(vec![sib]);
                             }
                         }
                         end -= 1;
@@ -3758,12 +3805,8 @@ impl FormulaEvaluator {
                         }
                     }
                 }
-                // If chain narrowed to a single node, return it
-                if nodes.len() == 1 {
-                    Some(nodes[0])
-                } else {
-                    None
-                }
+                // However many the chain narrowed to, including none.
+                Some(nodes)
             }
             _ => None,
         }
