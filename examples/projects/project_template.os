@@ -287,7 +287,7 @@ tab project (label="Project", mutable=true) {
     // look at: both things under it are finished, so it reads 100%, offers `finish` and waits.
     // Its own two points are not paid until that is pressed - and until it is, more work can go
     // under it.
-    list Items (entry=<Item>, key="added", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
+    list Items (entry=<Item>, key="added", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", hover-text=true, sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
         - {
             - added = "2026-09-01T09:00:00+04:00"
             - handle = "editor"

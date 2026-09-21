@@ -470,6 +470,27 @@ The label is still part of the field, hidden rather than left out. Writing `labe
 takes the name away altogether, which is worth knowing when nothing else on the screen carries
 it: outside a table there is no heading, so a hidden label is not shown anywhere.
 
+#### Saying More When Asked:
+
+A field can carry text that is only read when somebody asks for it - the mouse resting on the
+field. `hover-text="..."` says it outright; `hover-text=true` says the field's **label** instead,
+which needs nothing written twice.
+
+```overseer
+float weight (label="Weight", hover-text="Measured before breakfast") = 82.5
+
+list rows (entry=<Row>, view="table", header=true, hover-text=true) { }
+```
+
+Like `hide-labels`, it reaches every descendant, so a list says it once and every cell answers
+with the name of its own column. That is the pairing worth knowing: a table takes the label out
+of each cell because the heading names the column, and far down a long table the heading has
+scrolled away - so the cell shows a value and nothing else. Asked with `hover-text=true`, it can
+say which column it is in without showing the name on every row.
+
+The same is true of a hidden label anywhere: `hide-labels` takes the naming off the screen, and
+this is where the naming can go.
+
 #### Markdown Text Formatting:
 ```overseer
 text MarkdownContent (markdown=true) = "# Heading
@@ -692,7 +713,7 @@ div Tasks {
 ## Reserved Keywords
 
 - **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
-- **Styling**: `background-color`, `font-size`, `font-color`, `hide-labels`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
+- **Styling**: `background-color`, `font-size`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Content**: `markdown`, `hidden`, `entry`, `base`
 - **Actions**: `target`, `condition`, `template`, `active`, `at`
