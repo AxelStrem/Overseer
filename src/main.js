@@ -1430,6 +1430,9 @@ tab Main {
                 try {
                     for (const ch of fieldChanges || []) {
                         if (!ch || !ch.path) continue
+                        // A value the resolver worked out, noted so the page can repaint it.
+                        // Writing it would put a computed number where the formula is.
+                        if (ch._aggregateSynthetic) continue
                         // Find node to know its type, then coerce value
                         let n = this.getNodeByPath(this.currentDocument, ch.path)
                         if (!n && this.renderer && typeof this.renderer.resolveNodeByPathLoose === 'function') {
@@ -1450,18 +1453,26 @@ tab Main {
             // change is applied to whatever the file says at that moment, which is how the bot
             // has always written and why it cannot lose somebody else's work.
             //
-            // Only for one field at a time, which is what typing into one is. A cascade naming
-            // several still goes the old way; it is rare, and it is not where the fault was.
+            // However many fields the change names, as one instruction. A change that rewrites
+            // two fields together is still one change: writing them one after another would
+            // make two file writes and two steps to take back for something typed once.
+            //
             // Counted from what the person actually changed, not from `changedFieldPaths`: that
-            // gains the fields the change cascades into as it goes, and those are worked out
-            // rather than written.
+            // gains the fields the change cascades into as it goes, and those are worked out by
+            // the resolver rather than written.
+            //
+            // None named is a different thing and still goes the old way. Those calls are not
+            // writes - something asked for the derived values to be worked out again - so there
+            // is nothing to name.
             const named = Object.keys(changedValuesMap)
-            const instruction = (this.currentFile && named.length === 1)
+            const instruction = (this.currentFile && named.length >= 1)
                 ? {
                     path: this.currentFile,
-                    node_path: named[0].split('/').filter(Boolean),
-                    nodePath: named[0].split('/').filter(Boolean),
-                    value: changedValuesMap[named[0]]
+                    values: named.map((path) => ({
+                        node_path: path.split('/').filter(Boolean),
+                        nodePath: path.split('/').filter(Boolean),
+                        value: changedValuesMap[path]
+                    }))
                 }
                 : null
             // The backend keeps the document it last produced, so it can describe the edit
@@ -1472,7 +1483,7 @@ tab Main {
             if (instruction) {
                 this._writingByInstruction = (this._writingByInstruction || 0) + 1
                 try {
-                    update = await invoke('write_overseer_value', instruction).catch((e) => {
+                    update = await invoke('write_overseer_values', instruction).catch((e) => {
                         // Swallowing this is what let a whole class of trouble look like a
                         // backend fault: the page falls back to sending the document, shows the
                         // new value, and nothing is written. Say so at least.

@@ -126,6 +126,7 @@ fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
             trail.push(node.name.clone());
             if node.node_type == "list" {
                 if let Some(window) = window_of(node) {
+                    name_the_entries(node);
                     narrow(node, window, root, trail);
                 }
             }
@@ -134,6 +135,45 @@ fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
         }
     }
     walk(nodes, &snapshot, &mut Vec::new());
+}
+
+/// Give every entry the name it would be instantiated with, before anything is instantiated.
+///
+/// An unnamed entry is called `Template__N` once the template has been copied onto it, and an
+/// entry left out of view never gets that far - so it kept the `-` it was written as, and
+/// addressed as `-`, `-#1`, `-#2`, numbered within the out-of-view group rather than by its
+/// place in the list. Two different schemes in one list, and which one an entry fell under
+/// depended on the window: widening it renamed the entries that came into view, and an address
+/// is meant to survive a resolve.
+///
+/// Doing it here rather than repairing it afterwards is what makes the names agree. Instantiation
+/// only names an entry that has none, so one named here keeps that name, and the number comes
+/// from the same place - its index among the list's children.
+///
+/// This does not make an out-of-view entry *readable*: its fields are still uninstantiated, so a
+/// formula reaching one finds nothing. That is `viewreach`, and it is the larger job. What this
+/// fixes is the entry having no name to be reached by.
+fn name_the_entries(list: &mut OverseerNode) {
+    let Some(OverseerValue::Template(path)) = list.parameters.get("entry") else {
+        return;
+    };
+    let template = path
+        .trim_start_matches("../")
+        .split('/')
+        .last()
+        .unwrap_or("")
+        .to_string();
+    if template.is_empty() {
+        return;
+    }
+    // Enumerated across every child, because that is the index instantiation counts with - a
+    // list holding anything besides its entries would otherwise be numbered differently here.
+    for (at, child) in list.children.iter_mut().enumerate() {
+        let is_entry = child.node_type == "list_item" || child.node_type == "-";
+        if is_entry && (child.name.is_empty() || child.name == "-") {
+            child.name = format!("{}__{}", template, at + 1);
+        }
+    }
 }
 
 /// How many entries a list keeps in view, if it says.

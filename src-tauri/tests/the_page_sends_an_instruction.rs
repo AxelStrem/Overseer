@@ -17,6 +17,7 @@ const DOCUMENT: &str = r#"tab day (label="Day", mutable=true) {
 
     timestamp showing (mutable="guarded") = $(today())
     int recorded = 0
+    int counted = 0
     int doubled = $(recorded * 2)
 
     button record (label="record") {
@@ -61,8 +62,8 @@ fn set(service: &DocumentRoot, session: &str, path: &[&str], value: i64) -> serd
         .command_for(
             session,
             Some("day.os"),
-            "write_overseer_value",
-            &json!({ "node_path": path, "value": { "Integer": value } }),
+            "write_overseer_values",
+            &json!({ "values": [{ "node_path": path, "value": { "Integer": value } }] }),
         )
         .expect("the write was refused")
 }
@@ -213,6 +214,77 @@ fn every_change_is_one_step_to_take_back() {
         assert_eq!(overseer::undo::depth(&root, "day.os"), 2);
         service.undo("day.os").expect("undo");
         assert!(on_disk(&root).contains("int recorded = 1"), "{}", on_disk(&root));
+    });
+}
+
+/// Several values the way the page sends a change that rewrites more than one field.
+fn set_both(
+    service: &DocumentRoot,
+    session: &str,
+    first: (&[&str], i64),
+    second: (&[&str], i64),
+) -> serde_json::Value {
+    service
+        .command_for(
+            session,
+            Some("day.os"),
+            "write_overseer_values",
+            &json!({ "values": [
+                { "node_path": first.0, "value": { "Integer": first.1 } },
+                { "node_path": second.0, "value": { "Integer": second.1 } },
+            ]}),
+        )
+        .expect("the write was refused")
+}
+
+#[test]
+fn several_values_reach_the_file_together() {
+    serialised(|| {
+        let root = a_root("both");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        set_both(&service, "alice", (&["day", "recorded"], 4), (&["day", "counted"], 7));
+        let text = on_disk(&root);
+        assert!(text.contains("int recorded = 4"), "{}", text);
+        assert!(text.contains("int counted = 7"), "{}", text);
+    });
+}
+
+#[test]
+fn several_values_are_one_step_to_take_back() {
+    // The reason they go together rather than one after another. Two writes would be two steps,
+    // and the person who typed once would press Undo twice to get back to where they started.
+    serialised(|| {
+        let root = a_root("bothundo");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        set_both(&service, "alice", (&["day", "recorded"], 4), (&["day", "counted"], 7));
+        assert_eq!(overseer::undo::depth(&root, "day.os"), 1);
+        service.undo("day.os").expect("undo");
+        let text = on_disk(&root);
+        assert!(text.contains("int recorded = 0"), "{}", text);
+        assert!(text.contains("int counted = 0"), "{}", text);
+    });
+}
+
+#[test]
+fn one_value_that_cannot_be_written_refuses_the_whole_change() {
+    // Half a change is worse than none: the page would show two new values, the file would hold
+    // one, and nothing would say which. Refused, the file still says what it did.
+    serialised(|| {
+        let root = a_root("bothrefused");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        let before = on_disk(&root);
+        let refused = service.command_for(
+            "alice",
+            Some("day.os"),
+            "write_overseer_values",
+            &json!({ "values": [
+                { "node_path": ["day", "recorded"], "value": { "Integer": 4 } },
+                { "node_path": ["day", "nothing_of_the_sort"], "value": { "Integer": 7 } },
+            ]}),
+        );
+        assert!(refused.is_err(), "writing to a field that is not there was allowed");
+        assert_eq!(on_disk(&root), before, "the file was half written");
+        assert_eq!(overseer::undo::depth(&root, "day.os"), 0);
     });
 }
 

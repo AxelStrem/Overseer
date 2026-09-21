@@ -255,16 +255,51 @@ describe('a change goes up as an instruction, not as a document', () => {
   it('names the field and the value rather than sending the document', async () => {
     const app = withAField()
     invoke.mockImplementation((cmd) =>
-      cmd === 'write_overseer_value'
+      cmd === 'write_overseer_values'
         ? Promise.resolve({ text: 'TEXT', changes: [], nodes: null })
         : Promise.resolve(null))
 
     await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
 
-    const sent = callsTo('write_overseer_value')
+    const sent = callsTo('write_overseer_values')
     expect(sent, 'the edit did not go as an instruction').toHaveLength(1)
-    expect(sent[0][1].node_path).toEqual(['day', 'n'])
-    expect(sent[0][1].value).toEqual({ Integer: 2 })
+    expect(sent[0][1].values).toHaveLength(1)
+    expect(sent[0][1].values[0].node_path).toEqual(['day', 'n'])
+    expect(sent[0][1].values[0].value).toEqual({ Integer: 2 })
+  })
+
+  it('carries several values as one write rather than one write each', async () => {
+    // A change that rewrites two fields together is one change. Written one after another it
+    // would be two file writes and two steps to take back for something typed once.
+    const app = withAField()
+    app.currentDocument[0].children.push(
+      { name: 'm', node_type: 'int', parameters: { value: { Integer: 5 } }, children: [] })
+    invoke.mockImplementation((cmd) =>
+      cmd === 'write_overseer_values'
+        ? Promise.resolve({ text: 'TEXT', changes: [], nodes: null })
+        : Promise.resolve(null))
+
+    await app.reevaluateDocumentSelective(
+      ['day/n', 'day/m'],
+      [
+        { path: 'day/n', oldValue: 1, newValue: 2 },
+        { path: 'day/m', oldValue: 5, newValue: 6 },
+      ])
+
+    const sent = callsTo('write_overseer_values')
+    expect(sent, 'the change was split into a write each').toHaveLength(1)
+    expect(sent[0][1].values.map((v) => v.node_path)).toEqual([['day', 'n'], ['day', 'm']])
+    expect(sent[0][1].values.map((v) => v.value)).toEqual([{ Integer: 2 }, { Integer: 6 }])
+    expect(callsTo('parse_overseer_content_selective_update'), 'the document went up as well')
+      .toHaveLength(0)
+  })
+
+  it('still sends the document when the change names no value at all', async () => {
+    // Not every call is a write. Some say only that something changed and the derived values
+    // want working out again, and those have nothing to name.
+    const app = withAField()
+    await app.reevaluateDocumentSelective(['day/n'])
+    expect(callsTo('write_overseer_values')).toHaveLength(0)
   })
 
   it('sends no document text with it', async () => {
@@ -272,13 +307,13 @@ describe('a change goes up as an instruction, not as a document', () => {
     // and sending it is what made the write able to overwrite somebody else's.
     const app = withAField()
     invoke.mockImplementation((cmd) =>
-      cmd === 'write_overseer_value'
+      cmd === 'write_overseer_values'
         ? Promise.resolve({ text: 'TEXT', changes: [], nodes: null })
         : Promise.resolve(null))
 
     await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
 
-    const [, args] = callsTo('write_overseer_value')[0]
+    const [, args] = callsTo('write_overseer_values')[0]
     expect(Object.keys(args)).not.toContain('content')
     expect(callsTo('parse_overseer_content_selective_update'), 'the document went up as well')
       .toHaveLength(0)
@@ -291,7 +326,7 @@ describe('a change goes up as an instruction, not as a document', () => {
     try {
       const app = withAField()
       invoke.mockImplementation((cmd) =>
-        cmd === 'write_overseer_value'
+        cmd === 'write_overseer_values'
           ? Promise.resolve({ text: 'TEXT', changes: [], nodes: null })
           : Promise.resolve(null))
 
@@ -312,7 +347,7 @@ describe('a change goes up as an instruction, not as a document', () => {
     const app = withAField()
     app.currentFile = null
     await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
-    expect(callsTo('write_overseer_value')).toHaveLength(0)
+    expect(callsTo('write_overseer_values')).toHaveLength(0)
   })
 })
 
@@ -377,7 +412,7 @@ describe('keeping up with what the file says', () => {
         ]
       }]
       invoke.mockImplementation((cmd) =>
-        cmd === 'write_overseer_value'
+        cmd === 'write_overseer_values'
           ? Promise.resolve({ wrote: true, text: 'AFTER THE WRITE', changes: [], nodes: null })
           : Promise.resolve(null))
 
@@ -426,7 +461,7 @@ describe('a write in flight is not overtaken by a save', () => {
   /// A backend that takes its time, as a large document does.
   const slowToAnswer = (ms) => {
     invoke.mockImplementation((cmd) => {
-      if (cmd === 'write_overseer_value') {
+      if (cmd === 'write_overseer_values') {
         return new Promise((resolve) => setTimeout(
           () => resolve({ wrote: true, text: 'AFTER THE WRITE', changes: [], nodes: null }), ms))
       }

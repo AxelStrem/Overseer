@@ -5779,6 +5779,10 @@ export class OverseerRenderer {
                     }
                 } catch(_) { /* best-effort */ }
                 
+                // What it said before, read before it is overwritten - see the call below.
+                let was = null
+                try { was = this.getNodeValue(targetNode || node) } catch(_) {}
+
                 // Update the node value in the document structure (prefer resolved target by path)
                 try {
                     if (targetNode) this.updateNodeValue(targetNode, newValue)
@@ -5813,7 +5817,15 @@ export class OverseerRenderer {
                     // Try to determine field path for selective update
                     try {
                         const fp = fieldPath || this.buildNodePath(element).join('/')
-                        window.app.reevaluateDocumentSelective([fp])
+                        // With the value - see the note in `createTagsElement`, which had the
+                        // same fault. Naming only the path says "this changed, work out what
+                        // follows from it" and leaves the change itself to the save, so the
+                        // document went up as text and was written over the file. Every other
+                        // field already passes the value; this one did not, so editing a
+                        // markdown field was the one edit that still sent the document.
+                        window.app.reevaluateDocumentSelective(
+                            [fp], [{ path: fp, oldValue: was, newValue }]
+                        )
                     } catch (e) {
                         if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
                         window.app.reevaluateDocumentSelective([])

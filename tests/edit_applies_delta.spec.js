@@ -67,7 +67,7 @@ describe('an edit answered with a change', () => {
     setupDOM()
     const { invoke } = await import('@tauri-apps/api/core')
     invoke.mockImplementation(async (cmd) => {
-      if ((cmd === 'parse_overseer_content_selective_update' || cmd === 'write_overseer_value')) {
+      if ((cmd === 'parse_overseer_content_selective_update' || cmd === 'write_overseer_values')) {
         return {
           text: 'TEXT-AFTER',
           // 'beta' is a dependent the edit recomputed - exactly the case a whole document

@@ -1026,12 +1026,43 @@ pub fn write_value_at(
     value: OverseerValue,
     session: &str,
 ) -> Result<ResolvedUpdate> {
+    write_values_at(path, document, vec![ValueWrite { node_path, value }], session)
+}
+
+/// One value to write, named by the path of node names the page already speaks in.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ValueWrite {
+    #[serde(alias = "nodePath")]
+    pub node_path: Vec<String>,
+    pub value: OverseerValue,
+}
+
+/// Set several values as one change.
+///
+/// Not the same as writing each in turn. A change is read, applied and written in one pass, so
+/// several values arriving together make one file write and one step to take back - where three
+/// writes in a row would make three of each, and the person who typed once would press Undo
+/// three times to get back to where they started.
+///
+/// Applied in the order given, against the document as the file says it, which is what keeps a
+/// change made elsewhere in the meantime from being thrown away. If one of them cannot be
+/// applied the whole change is refused rather than half written: the page is told, and the file
+/// still says what it did.
+pub fn write_values_at(
+    path: &str,
+    document: &str,
+    writes: Vec<ValueWrite>,
+    session: &str,
+) -> Result<ResolvedUpdate> {
     change_document(path, document, session, move |nodes| {
-        crate::actions::ActionExecutor::assign_value(
-            nodes,
-            &format!("/{}", node_path.join("/")),
-            value,
-        )
+        for write in writes {
+            crate::actions::ActionExecutor::assign_value(
+                nodes,
+                &format!("/{}", write.node_path.join("/")),
+                write.value,
+            )?;
+        }
+        Ok(())
     })
 }
 

@@ -87,18 +87,20 @@ async fn save_overseer_file_from_text(
 /// pages reach it. The app has one window, and that window is the only viewer there is.
 const THE_WINDOW: &str = "desktop";
 
-/// Set one value, named by the path of node names the page already speaks in.
+/// Set values, each named by the path of node names the page already speaks in.
 ///
 /// The document is read, changed and written here, rather than being sent up as text to be
 /// written over the file. That is what stops a change made elsewhere in the meantime from being
 /// thrown away without a word.
+///
+/// Several at once rather than one, because a change that rewrites two fields together is one
+/// change: one file write, and one step to take back.
 #[command]
-async fn write_overseer_value(
+async fn write_overseer_values(
     path: String,
-    node_path: Vec<String>,
-    value: OverseerValue,
+    values: Vec<app_api::ValueWrite>,
 ) -> Result<app_api::ResolvedUpdate> {
-    app_api::write_value_at(&path, &path, node_path, value, THE_WINDOW)
+    app_api::write_values_at(&path, &path, values, THE_WINDOW)
 }
 
 /// Add an entry to a list, with whatever fields the page has for it.
@@ -343,7 +345,7 @@ fn main() {
             execute_overseer_event,
             execute_overseer_event_with_text,
             execute_overseer_event_update,
-            write_overseer_value,
+            write_overseer_values,
             run_overseer_event,
             append_overseer_entry,
             remove_overseer_entry

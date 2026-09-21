@@ -426,19 +426,17 @@ impl DocumentRoot {
                     .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))?,
                 )
             }
-            "write_overseer_value" => {
+            "write_overseer_values" => {
                 let named = document.ok_or_else(|| {
                     RequestError::Rejected("'document' is required".into())
                 })?;
                 let at = self.resolve(named)?;
-                let path = arg_strings(args, &["node_path", "nodePath"]);
-                let value: OverseerValue = from_value(args, "value")?;
+                let values: Vec<app_api::ValueWrite> = from_value(args, "values")?;
                 as_json(
-                    app_api::write_value_at(
+                    app_api::write_values_at(
                         at.to_string_lossy().as_ref(),
                         named,
-                        path,
-                        value,
+                        values,
                         session,
                     )
                     .map_err(|e| RequestError::Failed(format!("could not write: {:?}", e)))?,

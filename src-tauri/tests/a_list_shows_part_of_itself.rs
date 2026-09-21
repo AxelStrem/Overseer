@@ -148,6 +148,46 @@ fn the_list_says_how_many_it_left_out() {
     );
 }
 
+/// How each entry of the log would be addressed, in order.
+fn entry_addresses(text: String) -> Vec<String> {
+    let nodes = app_api::load_document(text).expect("load");
+    let list = find(&nodes, "Days").expect("no Days list");
+    overseer::addressing::child_segments(list)
+}
+
+#[test]
+fn an_entry_out_of_view_is_addressed_as_it_would_be_in_view() {
+    // An unnamed entry is called `Day__N` once the template has been copied onto it, and one
+    // left out of view never got that far - so it kept the `-` it was written as and addressed
+    // as `-`, `-#1`, `-#2`, numbered within the out-of-view group rather than by its place in
+    // the list. The window then decided which of two schemes an entry fell under, and widening
+    // it renamed everything that came into view.
+    //
+    // Compared against the same log with no window at all, which is the answer both must give.
+    assert_eq!(entry_addresses(log(6, Some(3))), entry_addresses(log(6, None)));
+}
+
+#[test]
+fn a_write_can_name_an_entry_out_of_view() {
+    // The payoff, and the thing that could not be done before: reaching an entry by name rather
+    // than by key. The server names the address a write is about before resolving, so the list
+    // keeps that entry in view - but only if the entry answers to the name being used, and an
+    // out-of-view entry answered to `-#1`.
+    //
+    // A keyed list was always fine, addressing by key, which is why the bot never hit this.
+    let _held = overseer::resolver::keeping_in_view("t/Days/Day__1/note");
+    let nodes = app_api::load_document(log(6, Some(3))).expect("load");
+    let named = find(&nodes, "Day__1").expect("the named entry is not in the document");
+    assert!(
+        !out_of_view(named),
+        "the entry the write named was left out of view"
+    );
+    assert!(
+        named.children.iter().any(|c| c.name == "note"),
+        "the entry the write named was kept in view but never instantiated"
+    );
+}
+
 #[test]
 fn a_list_without_a_window_is_untouched() {
     // Every document that says nothing must behave exactly as it did.

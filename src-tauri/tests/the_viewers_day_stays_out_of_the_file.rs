@@ -81,8 +81,8 @@ fn set(service: &DocumentRoot, session: &str, field: &str, value: &str) {
         .command_for(
             session,
             Some("d.os"),
-            "write_overseer_value",
-            &json!({ "node_path": path, "value": { "String": value } }),
+            "write_overseer_values",
+            &json!({ "values": [{ "node_path": path, "value": { "String": value } }] }),
         )
         .expect("the write was refused");
 }
