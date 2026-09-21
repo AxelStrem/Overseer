@@ -675,6 +675,26 @@ export class OverseerRenderer {
             // says what the file now holds, which the page has to take on or its next save is
             // refused for being built on a document it moved.
             try { window.app.alreadyWritten && window.app.alreadyWritten(update) } catch (_) {}
+            // Two shapes of answer, and this needs both.
+            //
+            // A change is described as a delta when the backend still holds the document it last
+            // worked out for this exact text. It does not when the document was worked out for a
+            // viewer rather than plainly - and a guarded field makes that so for anybody who has
+            // moved the day, which is everybody who reaches a day the history has not got. Then
+            // the answer is the whole document, and taking only the delta meant taking nothing:
+            // the page never learned the entry existed, the search for it by key found nothing,
+            // and the press that followed kept its preview path and named a node the document
+            // does not have. Silently, because that is how a press that names nothing fails.
+            // Two shapes of answer, and this needs both.
+            //
+            // A change is described as a delta when the backend still holds the document it last
+            // worked out for this exact text. It does not when the document was worked out for a
+            // viewer rather than plainly - and a guarded field makes that so for anybody who has
+            // moved the day, which is everybody who reaches a day the history has not got. Then
+            // the answer is the whole document, and taking only the delta meant taking nothing:
+            // the page never learned the entry existed, the search for it by key found nothing,
+            // and the press that followed kept its preview path and named a node the document
+            // does not have. Silently, because that is how a press that names nothing fails.
             if (Array.isArray(update.changes)) {
                 window.app._currentText = typeof update.text === 'string' ? update.text : null
                 try {
@@ -684,6 +704,25 @@ export class OverseerRenderer {
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('[Overseer] repaint after making the entry failed', e)
                 }
+            } else if (Array.isArray(update.nodes)) {
+                window.app._currentText = typeof update.text === 'string' ? update.text : null
+                const older = window.app.currentDocument
+                try { this._tagGuardedChangesAfterBackendUpdate(older, update.nodes) } catch (_) {}
+                try {
+                    if (typeof window.app._applyResolvedDocumentWithFormulaPreservation === 'function') {
+                        window.app._applyResolvedDocumentWithFormulaPreservation(update.nodes)
+                    } else {
+                        window.app.currentDocument = update.nodes
+                    }
+                } catch (_) { window.app.currentDocument = update.nodes }
+                // The whole document moved, so the whole of it is drawn again. Making an entry
+                // real happens once, when a day is first written to, so this is not a cost
+                // anything pays twice.
+                try { this.renderDocument(window.app.currentDocument) } catch (e) {
+                    if (DEBUG_MODE) console.warn('[Overseer] redraw after making the entry failed', e)
+                }
+            } else if (DEBUG_MODE) {
+                console.warn('[Overseer] the entry was made but the answer described nothing')
             }
 
             // Found by its key rather than by where it went. A keyed list is written at either

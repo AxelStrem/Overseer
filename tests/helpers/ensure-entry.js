@@ -73,7 +73,15 @@ function findTemplate(roots, name) {
 
 /// Answer `ensure_overseer_entry` against `app.currentDocument`, or return null for other
 /// commands so a caller can chain its own handling.
-export function answerEnsureEntry(appOrGetter, cmd, args, { text = 'AFTER THE WRITE' } = {}) {
+///
+/// `shape` picks which of the two answers the real backend gives. It describes a change as a
+/// delta only while it still holds the document it last worked out for this exact text; it does
+/// not when the document was worked out for a viewer rather than plainly, and a guarded field
+/// makes that so for anybody who has moved the day - which is everybody who reaches a day the
+/// history has not got. So `nodes` is the shape that matters most here, and it is the default:
+/// `changes` was the only one a spec exercised, and the page handled only that one.
+export function answerEnsureEntry(appOrGetter, cmd, args,
+                                  { text = 'AFTER THE WRITE', shape = 'nodes' } = {}) {
   if (cmd !== 'ensure_overseer_entry') return null
   // A getter as well as an app, because a spec often installs its mock before it has one.
   const app = typeof appOrGetter === 'function' ? appOrGetter() : appOrGetter
@@ -153,12 +161,26 @@ export function answerEnsureEntry(appOrGetter, cmd, args, { text = 'AFTER THE WR
     })
   }
 
+  if (shape === 'changes') {
+    return Promise.resolve({
+      wrote: true,
+      text,
+      file_text: text,
+      changes: [{ kind: 'subtree', path: found.indices, node: list }],
+      nodes: null,
+    })
+  }
+  // The whole document, with the list put back where it came from.
+  const whole = clone(app.currentDocument)
+  let at = { children: whole }
+  for (const index of found.indices.slice(0, -1)) at = (at.children || [])[index] || {}
+  if (Array.isArray(at.children)) at.children[found.indices[found.indices.length - 1]] = list
   return Promise.resolve({
     wrote: true,
     text,
     file_text: text,
-    changes: [{ kind: 'subtree', path: found.indices, node: list }],
-    nodes: null,
+    changes: null,
+    nodes: whole,
   })
 }
 
