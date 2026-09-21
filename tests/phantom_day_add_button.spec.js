@@ -34,6 +34,7 @@ function setupDOM() {
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
+import { answerEnsureEntry } from './helpers/ensure-entry.js'
 
 function deepClone(o) { return JSON.parse(JSON.stringify(o)) }
 
@@ -104,6 +105,10 @@ describe('logging food on a day with nothing tracked', () => {
     const { invoke } = await import('@tauri-apps/api/core')
     const events = []
     invoke.mockImplementation((cmd, args) => {
+      // Making a preview real is a backend instruction now; the page used to do it itself in
+      // its own copy of the document. See `helpers/ensure-entry.js`.
+      const madeReal = answerEnsureEntry(() => app, cmd, args)
+      if (madeReal !== null) return madeReal
       if (cmd === 'get_next_timer_due_ms' || cmd === 'scheduler_tick') return Promise.resolve(null)
       if (cmd === 'execute_overseer_event') {
         events.push({ path: args.node_path || args.nodePath, event: args.event_name || args.eventName })
@@ -117,6 +122,9 @@ describe('logging food on a day with nothing tracked', () => {
     })
 
     const app = new OverseerApp()
+    // Opened from somewhere, which every document a view is edited through is:
+    // making a preview real is a write, and a write needs a file to reach.
+    app.currentFile = '/documents/test.os'
     app.currentDocument = buildDoc()
     app.renderer.renderDocument(app.currentDocument)
 

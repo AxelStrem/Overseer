@@ -119,6 +119,18 @@ async fn append_overseer_entry(
     )
 }
 
+/// Make sure a list has the entry a view is pointed at, and apply the edit that asked for it.
+///
+/// A view onto a key the list lacks shows the template as a preview; editing a field in it makes
+/// the entry real at that key. Both halves are one instruction because they are one change.
+#[command]
+async fn ensure_overseer_entry(
+    path: String,
+    wanted: app_api::EntryWanted,
+) -> Result<app_api::ResolvedUpdate> {
+    app_api::ensure_entry_at(&path, &path, wanted, THE_WINDOW)
+}
+
 /// And take one out.
 #[command]
 async fn remove_overseer_entry(
@@ -348,7 +360,8 @@ fn main() {
             write_overseer_values,
             run_overseer_event,
             append_overseer_entry,
-            remove_overseer_entry
+            remove_overseer_entry,
+            ensure_overseer_entry
         ])
         .run(tauri::generate_context!())
     {

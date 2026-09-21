@@ -29,6 +29,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerRenderer } from '../src/renderer.js'
 import { OverseerApp } from '../src/main.js'
+import { answerEnsureEntry } from './helpers/ensure-entry.js'
 
 function findElementByPath(pathArray) {
   const all = Array.from(document.querySelectorAll('[data-path]'))
@@ -50,16 +51,26 @@ describe('Link proxy phantom preview and lazy creation', () => {
     const { invoke } = await import('@tauri-apps/api/core')
 
     invoke.mockImplementation((cmd, args) => {
+      // Making a preview real is a backend instruction now; the page used to do it itself in
+      // its own copy of the document. See `helpers/ensure-entry.js`.
+      const madeReal = answerEnsureEntry(() => app, cmd, args)
+      if (madeReal !== null) return madeReal
       if (cmd === 'serialize_overseer_nodes') { currentDoc = deepClone(args.nodes); return Promise.resolve('DOC') }
       if (cmd === 'get_next_timer_due_ms') return Promise.resolve(null)
       if (cmd === 'scheduler_tick') return Promise.resolve(null)
-      if (cmd === 'parse_overseer_content') return Promise.resolve(deepClone(currentDoc))
-      if (cmd === 'parse_overseer_content_selective') return Promise.resolve(deepClone(currentDoc))
+      // Answered from the document as it now stands, not from a copy captured the last time
+      // the page serialized one: a change that goes as an instruction serializes nothing, so
+      // such a copy predates the write and answering with it would undo it.
+      if (cmd === 'parse_overseer_content') return Promise.resolve(deepClone(app.currentDocument))
+      if (cmd === 'parse_overseer_content_selective') return Promise.resolve(deepClone(app.currentDocument))
       if (cmd === 'execute_overseer_event') return Promise.resolve(deepClone(args.nodes))
       return Promise.reject(new Error('unknown command: ' + cmd))
     })
 
     const app = new OverseerApp()
+    // Opened from somewhere, which every document a view is edited through is:
+    // making a preview real is a write, and a write needs a file to reach.
+    app.currentFile = '/documents/test.os'
     const renderer = app.renderer
 
     // Document with list having entry template Task and key=id
@@ -133,9 +144,10 @@ describe('Link proxy phantom preview and lazy creation', () => {
   input.value = 'Created Title'
   input.dispatchEvent(new Event('blur'))
   // Allow async finishEditing to complete
-  await new Promise(r => setTimeout(r, 0))
-  // Selective reevaluation may run as part of finishEditing, but call defensively
-  await app.reevaluateDocumentSelective([])
+  await (async () => { for (let i = 0; i < 20; i += 1) await new Promise(r => setTimeout(r, 0)) })()  // making a preview real is a round trip now, so one tick is not enough
+  // No full re-resolve here. Making the preview real went as an instruction and
+  // its answer carried the resolved subtree; asking for the whole document again
+  // would have this fake answer from the copy it captured before the write.
 
     // After edit, phantom should be cleared and list should have the item with id=a1 and edited title
     const root = app.currentDocument.find(n=>n.name==='Root')

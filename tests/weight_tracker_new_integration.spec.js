@@ -28,6 +28,7 @@ function setupDOM() {
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerApp } from '../src/main.js'
+import { answerEnsureEntry } from './helpers/ensure-entry.js'
 
 function deepClone(o){ return JSON.parse(JSON.stringify(o)) }
 function findByPath(pathArray){
@@ -86,10 +87,17 @@ describe('weight_tracker_new integration: dynamic link, phantom materialize, and
     let lastSerialized = null
 
     invoke.mockImplementation((cmd, args) => {
+      // Making a preview real is a backend instruction now; the page used to do it itself in
+      // its own copy of the document. See `helpers/ensure-entry.js`.
+      const madeReal = answerEnsureEntry(() => app, cmd, args)
+      if (madeReal !== null) return madeReal
       if (cmd === 'get_next_timer_due_ms') return Promise.resolve(null)
       if (cmd === 'scheduler_tick') return Promise.resolve(null)
-      if (cmd === 'parse_overseer_content') return Promise.resolve(deepClone(currentDoc))
-      if (cmd === 'parse_overseer_content_selective') return Promise.resolve(deepClone(currentDoc))
+      // Answered from the document as it now stands, not from a copy captured the last time
+      // the page serialized one: a change that goes as an instruction serializes nothing, so
+      // such a copy predates the write and answering with it would undo it.
+      if (cmd === 'parse_overseer_content') return Promise.resolve(deepClone(app.currentDocument))
+      if (cmd === 'parse_overseer_content_selective') return Promise.resolve(deepClone(app.currentDocument))
       if (cmd === 'execute_overseer_event') return Promise.resolve(deepClone(args.nodes))
       if (cmd === 'serialize_overseer_nodes') { lastSerialized = deepClone(args.nodes); currentDoc = deepClone(args.nodes); return Promise.resolve('DOC') }
       if (cmd === 'save_overseer_file') return Promise.resolve(null)
@@ -99,6 +107,9 @@ describe('weight_tracker_new integration: dynamic link, phantom materialize, and
     })
 
     const app = new OverseerApp()
+    // Opened from somewhere, which every document a view is edited through is:
+    // making a preview real is a write, and a write needs a file to reach.
+    app.currentFile = '/documents/test.os'
     // Load the document (render it)
     app.currentDocument = deepClone(currentDoc)
     app.renderer.renderDocument(app.currentDocument)
@@ -179,8 +190,10 @@ describe('weight_tracker_new integration: dynamic link, phantom materialize, and
     input.dispatchEvent(new Event('blur'))
 
     // Allow async and selective reevaluation
-    await new Promise(r => setTimeout(r, 0))
-    await app.reevaluateDocumentSelective([])
+    await (async () => { for (let i = 0; i < 20; i += 1) await new Promise(r => setTimeout(r, 0)) })()  // making a preview real is a round trip now, so one tick is not enough
+    // No full re-resolve here. Making the preview real went as an instruction and
+    // its answer carried the resolved subtree; asking for the whole document again
+    // would have this fake answer from the copy it captured before the write.
 
     // Verify the History list now has the new entry with date=2025.09.07 and test_data=Sunday
     const root = app.currentDocument.find(n=>n.name==='weight_minimal')
@@ -198,26 +211,18 @@ describe('weight_tracker_new integration: dynamic link, phantom materialize, and
     })
     expect(match).toBeTruthy()
 
-    // Serialize and ensure the serialized doc also contains the same new item
-    await app.saveFile()
-    expect(lastSerialized).toBeTruthy()
+    // Every node of the new entry carries `is_hierarchy_transparent`. The page once built it
+    // itself and left the field off, which broke serializing the document that held it.
     const checkFlag = (node) => {
       expect(typeof node.is_hierarchy_transparent).toBe('boolean')
       if (Array.isArray(node.children)) node.children.forEach(checkFlag)
     }
-    if (Array.isArray(lastSerialized)) lastSerialized.forEach(checkFlag)
-    else checkFlag(lastSerialized)
+    checkFlag(match)
 
-    // Also verify in serialized structure the item exists
-    const weightRoot = lastSerialized.find(n=>n.name==='weight_minimal')
-    const hist = weightRoot.children.find(n=>n.name==='History')
-    const matchSer = hist.children.find(it => {
-      const d = it.children.find(f=>f.name==='date')?.parameters?.value
-      const t = it.children.find(f=>f.name==='test_data')?.parameters?.value
-      const dv = (d?.String||d||'').toString().replaceAll('-', '.')
-      const tv = (t?.String||t||'').toString()
-      return (dv==='2025.09.07' && tv==='Sunday')
-    })
-    expect(matchSer).toBeTruthy()
+    // The entry reached the file as part of being made, so a save has nothing left to send -
+    // which is what stops a change from going up as a whole document and landing on top of
+    // whatever wrote in the meantime.
+    await app.saveFile()
+    expect(lastSerialized, 'the document went up as text as well').toBeNull()
   })
 })

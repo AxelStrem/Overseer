@@ -1006,6 +1006,66 @@ pub fn append_entry_at(
     })
 }
 
+/// What a view onto a key the list lacks asks for when one of its fields is edited.
+///
+/// The key it is pointed at, the template its preview was drawn from, and where the entry should
+/// go if it has to be made. `fields` is the edit that caused all this, named relative to the
+/// entry - `weight`, or `targets/target_calories` - and applied whether the entry was just made
+/// or was already there. Both together, because a person edited one field once: one file write,
+/// and one step to take back.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EntryWanted {
+    #[serde(alias = "listPath")]
+    pub list_path: Vec<String>,
+    #[serde(alias = "keyField", default)]
+    pub key_field: String,
+    #[serde(alias = "keyValue")]
+    pub key_value: OverseerValue,
+    pub template: String,
+    /// `first`, `prepend`, `prepend-on-edit` for the front; anything or nothing for the back.
+    #[serde(default)]
+    pub position: Option<String>,
+    #[serde(default)]
+    pub fields: std::collections::HashMap<String, OverseerValue>,
+}
+
+/// Make sure the list has an entry with this key, then apply the edit that asked for it.
+///
+/// This is the whole of what a preview becoming real means, said in one instruction against
+/// whatever the file holds at that moment - which is the point. The page used to do the making
+/// itself, in its own copy of the document, and leave the whole text to be saved over the file;
+/// a write that landed in between was gone without a word.
+///
+/// Doing nothing when the entry is already there is not a special case, it is the same sentence:
+/// the edit lands on the entry either way, so a view does not have to know whether what it is
+/// showing was a preview a moment ago.
+pub fn ensure_entry_at(
+    path: &str,
+    document: &str,
+    wanted: EntryWanted,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    change_document(path, document, session, move |nodes| {
+        let list = format!("/{}", wanted.list_path.join("/"));
+        let goes = crate::actions::WhereItGoes::from_said(wanted.position.as_deref());
+        let entry = crate::actions::ActionExecutor::ensure_entry(
+            nodes,
+            &list,
+            &wanted.template,
+            &wanted.key_field,
+            wanted.key_value,
+            goes,
+        )?;
+        // Named through the entry the list answered with, rather than through the key: the key
+        // selects an entry, and the path a write takes is a path of names.
+        for (field, value) in wanted.fields {
+            let target = format!("{}/{}/{}", list, entry, field);
+            crate::actions::ActionExecutor::assign_value(nodes, &target, value)?;
+        }
+        Ok(())
+    })
+}
+
 /// And take one out again.
 pub fn remove_entry_at(
     path: &str,

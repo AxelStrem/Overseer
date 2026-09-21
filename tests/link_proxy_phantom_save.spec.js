@@ -29,6 +29,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { OverseerRenderer } from '../src/renderer.js'
 import { OverseerApp } from '../src/main.js'
+import { answerEnsureEntry } from './helpers/ensure-entry.js'
 
 function findElementByPath(pathArray) {
   const all = Array.from(document.querySelectorAll('[data-path]'))
@@ -41,10 +42,18 @@ function findElementByPath(pathArray) {
   return null
 }
 
-describe('Phantom edit then save serializes with required schema', () => {
+// This used to end by saving the document and checking that every node in what went up carried
+// `is_hierarchy_transparent` - a field the page once left off an entry it built itself, which
+// broke serializing the document that held it.
+//
+// Two things have changed since. The entry comes from the backend rather than from the page, and
+// the wire deliberately leaves out any field sitting at its default, filling it in again on the
+// way back - so its absence is correct and checking for it tests the wire format rather than this.
+// And the change is written as part of being made, so there is no save afterwards to check.
+describe('a preview made real reaches the file without the document being saved', () => {
   beforeEach(() => setupDOM())
 
-  it('materializes item, updates list UI, and saves without missing is_hierarchy_transparent', async () => {
+  it('makes the entry, shows it in the list, and leaves no save behind', async () => {
     const deepClone = (o) => JSON.parse(JSON.stringify(o))
     let currentDoc = null
     const { invoke } = await import('@tauri-apps/api/core')
@@ -52,11 +61,18 @@ describe('Phantom edit then save serializes with required schema', () => {
     // Track last serialized nodes to assert schema
     let lastSerialized = null
     invoke.mockImplementation((cmd, args) => {
+      // Making a preview real is a backend instruction now; the page used to do it itself in
+      // its own copy of the document. See `helpers/ensure-entry.js`.
+      const madeReal = answerEnsureEntry(() => app, cmd, args)
+      if (madeReal !== null) return madeReal
       if (cmd === 'serialize_overseer_nodes') { lastSerialized = deepClone(args.nodes); currentDoc = deepClone(args.nodes); return Promise.resolve('DOC') }
       if (cmd === 'get_next_timer_due_ms') return Promise.resolve(null)
       if (cmd === 'scheduler_tick') return Promise.resolve(null)
-      if (cmd === 'parse_overseer_content') return Promise.resolve(deepClone(currentDoc))
-      if (cmd === 'parse_overseer_content_selective') return Promise.resolve(deepClone(currentDoc))
+      // Answered from the document as it now stands, not from a copy captured the last time
+      // the page serialized one: a change that goes as an instruction serializes nothing, so
+      // such a copy predates the write and answering with it would undo it.
+      if (cmd === 'parse_overseer_content') return Promise.resolve(deepClone(app.currentDocument))
+      if (cmd === 'parse_overseer_content_selective') return Promise.resolve(deepClone(app.currentDocument))
       if (cmd === 'execute_overseer_event') return Promise.resolve(deepClone(args.nodes))
       if (cmd === 'save_overseer_file') return Promise.resolve(null)
       if (cmd === 'save_overseer_file_with_original') return Promise.resolve(null)
@@ -65,6 +81,9 @@ describe('Phantom edit then save serializes with required schema', () => {
     })
 
     const app = new OverseerApp()
+    // Opened from somewhere, which every document a view is edited through is:
+    // making a preview real is a write, and a write needs a file to reach.
+    app.currentFile = '/documents/test.os'
     const renderer = app.renderer
 
     // Document with list having entry template Task and key=id
@@ -114,8 +133,10 @@ describe('Phantom edit then save serializes with required schema', () => {
     expect(input).toBeTruthy()
     input.value = 'Saved Title'
     input.dispatchEvent(new Event('blur'))
-    await new Promise(r => setTimeout(r, 0))
-    await app.reevaluateDocumentSelective([])
+    await (async () => { for (let i = 0; i < 20; i += 1) await new Promise(r => setTimeout(r, 0)) })()  // making a preview real is a round trip now, so one tick is not enough
+    // No full re-resolve here. Making the preview real went as an instruction and
+    // its answer carried the resolved subtree; asking for the whole document again
+    // would have this fake answer from the copy it captured before the write.
 
     // Verify item created in memory
     const root = app.currentDocument.find(n=>n.name==='Root')
@@ -123,16 +144,14 @@ describe('Phantom edit then save serializes with required schema', () => {
     const created = list.children.find(it => it.children.some(f=>f.name==='id' && (f.parameters.value?.String||f.parameters.value)==='s1'))
     expect(created).toBeTruthy()
 
-    // Save file – should invoke serialize without error
-    await app.saveFile()
-    expect(lastSerialized).toBeTruthy()
+    // It carries the edit that asked for it.
+    const title = created.children.find((c) => c.name === 'title')
+    expect(title?.parameters?.value?.String ?? title?.parameters?.value).toBe('Saved Title')
 
-    // Assert all nodes have is_hierarchy_transparent defined
-    const checkFlag = (node) => {
-      expect(typeof node.is_hierarchy_transparent).toBe('boolean')
-      if (Array.isArray(node.children)) node.children.forEach(checkFlag)
-    }
-    if (Array.isArray(lastSerialized)) lastSerialized.forEach(checkFlag)
-    else checkFlag(lastSerialized)
+    // And a save has nothing left to send: it was written as part of being made. That is the
+    // whole point - a change that goes up as a whole document lands on top of whatever wrote in
+    // the meantime, and this was the last page change that did.
+    await app.saveFile()
+    expect(lastSerialized, 'the document went up as text as well').toBeNull()
   })
 })

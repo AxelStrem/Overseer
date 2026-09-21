@@ -62,7 +62,6 @@ export class OverseerRenderer {
         // Track live intervals so we can clear them on each full re-render
         this._liveIntervals = new Set()
         // Track newly materialized targets so updates apply to the exact node, not a loosely-resolved path
-        this._materializedTargets = new Map()
     // Default top-level mutability: disabled by default (can be enabled per-node via mutable=true or inherited)
     this._defaultTopLevelMutable = false
     }
@@ -488,284 +487,187 @@ export class OverseerRenderer {
         } catch(_) { return { name: templateName || 'Item', node_type: 'div', parameters: {}, children: [] } }
     }
 
-    // Materialize missing list item by calling ensure_in_list via event executor, update the link param, and return a concrete field path for the edited element.
-    // Options:
-    //  - position: 'append' | 'prepend' (default: 'append')
+    /// What a key reads as, once the list's `keyPrecision` has had its say.
+    ///
+    /// A day-precision history holds `2026-08-04` and is pointed at by a timestamp that may carry
+    /// an hour, so the two are compared as the day they fall on. Lifted out of the link resolver
+    /// because making a preview real has to find the entry the resolver failed to find, and two
+    /// copies of this would eventually disagree about which entry a key names.
+    keyReadsAs(precision, value) {
+        try {
+            if (value === null || value === undefined) return ''
+            const said = String(value)
+            if (!precision) return said
+            const p = String(precision).toLowerCase()
+            if (p === 'day' || p === 'days') {
+                // Accept YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD, or RFC3339 strings
+                const m = said.match(/^(\d{4})[./-](\d{2})[./-](\d{2})(?:.*)?$/)
+                if (m) return `${m[1]}-${m[2]}-${m[3]}`
+                const d = new Date(said)
+                if (!isNaN(d.getTime())) {
+                    const pad = (n) => String(n).padStart(2, '0')
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+                }
+                return said
+            }
+            return said
+        } catch (_) { return String(value) }
+    }
+
+    /// The entry of this list whose key reads as `key`, if it has one.
+    entryKeyed(listNode, keyField, key) {
+        const precisionRaw = listNode?.parameters?.keyPrecision
+            ?? listNode?.parameters?._computed_keyPrecision
+        const precision = (precisionRaw && typeof precisionRaw === 'object')
+            ? precisionRaw.String : precisionRaw
+        const wanted = this.keyReadsAs(precision, key)
+        const children = Array.isArray(listNode?.children) ? listNode.children : []
+        return children.find((entry) => {
+            const field = (entry.children || []).find((c) => c?.name === keyField)
+            const held = field?.parameters
+                ? (field.parameters._computed_value ?? field.parameters.value)
+                : undefined
+            const plain = (held && typeof held === 'object')
+                ? (held.String ?? held.Timestamp ?? held.Date ?? held.Integer ?? held.Float ?? held.Boolean)
+                : held
+            return this.keyReadsAs(precision, plain) === wanted
+        }) || null
+    }
+
+    /// Make the preview real: ask for the entry at this key, and carry the edit that asked.
+    ///
+    /// A view onto a key the list lacks shows the template as a preview. The moment a field in it
+    /// is edited the entry has to exist, at that key, and the edit has to land on it - and from
+    /// then on the view is an ordinary view onto an ordinary entry.
+    ///
+    /// The page used to do all of that in its own copy of the document and leave the whole text
+    /// to be saved over the file. Three things were wrong with that beyond the write itself:
+    /// asked twice it made two entries at one key, on prepending it wrote values into the entries
+    /// that were already there - looking for a child named `weight`, by that name - and the entry
+    /// it made carried no mark saying it was new, so `freeze=true` never fired on a day created
+    /// this way while a day the bot created froze correctly.
+    ///
+    /// One instruction says the whole sentence instead, against whatever the file holds at that
+    /// moment. Doing nothing when the entry is already there is the same sentence rather than a
+    /// special case, which is what lets a view stop caring whether what it shows was a preview.
+    ///
+    /// `options.value` is the edit, already shaped as a value, and it travels with the making so
+    /// the two are one change: one file write, one press of Undo.
     async _materializePhantomAndComputePath(meta, options = {}) {
         try {
             if (!window.app || !window.app.currentDocument) return null
-            // meta.listPath is path array to the list node
             const listPathArr = Array.isArray(meta.listPath) ? meta.listPath : []
-            const listPathStr = listPathArr.join('/')
-            const ownerEl = document.querySelector(`[data-path='${JSON.stringify(listPathArr)}']`)
-            const ownerNode = ownerEl ? null : null // unused; actions are path-based
-            // Build a synthetic owner path: use the list container path for event context
-            const eventContextPath = listPathArr
-            // Execute ensure_in_list by invoking backend through a tiny synthetic action: we piggyback on execute_overseer_event with an injected action is complex,
-            // instead, reuse the existing command interface by creating a minimal action block would require serialization changes.
-            // Simpler: directly mutate currentDocument here to append, using list entry template name.
-            const doc = window.app.currentDocument
-            // Locate list node in document by path
-            const listNode = this.findNodeByPath(doc, listPathArr)
+            if (listPathArr.length === 0) return null
+            const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
             if (!listNode || (listNode.node_type || '').toLowerCase() !== 'list') return null
-            // Determine effective key field
-            let keyField = meta.keyField
-            if (!keyField) {
-                const k = listNode.parameters?.key || listNode.parameters?._computed_key
-                keyField = (typeof k === 'string') ? k : (k && k.String !== undefined ? String(k.String) : 'id')
-            }
-            // Find template
-            let tmplName = meta.templateName
-            if (!tmplName) {
-                const entry = listNode.parameters?.entry
-                if (entry) {
-                    if (typeof entry === 'string') tmplName = entry
-                    else if (typeof entry === 'object' && entry.Template !== undefined) tmplName = String(entry.Template)
-                    else if (typeof entry === 'object' && entry.String !== undefined) tmplName = String(entry.String)
+
+            // What the list is keyed by and what its entries are made from, where the link did
+            // not say.
+            const said = (v, fallback) => {
+                if (typeof v === 'string') return v
+                if (v && typeof v === 'object') {
+                    if (v.Template !== undefined) return String(v.Template)
+                    if (v.String !== undefined) return String(v.String)
                 }
+                return fallback
             }
-            if (tmplName && tmplName.startsWith('<') && tmplName.endsWith('>')) tmplName = tmplName.slice(1, -1)
-            // Clone template (deep-search by name anywhere in the document)
-            const roots = doc
-            const findByNameDeep = (nodes, name) => {
-                if (!Array.isArray(nodes)) return null
-                for (const n of nodes) {
-                    if (!n) continue
-                    if (n.name === name) return n
-                    const found = findByNameDeep(n.children || [], name)
-                    if (found) return found
+            const keyField = meta.keyField
+                || said(listNode.parameters?.key ?? listNode.parameters?._computed_key, 'id')
+            let template = meta.templateName || said(listNode.parameters?.entry, null)
+            if (template && template.startsWith('<') && template.endsWith('>')) {
+                template = template.slice(1, -1)
+            }
+            if (!template) return null
+
+            // A document with no address cannot be written to, and this is a write - the same as
+            // every other change the page makes. Making the entry in the page's own copy instead
+            // is what this replaced; keeping that as a second path is how two would drift apart.
+            if (!window.app.currentFile) {
+                if (DEBUG_MODE) {
+                    console.warn('[Overseer] a document that has not been saved anywhere has nowhere to make the entry')
                 }
                 return null
             }
-            const tmpl = tmplName ? findByNameDeep(roots, tmplName) : null
-            let newItem = tmpl ? JSON.parse(JSON.stringify(tmpl)) : { name: tmplName || 'Item', node_type: 'div', parameters: {}, children: [] }
-            // The clone must not inherit the template's provenance. `source_id` points at the
-            // template's own source text, and the serializer replays that text verbatim for
-            // any node still carrying one - so a materialized entry would be written out as a
-            // full copy of the template, comments and all, instead of the handful of fields
-            // that actually differ. Without the ids it is treated as a fresh template
-            // instance, and only genuine overrides are written.
-            const stripTemplateProvenance = (n) => {
-                if (!n || typeof n !== 'object') return
-                delete n.source_id
-                delete n.source_fingerprint
-                delete n.source_snapshot
-                if (Array.isArray(n.children)) n.children.forEach(stripTemplateProvenance)
+
+            // Named relative to the entry, which is how the instruction takes them. The ordinals
+            // the preview path carries are about where a field sat in the preview and mean
+            // nothing to a list that has never held this entry.
+            const tail = (Array.isArray(meta.tailSegments) ? meta.tailSegments : [])
+                .map((seg) => String(seg).split('#')[0])
+                .filter((seg) => seg.length > 0)
+            const fields = {}
+            if (options.value !== undefined && options.value !== null && tail.length > 0) {
+                fields[tail.join('/')] = options.value
             }
-            stripTemplateProvenance(newItem)
-            // Assign a stable UID to the new item (used for DOM mapping independent of name/position)
-            try {
-                const uid = `uid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
-                if (!newItem.parameters) newItem.parameters = {}
-                // Store in parameters to persist through rerenders (not serialized if we prefix underscore)
-                newItem.parameters._uid = { String: uid }
-                newItem.__uid = uid
-                if (!this._uidToNode) this._uidToNode = new Map()
-                this._uidToNode.set(uid, newItem)
-                if (DEBUG_MODE) console.debug('[Overseer] uid assign (materialize)', uid, newItem.name)
-            } catch(_) { /* best-effort */ }
-            // Ensure required schema fields exist on the new item
-            if (newItem.is_hierarchy_transparent === undefined) newItem.is_hierarchy_transparent = (tmpl && typeof tmpl.is_hierarchy_transparent === 'boolean') ? tmpl.is_hierarchy_transparent : false
-            // Mark as originating from a template to help selective UI rerenders detect templated instances
-            try { newItem.parameters = Object.assign({}, newItem.parameters || {}, { _from_template: true }) } catch (_) {}
-            // Assign a unique instance name similar to backend logic (T__N), avoiding collisions by scanning siblings
-            const baseNameRaw = (tmplName || newItem.name || 'Item')
-            const baseName = String(baseNameRaw).replace(/__\d+$/, '')
-            const usedSuffixes = new Set()
-            for (const sib of (Array.isArray(listNode.children) ? listNode.children : [])) {
-                const nm = sib && sib.name ? String(sib.name) : ''
-                if (nm === baseName) { usedSuffixes.add(1); continue }
-                const m = nm.startsWith(baseName + '__') ? nm.slice(baseName.length + 2).match(/^(\d+)$/) : null
-                if (m) {
-                    const n = parseInt(m[1], 10)
-                    if (!isNaN(n)) usedSuffixes.add(n)
+
+            const asAValue = (plain) => {
+                if (plain && typeof plain === 'object') return plain
+                if (typeof plain === 'boolean') return { Boolean: plain }
+                if (typeof plain === 'number') {
+                    return Number.isInteger(plain) ? { Integer: plain } : { Float: plain }
                 }
+                return { String: String(plain ?? '') }
             }
-            let nextN = 1
-            if (usedSuffixes.size > 0) {
-                let max = 0
-                for (const n of usedSuffixes) if (n > max) max = n
-                nextN = max + 1
-            }
-            newItem.name = `${baseName}__${nextN}`
-            
-            // Set key field value
-            if (!newItem.children) newItem.children = []
-            let keyChild = newItem.children.find(c => c && c.name === keyField)
-            if (!keyChild) { keyChild = { name: keyField, node_type: 'string', parameters: {}, children: [] }; newItem.children.unshift(keyChild) }
-            if (keyChild.is_hierarchy_transparent === undefined) keyChild.is_hierarchy_transparent = false
-            if (!keyChild.parameters) keyChild.parameters = {}
-            const kv = meta.keyValue
-            // Match key value type to the field's node type where possible
-            const keyTy = String(keyChild.node_type || keyChild.type || '').toLowerCase()
-            const toDate2 = (s) => {
-                const str = String(s || '')
-                const m = str.match(/^(\d{4})[./-](\d{2})[./-](\d{2})(?:.*)?$/)
-                if (m) return `${m[1]}-${m[2]}-${m[3]}`
-                const d = new Date(str); if (!isNaN(d.getTime())) {
-                    const pad = (n) => String(n).padStart(2, '0')
-                    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
-                }
-                return String(str)
-            }
-            const toTs2 = (s) => {
-                const str = String(s || '')
-                if (/^\d{4}-\d{2}-\d{2}T/.test(str)) return str
-                const d = toDate2(str)
-                return `${d}T00:00:00Z`
-            }
-            const numParse = (s, f=false) => {
-                const n = f ? parseFloat(String(s)) : parseInt(String(s), 10)
-                return isNaN(n) ? null : n
-            }
-            let kvTyped
-            switch (keyTy) {
-                case 'date': kvTyped = { String: toDate2(kv) }; break
-                case 'timestamp': kvTyped = { String: toDate2(kv) }; break
-                case 'int':
-                case 'integer': { const n = numParse(kv, false); kvTyped = (n===null)?{ String: String(kv) }:{ Integer: n }; break }
-                case 'float': { const n = numParse(kv, true); kvTyped = (n===null)?{ String: String(kv) }:{ Float: n }; break }
-                case 'bool':
-                case 'boolean': { const s = String(kv).toLowerCase(); kvTyped = (s==='true'||s==='false')?{ Boolean: s==='true' }:{ String: String(kv) }; break }
-                default: kvTyped = (typeof kv === 'number') ? { Integer: kv } : { String: String(kv) }
-            }
-            // Assign the key and mirror it in _computed_value to avoid template-computed fallbacks overriding display
-            keyChild.parameters.value = kvTyped
-            try { keyChild.parameters._computed_value = kvTyped } catch(_) {}
-            // Ensure the key field persists on serialization as an explicit override
-            try { keyChild.parameters._override_present = { Boolean: true } } catch(_) {}
-            // Write it in the same dash form authored entries use.
-            try { keyChild.authored_dash = true } catch(_) {}
-            // Mark the entry as one built by cloning a template, so the serializer records
-            // only what distinguishes it. The clone has to carry the template's full
-            // structure - the click that materialized it addresses a button inside the
-            // entry, and that path has to resolve - but none of that structure belongs on
-            // disk, where the template supplies it.
-            try { newItem.parameters._materialized_from_template = { Boolean: true } } catch(_) {}
-            // Insert into list honoring requested position
-            const pos = (options && typeof options.position === 'string') ? options.position.toLowerCase() : 'append'
-            if (pos === 'prepend') {
-                // Prior to inserting at the front, freeze existing sibling weight values so reevaluation does not shift them.
-                try {
-                    let frozenCount = 0
-                    for (const sib of (Array.isArray(listNode.children) ? listNode.children : [])) {
-                        if (!sib || !Array.isArray(sib.children)) continue
-                        const weightChild = sib.children.find(c => c && c.name === 'weight')
-                        if (!weightChild) continue
-                        if (!weightChild.parameters) weightChild.parameters = {}
-                        const hasExplicit = weightChild.parameters.value !== undefined
-                        if (hasExplicit) continue // already explicit, skip
-                        // Prefer an existing computed value; fall back to fallback; else skip
-                        const cv = weightChild.parameters._computed_value || weightChild.parameters._computed_fallback || null
-                        if (!cv || typeof cv !== 'object') continue
-                        // Mirror value structure exactly (Float/Integer/String/etc.)
-                        try {
-                            weightChild.parameters.value = JSON.parse(JSON.stringify(cv))
-                            // Mark override so serializer persists it
-                            weightChild.parameters._override_present = { Boolean: true }
-                            frozenCount++
-                        } catch(_) { /* ignore */ }
-                    }
-                    if (frozenCount > 0) {
-                        
-                    } else {
-                        
-                    }
-                } catch(_) { /* best-effort */ }
-                listNode.children.unshift(newItem)
-            } else {
-                listNode.children.push(newItem)
-            }
-            // Mark explicit override so it persists
-            listNode.parameters = Object.assign({}, listNode.parameters || {}, { _explicit_overrides: { String: (listNode.parameters?._explicit_overrides?.String || '') } })
-            // Do not mutate the original link; keep it dynamic so it can follow future date changes.
-            // Return a real field path if the edit targeted a child in tailSegments; otherwise the item path
-            // Use the actual item name (with instance suffix) for correct path resolution
-            const siblings = listNode.children
-            // Use the exact instance name (which already contains __N) to avoid ambiguity; still include
-            // an ordinal when multiple siblings coincidentally share the same exact name (extremely rare given unique suffix selection above).
-            const idxNew = siblings.indexOf(newItem)
-            const itemExactName = newItem.name // e.g., WeightRecord__19
-            const itemOrd = siblings.slice(0, idxNew).filter(c => c && c.name === itemExactName).length
-            const itemSeg = itemOrd > 0 ? `${itemExactName}#${itemOrd}` : itemExactName
-            let realPathArr = listPathArr.concat([itemSeg])
-            // Traverse tail segments directly on the newly created item, creating missing fields on demand,
-            // and construct canonical path segments using the actual picked names and true ordinal among siblings.
-            const parseSeg = (seg) => {
-                const i = typeof seg === 'string' ? seg.lastIndexOf('#') : -1
-                return i > 0 ? { base: seg.slice(0, i), ord: parseInt(seg.slice(i + 1), 10) || 0 } : { base: String(seg), ord: 0 }
-            }
-            const normalize = (s) => String(s || '').replace(/__\d+$/, '')
-            let curRef = newItem
-            const tailSegs = Array.isArray(meta.tailSegments) ? meta.tailSegments.slice() : []
-            for (let tIdx = 0; tIdx < tailSegs.length; tIdx++) {
-                const t = tailSegs[tIdx]
-                const { base, ord } = parseSeg(t)
-                let kidsNow = Array.isArray(curRef.children) ? curRef.children : []
-                // Prefer exact name match first, then normalized name match
-                let candidates = kidsNow.filter(n => n && n.name === base)
-                if (candidates.length === 0) {
-                    candidates = kidsNow.filter(n => n && normalize(n.name) === base)
-                }
-                let pick = candidates[ord] || candidates[0]
-                if (!pick) {
-                    // Create the missing child; assume leaf is string, otherwise a transparent container
-                    const isLast = (tIdx === tailSegs.length - 1)
-                    pick = { name: base, node_type: isLast ? 'string' : 'div', parameters: {}, children: [], is_hierarchy_transparent: false }
-                    curRef.children = Array.isArray(curRef.children) ? curRef.children : []
-                    curRef.children.push(pick)
-                    kidsNow = curRef.children
-                }
-                const idxPick = kidsNow.indexOf(pick)
-                const ordPick = idxPick > 0 ? kidsNow.slice(0, idxPick).filter(n => n && n.name === pick.name).length : 0
-                const segName = ordPick > 0 ? `${pick.name}#${ordPick}` : pick.name
-                realPathArr = realPathArr.concat([segName])
-                curRef = pick
-            }
-            const __finalPath = realPathArr.join('/')
-            // Record a direct reference to the newly created leaf target so later edits update exactly this node
-            try {
-                // Attach diagnostic markers for identity tracking
-                const materializeId = `mat_${Date.now()}_${Math.random().toString(36).slice(2)}`
-                try { newItem.__materialize_id = materializeId } catch(_) {}
-                try { curRef.__materialize_id = materializeId + '_leaf' } catch(_) {}
-                // If this appears to be a WeightRecord template with a 'weight' child, ensure it has an explicit starting value so backend reevaluation doesn't cascade-shift others.
-                try {
-                    const isWeightRecord = /weightrecord/i.test(newItem.name || '')
-                    if (isWeightRecord) {
-                        const wLeaf = (newItem.children||[]).find(c => c && c.name === 'weight')
-                        if (wLeaf) {
-                            if (!wLeaf.parameters) wLeaf.parameters = {}
-                            const existingExplicit = wLeaf.parameters.value
-                            if (existingExplicit === undefined) {
-                                const baseVal = wLeaf.parameters._computed_value || wLeaf.parameters._computed_fallback
-                                if (baseVal && typeof baseVal === 'object') {
-                                    try { wLeaf.parameters.value = JSON.parse(JSON.stringify(baseVal)) } catch(_) {}
-                                    wLeaf.parameters._override_present = { Boolean: true }
-                                    
-                                }
-                            }
-                        }
-                    }
-                } catch(_) { /* best-effort */ }
-                this._materializedTargets.set(__finalPath, { itemNode: newItem, leafNode: curRef, ts: Date.now(), materializeId, position: pos })
-                
-            } catch(_) { /* best-effort */ }
-            if (DEBUG_MODE) console.debug('[Overseer] _materializePhantomAndComputePath summary', {
-                list: listPathArr.join('/'),
-                template: tmplName,
-                newItemName: newItem && newItem.name,
+            const wanted = {
+                list_path: listPathArr,
+                listPath: listPathArr,
+                key_field: keyField,
                 keyField,
-                keyValue: kvTyped,
-                position: pos,
-                finalPath: __finalPath
-            })
+                key_value: asAValue(meta.keyValue),
+                keyValue: asAValue(meta.keyValue),
+                template,
+                // `append` or `prepend`, as `phantom-materialize` said it.
+                position: options.position || 'append',
+                fields,
+            }
+
+            // Said out loud for the same reason the edit and press paths say it: a save left over
+            // from an earlier change must not go out on top of this write.
+            window.app._writingByInstruction = (window.app._writingByInstruction || 0) + 1
+            let update = null
             try {
-                const ordering = (listNode.children||[]).map((c,i)=>({ idx:i, name:c && c.name }))
-                
-            } catch(_) {}
-            return __finalPath
-        } catch(_) { return null }
+                update = await invoke('ensure_overseer_entry', {
+                    path: window.app.currentFile,
+                    wanted,
+                }).catch((e) => {
+                    if (DEBUG_MODE) console.warn('[Overseer] the entry was refused', e)
+                    return null
+                })
+            } finally {
+                window.app._writingByInstruction -= 1
+            }
+            if (!update) return null
+
+            // Written as part of making it, so nothing is waiting to be saved - and the answer
+            // says what the file now holds, which the page has to take on or its next save is
+            // refused for being built on a document it moved.
+            try { window.app.alreadyWritten && window.app.alreadyWritten(update) } catch (_) {}
+            if (Array.isArray(update.changes)) {
+                window.app._currentText = typeof update.text === 'string' ? update.text : null
+                try {
+                    const touched = window.app.applyDocumentChanges(
+                        window.app.currentDocument, update.changes)
+                    this.repaintNodes(touched, window.app.currentDocument)
+                } catch (e) {
+                    if (DEBUG_MODE) console.warn('[Overseer] repaint after making the entry failed', e)
+                }
+            }
+
+            // Found by its key rather than by where it went. A keyed list is written at either
+            // end, and which end is the document's business rather than something to assume from
+            // here - the same reading of the key that failed to find it a moment ago.
+            const listNow = this.findNodeByPath(window.app.currentDocument, listPathArr)
+            const entry = this.entryKeyed(listNow, keyField, meta.keyValue)
+            if (!entry) return null
+            const siblings = Array.isArray(listNow.children) ? listNow.children : []
+            const at = siblings.indexOf(entry)
+            const sharing = siblings.slice(0, at).filter((s) => s && s.name === entry.name).length
+            const entrySeg = sharing > 0 ? `${entry.name}#${sharing}` : entry.name
+            const realPath = listPathArr.concat([entrySeg], tail).join('/')
+            try {
+            } catch (_) { /* best-effort */ }
+            return realPath
+        } catch (_) { return null }
     }
 
     // Interval management: avoid per-element MutationObservers by clearing on re-render
@@ -1880,26 +1782,7 @@ export class OverseerRenderer {
                     // Normalize by keyPrecision when present (e.g., day precision for dates)
                     const keyPrecisionRaw = basePicked?.parameters?.keyPrecision || basePicked?.parameters?._computed_keyPrecision
                     const keyPrecision = (typeof keyPrecisionRaw === 'object' && keyPrecisionRaw.String !== undefined) ? String(keyPrecisionRaw.String) : (typeof keyPrecisionRaw === 'string' ? keyPrecisionRaw : '')
-                    const normalizeByPrecision = (prec, val) => {
-                        try {
-                            if (val === null || val === undefined) return ''
-                            const s = String(val)
-                            if (!prec) return s
-                            const p = prec.toLowerCase()
-                            if (p === 'day' || p === 'days') {
-                                // Accept YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD, or RFC3339 strings
-                                const m = s.match(/^(\d{4})[./-](\d{2})[./-](\d{2})(?:.*)?$/)
-                                if (m) return `${m[1]}-${m[2]}-${m[3]}`
-                                const d = new Date(s)
-                                if (!isNaN(d.getTime())) {
-                                    const pad = (n) => String(n).padStart(2, '0')
-                                    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
-                                }
-                                return s
-                            }
-                            return s
-                        } catch(_) { return String(val) }
-                    }
+                    const normalizeByPrecision = (prec, val) => this.keyReadsAs(prec, val)
                     // If selector used 'key=value', use the list's configured key field name
                     if (keyField.toLowerCase() === 'key') {
                         try {
@@ -5126,7 +5009,17 @@ export class OverseerRenderer {
                             position = policy.startsWith('prepend') ? 'prepend' : 'append'
                         }
                     } catch(_) { /* default to append */ }
-                    const realPath = await this._materializePhantomAndComputePath(metaWithTail, { position })
+                    // The edit travels with the making. Both are one change - a person typed
+                    // into one field once - so making the entry and writing what was typed is
+                    // one file write and one press of Undo. The ordinary commit below still
+                    // writes the value; finding the file already says it, that write records no
+                    // step of its own.
+                    let asAValue
+                    try {
+                        asAValue = window.app.coerceToOverseerValue(node, newValue)
+                    } catch (_) { asAValue = undefined }
+                    const realPath = await this._materializePhantomAndComputePath(
+                        metaWithTail, { position, value: asAValue })
                     
                     if (DEBUG_MODE) console.debug('[Overseer] Phantom materialized on edit. Computed realPath:', realPath)
                     if (realPath) { fieldPath = realPath; materializedRealPath = realPath }
@@ -5173,98 +5066,12 @@ export class OverseerRenderer {
                 if (materializedRealPath) {
                     // Strong guarantee: Prefer a direct update of the newly materialized node immediately
                     try {
-                        if (this._materializedTargets && this._materializedTargets.has(materializedRealPath)) {
-                            const t = this._materializedTargets.get(materializedRealPath)
-                            if (t && t.leafNode) {
-                                // Capture previous value for change record
-                                let prevVal = null
-                                try { prevVal = this.getNodeValue(t.leafNode) } catch(_) {}
-                                // Verify that the stored leaf belongs to the expected freshly inserted item
-                                try {
-                                    const targetPathArr = materializedRealPath.split('/')
-                                    const listPathArr = targetPathArr.slice(0, -2)
-                                    const itemName = targetPathArr[targetPathArr.length - 2]
-                                    const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
-                                    if (listNode && Array.isArray(listNode.children)) {
-                                        const liveItem = listNode.children.find(ch => ch && ch.name === itemName)
-                                        if (liveItem) {
-                                            const liveLeaf = (liveItem.children||[]).find(ch => ch && ch.name === 'weight') || null
-                                            if (liveLeaf && liveLeaf !== t.leafNode) {
-                                                if (DEBUG_MODE) console.warn('[Overseer] materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
-                                                t.leafNode = liveLeaf
-                                            }
-                                        } else {
-                                            if (DEBUG_MODE) console.warn('[Overseer] could not find live item for materialized path', materializedRealPath)
-                                        }
-                                    }
-                                } catch(_) { /* diagnostics best-effort */ }
-                                this.updateNodeValue(t.leafNode, newValue)
-                                
-                                // Immediately refresh computed values/DOM via selective reevaluation
-                                try {
-                                    const metaTarget = this._materializedTargets.get(materializedRealPath)
-                                    if (metaTarget && metaTarget.position === 'prepend') {
-                                        
-                                        // Direct DOM paint via UID (new item should be at dataset.uid = newItem.__uid)
-                                        try {
-                                            const uid = metaTarget.itemNode && metaTarget.itemNode.__uid
-                                            if (uid) {
-                                                const el = document.querySelector(`[data-uid='${uid}']`)
-                                                if (el) {
-                                                    // Find weight field element inside this item
-                                                    let valueHolder = el.querySelector(`[data-path*='${materializedRealPath.split('/').slice(-2).join('/')}'] .field-value`)
-                                                    if (!valueHolder) {
-                                                        // fallback: any descendant with class field-value
-                                                        valueHolder = el.querySelector('.field-value')
-                                                    }
-                                                    if (valueHolder) {
-                                                        valueHolder.textContent = String(newValue)
-                                                        
-                                                    }
-                                                }
-                                            }
-                                        } catch(_) { /* best-effort */ }
-                                        // Targeted update: we still need the link container (e.g., SelectedWeightRecord) to reflect new selection.
-                                        // Strategy: pin existing sibling weights (explicit value) then reevaluate only the link container path if available.
-                                        try {
-                                            const targetPathArr = materializedRealPath.split('/')
-                                            const listPathArr = targetPathArr.slice(0, -2)
-                                            const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
-                                            if (listNode && Array.isArray(listNode.children)) {
-                                                for (const sib of listNode.children) {
-                                                    if (!sib || !Array.isArray(sib.children)) continue
-                                                    const wLeaf = sib.children.find(c => c && c.name === 'weight')
-                                                    if (!wLeaf) continue
-                                                    if (!wLeaf.parameters) wLeaf.parameters = {}
-                                                    if (wLeaf.parameters.value === undefined) {
-                                                        const curVal = wLeaf.parameters._computed_value || wLeaf.parameters._computed_fallback
-                                                        if (curVal && typeof curVal === 'object') {
-                                                            try { wLeaf.parameters.value = JSON.parse(JSON.stringify(curVal)) } catch(_) {}
-                                                            wLeaf.parameters._override_present = { Boolean: true }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } catch(_) { /* best-effort pin */ }
-                                        if (linkContainerPathArr) {
-                                            try {
-                                                this.rerenderSubtree(window.app.currentDocument, linkContainerPathArr)
-                                                
-                                            } catch(e) { console.warn('[Overseer] link container rerender failed', e) }
-                                        }
-                                    } else if (window.app && typeof window.app.reevaluateDocumentSelective === 'function') {
-                                        await window.app.reevaluateDocumentSelective([materializedRealPath], [{ path: materializedRealPath, oldValue: prevVal, newValue }])
-                                    }
-                                } catch(_) { /* best-effort */ }
-                                // Ensure the owning list subtree is in sync in case DOM nodes were not yet present
-                                try {
-                                    const listPathArr = materializedRealPath.split('/').slice(0, -2)
-                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
-                                } catch(_) { /* ignore */ }
-                                skipElementEvent = true
-                                try { this._materializedTargets.delete(materializedRealPath) } catch(_) {}
-                            }
-                        }
+                        // Nothing here any more. The page used to keep a direct reference to the
+                        // node it had just made, and write the value straight into it rather than
+                        // through its path - with a stretch of pointer-correction beside it that
+                        // looked for a child named `weight`, by that name. The entry comes from
+                        // the backend now, with the edit already applied, so the value arrives
+                        // the way every other value does.
                     } catch(_) { /* fall through to gates below if direct route not available */ }
                     
                     // First, compare against what the user actually saw (prevDisplay). If equal, skip.
@@ -5279,7 +5086,11 @@ export class OverseerRenderer {
                     
                     if (prevStr === newStrDirect || eqNum) {
                         
-                        try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
+                        // Nothing to mark. These are the branches taken when the entry has just been made and
+                        // the value shown is already the value typed - which used to mean the change existed
+                        // only in the page, so the save had to be told there was something to carry. The entry
+                        // and the edit are written as part of being made now, so marking the document would
+                        // leave it looking unsaved and send the whole of it up to repeat what the file says.
                         return
                     }
                     const arr = materializedRealPath.split('/')
@@ -5332,7 +5143,11 @@ export class OverseerRenderer {
                                 }
                             } catch(_) { /* best-effort paint */ }
                             // We still want to mark the document modified minimally so save picks up the new instance.
-                            try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
+                            // Nothing to mark. These are the branches taken when the entry has just been made and
+                            // the value shown is already the value typed - which used to mean the change existed
+                            // only in the page, so the save had to be told there was something to carry. The entry
+                            // and the edit are written as part of being made now, so marking the document would
+                            // leave it looking unsaved and send the whole of it up to repeat what the file says.
                             return
                         }
                     }
@@ -5370,7 +5185,11 @@ export class OverseerRenderer {
                             
                             if (shown === want || eqNum3) {
                                 
-                                try { window.app && window.app.markDocumentModified && window.app.markDocumentModified() } catch(_) {}
+                                // Nothing to mark. These are the branches taken when the entry has just been made and
+                                // the value shown is already the value typed - which used to mean the change existed
+                                // only in the page, so the save had to be told there was something to carry. The entry
+                                // and the edit are written as part of being made now, so marking the document would
+                                // leave it looking unsaved and send the whole of it up to repeat what the file says.
                                 return
                             }
                         }
@@ -5379,49 +5198,6 @@ export class OverseerRenderer {
                 // Prefer a direct update of the newly materialized target (exact node reference) to avoid any mis-targeting
                 let success = false
                 try {
-                    if (materializedRealPath && this._materializedTargets && this._materializedTargets.has(materializedRealPath)) {
-                        const t = this._materializedTargets.get(materializedRealPath)
-                        if (t && t.leafNode) {
-                            try {
-                                let prevVal = null
-                                try { prevVal = this.getNodeValue(t.leafNode) } catch(_) {}
-                                // Re-verify pointer integrity before second-stage direct update
-                                try {
-                                    const targetPathArr = materializedRealPath.split('/')
-                                    const listPathArr = targetPathArr.slice(0, -2)
-                                    const itemName = targetPathArr[targetPathArr.length - 2]
-                                    const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
-                                    if (listNode && Array.isArray(listNode.children)) {
-                                        const liveItem = listNode.children.find(ch => ch && ch.name === itemName)
-                                        if (liveItem) {
-                                            const liveLeaf = (liveItem.children||[]).find(ch => ch && ch.name === 'weight') || null
-                                            if (liveLeaf && liveLeaf !== t.leafNode) {
-                                                if (DEBUG_MODE) console.warn('[Overseer] late materialized leaf mismatch; correcting pointer', { materializedRealPath, materializeId: t.materializeId })
-                                                t.leafNode = liveLeaf
-                                            }
-                                        }
-                                    }
-                                } catch(_) { /* best-effort */ }
-                                // Apply update (guarded updates are marked below after path resolution)
-                                this.updateNodeValue(t.leafNode, newValue)
-                                success = true
-                                usedDirectMaterializedUpdate = true
-                                
-                                // Refresh computed values/DOM
-                                try {
-                                    if (window.app && typeof window.app.reevaluateDocumentSelective === 'function') {
-                                        await window.app.reevaluateDocumentSelective([materializedRealPath], [{ path: materializedRealPath, oldValue: prevVal, newValue }])
-                                    }
-                                } catch(_) { /* best-effort */ }
-                                try {
-                                    const listPathArr = materializedRealPath.split('/').slice(0, -2)
-                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
-                                } catch(_) { /* ignore */ }
-                            } catch(_) {}
-                        }
-                        // Clean up the entry after use
-                        try { this._materializedTargets.delete(materializedRealPath) } catch(_) {}
-                    }
                 } catch(_) { /* fall back to path-based below */ }
                 if (!success) {
                     

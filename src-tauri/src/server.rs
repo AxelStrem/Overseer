@@ -426,6 +426,24 @@ impl DocumentRoot {
                     .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))?,
                 )
             }
+            "ensure_overseer_entry" => {
+                let named = document.ok_or_else(|| {
+                    RequestError::Rejected("'document' is required".into())
+                })?;
+                let at = self.resolve(named)?;
+                let wanted: app_api::EntryWanted = from_value(args, "wanted")?;
+                as_json(
+                    app_api::ensure_entry_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        wanted,
+                        session,
+                    )
+                    .map_err(|e| {
+                        RequestError::Failed(format!("could not make the entry: {:?}", e))
+                    })?,
+                )
+            }
             "write_overseer_values" => {
                 let named = document.ok_or_else(|| {
                     RequestError::Rejected("'document' is required".into())

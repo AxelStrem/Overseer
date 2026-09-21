@@ -119,6 +119,33 @@ fn note_structural() {
     });
 }
 
+/// Where a new entry goes when the list already has some.
+///
+/// A keyed history is read in whatever order `sort_by` says and written at either end, so which
+/// end is a choice the document makes rather than something to assume. A view that materialises
+/// its key says which through `phantom-materialize`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhereItGoes {
+    First,
+    Last,
+}
+
+impl WhereItGoes {
+    /// Read from what was said, however it was said it.
+    ///
+    /// `first` and `prepend` mean the front; anything else, including nothing at all, means the
+    /// back - which is what a list did before it could be asked. The page passes on what
+    /// `phantom-materialize` says, so `prepend-on-edit` arrives here as `prepend`.
+    pub fn from_said(said: Option<&str>) -> Self {
+        match said.map(|s| s.trim().to_lowercase()) {
+            Some(word) if word == "first" || word == "prepend" || word == "prepend-on-edit" => {
+                WhereItGoes::First
+            }
+            _ => WhereItGoes::Last,
+        }
+    }
+}
+
 pub struct ActionExecutor;
 
 impl ActionExecutor {
@@ -779,6 +806,10 @@ impl ActionExecutor {
                         ))
                     }
                 };
+                let goes = WhereItGoes::from_said(match action.parameters.get("position") {
+                    Some(OverseerValue::String(s)) => Some(s.as_str()),
+                    _ => None,
+                });
                 Self::ensure_in_list(
                     nodes,
                     owner_path,
@@ -786,7 +817,9 @@ impl ActionExecutor {
                     &template_name,
                     &key_field,
                     key_value,
+                    goes,
                 )
+                .map(|_| ())
             }
             "remove_from_list" | "remove" => {
                 let list_path = match action
@@ -2379,6 +2412,16 @@ impl ActionExecutor {
             .and_then(|c| c.parameters.get("value"))
     }
 
+    /// Make sure the list has an entry with this key, and leave it alone if it already does.
+    ///
+    /// This is what a view onto a key the list lacks means by making its preview real: the entry
+    /// appears at that key, with the template's fields, and everything after that is an ordinary
+    /// entry being edited.
+    ///
+    /// Finished the same way an appended or prepended entry is - the list's own entry style, and
+    /// the mark that says the entry is new. That mark is what `freeze=true` acts on, so without
+    /// it a day created this way silently kept reading a standing figure that a day created any
+    /// other way had written into it.
     fn ensure_in_list(
         nodes: &mut Vec<OverseerNode>,
         owner_path: &[String],
@@ -2386,7 +2429,8 @@ impl ActionExecutor {
         template_name: &str,
         key_field: &str,
         key_value: OverseerValue,
-    ) -> Result<(), OverseerError> {
+        goes: WhereItGoes,
+    ) -> Result<String, OverseerError> {
         // Shape, not value: what this does moves the addresses of everything after
         // it, so nothing the graph knows survives it.
         note_structural();
@@ -2417,13 +2461,16 @@ impl ActionExecutor {
             ));
         };
 
-        // If exists, do nothing
-        if list_node.children.iter().any(|it| {
+        // Already there: nothing to make, and the caller is told which one it is. Saying so
+        // rather than just "done" is what lets one instruction mean "make sure of this entry and
+        // then write into it" - the same sentence whether the entry was a preview a moment ago or
+        // has been in the file for a month.
+        if let Some(found) = list_node.children.iter().find(|it| {
             Self::get_field_value(it, &effective_key_field).map_or(false, |v| {
-                Self::value_equals_with_key_precision(&list_node, v, &key_value)
+                Self::value_equals_with_key_precision(list_node, v, &key_value)
             })
         }) {
-            return Ok(());
+            return Ok(found.name.clone());
         }
 
         // Find template by name (accept both "Record" and "<Record>" forms)
@@ -2438,6 +2485,7 @@ impl ActionExecutor {
         let template_def = Self::find_node_by_name(&snapshot, tn).ok_or_else(|| {
             OverseerError::ValidationError(format!("Template not found: {}", template_name))
         })?;
+        let style_guide = Self::derive_list_entry_style(list_node, goes == WhereItGoes::First);
         let mut new_item = Self::clone_from_template(template_def);
         Self::set_field_value_on_item(&mut new_item, &effective_key_field, key_value);
         // Apply layout opposite to parent list's effective layout (to match default alternation rule)
@@ -2453,8 +2501,40 @@ impl ActionExecutor {
         // This prevents duplicate sibling names that break name-based path resolution during formula evaluation.
         let ordinal = list_node.children.len() + 1; // 1-based index after append
         new_item.name = format!("{}__{}", template_def.name, ordinal);
-        list_node.children.push(new_item);
-        Ok(())
+        Self::apply_list_entry_style(&mut new_item, &style_guide);
+        Self::mark_the_entry_as_new(&mut new_item);
+        let made = new_item.name.clone();
+        match goes {
+            WhereItGoes::First => list_node.children.insert(0, new_item),
+            WhereItGoes::Last => list_node.children.push(new_item),
+        }
+        // The list's text no longer matches what was parsed from it, so it has to be written out
+        // again rather than replayed - the same reason removing an entry clears this.
+        list_node.source_fingerprint = None;
+        Ok(made)
+    }
+
+    /// Make sure a list has an entry with this key, and say which entry that is.
+    ///
+    /// The public way in, for a caller holding a path of names rather than an action block: the
+    /// page, when a view onto a key the list lacks is edited and the preview has to become real.
+    pub fn ensure_entry(
+        nodes: &mut Vec<OverseerNode>,
+        list_path: &str,
+        template_name: &str,
+        key_field: &str,
+        key_value: OverseerValue,
+        goes: WhereItGoes,
+    ) -> Result<String, OverseerError> {
+        Self::ensure_in_list(
+            nodes,
+            &[],
+            list_path,
+            template_name,
+            key_field,
+            key_value,
+            goes,
+        )
     }
 
     fn remove_from_list(
@@ -3854,6 +3934,7 @@ div Ext {
             "<Record>",
             "date",
             OverseerValue::String("2024-08-12".to_string()),
+            WhereItGoes::Last,
         )
         .unwrap();
         // Now try to ensure with a timestamp on the same day; should no-op (no duplicate)
@@ -3864,6 +3945,7 @@ div Ext {
             "<Record>",
             "date",
             OverseerValue::String("2024-08-12T23:10:00Z".to_string()),
+            WhereItGoes::Last,
         )
         .unwrap();
         // Verify History has exactly 1 child
