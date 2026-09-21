@@ -189,6 +189,23 @@ describe('a view onto a key the list does not have', () => {
     expect(args.wanted.template).toBe('DayRecord')
   })
 
+  it('names each thing once', async () => {
+    // The older commands take their arguments at the top level, where the backend reads either
+    // spelling and sending both is harmless. These go inside one object, read as a struct whose
+    // fields take the other spelling as an alias - and both at once is a duplicate field, which
+    // loses the whole request. Nothing about that is visible from here, which is why it is
+    // pinned here as well as on the other side.
+    const app = openIt(aTracker('append-on-edit'))
+    aBackendThatMakesTheEntry(app)
+    await materialise(app, 'append', { Float: 91 })
+
+    const names = Object.keys(asked()[0][1].wanted)
+    const camel = names.filter((n) => /[A-Z]/.test(n))
+    expect(camel, `sent in two spellings: ${names.join(', ')}`).toEqual([])
+    expect(names.sort()).toEqual(
+      ['fields', 'key_field', 'key_value', 'list_path', 'position', 'template'])
+  })
+
   it('carries the edit with it, so the two are one change', async () => {
     // Making the entry and writing what was typed is one thing a person did. Asked for
     // separately they would be two file writes and two presses of Undo.

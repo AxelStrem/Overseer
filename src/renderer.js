@@ -587,12 +587,23 @@ export class OverseerRenderer {
     /// `options.value` is the edit, already shaped as a value, and it travels with the making so
     /// the two are one change: one file write, one press of Undo.
     async _materializePhantomAndComputePath(meta, options = {}) {
+        // Said out loud, every one of them. A preview that cannot be made real leaves the
+        // press naming a node the document has not got, and the only thing said about that is
+        // the backend's "owner node not found" - which reports where the press landed and
+        // nothing at all about why it was sent there. Three rounds of guessing went into
+        // finding that out once.
+        const gaveUp = (why, extra) => {
+            try { console.warn('[Overseer] the preview could not be made real:', why, extra || '') } catch (_) {}
+            return null
+        }
         try {
-            if (!window.app || !window.app.currentDocument) return null
+            if (!window.app || !window.app.currentDocument) return gaveUp('no document is open')
             const listPathArr = Array.isArray(meta.listPath) ? meta.listPath : []
-            if (listPathArr.length === 0) return null
+            if (listPathArr.length === 0) return gaveUp('the view does not say which list', meta)
             const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
-            if (!listNode || (listNode.node_type || '').toLowerCase() !== 'list') return null
+            if (!listNode || (listNode.node_type || '').toLowerCase() !== 'list') {
+                return gaveUp('nothing at that path is a list', listPathArr.join('/'))
+            }
 
             // What the list is keyed by and what its entries are made from, where the link did
             // not say.
@@ -610,16 +621,13 @@ export class OverseerRenderer {
             if (template && template.startsWith('<') && template.endsWith('>')) {
                 template = template.slice(1, -1)
             }
-            if (!template) return null
+            if (!template) return gaveUp('the list does not say what its entries are made from')
 
             // A document with no address cannot be written to, and this is a write - the same as
             // every other change the page makes. Making the entry in the page's own copy instead
             // is what this replaced; keeping that as a second path is how two would drift apart.
             if (!window.app.currentFile) {
-                if (DEBUG_MODE) {
-                    console.warn('[Overseer] a document that has not been saved anywhere has nowhere to make the entry')
-                }
-                return null
+                return gaveUp('the document has no address to write to')
             }
 
             // Named relative to the entry, which is how the instruction takes them. The ordinals
@@ -641,13 +649,19 @@ export class OverseerRenderer {
                 }
                 return { String: String(plain ?? '') }
             }
+            // One spelling of each name, and it matters.
+            //
+            // The older commands take their arguments at the top level, where the backend reads
+            // either spelling, and the page sends both for safety. These arrive inside one
+            // object that the backend reads as a struct whose fields accept the other spelling
+            // as an alias - and to that, both at once is a *duplicate field*. The whole request
+            // is refused, the refusal becomes a null, the preview is never made real, and the
+            // press that follows names a node the document has not got. Which is silence, and
+            // it cost three rounds of looking in the wrong place.
             const wanted = {
                 list_path: listPathArr,
-                listPath: listPathArr,
                 key_field: keyField,
-                keyField,
                 key_value: asAValue(meta.keyValue),
-                keyValue: asAValue(meta.keyValue),
                 template,
                 // `append` or `prepend`, as `phantom-materialize` said it.
                 position: options.position || 'append',
@@ -669,7 +683,7 @@ export class OverseerRenderer {
             } finally {
                 window.app._writingByInstruction -= 1
             }
-            if (!update) return null
+            if (!update) return gaveUp('the backend refused to make the entry', wanted)
 
             // Written as part of making it, so nothing is waiting to be saved - and the answer
             // says what the file now holds, which the page has to take on or its next save is
@@ -730,7 +744,15 @@ export class OverseerRenderer {
             // here - the same reading of the key that failed to find it a moment ago.
             const listNow = this.findNodeByPath(window.app.currentDocument, listPathArr)
             const entry = this.entryKeyed(listNow, keyField, meta.keyValue)
-            if (!entry) return null
+            if (!entry) {
+                return gaveUp('the entry was made but cannot be found by its key', {
+                    key: meta.keyValue,
+                    keyField,
+                    holds: (listNow?.children || []).length,
+                    answered: Array.isArray(update.changes) ? 'changes'
+                        : (Array.isArray(update.nodes) ? 'the whole document' : 'nothing'),
+                })
+            }
             const siblings = Array.isArray(listNow.children) ? listNow.children : []
             const at = siblings.indexOf(entry)
             const sharing = siblings.slice(0, at).filter((s) => s && s.name === entry.name).length
@@ -739,7 +761,7 @@ export class OverseerRenderer {
             try {
             } catch (_) { /* best-effort */ }
             return realPath
-        } catch (_) { return null }
+        } catch (e) { return gaveUp('it went wrong', e) }
     }
 
     // Interval management: avoid per-element MutationObservers by clearing on re-render
@@ -5766,7 +5788,7 @@ export class OverseerRenderer {
 
             return Array.isArray(realPath) ? realPath : String(realPath).split('/')
         } catch (err) {
-            try { if (DEBUG_MODE) console.warn('[Overseer] phantom materialization for event failed', err) } catch(_) {}
+            try { console.warn('[Overseer] making the preview real for a press went wrong', err) } catch(_) {}
             return null
         }
     }

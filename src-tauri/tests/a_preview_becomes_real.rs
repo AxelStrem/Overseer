@@ -198,6 +198,69 @@ fn a_write_made_in_the_meantime_survives_it() {
 }
 
 #[test]
+fn the_message_the_page_sends_is_one_this_door_accepts() {
+    // Written out by hand, exactly as `_materializePhantomAndComputePath` builds it, because
+    // nothing else checks that the two agree. Every other test here sends a shape chosen here,
+    // and the page sent a different one for a while without a single test minding.
+    serialised(|| {
+        let root = a_root("shape");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        let sent = service.command_for(
+            "alice",
+            Some("day.os"),
+            "ensure_overseer_entry",
+            &json!({ "wanted": {
+                "list_path": ["tracker", "History"],
+                "key_field": "date",
+                "key_value": { "String": "2026-08-05" },
+                "template": "DayRecord",
+                "position": "append",
+                "fields": { "weight": { "Float": 91.0 } },
+            }}),
+        );
+        assert!(sent.is_ok(), "the page's own message was refused: {:?}", sent.err());
+    });
+}
+
+#[test]
+fn naming_a_field_twice_over_is_refused_and_says_so() {
+    // The page used to send each name in both spellings, the way the older commands take their
+    // arguments at the top level - where either is read and both is harmless. These arrive
+    // inside one object, read as a struct whose fields take the other spelling as an alias, and
+    // both at once is a duplicate field: the whole request goes, and with it any chance of the
+    // preview being made real.
+    //
+    // Pinned rather than made to work, because one spelling is the right answer and this records
+    // why the second one cannot come back.
+    serialised(|| {
+        let root = a_root("twice");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        let sent = service.command_for(
+            "alice",
+            Some("day.os"),
+            "ensure_overseer_entry",
+            &json!({ "wanted": {
+                "list_path": ["tracker", "History"],
+                "listPath": ["tracker", "History"],
+                "key_field": "date",
+                "keyField": "date",
+                "key_value": { "String": "2026-08-05" },
+                "keyValue": { "String": "2026-08-05" },
+                "template": "DayRecord",
+                "fields": {},
+            }}),
+        );
+        let said = format!("{:?}", sent.as_ref().err());
+        assert!(sent.is_err(), "a name given twice was accepted");
+        assert!(
+            said.contains("duplicate field"),
+            "the refusal does not say what is wrong: {}",
+            said
+        );
+    });
+}
+
+#[test]
 fn a_key_in_something_that_is_not_a_list_is_refused() {
     serialised(|| {
         let root = a_root("notalist");
