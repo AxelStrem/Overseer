@@ -1860,7 +1860,7 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
 /// serializer knows the value was not written there and does not write it to disk. Adding a
 /// name here without that marker being understood would persist the copy into every entry;
 /// `file_ops::marks_a_template_node` reads this same list for exactly that reason.
-pub const INHERITABLE_PARAMS: [&str; 4] = [
+pub const INHERITABLE_PARAMS: [&str; 5] = [
     "background-color",
     "font-color",
     "font-size",
@@ -1868,6 +1868,10 @@ pub const INHERITABLE_PARAMS: [&str; 4] = [
     // columns, so a table-shaped list repeating every label on every row says everything
     // twice; and a field whose name is obvious from where it sits does not need saying at all.
     "hide-labels",
+    // What a field says about itself when the mouse rests on it. Said on a container so a
+    // table can ask once and every cell answer with the name of its own column - which is
+    // where the naming goes when the label is not shown.
+    "hover-text",
 ];
 
 fn resolve_parameter_inheritance(

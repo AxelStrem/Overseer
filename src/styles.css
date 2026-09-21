@@ -453,6 +453,33 @@ body {
     font-size: 14px;
 }
 
+/* What a field says about itself when the mouse rests on it.
+ *
+ * One of these for the whole page, moved to whichever field is being asked. Drawn rather than
+ * left to a `title` attribute so that it can be read: a title cannot be styled, waits about a
+ * second, and never appears at all on a touch screen - and what this most often carries is a
+ * label that has been hidden, which would then be unreadable rather than merely tucked away.
+ *
+ * `pointer-events: none` because it sits over the thing being pointed at: catching the pointer
+ * would count as leaving the field, which would hide the popup, which would put the pointer back
+ * on the field, which would show it again.
+ */
+.overseer-hover-text {
+    position: absolute;
+    z-index: 1000;
+    max-width: 320px;
+    padding: 5px 9px;
+    border-radius: 5px;
+    background: var(--overseer-hover-bg, #101723);
+    color: var(--overseer-hover-fg, #e9eef7);
+    border: 1px solid var(--overseer-hover-border, #2b3648);
+    font-size: 12.5px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+}
+
 /* A label the container asked not to show. It stays in the page: the text is the only place the
  * field says what it is, and something above the column or under the mouse will want to read it.
  *

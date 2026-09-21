@@ -973,6 +973,7 @@ export class OverseerRenderer {
             cleanupNode(this.contentDisplay)
         } catch(_) {}
         // Defensive guards: in headless test environments elements can be null
+        this.watchForHoverText(this.contentDisplay)
         if (this.contentDisplay) {
             try { this.contentDisplay.innerHTML = '' } catch(_) {}
         }
@@ -4197,6 +4198,99 @@ export class OverseerRenderer {
         return said === true || said === 'true'
     }
 
+    /// What this field should say when the mouse rests on it, or nothing.
+    ///
+    /// `hover-text="..."` says it outright. `hover-text=true` says the label instead, which is
+    /// the useful half: a label can be hidden, and a field in a column too narrow to name can
+    /// then carry its name here and show nothing but its value. The two are the same sentence -
+    /// something this field says about itself that is only read when somebody asks.
+    ///
+    /// Read from the node, which is where inheritance leaves it, so a list says it once and
+    /// every cell answers with the name of its own column.
+    hoverTextFor(node, label) {
+        const said = this.getParameterValue(node, 'hover-text')
+        if (said === undefined || said === null || said === false || said === 'false') return null
+        if (said === true || said === 'true') {
+            const named = label ? label.textContent : ''
+            return named && named.trim() !== '' ? named : null
+        }
+        const given = String(said)
+        return given.trim() === '' ? null : given
+    }
+
+    /// The one popup the page draws, made when something first asks for it.
+    ///
+    /// One element rather than one per field, and one listener rather than thousands: a table of
+    /// five hundred rows has a few thousand cells, and giving each its own listener and its own
+    /// node is a cost paid on every render for something at most one of them shows at a time.
+    theHoverPopup() {
+        if (this._hoverPopup && this._hoverPopup.isConnected) return this._hoverPopup
+        const popup = document.createElement('div')
+        popup.className = 'overseer-hover-text'
+        popup.setAttribute('role', 'tooltip')
+        popup.style.display = 'none'
+        document.body.appendChild(popup)
+        this._hoverPopup = popup
+        return popup
+    }
+
+    /// Watch the document for a field that has something to say.
+    ///
+    /// Delegated, and installed once for the life of the page: `mouseover` and `mouseout` both
+    /// bubble, unlike `mouseenter`, so one listener at the top can serve every field - including
+    /// the ones a later render replaces, which is why nothing is re-wired on re-render.
+    ///
+    /// A title attribute would have been three lines and no listener. It cannot be styled, it
+    /// waits about a second before appearing, and on a touch screen it never appears at all -
+    /// and the thing most worth showing this way is a label that has been hidden, which would
+    /// then be unreadable rather than merely tucked away.
+    watchForHoverText(within) {
+        if (!within || within.dataset.hoverTextWatched === '1') return
+        within.dataset.hoverTextWatched = '1'
+
+        const show = (target) => {
+            const text = target.dataset.hoverText
+            if (!text) return
+            const popup = this.theHoverPopup()
+            popup.textContent = text
+            popup.style.display = 'block'
+            // Placed against the field rather than the pointer, so it does not follow the mouse
+            // around inside a wide cell. Above where there is room and below where there is not.
+            const box = target.getBoundingClientRect()
+            const mine = popup.getBoundingClientRect()
+            const gap = 6
+            const room = box.top > mine.height + gap
+            const top = room ? box.top - mine.height - gap : box.bottom + gap
+            let left = box.left + (box.width - mine.width) / 2
+            left = Math.max(gap, Math.min(left, window.innerWidth - mine.width - gap))
+            popup.style.top = `${Math.round(top + window.scrollY)}px`
+            popup.style.left = `${Math.round(left + window.scrollX)}px`
+        }
+        const hide = () => {
+            if (this._hoverPopup) this._hoverPopup.style.display = 'none'
+            if (this._hoverTimer) {
+                clearTimeout(this._hoverTimer)
+                this._hoverTimer = null
+            }
+        }
+
+        within.addEventListener('mouseover', (event) => {
+            const target = event.target?.closest?.('[data-hover-text]')
+            if (!target) return
+            if (this._hoverTimer) clearTimeout(this._hoverTimer)
+            // A moment's pause, so running the mouse across a table does not flash a popup for
+            // every column it passes over.
+            this._hoverTimer = setTimeout(() => show(target), 300)
+        })
+        within.addEventListener('mouseout', (event) => {
+            const target = event.target?.closest?.('[data-hover-text]')
+            if (!target) return
+            hide()
+        })
+        // Anything that moves what is on screen leaves the popup pointing at nothing.
+        window.addEventListener('scroll', hide, { passive: true })
+    }
+
     // Apply conservative default styles for fields (string/number/text/date/timestamp/bool/checkbox)
     // without overriding explicit parameters. This mainly ensures labels/values are readable
     // and laid out consistently even when no styling parameters are provided.
@@ -4216,6 +4310,14 @@ export class OverseerRenderer {
             // alone, and making its container a flex row would change how that value sizes for
             // no reason at all.
             const label = container.querySelector('label')
+
+            // What this field says when the mouse rests on it, settled now, while the label is
+            // still there to read it from. A table takes the label out of every cell once the
+            // fields are built - the heading names the column - so asking later would find
+            // nothing, and that is the very case this is for.
+            const saying = this.hoverTextFor(node, label)
+            if (saying) container.dataset.hoverText = saying
+
             if (label && this.labelsAreHidden(node)) {
                 // Hidden, not left out. The text is still the only place this field says what
                 // it is, and something will want to read it - a heading above the column, or
