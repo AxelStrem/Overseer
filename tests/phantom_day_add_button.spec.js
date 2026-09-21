@@ -50,8 +50,21 @@ const addButton = (name, label) => ({
   }]
 })
 
+/// The buttons in a row of their own, which is how the tracker has them - loose in the day's
+/// row they wrapped separately. The wrapper is unnamed, so an address looks through it and an
+/// action path does not.
+///
+/// Nested twice below, because that is the depth the real document has: the day holds an unnamed
+/// div of fields, and the row of buttons sits inside that. One wrapper was not enough to tell a
+/// rule that drops every wrapper from one that drops the first.
+const buttonsInARow = (...buttons) => ({
+  name: '', node_type: 'div',
+  parameters: { layout: { String: 'horizontal' }, margin: { Integer: 0 } },
+  is_hierarchy_transparent: true, children: buttons,
+})
+
 // History holds 2026-08-04 only; the selected date is a day with nothing logged.
-function buildDoc() {
+function buildDoc(nested = false) {
   return [{
     name: 'tracker_v2', node_type: 'tab', parameters: {}, is_hierarchy_transparent: false, children: [
       {
@@ -60,7 +73,9 @@ function buildDoc() {
             name: 'DayRecord', node_type: 'div', parameters: {}, is_hierarchy_transparent: false, children: [
               { name: 'date', node_type: 'timestamp', parameters: { precision: { String: 'day' }, value: { String: '2026-08-04' } }, children: [], is_hierarchy_transparent: false },
               { name: 'intake', node_type: 'list', parameters: { entry: { Template: 'MealRecord' } }, children: [], is_hierarchy_transparent: false },
-              addButton('add_by_portions', '+ Add by portions'),
+              nested
+                ? buttonsInARow(buttonsInARow(addButton('add_by_portions', '+ Add by portions')))
+                : addButton('add_by_portions', '+ Add by portions'),
             ]
           },
         ]
@@ -89,7 +104,9 @@ function buildDoc() {
             is_hierarchy_transparent: false, children: [
               { name: 'date', node_type: 'timestamp', parameters: { value: { String: '2026-08-04' } }, children: [], is_hierarchy_transparent: false },
               { name: 'intake', node_type: 'list', parameters: { entry: { Template: 'MealRecord' } }, children: [], is_hierarchy_transparent: false },
-              addButton('add_by_portions', '+ Add by portions'),
+              nested
+                ? buttonsInARow(buttonsInARow(addButton('add_by_portions', '+ Add by portions')))
+                : addButton('add_by_portions', '+ Add by portions'),
             ]
           },
         ]
@@ -101,7 +118,7 @@ function buildDoc() {
 describe('logging food on a day with nothing tracked', () => {
   beforeEach(() => setupDOM())
 
-  it('materializes the phantom day so the event carries a resolvable path', async () => {
+  const pressAddOnAMissingDay = async (nested) => {
     const { invoke } = await import('@tauri-apps/api/core')
     const events = []
     invoke.mockImplementation((cmd, args) => {
@@ -125,7 +142,7 @@ describe('logging food on a day with nothing tracked', () => {
     // Opened from somewhere, which every document a view is edited through is:
     // making a preview real is a write, and a write needs a file to reach.
     app.currentFile = '/documents/test.os'
-    app.currentDocument = buildDoc()
+    app.currentDocument = buildDoc(nested)
     app.renderer.renderDocument(app.currentDocument)
 
     const linkEl = Array.from(document.querySelectorAll('[data-path]')).find(el => {
@@ -163,5 +180,22 @@ describe('logging food on a day with nothing tracked', () => {
 
     const historyAfter = app.currentDocument[0].children.find(c => c.name === 'History').children.length
     expect(historyAfter, 'the phantom day should have become a real history entry').toBe(historyBefore + 1)
+
+    // And it has to name something. A path with no `<phantom>` in it is not the same as a path
+    // the document can follow - the backend looks for an `on click` on the node it names, and
+    // finding nothing there answers with the document untouched and says nothing about why.
+    const landed = app.renderer.findNodeByPath(app.currentDocument, sent)
+    expect(landed, `the event path names nothing: ${JSON.stringify(sent)}`).toBeTruthy()
+    expect(landed.node_type).toBe('button')
+  }
+
+  it('materializes the phantom day so the event carries a resolvable path', async () => {
+    await pressAddOnAMissingDay(false)
+  })
+
+  it('does the same when the buttons sit in a row of their own', async () => {
+    // Which is how the tracker has them. An unnamed wrapper is looked through by an address and
+    // not by an action path, so a path built for one scheme does not answer in the other.
+    await pressAddOnAMissingDay(true)
   })
 })

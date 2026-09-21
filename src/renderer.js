@@ -487,6 +487,39 @@ export class OverseerRenderer {
         } catch(_) { return { name: templateName || 'Item', node_type: 'div', parameters: {}, children: [] } }
     }
 
+    /// The path that reaches a child, given the path that reaches its parent.
+    ///
+    /// A wrapper adds nothing. A div with no name of its own is there to arrange what is inside
+    /// it, and nothing addresses it - the same rule the resolver and the serializer use, which
+    /// is `is_hierarchy_transparent` together with having no name, or a name that is only the
+    /// node type said twice.
+    ///
+    /// Where siblings share a name an ordinal tells them apart. Asked of one place rather than
+    /// written out twice, because it was written out twice: a phantom preview built its
+    /// children's paths without this, so an unnamed row of buttons contributed a segment called
+    /// `div`, and the press that followed named a node the document does not have. Nothing
+    /// failed - the backend looks for an `on click` where it is told, finds none, and answers
+    /// with the document untouched - so the button simply did nothing.
+    childPathFor(parent, child, path) {
+        const segBase = (child.name || child.node_type || child.type || 'child')
+        const isWrapper = !!(child.is_hierarchy_transparent === true
+            && (!child.name
+                || String(child.name).toLowerCase()
+                   === String(child.node_type || child.type || '').toLowerCase()))
+        if (isWrapper) return path
+        let seg = segBase
+        const siblings = Array.isArray(parent?.children) ? parent.children : null
+        if (siblings) {
+            const at = siblings.indexOf(child)
+            if (at >= 0) {
+                const sharing = siblings.slice(0, at)
+                    .filter((c) => (c?.name || c?.node_type || c?.type) === segBase).length
+                if (sharing > 0) seg = `${segBase}#${sharing}`
+            }
+        }
+        return [...path, seg]
+    }
+
     /// What a key reads as, once the list's `keyPrecision` has had its say.
     ///
     /// A day-precision history holds `2026-08-04` and is pointed at by a timestamp that may carry
@@ -1251,9 +1284,9 @@ export class OverseerRenderer {
                                     }
                                 } catch(_) { /* best-effort leaf fallback */ }
                                 const syntheticPath = path.concat(['<phantom>'])
+                                const previewParent = { children: mergedChildren }
                                 for (const ch of mergedChildren) {
-                                    const segBase = (ch.name || ch.node_type || ch.type || 'child')
-                                    const chPath = syntheticPath.concat([segBase])
+                                    const chPath = this.childPathFor(previewParent, ch, syntheticPath)
                                     this.renderNode(ch, element, inheritedForChildren, chPath)
                                 }
                                 // Post-pass: enforce inheritance visually for descendants without explicit override using CSS variable
@@ -1506,19 +1539,8 @@ export class OverseerRenderer {
                         const filteredChildren = children.filter(ch => this.shouldRenderChild(node, ch))
                         if (DEBUG_MODE) console.log('Rendering', filteredChildren.length, 'children for node:', node)
                         for (const child of filteredChildren) {
-                            // Build a logical, disambiguated path segment
-                            const segBase = (child.name || child.node_type || child.type || 'child')
-                            const isGenericTransparent = !!(child.is_hierarchy_transparent === true && (!child.name || String(child.name).toLowerCase() === String((child.node_type || child.type || '')).toLowerCase()))
-                            // Compute ordinal among raw siblings with same name to disambiguate duplicates (name#k)
-                            let seg = segBase
-                            if (!isGenericTransparent && Array.isArray(node.children)) {
-                                const idx = node.children.indexOf(child)
-                                if (idx >= 0) {
-                                    const k = node.children.slice(0, idx).filter(c => (c?.name || c?.node_type || c?.type) === segBase).length
-                                    if (k > 0) seg = `${segBase}#${k}`
-                                }
-                            }
-                            const childPath = isGenericTransparent ? path : [...path, seg]
+                            const seg = (child.name || child.node_type || child.type || 'child')
+                            const childPath = this.childPathFor(node, child, path)
                             if (DEBUG_MODE) {
                                 try {
                                     const dbgParent = node.name || node.node_type || node.type || 'unknown'
