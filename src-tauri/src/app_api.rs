@@ -656,7 +656,7 @@ pub fn execute_event_update(
         eprintln!("[PHASE] press load {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
     }
 
-    crate::actions::start_reporting();
+    crate::actions::start_reporting_and_settling();
     let phase = std::time::Instant::now();
     let outcome = ActionExecutor::execute_event(&mut nodes, &node_path, &event_name);
     if resolver::profile_enabled() {
@@ -854,7 +854,7 @@ fn change_document(
         load_document(as_it_stood.clone())?
     };
 
-    crate::actions::start_reporting();
+    crate::actions::start_reporting_and_settling();
     work(&mut nodes)?;
     let report = crate::actions::take_report();
 

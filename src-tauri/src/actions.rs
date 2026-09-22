@@ -64,6 +64,9 @@ pub struct Changed {
 }
 
 thread_local! {
+    /// Whether whoever asked is going to work the document out afterwards - see
+    /// `caller_will_settle_it`.
+    static CALLER_SETTLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Collected here rather than returned, because an action runs six levels down through
     /// `if` blocks and mount handlers, and threading a return through all of them would touch
     /// every arm to say nothing. The same shape as `dependencies::start_recording`.
@@ -71,7 +74,10 @@ thread_local! {
 }
 
 /// Start noting what actions change. Anything previously noted is discarded.
+///
+/// For a caller that does not work the document out afterwards, so the event settles it itself.
 pub fn start_reporting() {
+    CALLER_SETTLES.with(|it| it.set(false));
     REPORT.with(|r| *r.borrow_mut() = Some(Changed::default()));
 }
 
@@ -91,14 +97,20 @@ fn note_field(address: String) {
     });
 }
 
-/// Whether a caller is collecting a report and nothing has moved the document's shape.
+/// Whether whoever asked for this event is going to work the document out afterwards.
 ///
-/// Both of `execute_event_update`'s endings resolve - selectively when the graph can say what
-/// the change reaches, and by parsing the serialized document when it cannot - so the final
-/// resolve inside the event is work done twice. Only for that caller: anything that runs an
-/// event without asking for a report still settles the document itself.
+/// Said by the caller rather than guessed at. Three of the four callers that collect a report
+/// do settle - both of `execute_event_update`'s endings resolve, `change_document` resolves or
+/// asks the graph, and the bot's door resolves outright - so the resolve at the end of the event
+/// is work done twice for them. `execute_event_on_text` does not, and has to be told apart.
+///
+/// It used to be guessed at, as "a report is being collected and the shape has not moved", and
+/// the second half of that was wrong: a caller that settles does so whether the shape moved or
+/// not. What it cost was exactly the case the guess was meant to protect - pressing a button
+/// that appends worked the whole document out at the end of the event and again in the caller,
+/// which on the food tracker was 800 ms of the 1,600 a logged meal took.
 fn caller_will_settle_it() -> bool {
-    REPORT.with(|r| r.borrow().as_ref().map_or(false, |c| !c.structural))
+    CALLER_SETTLES.with(|it| it.get()) && REPORT.with(|r| r.borrow().is_some())
 }
 
 /// A write the document says is the viewer's. Noted and not made.
@@ -108,6 +120,15 @@ fn note_view_state(address: String, value: OverseerValue) {
             changed.view_state.push((address, value));
         }
     });
+}
+
+/// The same, for a caller that will work the document out once the event is done.
+///
+/// Saying so is what lets the event skip the resolve at its end. Say it only if you resolve
+/// afterwards on every path out, including the one where the shape moved.
+pub fn start_reporting_and_settling() {
+    start_reporting();
+    CALLER_SETTLES.with(|it| it.set(true));
 }
 
 /// The document's shape moved, so no address can be trusted to still mean what it did.
@@ -320,14 +341,17 @@ impl ActionExecutor {
         for child in owner.children.clone() {
             if child.node_type == "on" && child.name == event_name {
                 // Execute each action child in order
-                for action in child.children {
+                let in_order = child.children;
+                let last = in_order.len().saturating_sub(1);
+                for (at, action) in in_order.into_iter().enumerate() {
                     #[cfg(feature = "debug-resolver")]
                     eprintln!(
                         "[ACTIONS] Action node: type='{}' name='{}' params={:?}",
                         action.node_type, action.name, action.parameters
                     );
                     Self::execute_action(nodes, &owner_indices, &owner_eval_path, &action)?;
-                    // Re-resolve between actions only when the tree's shape may have moved.
+                    // Re-resolve between actions only when the tree's shape may have moved,
+                    // and only when there is a later action to traverse it.
                     //
                     // A full resolve is expensive - templates, formulas, chart series, sort
                     // keys, over every node - and running one after each action meant a
@@ -335,8 +359,16 @@ impl ActionExecutor {
                     // value cannot add or remove nodes, so template instantiation cannot
                     // change and the final resolve below already recomputes everything that
                     // depends on the values written. Structural actions genuinely do change
-                    // the tree that later actions traverse, so those still resolve in place.
-                    if Self::action_changes_structure(&action.node_type) {
+                    // the tree that later actions traverse, so those resolve in place.
+                    //
+                    // Between actions, though - not after the last one. The Add buttons on a
+                    // day hold a single `append` each, so resolving in place settled a tree
+                    // nothing was going to read before the caller settled it again: two full
+                    // resolves of the document for one press, and on the food tracker that was
+                    // 800 ms of the 1,600 a logged meal cost. A structural action at the end
+                    // leaves the change pending like any other, and the resolve below or the
+                    // caller answers for it.
+                    if Self::action_changes_structure(&action.node_type) && at < last {
                         resolver::resolve_document(nodes);
                         pending_changes = false;
                     } else {

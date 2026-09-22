@@ -1063,7 +1063,7 @@ impl DocumentRoot {
         let looking_at = crate::viewstate::overlay(session, name);
         let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
 
-        crate::actions::start_reporting();
+        crate::actions::start_reporting_and_settling();
         let (outcome, nodes, serialized) = DocumentManager::with_document(dir, || {
             // Named before the document is resolved, so a list showing only part of itself
             // keeps whatever this write is about - see `resolver::keeping_in_view`.
