@@ -167,6 +167,46 @@ body {
     box-shadow: none !important;
 }
 
+/* A div with `on click`, pressed wherever it is touched except where something inside keeps the
+   tap for itself. The renderer says which as the pointer moves - `would-press` over the parts that
+   would press it, `is-pressed` while held - so hovering a field that keeps its own taps does not
+   light the whole row up as though it were about to go. A veil over the row rather than a change
+   of its background, because the background is the document's to choose. */
+.overseer-pressable {
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.overseer-pressable.would-press {
+    cursor: pointer;
+}
+
+.overseer-pressable::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: currentColor;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+}
+
+@media (hover: hover) {
+    .overseer-pressable.would-press::after {
+        opacity: 0.05;
+    }
+}
+
+.overseer-pressable.is-pressed::after {
+    opacity: 0.12;
+}
+
+.overseer-pressable:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
 .overseer-list {
     background: var(--surface-color);
     border: 1px solid var(--border-color);

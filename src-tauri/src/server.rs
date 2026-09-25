@@ -219,12 +219,17 @@ impl DocumentRoot {
             Some((parent, _)) => parent,
             None => address,
         };
+        // Whether the thing pressed is still there, asked of the thing pressed. It used to be
+        // read off whether what surrounds it was, which is the same question for a button that
+        // removes the entry it sits on - but a pressed entry that removes itself is surrounded
+        // by its list, which stays, and it answered that nothing had gone.
+        let gone = crate::addressing::find(&nodes, address).is_none();
         match crate::addressing::find(&nodes, reported) {
             Some(node) => Ok(EventOutcome {
                 child_addresses: child_addresses(reported, node),
                 node: Some(node.clone()),
                 address: reported.to_string(),
-                gone: false,
+                gone,
             }),
             // Some buttons exist to remove the thing they sit on, and then there is nothing
             // left to describe.

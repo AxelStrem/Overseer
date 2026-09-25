@@ -1088,6 +1088,9 @@ export class OverseerRenderer {
             container.appendChild(element)
             if (DEBUG_MODE) console.log('Appended element to container')
 
+            // A div that says `on click` is pressed wherever it is touched - see `makePressable`.
+            try { this.makePressable(element, node) } catch (_) { /* it still shows, unpressable */ }
+
             // Apply background-color with correct precedence:
             // 1) Own computed background-color when present
             // 2) If no computed and raw is a literal color, use it
@@ -2394,6 +2397,153 @@ export class OverseerRenderer {
         return listItem
     }
 
+    /**
+     * A whole entry as the thing you press.
+     *
+     * A button is its own node, so pressing one means hitting it - and on a phone, ticking a
+     * shopping item off meant hitting a small button at the end of a row that is mostly not the
+     * button. A div that declares `on click` is pressed wherever it is touched instead.
+     *
+     * Wherever nothing inside it answers for itself, that is - see `whatTakesTheTap`. The press
+     * itself goes the way a button's does, by the div's path, and the backend never knew the
+     * difference: the owner of an `on click` was always any node.
+     *
+     * Not a link proxy: that draws a button of its own for an `on click`, in `renderEventControls`,
+     * and pressing the proxy as well would be the same action twice.
+     */
+    makePressable(element, node) {
+        const type = (node.node_type || node.type || '').toLowerCase()
+        const drawnAsAField = ['tab', 'list', 'string', 'text', 'tags', 'filter', 'int', 'float',
+            'date', 'timestamp', 'bool', 'button', 'checkbox', 'chart', 'mount'].includes(type)
+        if (drawnAsAField) return
+        if (!this.declaresEvent(node, 'click')) return
+        if (node.parameters && node.parameters.link !== undefined) return
+
+        element.classList.add('overseer-pressable')
+        element.setAttribute('role', 'button')
+        element.tabIndex = 0
+
+        const reachesThis = (event) => this.whatTakesTheTap(event.target, element) === element
+        const press = () => this.emitEvent(node, element, 'click')
+            .catch((err) => console.warn('Action execution failed:', err))
+
+        element.addEventListener('click', (event) => {
+            if (!reachesThis(event)) return
+            // A drag to select some text ends in a click, and copying a name is not buying it.
+            try {
+                const selected = window.getSelection()
+                if (selected && !selected.isCollapsed && element.contains(selected.anchorNode)) return
+            } catch (_) { /* no selection to speak of */ }
+            // Whatever let the tap through must not act on it as well: a checkbox that only
+            // shows something would flip under the finger and then flip back.
+            event.preventDefault()
+            press()
+        })
+        element.addEventListener('keydown', (event) => {
+            if (event.target !== element) return
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            press()
+        })
+
+        // Looking pressable where a tap would press it, and not over a field that keeps its own.
+        element.addEventListener('pointerover', (event) => {
+            element.classList.toggle('would-press', reachesThis(event))
+        })
+        element.addEventListener('pointerdown', (event) => {
+            if (reachesThis(event)) element.classList.add('is-pressed')
+        })
+        const letGo = () => element.classList.remove('is-pressed')
+        element.addEventListener('pointerup', letGo)
+        element.addEventListener('pointercancel', letGo)
+        element.addEventListener('pointerleave', () => {
+            letGo()
+            element.classList.remove('would-press')
+        })
+    }
+
+    /// Whether a node has an `on <event>` block - the backend's own test for having something to run.
+    declaresEvent(node, eventName) {
+        const kids = node && Array.isArray(node.children) ? node.children : []
+        return kids.some(c => c && (c.node_type || c.type) === 'on' && c.name === eventName)
+    }
+
+    /**
+     * Which of the things under a tap it belongs to.
+     *
+     * Walked outwards from what was touched to the pressable entry, and the first thing on the
+     * way that answers for itself keeps it. A control that can be changed does: a double tap on
+     * an amount has to edit it, and the first tap of the two must not have bought the thing on
+     * the way. Anything that cannot be changed from here lets it through - a worked-out name, a
+     * checkbox that only shows something, a date, a group or a list with no action of its own -
+     * so the whole of an entry is its button except the parts that are something else's. An
+     * entry inside another pressable entry is the first thing reached, so the innermost wins.
+     */
+    whatTakesTheTap(target, pressable) {
+        let el = target
+        while (el && el !== pressable) {
+            if (el.classList && el.classList.contains('overseer-pressable')) return el
+            if (this.answersForItself(el)) return el
+            el = el.parentElement
+        }
+        return pressable
+    }
+
+    answersForItself(el) {
+        if (!el || !el.tagName) return false
+        const tag = el.tagName
+        // What the page puts there itself: an editor open on a field, a link in some markdown.
+        if (tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable) return true
+        if (tag === 'A') return el.hasAttribute('href')
+        if (tag === 'INPUT') {
+            // A field's checkbox is decided by its field, which knows whether it can change.
+            if (el.type === 'checkbox' && el.parentElement && el.parentElement.closest('.overseer-field')) return false
+            return !el.disabled
+        }
+        if (tag === 'BUTTON') {
+            if (el.disabled) return false
+            // A document's button with nothing to do is as inert as a label.
+            const declared = this.nodeDrawnBy(el)
+            return declared ? this.declaresEvent(declared, 'click') : true
+        }
+        if (el.classList.contains('overseer-field')) {
+            const declared = this.nodeDrawnBy(el)
+            return declared ? this.canBeChangedHere(declared, el) : false
+        }
+        return false
+    }
+
+    /// The document node an element was drawn for, when it was drawn for one.
+    nodeDrawnBy(el) {
+        try {
+            const uid = el.dataset && el.dataset.uid
+            if (uid && this._uidToNode && this._uidToNode.has(uid)) return this._uidToNode.get(uid)
+            if (el.dataset && el.dataset.path) {
+                return this.findNodeByPath(window.app.currentDocument, JSON.parse(el.dataset.path))
+            }
+        } catch (_) { /* not one of ours */ }
+        return null
+    }
+
+    /**
+     * Whether a field can be changed where it is drawn.
+     *
+     * A date or a timestamp has no editor at all. A worked-out value has one, but it opens on the
+     * formula, which is not something anyone means to edit from a list row - so inside something
+     * pressable it counts as fixed, and passes its taps on rather than keeping them.
+     */
+    canBeChangedHere(node, el) {
+        const type = (node.node_type || node.type || '').toLowerCase()
+        if (!['string', 'text', 'int', 'float', 'bool', 'checkbox', 'tags'].includes(type)) return false
+        if (this.parameterHasFormula(node, 'value')) return false
+        return this.getEffectiveMutableMode(node, el) !== 'false'
+    }
+
+    /// A field that passes its taps to the entry it sits in cannot also answer a double tap.
+    passesItsTapsOn(el, node) {
+        return !!(el && el.closest && el.closest('.overseer-pressable')) && !this.canBeChangedHere(node, el)
+    }
+
     // Render simple controls for event handler blocks (e.g., an on click button)
     renderEventControls(node, container) {
         try {
@@ -2875,6 +3025,7 @@ export class OverseerRenderer {
         value.addEventListener('dblclick', () => {
             const mode = this.getEffectiveMutableMode(node, value)
             if (mode === 'false') return
+            if (this.passesItsTapsOn(value, node)) return
             if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.makeFieldEditable(value, node)
         })
@@ -2923,6 +3074,7 @@ export class OverseerRenderer {
         value.addEventListener('dblclick', () => {
             const mode = this.getEffectiveMutableMode(node, value)
             if (mode === 'false') return
+            if (this.passesItsTapsOn(value, node)) return
             if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             const hasFormula = node?.parameters && typeof node.parameters.value === 'object' && node.parameters.value?.Formula !== undefined
             if (hasFormula) {
@@ -3003,6 +3155,7 @@ export class OverseerRenderer {
         value.addEventListener('dblclick', () => {
             const mode = this.getEffectiveMutableMode(node, value)
             if (mode === 'false') return
+            if (this.passesItsTapsOn(value, node)) return
             if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.makeFieldEditable(value, node)
         })

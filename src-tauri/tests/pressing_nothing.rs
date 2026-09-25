@@ -31,7 +31,7 @@ fn sandbox(tag: &str) -> (Sandbox, DocumentRoot) {
     (Sandbox { root: root.clone() }, DocumentRoot::new(&root).expect("root"))
 }
 
-/// The first thing on the list, and the button that buys it.
+/// The first thing on the list, which is what is pressed to buy it.
 fn first_item(documents: &DocumentRoot) -> String {
     let list = documents.read_at("shopping.os", "shopping/List").expect("read the list");
     list.child_addresses.first().expect("the example ships with a list").clone()
@@ -48,10 +48,10 @@ fn the_event_on_the_end_of_the_address_is_refused() {
     let listed = counted(&documents, "shopping/List");
     let bought = counted(&documents, "shopping/History");
 
-    match documents.run_event("shopping.os", &format!("{item}/bought/click"), "click") {
+    match documents.run_event("shopping.os", &format!("{item}/click"), "click") {
         Err(RequestError::Rejected(said)) => {
             assert!(
-                said.contains(&format!("{item}/bought'")),
+                said.contains(&format!("{item}'")),
                 "it did not say what to press instead: {said}"
             );
         }
@@ -64,15 +64,15 @@ fn the_event_on_the_end_of_the_address_is_refused() {
 }
 
 #[test]
-fn the_button_itself_still_works() {
+fn the_entry_itself_still_works() {
     let (_dir, documents) = sandbox("works");
     let item = first_item(&documents);
     let listed = counted(&documents, "shopping/List");
     let bought = counted(&documents, "shopping/History");
 
     let outcome = documents
-        .run_event("shopping.os", &format!("{item}/bought"), "click")
-        .expect("the button should press");
+        .run_event("shopping.os", &item, "click")
+        .expect("the entry should press");
 
     assert!(outcome.gone, "the item removed itself, so it should report gone");
     assert_eq!(counted(&documents, "shopping/List"), listed - 1, "it should have left the list");

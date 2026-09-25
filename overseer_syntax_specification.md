@@ -317,6 +317,40 @@ Notes:
 - Nested content of `if { ... }` must be actions; field assignments inside action blocks follow the usual `- field = value` rules when used within `append`/`prepend` object initializers.
 - This conditional is available only within action contexts (e.g., inside `on click {}` or `on timeout {}` blocks).
 
+#### A whole entry as the thing you press
+
+A div can carry `on click` as well as a button can, and then the whole of it is pressed wherever
+it is touched - on a phone, a row of a list is a much bigger target than a button at the end of
+it.
+
+```overseer
+div Item (layout="horizontal") {
+    timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
+    string handle (hidden=true) = ""
+    string name = $(/shopping/Types.filter(|x| x/handle == ../handle)/name)
+    float amount = 1
+
+    on click {
+        append (list="/shopping/History") {
+            - handle = $(handle)
+            - amount = $(amount)
+        }
+        remove (from="/shopping/List", keyField="added", keyValue=$(added))
+    }
+}
+```
+
+The actions run from the div's own place, one level down from where a button inside it would
+stand - so a bare `$(amount)` is the entry's own field, where a button would say `$(../amount)`.
+
+Something inside the div that can be changed keeps its own taps, and nothing reaches the div: a
+field that can be edited, a checkbox that can be ticked, a button with an `on click` of its own, a
+link. Anything that cannot be changed lets the tap through to the div - a worked-out value, a
+field declared `mutable=false`, a checkbox that only shows something, a date, a group or a button
+with no action of its own. A worked-out value inside a pressable div does not open its formula on
+a double tap either, since its taps are the div's. An entry inside another pressable entry takes
+the tap itself, and the outer one does not see it.
+
 
 
 ### Showing a time as a duration

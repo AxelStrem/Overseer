@@ -8,9 +8,9 @@
 // same shops whether or not it is on the list today. An entry says which type, how much, and
 // anything worth remembering about this particular one.
 // -
-// Buying is a button rather than a message to the bot, because it happens in a shop with one
-// hand full. It moves the entry to History - the same two actions the bot would do, written
-// once in the document where the finger is.
+// Buying is a tap on the entry rather than a message to the bot, because it happens in a shop
+// with one hand full. It moves the entry to History - the same two actions the bot would do,
+// written once in the document where the finger is.
 // -
 // Duplicates are allowed: two entries of milk with different amounts are two things to buy.
 // Entries are keyed by when they were added, which is unique enough to be an address and does
@@ -65,25 +65,29 @@ tab shopping (label="Shopping", mutable=true) {
             tags shops_here (hidden=true, vocabulary="/shopping/Shops") = $(/shopping/Types.filter(|x| x/handle == ../handle)/shops)
             int available_here (hidden=true) = $(shops_here.filter(|s| s == /shopping/Selected/selected_shop).count())
 
-            string name (font-size=18px, width=30%) = $(/shopping/Types.filter(|x| x/handle == ../handle)/name)
+            string name (font-size=18px, width=44%) = $(/shopping/Types.filter(|x| x/handle == ../handle)/name)
             float amount (precision=2, format="trim", width=10%) = 1
             string commentary (width=38%) = ""
 
-            // Both halves of buying something, from one press.
-            button bought (label="bought", margin=0, width=14%) {
-                on click {
-                    append (list="/shopping/History") {
-                        - bought_at = $(now())
-                        - handle = $(../handle)
-                        - amount = $(../amount)
-                        - commentary = $(../commentary)
-                        // Which shop was being looked at when the button was pressed. Not
-                        // where it was necessarily bought - but the two are the same thing
-                        // in the only situation this button gets pressed in.
-                        - shop = $(/shopping/Selected/selected_shop)
-                    }
-                    remove (from="/shopping/List", keyField="added", keyValue=$(../added))
+            // Both halves of buying something, from one tap anywhere on the entry: on a phone,
+            // in a shop, the whole row is a target where a button at the end of it was not. The
+            // amount and the commentary keep their own taps, since they can be edited - the
+            // name and the space around it are the entry's.
+            //
+            // Run from the entry's own place, so its fields are named bare: `$(handle)` here is
+            // what `$(../handle)` was from a button inside it.
+            on click {
+                append (list="/shopping/History") {
+                    - bought_at = $(now())
+                    - handle = $(handle)
+                    - amount = $(amount)
+                    - commentary = $(commentary)
+                    // Which shop was being looked at when the entry was pressed. Not where it
+                    // was necessarily bought - but the two are the same thing in the only
+                    // situation it gets pressed in.
+                    - shop = $(/shopping/Selected/selected_shop)
                 }
+                remove (from="/shopping/List", keyField="added", keyValue=$(added))
             }
         }
 
