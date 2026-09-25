@@ -62,6 +62,34 @@ const DOCUMENT: &str = r#"tab project (label="P", mutable=true) {
         }
     }
 
+    // A form onto a list keyed by what is typed, which has to say no to an empty key and to one
+    // already taken - the way the project documents' tag form does.
+    div (hidden=true) {
+        div Label {
+            string tag = ""
+            string name = ""
+        }
+    }
+
+    list Labels (entry=<Label>, key="tag") {
+        - {
+            - tag = "bug"
+            - name = "bug"
+        }
+    }
+
+    div NewTag (layout="horizontal") {
+        textbox tag = ""
+        textbox name = ""
+        button add (label="+ tag") {
+            on click {
+                if (cond=$(../tag != "" && /project/Labels.filter(|x| x/tag == ../tag).count() == 0)) {
+                    append (list="/project/Labels", from="..")
+                }
+            }
+        }
+    }
+
     list Items (entry=<Item>, key="added") {
     }
 }
@@ -256,5 +284,57 @@ fn a_press_without_typing_is_the_press_it_always_was() {
             )
             .expect("a press without typing was refused");
         assert!(the_entry(&on_disk(&root)).contains("- added = "));
+    });
+}
+
+/// The tag form's press, with what is typed into it.
+fn press_tag(service: &DocumentRoot, typed: &[(&str, &str)]) -> Value {
+    let form = |field: &str| vec!["project".to_string(), "NewTag".into(), field.into()];
+    let typed: Vec<Value> = typed
+        .iter()
+        .map(|(field, text)| json!({ "node_path": form(field), "value": { "String": text } }))
+        .collect();
+    service
+        .command_for(
+            "alice",
+            Some("p.os"),
+            "run_overseer_event",
+            &json!({ "node_path": form("add"), "event_name": "click", "typed": typed }),
+        )
+        .expect("the press was refused")
+}
+
+fn tags(text: &str) -> Vec<String> {
+    let body = &text[text.find("list Labels").unwrap()..text.find("div NewTag").unwrap()];
+    body.lines()
+        .filter_map(|l| l.trim().strip_prefix("- tag = \"").map(|r| r.trim_end_matches('"').to_string()))
+        .collect()
+}
+
+#[test]
+fn a_form_adds_to_a_list_keyed_by_what_is_typed() {
+    serialised(|| {
+        let root = a_root("keyed");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        let answer = press_tag(&service, &[("tag", "net"), ("name", "networking")]);
+        assert_eq!(tags(&on_disk(&root)), vec!["bug", "net"]);
+        assert_eq!(answer.get("emptied").and_then(|e| e.as_array()).map(|e| e.len()), Some(2));
+    });
+}
+
+#[test]
+fn a_key_already_taken_or_empty_adds_nothing_and_empties_nothing() {
+    // The guard is the document's, in the `if`, reading what is typed the way any formula in a
+    // press does. Nothing copied means nothing emptied, so the boxes keep what was typed to be
+    // put right.
+    serialised(|| {
+        let root = a_root("guarded");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        let before = on_disk(&root);
+        let taken = press_tag(&service, &[("tag", "bug"), ("name", "again")]);
+        let empty = press_tag(&service, &[("tag", ""), ("name", "nameless")]);
+        assert_eq!(tags(&on_disk(&root)), vec!["bug"]);
+        assert_eq!(on_disk(&root), before, "a refused press wrote something");
+        assert!(taken.get("emptied").is_none() && empty.get("emptied").is_none(), "{:?} {:?}", taken, empty);
     });
 }

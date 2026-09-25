@@ -88,7 +88,10 @@ tab project (label="Project", mutable=true) {
             // each other read as an error. Both are assumed not to happen.
             string handle (label="id", font-size=11px, width=8%) = ""
 
-            string title (label="title", font-size=14px, width=28%) = ""
+            // In bold when there is something under it, so the shape of the plan shows in a list
+            // where every row is otherwise one line of the same weight.
+            string title (label="title", font-size=14px, width=28%,
+                          font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
             // Which larger task this is part of, by that task's handle. Empty for a task that
             // stands on its own, which is most of them.
@@ -394,6 +397,26 @@ tab project (label="Project", mutable=true) {
             - tag = "later"
             - name = "later"
             - colour = "#fbca04"
+        }
+    }
+
+    // A new tag, without editing the document.
+    //
+    // The same kind of form as the one for tasks: what is typed stays on the page until the press
+    // copies it into the list and empties the boxes. The tag is what items are marked with and
+    // the list's key, so the press does nothing when it is empty or already taken - the boxes keep
+    // what was typed, to be put right. An empty name or colour leaves the template's, the name
+    // being worth giving whenever the tag is terse.
+    div NewTag (layout="horizontal", margin=0, spacing=6, alignment="center") {
+        textbox tag (label="", placeholder="tag", width=22%) = ""
+        textbox name (label="", placeholder="shown as", width=36%) = ""
+        textbox colour (label="", placeholder="#rrggbb", width=22%) = ""
+        button add (label="+ tag", margin=0, width=12%) {
+            on click {
+                if (cond=$(../tag != "" && /project/Labels.filter(|x| x/tag == ../tag).count() == 0)) {
+                    append (list="/project/Labels", from="..")
+                }
+            }
         }
     }
 

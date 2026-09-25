@@ -4293,7 +4293,21 @@ export class OverseerRenderer {
                 fieldValue.style.setProperty('font-size', this.convertCssSizeValue(fontSize), 'important')
             })
         }
-        
+
+        // Bold or not, from a formula as readily as a size: a task with things under it reads
+        // in bold in the project documents, `$(../kids > 0 ? "bold" : "normal")`. Only a weight
+        // CSS knows is applied, so a formula not yet worked out is never written into the style.
+        const fontWeight = this.getParameterValue(node, 'font-weight')
+        if (fontWeight !== null && fontWeight !== undefined) {
+            const weight = String(fontWeight).trim().toLowerCase()
+            if (/^(normal|bold|bolder|lighter|[1-9]00)$/.test(weight)) {
+                element.style.setProperty('font-weight', weight, 'important')
+                element.querySelectorAll('.field-value').forEach(fieldValue => {
+                    fieldValue.style.setProperty('font-weight', weight, 'important')
+                })
+            }
+        }
+
         // Width parameter
         if (params.width) {
             element.style.width = this.convertCssSizeValue(params.width)

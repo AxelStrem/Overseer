@@ -501,6 +501,7 @@ div Container (background-color=rgb(0.2, 0.8, 0.5)) { // RGB triplets
 text Content (font-size=16px, font-color=blue) {    // Pixels and named colors
 text Content (font-size=120%, font-color=#333333) { // Percentages and hex
 text Content (font-size=1.2em, font-color=rgb(0.1, 0.1, 0.1)) { // Em units and RGB
+string title (font-weight=$(../kids > 0 ? "bold" : "normal")) = ""  // bold, normal, or 100-900
 
 // Fixed sizing with multiple units
 div FixedBox (width=200px, height=150px) {          // Pixel values
@@ -797,7 +798,7 @@ div Tasks {
 ## Reserved Keywords
 
 - **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
-- **Styling**: `background-color`, `font-size`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
+- **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
