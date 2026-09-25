@@ -473,6 +473,28 @@ tab tasks (label="Tasks", mutable=true) {
         }
     }
 
+    // A one-off task, without asking the bot.
+    //
+    // For the things no rule puts here. What is typed stays on the page until "add" copies it
+    // into a new task and empties the boxes; a box left empty leaves the template's value -
+    // difficulty 1, no priority and nothing gained per day. No rule, which is what makes it a
+    // one-off. No deadline either: a date typed into a box would have to be read as a moment,
+    // and "by Friday" is the end of Friday in your zone, which the bot is better placed to ask.
+    div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
+        textbox title (label="", placeholder="a one-off task", width=40%) = ""
+        textbox labels (label="", placeholder="tags", width=17%) = ""
+        textbox difficulty (label="", placeholder="difficulty", width=11%) = ""
+        textbox base_priority (label="", placeholder="priority", width=10%) = ""
+        textbox priority_gain (label="", placeholder="+/day", width=9%) = ""
+        button add (label="add", margin=0, width=9%) {
+            on click {
+                append (list="/tasks/Open", from="..") {
+                    - added = $(now())
+                }
+            }
+        }
+    }
+
     text rules_header (markdown=true) = "## Rules"
 
     list Rules (entry=<Rule>, key="handle", layout="vertical", spacing=6) {
