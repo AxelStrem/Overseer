@@ -780,6 +780,37 @@ body {
 }
 
 /* Editing */
+/* A textbox: drawn as the box it is, so it says it is there to be typed into, and a whole row's
+   height to aim at rather than a few pixels of empty value. */
+.textbox-input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 32px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: inherit;
+    background: var(--background-color);
+    color: var(--text-color);
+    outline: none;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.textbox-input::placeholder {
+    color: var(--text-secondary);
+}
+
+.textbox-input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+.textbox-input[readonly] {
+    border-style: dashed;
+    color: var(--text-secondary);
+}
+
 .field-editor {
     width: 100%;
     padding: 6px 8px;

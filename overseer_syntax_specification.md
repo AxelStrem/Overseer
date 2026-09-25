@@ -89,6 +89,7 @@ list Items (entry=string) {
 
 #### Primitive Types:
 - `string`: Text data (single line)
+- `textbox`: A box to type into - see "A form that fills an entry"
 - `text`: Multi-line text with markdown support
 - `int`: Integer numbers
 - `float`: Floating-point numbers
@@ -316,6 +317,44 @@ Notes:
 - `cond` should evaluate to a boolean. Standard formula comparisons and logical operations are supported.
 - Nested content of `if { ... }` must be actions; field assignments inside action blocks follow the usual `- field = value` rules when used within `append`/`prepend` object initializers.
 - This conditional is available only within action contexts (e.g., inside `on click {}` or `on timeout {}` blocks).
+
+#### A form that fills an entry
+
+A `textbox` is a field drawn as a box to type into. It takes the cursor with one tap, where a
+string is edited with a double one, and `placeholder` says what goes in it while it is empty.
+
+What is typed belongs to whoever is typing, and is never written to the file - the way
+`mutable="guarded"` works. The file says what the box starts with, through the usual means, a
+value or a formula, and that is all it ever says. A press sends the text along, so actions can
+read it; nothing else does.
+
+`from` on `append` or `prepend` fills the new entry from another node instead of naming each
+field in the block:
+
+```overseer
+div NewTask (layout="horizontal") {
+    textbox title (placeholder="what") = ""
+    textbox points (placeholder="points") = ""
+
+    button add (label="add") {
+        on click {
+            append (list="/project/Items", from="..") {
+                - added = $(now())
+            }
+        }
+    }
+}
+```
+
+The entry is still made from the list's template; the source only supplies values. Fields are
+matched by name - and by the names of the divs they sit in, with unnamed wrappers ignored on both
+sides - and each value is converted to the type the template gives that field: text to a number, a
+date or a flag, `3,5` as well as `3.5`. A value that cannot be converted, or an empty one, is left
+out, so the template's default stands. A field the block names itself is the block's. Fields the
+template does not have are ignored.
+
+The textboxes a copy read are emptied afterwards - back to what they start with - and a textbox
+anywhere else keeps what was typed into it.
 
 #### A whole entry as the thing you press
 
@@ -749,8 +788,8 @@ div Tasks {
 - **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
 - **Styling**: `background-color`, `font-size`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
-- **Content**: `markdown`, `hidden`, `entry`, `base`
-- **Actions**: `target`, `condition`, `template`, `active`, `at`
+- **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`
+- **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
 - **Mounts**: `source`, `lazy`, `mutable`

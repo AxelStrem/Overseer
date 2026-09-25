@@ -473,6 +473,12 @@ impl DocumentRoot {
                 let path = arg_strings(args, &["node_path", "nodePath"]);
                 let event = arg_str(args, &["event_name", "eventName"])
                     .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
+                // What is typed into the page's textboxes, for this press to read. Absent is
+                // nothing typed, not a mistake.
+                let typed: Vec<app_api::ValueWrite> = match args.get("typed") {
+                    Some(v) if !v.is_null() => from_value(args, "typed")?,
+                    _ => Vec::new(),
+                };
                 as_json(
                     app_api::run_event_at(
                         at.to_string_lossy().as_ref(),
@@ -480,6 +486,7 @@ impl DocumentRoot {
                         path,
                         event,
                         session,
+                        typed,
                     )
                     .map_err(|e| RequestError::Failed(format!("could not run the event: {:?}", e)))?,
                 )

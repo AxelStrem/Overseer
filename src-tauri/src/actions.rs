@@ -131,6 +131,168 @@ pub fn start_reporting_and_settling() {
     CALLER_SETTLES.with(|it| it.set(true));
 }
 
+thread_local! {
+    /// The textboxes a copy took its values from during this press, named the way the page named
+    /// them - see `hold_typed_text`.
+    static EMPTIED: std::cell::RefCell<Vec<Vec<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Text typed into textboxes, held on the document for the length of one press.
+///
+/// What a textbox holds while someone types belongs to the page, never to the file: the file says
+/// what the box starts with, and that is all it ever says. But a press has to be able to read what
+/// was typed - copying a form into a new entry is the reason textboxes exist - so the page sends
+/// the text along with the press, and it is put on the boxes here, where actions and the formulas
+/// in them read it like any other value. `let_go_of_typed_text` puts back what the file said
+/// before anything is worked out, cached or written, so the text never gets further than the press.
+///
+/// Only onto textboxes. Anything else named here is left alone: this is a way to say what was
+/// typed, not a way to write a field without it being written.
+pub struct TypedText {
+    held: std::collections::HashMap<String, (Option<OverseerValue>, Option<OverseerValue>)>,
+}
+
+/// The marker a held textbox carries, saying which of the page's paths it is.
+const TYPED_FROM: &str = "_typed_from";
+
+pub fn hold_typed_text(nodes: &mut Vec<OverseerNode>, typed: &[(Vec<String>, OverseerValue)]) -> TypedText {
+    EMPTIED.with(|e| e.borrow_mut().clear());
+    let mut held = std::collections::HashMap::new();
+    for (path, value) in typed {
+        let Some((_, indices)) = ActionExecutor::get_node_mut_by_path(nodes, path) else { continue };
+        let Some(node) = ActionExecutor::get_node_mut_by_indices(nodes, &indices) else { continue };
+        if node.node_type != "textbox" {
+            continue;
+        }
+        let text = match value {
+            OverseerValue::String(s) => s.clone(),
+            other => match crate::actions::as_text(other) {
+                Some(s) => s,
+                None => continue,
+            },
+        };
+        let key = serde_json::to_string(path).unwrap_or_default();
+        held.insert(
+            key.clone(),
+            (node.parameters.get("value").cloned(), node.parameters.get("_computed_value").cloned()),
+        );
+        node.parameters.insert("value".to_string(), OverseerValue::String(text));
+        node.parameters.remove("_computed_value");
+        node.parameters.insert(TYPED_FROM.to_string(), OverseerValue::String(key));
+    }
+    TypedText { held }
+}
+
+/// Put back what the file says the textboxes start with - anywhere a held one ended up, since a
+/// whole-node copy can have taken one somewhere else.
+pub fn let_go_of_typed_text(nodes: &mut Vec<OverseerNode>, typed: TypedText) {
+    if typed.held.is_empty() {
+        return;
+    }
+    fn walk(nodes: &mut [OverseerNode], held: &std::collections::HashMap<String, (Option<OverseerValue>, Option<OverseerValue>)>) {
+        for node in nodes.iter_mut() {
+            if let Some(OverseerValue::String(key)) = node.parameters.remove(TYPED_FROM) {
+                if let Some((value, computed)) = held.get(&key) {
+                    match value {
+                        Some(v) => node.parameters.insert("value".to_string(), v.clone()),
+                        None => node.parameters.remove("value"),
+                    };
+                    match computed {
+                        Some(v) => node.parameters.insert("_computed_value".to_string(), v.clone()),
+                        None => node.parameters.remove("_computed_value"),
+                    };
+                }
+            }
+            walk(&mut node.children, held);
+        }
+    }
+    walk(nodes, &typed.held);
+}
+
+/// The textboxes a copy used during this press, for the page to empty. Taken once.
+pub fn take_emptied() -> Vec<Vec<String>> {
+    EMPTIED.with(|e| std::mem::take(&mut *e.borrow_mut()))
+}
+
+fn note_emptied(key: &str) {
+    if let Ok(path) = serde_json::from_str::<Vec<String>>(key) {
+        EMPTIED.with(|e| {
+            let mut e = e.borrow_mut();
+            if !e.contains(&path) {
+                e.push(path);
+            }
+        });
+    }
+}
+
+/// A value as text, for a field that holds text or for a conversion that starts from it.
+pub(crate) fn as_text(value: &OverseerValue) -> Option<String> {
+    match value {
+        OverseerValue::String(s) | OverseerValue::Date(s) | OverseerValue::Timestamp(s) => Some(s.clone()),
+        OverseerValue::Integer(n) => Some(n.to_string()),
+        OverseerValue::Float(f) => Some(if f.fract() == 0.0 && f.abs() < 1e15 {
+            format!("{}", *f as i64)
+        } else {
+            format!("{}", f)
+        }),
+        OverseerValue::Boolean(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// A value as a field of this type holds it, when it can be said that way.
+///
+/// What lets a form of textboxes fill an entry: everything typed is text, and the entry wants a
+/// number here and a date there. `None` when it cannot be converted - and for nothing at all, so an
+/// empty box leaves the template's own default standing rather than writing an empty one over it.
+pub(crate) fn converted(value: &OverseerValue, to: &str) -> Option<OverseerValue> {
+    let text = as_text(value)?;
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    // A decimal comma, as a phone keyboard in half of Europe types it.
+    let number = || t.replace(',', ".");
+    match to {
+        "string" | "text" | "textbox" | "tags" => Some(OverseerValue::String(text.clone())),
+        "int" => match value {
+            OverseerValue::Integer(n) => Some(OverseerValue::Integer(*n)),
+            _ => number()
+                .parse::<i64>()
+                .ok()
+                .or_else(|| number().parse::<f64>().ok().filter(|f| f.fract() == 0.0 && f.abs() < 9e15).map(|f| f as i64))
+                .map(OverseerValue::Integer),
+        },
+        "float" => match value {
+            OverseerValue::Float(f) => Some(OverseerValue::Float(*f)),
+            OverseerValue::Integer(n) => Some(OverseerValue::Float(*n as f64)),
+            _ => number().parse::<f64>().ok().filter(|f| f.is_finite()).map(OverseerValue::Float),
+        },
+        "bool" | "checkbox" => match t.to_ascii_lowercase().as_str() {
+            "true" | "yes" | "1" | "on" => Some(OverseerValue::Boolean(true)),
+            "false" | "no" | "0" | "off" => Some(OverseerValue::Boolean(false)),
+            _ => None,
+        },
+        "date" => {
+            let day = t.get(..10).unwrap_or(t);
+            chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
+                .ok()
+                .filter(|_| t.len() == 10 || chrono::DateTime::parse_from_rfc3339(t).is_ok())
+                .map(|_| OverseerValue::Date(day.to_string()))
+        }
+        "timestamp" => {
+            if chrono::DateTime::parse_from_rfc3339(t).is_ok() {
+                Some(OverseerValue::Timestamp(t.to_string()))
+            } else {
+                chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d")
+                    .ok()
+                    .map(|_| OverseerValue::Timestamp(format!("{}T00:00:00Z", t)))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// The document's shape moved, so no address can be trusted to still mean what it did.
 fn note_structural() {
     REPORT.with(|r| {
@@ -987,13 +1149,14 @@ impl ActionExecutor {
                 let value_opt = action.parameters.get("value").cloned();
                 // Pass action block overrides to append semantics
                 let overrides = action.children.clone();
-                Self::append_to_list(
+                Self::append_to_list_from(
                     nodes,
                     owner_path,
                     &list_path,
                     template_name_opt.as_deref(),
                     value_opt,
                     &overrides,
+                    action.parameters.get("from"),
                 )
             }
             "prepend" => {
@@ -1032,6 +1195,7 @@ impl ActionExecutor {
                     template_name_opt.as_deref(),
                     value_opt,
                     &overrides,
+                    action.parameters.get("from"),
                 )
             }
             "move" => {
@@ -2688,6 +2852,93 @@ impl ActionExecutor {
         Self::set_value(nodes, &[], &[], target, value)
     }
 
+    /// The overrides a copy from `from` makes, for an entry made from this template.
+    ///
+    /// `append (list=..., from="..")` fills the new entry from another node - a div of textboxes,
+    /// in the case it was made for, so a form can add a list entry in one press without the
+    /// action naming each field. The entry is still made from the list's template; the source only
+    /// supplies values. A field is matched by its name, and by the names of the divs it sits in,
+    /// with unnamed wrappers ignored on both sides, since those arrange rather than mean anything.
+    /// The template's type is kept where the two differ and the value converted to it where it can
+    /// be - text into a number, a date, a flag - and left out where it cannot, or where there is
+    /// nothing in it, so the template's default stands. A field the action's own block names is
+    /// the block's: `- added = $(now())` beside a copy says what the form does not.
+    ///
+    /// The textboxes read here are noted, so the page can empty them once the press is done.
+    fn overrides_copied_from(
+        snapshot: &Vec<OverseerNode>,
+        owner_path: &[String],
+        from: &OverseerValue,
+        template: &OverseerNode,
+        block: &[OverseerNode],
+    ) -> Result<Vec<OverseerNode>, OverseerError> {
+        let from_path = match Self::evaluate_in_context(from, owner_path, snapshot)? {
+            OverseerValue::String(s) => s,
+            other => {
+                return Err(OverseerError::ValidationError(format!(
+                    "from must name a path, got {:?}",
+                    other
+                )))
+            }
+        };
+        let (segments, _param, anchored) = Self::split_path_and_param(&from_path);
+        let source = Self::resolve_target_indices(snapshot, owner_path, anchored, &segments)
+            .and_then(|at| Self::get_node_ref_by_indices(snapshot, &at))
+            .ok_or_else(|| OverseerError::ValidationError(format!("Source not found: {}", from_path)))?;
+
+        const HOLDS_A_VALUE: [&str; 10] =
+            ["string", "text", "textbox", "int", "float", "bool", "checkbox", "date", "timestamp", "tags"];
+        fn is_wrapper(node: &OverseerNode) -> bool {
+            node.is_hierarchy_transparent && (node.name.is_empty() || node.name == node.node_type)
+        }
+        /// Every field under a node, by the names that lead to it.
+        fn fields<'a>(node: &'a OverseerNode, trail: &mut Vec<String>, out: &mut Vec<(String, &'a OverseerNode)>) {
+            for child in &node.children {
+                if HOLDS_A_VALUE.contains(&child.node_type.as_str()) {
+                    if !child.name.is_empty() {
+                        trail.push(child.name.clone());
+                        out.push((trail.join("/"), child));
+                        trail.pop();
+                    }
+                } else if child.node_type == "list" || child.node_type == "on" || child.node_type == "button" {
+                    // What a form holds besides its fields: the button that sends it, and lists,
+                    // which are not a value to copy.
+                } else if is_wrapper(child) {
+                    fields(child, trail, out);
+                } else if !child.name.is_empty() {
+                    trail.push(child.name.clone());
+                    fields(child, trail, out);
+                    trail.pop();
+                }
+            }
+        }
+        let mut wanted = Vec::new();
+        fields(template, &mut Vec::new(), &mut wanted);
+        let mut offered = Vec::new();
+        fields(source, &mut Vec::new(), &mut offered);
+
+        let said_by_the_block: Vec<&str> = block.iter().map(|o| o.name.as_str()).collect();
+        let mut values = std::collections::HashMap::new();
+        for (path, field) in offered {
+            if let Some(OverseerValue::String(key)) = field.parameters.get(TYPED_FROM) {
+                note_emptied(key);
+            }
+            let first = path.split('/').next().unwrap_or("");
+            if said_by_the_block.contains(&first) {
+                continue;
+            }
+            let Some((_, into)) = wanted.iter().find(|(p, _)| *p == path) else { continue };
+            let value = field
+                .parameters
+                .get("_computed_value")
+                .or_else(|| field.parameters.get("value"));
+            if let Some(v) = value.and_then(|v| converted(v, &into.node_type)) {
+                values.insert(path, v);
+            }
+        }
+        Ok(crate::app_api::entry_overrides(&values))
+    }
+
     fn append_to_list(
         nodes: &mut Vec<OverseerNode>,
         owner_path: &[String],
@@ -2695,6 +2946,18 @@ impl ActionExecutor {
         template_name: Option<&str>,
         value_opt: Option<OverseerValue>,
         overrides: &Vec<OverseerNode>,
+    ) -> Result<(), OverseerError> {
+        Self::append_to_list_from(nodes, owner_path, list_path, template_name, value_opt, overrides, None)
+    }
+
+    fn append_to_list_from(
+        nodes: &mut Vec<OverseerNode>,
+        owner_path: &[String],
+        list_path: &str,
+        template_name: Option<&str>,
+        value_opt: Option<OverseerValue>,
+        overrides: &Vec<OverseerNode>,
+        from: Option<&OverseerValue>,
     ) -> Result<(), OverseerError> {
         // Shape, not value: what this does moves the addresses of everything after
         // it, so nothing the graph knows survives it.
@@ -2754,10 +3017,15 @@ impl ActionExecutor {
                     // Using current length+1 reflects the creation order and matches resolver's reload naming convention.
                     let ordinal = list_node.children.len() + 1;
                     new_item.name = format!("{}__{}", template_def.name, ordinal);
-                    // Apply evaluated overrides from action block
+                    // Apply evaluated overrides from action block, after whatever a copy supplies
+                    let mut all = match from {
+                        Some(from) => Self::overrides_copied_from(&snapshot, owner_path, from, template_def, overrides)?,
+                        None => Vec::new(),
+                    };
+                    all.extend(overrides.iter().cloned());
                     Self::apply_overrides_evaluated(
                         &mut new_item,
-                        overrides,
+                        &all,
                         owner_path,
                         &snapshot,
                     )?;
@@ -2820,6 +3088,7 @@ impl ActionExecutor {
         template_name: Option<&str>,
         value_opt: Option<OverseerValue>,
         overrides: &Vec<OverseerNode>,
+        from: Option<&OverseerValue>,
     ) -> Result<(), OverseerError> {
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let snapshot = nodes.clone();
@@ -2872,9 +3141,14 @@ impl ActionExecutor {
                     // Name as if appended to the front: use current length+1 to maintain unique names
                     let ordinal = list_node.children.len() + 1;
                     new_item.name = format!("{}__{}", template_def.name, ordinal);
+                    let mut all = match from {
+                        Some(from) => Self::overrides_copied_from(&snapshot, owner_path, from, template_def, overrides)?,
+                        None => Vec::new(),
+                    };
+                    all.extend(overrides.iter().cloned());
                     Self::apply_overrides_evaluated(
                         &mut new_item,
-                        overrides,
+                        &all,
                         owner_path,
                         &snapshot,
                     )?;

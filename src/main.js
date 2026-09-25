@@ -524,6 +524,8 @@ export class OverseerApp {
             // A newly opened document's charts should animate in, unlike a re-render of the
             // one already on screen.
             try { this.renderer.resetChartAnimations() } catch(_) {}
+            // What was typed into another document's textboxes means nothing in this one.
+            try { this.renderer.forgetTypedText() } catch(_) {}
             this._adoptDocumentPreserveRoot(overseerDocument)
             this._originalText = content
             this.isDocumentModified = false

@@ -64,6 +64,8 @@ export class OverseerRenderer {
         // Track newly materialized targets so updates apply to the exact node, not a loosely-resolved path
     // Default top-level mutability: disabled by default (can be enabled per-node via mutable=true or inherited)
     this._defaultTopLevelMutable = false
+        // What is typed into textboxes, by path - see `createTextboxElement`.
+        this._typed = new Map()
     }
 
     // Compute effective mutability mode at a specific path within a provided document tree.
@@ -1109,7 +1111,7 @@ export class OverseerRenderer {
                         : null)
 
                 // Controls/fields should not force inherit to keep native look unless explicitly set
-                const skipBgInherit = ['button','checkbox','string','text','int','float','bool','date','timestamp'].includes(nodeTypeLower)
+                const skipBgInherit = ['button','checkbox','string','textbox','text','int','float','bool','date','timestamp'].includes(nodeTypeLower)
                 const effectiveBg = (ownEffectiveBg !== null && ownEffectiveBg !== undefined)
                     ? ownEffectiveBg
                     : (!skipBgInherit ? (inheritedStyles.backgroundColor ?? null) : null)
@@ -1657,6 +1659,8 @@ export class OverseerRenderer {
                 return this.createListItemElement(node)
             case 'string':
                 return this.createStringElement(node)
+            case 'textbox':
+                return this.createTextboxElement(node)
             case 'text':
                 return this.createTextElement(node)
             case 'tags':
@@ -2413,7 +2417,7 @@ export class OverseerRenderer {
      */
     makePressable(element, node) {
         const type = (node.node_type || node.type || '').toLowerCase()
-        const drawnAsAField = ['tab', 'list', 'string', 'text', 'tags', 'filter', 'int', 'float',
+        const drawnAsAField = ['tab', 'list', 'string', 'textbox', 'text', 'tags', 'filter', 'int', 'float',
             'date', 'timestamp', 'bool', 'button', 'checkbox', 'chart', 'mount'].includes(type)
         if (drawnAsAField) return
         if (!this.declaresEvent(node, 'click')) return
@@ -2534,8 +2538,9 @@ export class OverseerRenderer {
      */
     canBeChangedHere(node, el) {
         const type = (node.node_type || node.type || '').toLowerCase()
-        if (!['string', 'text', 'int', 'float', 'bool', 'checkbox', 'tags'].includes(type)) return false
-        if (this.parameterHasFormula(node, 'value')) return false
+        if (!['string', 'textbox', 'text', 'int', 'float', 'bool', 'checkbox', 'tags'].includes(type)) return false
+        // A textbox's worked-out value is only where it starts; what is typed goes over it.
+        if (type !== 'textbox' && this.parameterHasFormula(node, 'value')) return false
         return this.getEffectiveMutableMode(node, el) !== 'false'
     }
 
@@ -3038,6 +3043,78 @@ export class OverseerRenderer {
     this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
+    }
+
+    /**
+     * A box to type into.
+     *
+     * A string is edited with a double tap on a value that is mostly for reading, which is right
+     * for a string and wrong for something whose whole purpose is to be filled in - a form, above
+     * all, where every field is empty and an empty string is a few pixels wide. This is drawn as
+     * the box it is and takes the cursor with one tap.
+     *
+     * What is typed belongs to the page and is never written to the file. The file says what the
+     * box starts with, through the usual means - a value, or a formula - and that is all it ever
+     * says. The text is held here by path, so a repaint does not lose it, and sent along with a
+     * press, which is the only time the backend sees it: `append (from=...)` copying a form into a
+     * new entry is what it is for. A press that copied a box says so, and the box is emptied - see
+     * `emptyTextboxes`.
+     */
+    createTextboxElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field textbox-field'
+
+        const labelText = this.getParameterValue(node, 'label')
+        if (labelText) {
+            const label = document.createElement('label')
+            label.textContent = labelText
+            container.appendChild(label)
+        }
+
+        const input = document.createElement('input')
+        input.type = 'text'
+        input.className = 'textbox-input'
+        const placeholder = this.getParameterValue(node, 'placeholder')
+        if (placeholder) input.placeholder = String(placeholder)
+        const key = JSON.stringify(Array.isArray(node.__overseer_path) ? node.__overseer_path : [])
+        const typed = this._typed.get(key)
+        const starting = this.getNodeValue(node)
+        input.value = typed !== undefined ? typed : (starting === null || starting === undefined ? '' : String(starting))
+
+        if (this.getEffectiveMutableMode(node, container) === 'false') {
+            input.readOnly = true
+        } else {
+            input.addEventListener('input', () => { this._typed.set(key, input.value) })
+        }
+        container.appendChild(input)
+
+        this.applyLayoutStyles(container, node)
+        this.applyFieldDefaultStyles(container, node)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    /// Everything typed, as a press sends it: each path once, in the one spelling the door takes.
+    typedText() {
+        const out = []
+        for (const [key, text] of this._typed) {
+            try { out.push({ node_path: JSON.parse(key), value: { String: text } }) } catch (_) { /* not a path */ }
+        }
+        return out
+    }
+
+    /// Forget what was typed, for a document that is not this one.
+    forgetTypedText() {
+        this._typed = new Map()
+    }
+
+    /// Put the boxes a press copied from back to what they start with.
+    emptyTextboxes(paths) {
+        for (const path of paths || []) {
+            if (!Array.isArray(path)) continue
+            this._typed.delete(JSON.stringify(path))
+            try { this.rerenderSubtree(window.app.currentDocument, path) } catch (_) { /* repainted with the rest */ }
+        }
     }
 
     createTextElement(node) {
@@ -6235,6 +6312,8 @@ export class OverseerRenderer {
         // Whether this press was sent as an instruction and is therefore already written. Both
         // endings of the press need to know, and they are in different scopes.
         let writtenAsAnInstruction = false
+        // The textboxes the press copied from, which the page empties once it has repainted.
+        let emptied = []
         let updated = null
         try {
             // Sanitize nodes: deep clone shallowly to strip any live references / accidental arrays in fields.
@@ -6288,13 +6367,17 @@ export class OverseerRenderer {
             // the result, so a meal the bot logged while this page was open is still there
             // afterwards. It is also the only way the press can be one step to take back: a
             // press followed by a save of the whole document was two writes saying one thing.
+            //
+            // With whatever is typed into the textboxes: the backend has no other way to know, and
+            // a form copied into a new entry is exactly a press that has to.
             const asAnInstruction = window.app.currentFile
                 ? {
                     path: window.app.currentFile,
                     node_path: path,
                     nodePath: path,
                     event_name: eventName,
-                    eventName
+                    eventName,
+                    typed: this.typedText()
                 }
                 : null
             if (asAnInstruction || knownText !== null) {
@@ -6329,6 +6412,9 @@ export class OverseerRenderer {
                     // or its next save is refused for being built on a document it moved.
                     writtenAsAnInstruction = true
                     window.app.alreadyWritten && window.app.alreadyWritten(update)
+                    // Forgotten now, so whatever is drawn next draws them empty.
+                    emptied = Array.isArray(update.emptied) ? update.emptied : []
+                    for (const p of emptied) this._typed.delete(JSON.stringify(p))
                 }
                 if (update && Array.isArray(update.changes)) {
                     window.app._currentText = typeof update.text === 'string' ? update.text : null
@@ -6347,6 +6433,8 @@ export class OverseerRenderer {
                     if (!asAnInstruction) {
                         window.app.markDocumentModified && window.app.markDocumentModified(true)
                     }
+                    // Nothing about them changed in the document, so the repaint above left them.
+                    this.emptyTextboxes(emptied)
                     return
                 }
                 if (update && Array.isArray(update.nodes)) {

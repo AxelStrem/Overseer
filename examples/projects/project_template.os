@@ -257,18 +257,26 @@ tab project (label="Project", mutable=true) {
     div (layout="horizontal", margin=0, spacing=10, alignment="center") {
 
         filter (target="/project/Items", text="title, commentary, handle", tags="labels",
-                status="done", vocabulary="/project/Labels", label="find", width=80%) { }
+                status="done", vocabulary="/project/Labels", label="find", width=100%) { }
+    }
 
-        // A new task, without editing the document or asking the bot.
-        //
-        // It arrives with nothing but the moment it was added, which is its key, and every
-        // other field at whatever the template says - one point in particular, so whatever it
-        // is put under has something to divide by before anything else is typed. That is the
-        // point of it: the row appears at the top of the list - newest first - and is filled in
-        // by typing into it.
-        button add (label="+ task", margin=0, width=20%) {
+    // A new task, without editing the document or asking the bot.
+    //
+    // Filled in here and added in one press. What is typed into these boxes is the page's and
+    // never the file's, so a half-written task is not saved, backed up or seen by the bot; the
+    // press copies the boxes into a new entry by their names, turns the points into a number, and
+    // empties them. A box left empty leaves the template's value - one point in particular, so
+    // whatever the task is put under has something to divide by. The moment it was added is its
+    // key, and the block says that rather than the form.
+    div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
+        textbox handle (label="", placeholder="id", width=11%) = ""
+        textbox title (label="", placeholder="what needs doing", width=38%) = ""
+        textbox parent (label="", placeholder="under", width=11%) = ""
+        textbox labels (label="", placeholder="tags", width=16%) = ""
+        textbox points (label="", placeholder="pts", width=7%) = ""
+        button add (label="+ task", margin=0, width=12%) {
             on click {
-                append (list="/project/Items") {
+                append (list="/project/Items", from="..") {
                     - added = $(now())
                 }
             }

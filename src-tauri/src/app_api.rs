@@ -544,6 +544,13 @@ pub struct ResolvedUpdate {
     pub wrote: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_text: Option<String>,
+    /// Textboxes a press copied from, named as the page named them, for the page to empty.
+    ///
+    /// What is typed into one lives in the page and reaches the backend only with a press - see
+    /// `actions::hold_typed_text` - so nothing here can empty it. Saying which were used is the
+    /// most it can do.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emptied: Vec<Vec<String>>,
 }
 
 /// The document as its own text reads, rather than as it happens to sit in memory.
@@ -605,6 +612,7 @@ fn finish_update_with(
                 view_state: Vec::new(),
                 wrote: false,
                 file_text: None,
+                emptied: Vec::new(),
             })
         }
         None => {
@@ -617,6 +625,7 @@ fn finish_update_with(
                 view_state: Vec::new(),
                 wrote: false,
                 file_text: None,
+                emptied: Vec::new(),
             })
         }
     }
@@ -1127,16 +1136,30 @@ pub fn write_values_at(
 }
 
 /// Run one handler, named the same way.
+///
+/// `typed` is what the page's textboxes hold as the press is made. It is put on them for the
+/// length of the press and taken off again before anything is worked out or written - see
+/// `actions::hold_typed_text` - and the answer names the ones a copy used, for the page to empty.
 pub fn run_event_at(
     path: &str,
     document: &str,
     node_path: Vec<String>,
     event_name: String,
     session: &str,
+    typed: Vec<ValueWrite>,
 ) -> Result<ResolvedUpdate> {
-    change_document(path, document, session, move |nodes| {
-        crate::actions::ActionExecutor::execute_event(nodes, &node_path, &event_name).map(|_| ())
-    })
+    let emptied = std::cell::RefCell::new(Vec::new());
+    let mut update = change_document(path, document, session, |nodes| {
+        let typed: Vec<(Vec<String>, OverseerValue)> =
+            typed.into_iter().map(|t| (t.node_path, t.value)).collect();
+        let held = crate::actions::hold_typed_text(nodes, &typed);
+        let ran = crate::actions::ActionExecutor::execute_event(nodes, &node_path, &event_name);
+        crate::actions::let_go_of_typed_text(nodes, held);
+        *emptied.borrow_mut() = crate::actions::take_emptied();
+        ran.map(|_| ())
+    })?;
+    update.emptied = emptied.into_inner();
+    Ok(update)
 }
 
 /// Whether the file still says what the caller was working from.
