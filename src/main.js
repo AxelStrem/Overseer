@@ -1464,13 +1464,17 @@ tab Main {
             // None named is a different thing and still goes the old way. Those calls are not
             // writes - something asked for the derived values to be worked out again - so there
             // is nothing to name.
+            //
+            // Each value names its path once. The door takes `node_path` or `nodePath` for it,
+            // and a message holding both is refused as a duplicate field - which is what every
+            // field edit did for a while, falling back to sending the whole text, saving the whole
+            // document, and coming back without the order of any sorted list on the page.
             const named = Object.keys(changedValuesMap)
             const instruction = (this.currentFile && named.length >= 1)
                 ? {
                     path: this.currentFile,
                     values: named.map((path) => ({
                         node_path: path.split('/').filter(Boolean),
-                        nodePath: path.split('/').filter(Boolean),
                         value: changedValuesMap[path]
                     }))
                 }

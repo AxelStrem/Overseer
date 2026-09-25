@@ -294,6 +294,23 @@ describe('a change goes up as an instruction, not as a document', () => {
       .toHaveLength(0)
   })
 
+  it('names each path once, in the spelling the door takes', async () => {
+    // The door takes `node_path` or `nodePath` and refuses a value that says both, as a
+    // duplicate field. Every value said both for a while: every field edit was refused, fell back
+    // to sending the whole text, and came back with each sorted list in the order of the file.
+    // The other half of this is `a_value_names_its_path_once` on the Rust side.
+    const app = withAField()
+    invoke.mockImplementation((cmd) =>
+      cmd === 'write_overseer_values'
+        ? Promise.resolve({ text: 'TEXT', changes: [], nodes: null })
+        : Promise.resolve(null))
+
+    await app.reevaluateDocumentSelective(['day/n'], [{ path: 'day/n', oldValue: 1, newValue: 2 }])
+
+    const [value] = callsTo('write_overseer_values')[0][1].values
+    expect(Object.keys(value).sort()).toEqual(['node_path', 'value'])
+  })
+
   it('still sends the document when the change names no value at all', async () => {
     // Not every call is a write. Some say only that something changed and the derived values
     // want working out again, and those have nothing to name.

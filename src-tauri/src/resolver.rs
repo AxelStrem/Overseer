@@ -443,7 +443,128 @@ pub fn resolve_specific_fields(
     // Only recompute charts that contain references to the changed fields
     compute_chart_series_for_specific_fields(nodes, field_paths);
 
+    // And the order of any sorted list holding what moved - see `refresh_sort_keys_holding`.
+    refresh_sort_keys_holding(nodes, field_paths);
+
     debug_resolver!("✅ Selective resolution completed");
+}
+
+/// Work out again the sort keys of the sorted lists that hold any of these paths.
+///
+/// A list's order is a `_ui_sort_key` on each entry, worked out from `sort_by`, and the page
+/// sorts by it - falling back to the order the file keeps for an entry that has none. Only the
+/// full resolve worked them out. So a selective one left them as they were, which was wrong for
+/// an edit to what a list sorts by, and a selective one starting from freshly parsed text had
+/// none at all: an edit to one day of the diary came back with every day in file order, oldest
+/// first, and the page showed it that way.
+///
+/// Only the lists holding something that moved, rather than all of them as the full resolve
+/// does: that walks and copies the whole document, 35 ms on the tracker, which an edit that
+/// touches one list has no reason to pay. The paths are matched on their names alone, so the
+/// same address matches whether it came from the page or from the dependency graph, which name
+/// unnamed wrappers differently.
+fn refresh_sort_keys_holding(
+    nodes: &mut Vec<OverseerNode>,
+    paths: &std::collections::HashSet<String>,
+) {
+    use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
+    use crate::types::OverseerValue;
+
+    // A path's names, without the empty segment an unnamed wrapper leaves or the `#1` a second
+    // unnamed one does.
+    fn names(path: &str) -> Vec<&str> {
+        path.split('/')
+            .filter(|s| !s.is_empty())
+            .filter(|s| !(s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_digit())))
+            .collect()
+    }
+    let touched: Vec<Vec<&str>> = paths.iter().map(|p| names(p)).filter(|p| !p.is_empty()).collect();
+    if touched.is_empty() {
+        return;
+    }
+
+    // Found first and worked out afterwards, so the document can be read whole while each one is
+    // worked out instead of being copied for the purpose.
+    struct Sorted {
+        at: Vec<usize>,
+        path: Vec<String>,
+        sort_by: String,
+    }
+    fn find(
+        children: &[OverseerNode],
+        at: &mut Vec<usize>,
+        path: &mut Vec<String>,
+        named: &mut Vec<String>,
+        touched: &[Vec<&str>],
+        found: &mut Vec<Sorted>,
+    ) {
+        for (i, node) in children.iter().enumerate() {
+            if out_of_view(node) {
+                continue;
+            }
+            let repeats = children[..i].iter().filter(|c| c.name == node.name).count();
+            at.push(i);
+            path.push(if repeats > 0 { format!("{}#{}", node.name, repeats) } else { node.name.clone() });
+            if !node.name.is_empty() {
+                named.push(node.name.clone());
+            }
+            let sort_by = match node.parameters.get("sort_by") {
+                Some(OverseerValue::Formula(s)) | Some(OverseerValue::String(s)) => s.as_str(),
+                _ => "",
+            };
+            if node.node_type == "list" && !sort_by.is_empty() {
+                let holds = touched.iter().any(|t| {
+                    t.len() >= named.len() && t.iter().zip(named.iter()).all(|(a, b)| a == b)
+                });
+                if holds {
+                    found.push(Sorted { at: at.clone(), path: path.clone(), sort_by: sort_by.to_string() });
+                }
+            }
+            find(&node.children, at, path, named, touched, found);
+            if !node.name.is_empty() {
+                named.pop();
+            }
+            path.pop();
+            at.pop();
+        }
+    }
+    let mut found = Vec::new();
+    find(nodes, &mut Vec::new(), &mut Vec::new(), &mut Vec::new(), &touched, &mut found);
+
+    fn at_mut<'a>(nodes: &'a mut [OverseerNode], at: &[usize]) -> Option<&'a mut OverseerNode> {
+        let (first, rest) = at.split_first()?;
+        let mut node = nodes.get_mut(*first)?;
+        for i in rest {
+            node = node.children.get_mut(*i)?;
+        }
+        Some(node)
+    }
+    for list in found {
+        let keys: Vec<OverseerValue> = {
+            let root: &[OverseerNode] = nodes;
+            let mut node = &root[list.at[0]];
+            for i in &list.at[1..] {
+                node = &node.children[*i];
+            }
+            node.children
+                .iter()
+                .enumerate()
+                .map(|(idx, child)| {
+                    // The same context the full resolve gives it - see `recursively_compute_sort_keys`.
+                    let mut path = list.path.clone();
+                    path.push(child.name.clone());
+                    let ctx = EvaluationContext::new_with_current_and_parent(child, Some(node), path, root);
+                    FormulaEvaluator::evaluate_lambda_on_item(&list.sort_by, &ctx, child)
+                        .unwrap_or(OverseerValue::Integer(idx as i64))
+                })
+                .collect()
+        };
+        if let Some(node) = at_mut(nodes, &list.at) {
+            for (child, key) in node.children.iter_mut().zip(keys) {
+                child.parameters.insert("_ui_sort_key".to_string(), key);
+            }
+        }
+    }
 }
 
 // Initialize default values and validate mount nodes across the document tree
