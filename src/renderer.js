@@ -669,6 +669,12 @@ export class OverseerRenderer {
                 position: options.position || 'append',
                 fields,
             }
+            // A press that asked for the entry runs in the same instruction, named from the entry
+            // down: two instructions were two file writes, and two steps to take back for one
+            // press. `options.answered` tells the caller it has run, so it is not sent again.
+            if (options.press) {
+                wanted.then = { within: tail, event: options.press.event, typed: options.press.typed || [] }
+            }
 
             // Said out loud for the same reason the edit and press paths say it: a save left over
             // from an earlier change must not go out on top of this write.
@@ -686,6 +692,7 @@ export class OverseerRenderer {
                 window.app._writingByInstruction -= 1
             }
             if (!update) return gaveUp('the backend refused to make the entry', wanted)
+            if (options.press) options.answered = update
 
             // Written as part of making it, so nothing is waiting to be saved - and the answer
             // says what the file now holds, which the page has to take on or its next save is
@@ -6098,7 +6105,11 @@ export class OverseerRenderer {
      *
      * Returns the real path as an array, or null when the element is not in a phantom.
      */
-    async _materializePhantomForEvent(element) {
+    /// Make the entry a press on a preview needs, and run the press with it when `press` is given.
+    ///
+    /// Answers `{ path, ran, answer }`: where the pressed node now is, and whether the press has
+    /// already happened as part of making the entry - in which case `answer` is what it said.
+    async _materializePhantomForEvent(element, press = null) {
         try {
             if (!element) return null
             let container = element
@@ -6136,7 +6147,8 @@ export class OverseerRenderer {
                 }
             } catch(_) { /* default to append */ }
 
-            const realPath = await this._materializePhantomAndComputePath(metaWithTail, { position })
+            const options = { position, press }
+            const realPath = await this._materializePhantomAndComputePath(metaWithTail, options)
             if (!realPath) return null
 
             // The preview is now backed by a real entry, so stop advertising it as a phantom.
@@ -6147,7 +6159,11 @@ export class OverseerRenderer {
                 }
             } catch(_) { /* best-effort */ }
 
-            return Array.isArray(realPath) ? realPath : String(realPath).split('/')
+            return {
+                path: Array.isArray(realPath) ? realPath : String(realPath).split('/'),
+                ran: !!options.answered,
+                answer: options.answered || null,
+            }
         } catch (err) {
             try { console.warn('[Overseer] making the preview real for a press went wrong', err) } catch(_) {}
             return null
@@ -6271,9 +6287,20 @@ export class OverseerRenderer {
         let materializedForThisEvent = false
         let nextText = null
         if (Array.isArray(path) && path.includes('<phantom>')) {
-            const realPath = await this._materializePhantomForEvent(element)
-            if (realPath) path = realPath
+            // With the press, when there is a handler for it and a file to write to, so the
+            // entry and what the press does are one change and one step to take back.
+            const declared = Array.isArray(node?.children)
+                && node.children.some(c => c && (c.node_type || c.type) === 'on' && c.name === eventName)
+            const press = (declared && window.app.currentFile)
+                ? { event: eventName, typed: this.typedText() }
+                : null
+            const made = await this._materializePhantomForEvent(element, press)
+            if (made && made.path) path = made.path
             materializedForThisEvent = true
+            if (made && made.ran) {
+                this.emptyTextboxes(Array.isArray(made.answer?.emptied) ? made.answer.emptied : [])
+                return
+            }
         }
     try { if (DEBUG_MODE) console.debug('[Overseer] emitEvent', eventName, 'path=', path) } catch(_) {}
 

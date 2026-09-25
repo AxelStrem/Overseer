@@ -14,6 +14,10 @@
 // What the real one does that this cannot is resolve the document afterwards, so template fields
 // arrive as the template declared them and formulas keep whatever the clone carried. Specs that
 // care about worked-out values want the Rust side instead - `a_preview_becomes_real.rs`.
+//
+// Nor does it run a press that rides along in `wanted.then`: that is the backend running a
+// handler, which is `a_press_on_a_new_day_is_one_step.rs`. A spec here can check what it was
+// asked to run, which is what the page decides.
 
 const clone = (o) => JSON.parse(JSON.stringify(o))
 

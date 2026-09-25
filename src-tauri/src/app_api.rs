@@ -1036,6 +1036,20 @@ pub struct EntryWanted {
     pub position: Option<String>,
     #[serde(default)]
     pub fields: std::collections::HashMap<String, OverseerValue>,
+    /// A press to run inside the entry once it is there - see `ensure_entry_at`.
+    #[serde(default)]
+    pub then: Option<PressWithin>,
+}
+
+/// A press on something inside an entry, named from the entry down, because the entry's own name
+/// is not known until it has been made.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PressWithin {
+    pub within: Vec<String>,
+    pub event: String,
+    /// What the page's textboxes hold, as a press carries it - see `run_event_at`.
+    #[serde(default)]
+    pub typed: Vec<ValueWrite>,
 }
 
 /// Make sure the list has an entry with this key, then apply the edit that asked for it.
@@ -1048,31 +1062,57 @@ pub struct EntryWanted {
 /// Doing nothing when the entry is already there is not a special case, it is the same sentence:
 /// the edit lands on the entry either way, so a view does not have to know whether what it is
 /// showing was a preview a moment ago.
+///
+/// A press is the same sentence with a different ending. Pressing a button on a day the history
+/// has not got used to be two instructions - make the day, then press - and so two file writes
+/// and two presses of Undo for one thing done once. `then` says the press, and it runs here, on
+/// the entry just made, in the same change.
 pub fn ensure_entry_at(
     path: &str,
     document: &str,
     wanted: EntryWanted,
     session: &str,
 ) -> Result<ResolvedUpdate> {
-    change_document(path, document, session, move |nodes| {
-        let list = format!("/{}", wanted.list_path.join("/"));
-        let goes = crate::actions::WhereItGoes::from_said(wanted.position.as_deref());
+    let emptied = std::cell::RefCell::new(Vec::new());
+    let mut update = change_document(path, document, session, |nodes| {
+        let EntryWanted { list_path, key_field, key_value, template, position, fields, then } = wanted;
+        let list = format!("/{}", list_path.join("/"));
+        let goes = crate::actions::WhereItGoes::from_said(position.as_deref());
         let entry = crate::actions::ActionExecutor::ensure_entry(
             nodes,
             &list,
-            &wanted.template,
-            &wanted.key_field,
-            wanted.key_value,
+            &template,
+            &key_field,
+            key_value,
             goes,
         )?;
         // Named through the entry the list answered with, rather than through the key: the key
         // selects an entry, and the path a write takes is a path of names.
-        for (field, value) in wanted.fields {
+        for (field, value) in fields {
             let target = format!("{}/{}/{}", list, entry, field);
             crate::actions::ActionExecutor::assign_value(nodes, &target, value)?;
         }
+        if let Some(press) = then {
+            // An entry just made holds only what it was given until the document is worked out:
+            // the template supplies the rest, the button included. So it is worked out before the
+            // press looks for it - what an event does between an action that changes the shape
+            // and the next one, for the same reason.
+            crate::resolver::resolve_document(nodes);
+            let mut owner = list_path.clone();
+            owner.push(entry.clone());
+            owner.extend(press.within);
+            let typed: Vec<(Vec<String>, OverseerValue)> =
+                press.typed.into_iter().map(|t| (t.node_path, t.value)).collect();
+            let held = crate::actions::hold_typed_text(nodes, &typed);
+            let ran = crate::actions::ActionExecutor::execute_event(nodes, &owner, &press.event);
+            crate::actions::let_go_of_typed_text(nodes, held);
+            *emptied.borrow_mut() = crate::actions::take_emptied();
+            ran?;
+        }
         Ok(())
-    })
+    })?;
+    update.emptied = emptied.into_inner();
+    Ok(update)
 }
 
 /// And take one out again.

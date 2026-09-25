@@ -121,7 +121,9 @@ describe('logging food on a day with nothing tracked', () => {
   const pressAddOnAMissingDay = async (nested) => {
     const { invoke } = await import('@tauri-apps/api/core')
     const events = []
+    const madeWith = []
     invoke.mockImplementation((cmd, args) => {
+      if (cmd === 'ensure_overseer_entry') madeWith.push(args.wanted)
       // Making a preview real is a backend instruction now; the page used to do it itself in
       // its own copy of the document. See `helpers/ensure-entry.js`.
       const madeReal = answerEnsureEntry(() => app, cmd, args)
@@ -170,22 +172,28 @@ describe('logging food on a day with nothing tracked', () => {
     clickable.dispatchEvent(new Event('click', { bubbles: true }))
     await new Promise(r => setTimeout(r, 50))
 
-    expect(events.length, 'the click should reach the backend').toBeGreaterThan(0)
-    const sent = events[0].path
+    // One instruction: the day is made and the press runs in it, as one change and one step to
+    // take back. Two used to be sent - make the day, then press - which was two writes.
+    expect(madeWith.length, 'the click should reach the backend').toBe(1)
+    expect(events.length, 'the press went as a second instruction after the day was made').toBe(0)
+    const then = madeWith[0].then
+    expect(then, 'the press did not ride with the instruction that makes the day').toBeTruthy()
+    expect(then.event).toBe('click')
     expect(
-      sent.includes('<phantom>'),
-      `the event path must be resolvable, got ${JSON.stringify(sent)}`
+      then.within.includes('<phantom>'),
+      `the press must be named from the entry down, got ${JSON.stringify(then.within)}`
     ).toBe(false)
-    expect(sent.slice(-1)[0]).toBe('add_by_portions')
+    expect(then.within.slice(-1)[0]).toBe('add_by_portions')
 
-    const historyAfter = app.currentDocument[0].children.find(c => c.name === 'History').children.length
-    expect(historyAfter, 'the phantom day should have become a real history entry').toBe(historyBefore + 1)
+    const history = app.currentDocument[0].children.find(c => c.name === 'History')
+    expect(history.children.length, 'the phantom day should have become a real history entry').toBe(historyBefore + 1)
 
-    // And it has to name something. A path with no `<phantom>` in it is not the same as a path
-    // the document can follow - the backend looks for an `on click` on the node it names, and
-    // finding nothing there answers with the document untouched and says nothing about why.
-    const landed = app.renderer.findNodeByPath(app.currentDocument, sent)
-    expect(landed, `the event path names nothing: ${JSON.stringify(sent)}`).toBeTruthy()
+    // And it has to name something. The backend looks for an `on click` on the node the press
+    // names, from the entry it has just made, and finding nothing there says nothing about why.
+    const entry = history.children[history.children.length - 1]
+    const landed = app.renderer.findNodeByPath(app.currentDocument,
+      ['tracker_v2', 'History', entry.name, ...then.within])
+    expect(landed, `the press names nothing in the new entry: ${JSON.stringify(then.within)}`).toBeTruthy()
     expect(landed.node_type).toBe('button')
   }
 
