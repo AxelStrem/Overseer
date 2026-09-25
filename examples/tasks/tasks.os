@@ -482,7 +482,7 @@ tab tasks (label="Tasks", mutable=true) {
     // and "by Friday" is the end of Friday in your zone, which the bot is better placed to ask.
     div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
         textbox title (label="", placeholder="a one-off task", width=40%) = ""
-        textbox labels (label="", placeholder="tags", width=17%) = ""
+        textbox labels (label="", placeholder="tags", vocabulary="/tasks/Labels", width=17%) = ""
         textbox difficulty (label="", placeholder="difficulty", width=11%) = ""
         textbox base_priority (label="", placeholder="priority", width=10%) = ""
         textbox priority_gain (label="", placeholder="+/day", width=9%) = ""

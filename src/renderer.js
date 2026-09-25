@@ -2831,9 +2831,13 @@ export class OverseerRenderer {
         return true
     }
 
-    createTagsElement(node) {
+    /// `own`, when given, is where the value lives instead of the document: `read()` answers the
+    /// set as its text and `write(text)` keeps a new one. A textbox with a vocabulary passes the
+    /// page's own store, so it picks tags exactly as a tags field does while what is picked stays
+    /// in the page - see `createTextboxElement`.
+    createTagsElement(node, own = null) {
         const container = document.createElement('div')
-        container.className = 'overseer-field tags-field'
+        container.className = own ? 'overseer-field textbox-field tags-field' : 'overseer-field tags-field'
 
         const labelText = this.getParameterValue(node, 'label')
         if (labelText) {
@@ -2846,10 +2850,14 @@ export class OverseerRenderer {
         chips.className = 'tag-chips'
         container.appendChild(chips)
 
-        const held = () => String(this.getNodeValue(node) || '')
+        const held = () => String((own ? own.read() : this.getNodeValue(node)) || '')
             .split(',').map(s => s.trim()).filter(Boolean)
 
         const write = (tags) => {
+            if (own) {
+                own.write(tags.join(', '))
+                return
+            }
             // Read before writing: the backend is told what this changed *from* and *to*, and
             // the first of those is gone the moment the node is updated.
             const before = String(this.getNodeValue(node) || '')
@@ -2876,6 +2884,13 @@ export class OverseerRenderer {
         const paint = () => {
             chips.textContent = ''
             const vocabulary = this.tagVocabulary(node)
+            const placeholder = own ? this.getParameterValue(node, 'placeholder') : null
+            if (placeholder && held().length === 0) {
+                const hint = document.createElement('span')
+                hint.className = 'tag-placeholder'
+                hint.textContent = String(placeholder)
+                chips.appendChild(hint)
+            }
             for (const tag of held()) {
                 const removing = editable()
                     ? () => { write(held().filter(t => t !== tag)); paint() }
@@ -3080,6 +3095,20 @@ export class OverseerRenderer {
         const typed = this._typed.get(key)
         const starting = this.getNodeValue(node)
         input.value = typed !== undefined ? typed : (starting === null || starting === undefined ? '' : String(starting))
+
+        // Given a vocabulary, the box picks from it instead of being typed into - the tag field's
+        // own chips and picker, with what is picked held here like anything typed. A form can
+        // then offer tags the way every other place does, and they reach the new entry as the
+        // text a set of tags is.
+        if (this.getParameterValue(node, 'vocabulary')) {
+            return this.createTagsElement(node, {
+                read: () => {
+                    const now = this._typed.get(key)
+                    return now !== undefined ? now : (starting === null || starting === undefined ? '' : String(starting))
+                },
+                write: (text) => { this._typed.set(key, text) },
+            })
+        }
 
         if (this.getEffectiveMutableMode(node, container) === 'false') {
             input.readOnly = true

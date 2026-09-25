@@ -38,7 +38,12 @@ const theDocument = ({ mutable = true } = {}) => [base('p', 'tab', { mutable: { 
     base('add', 'button', { label: { String: 'add' } }, [
       base('click', 'on', {}, [base('append', 'append', { list: { String: '/p/Items' }, from: { String: '..' } })]),
     ]),
+    base('labels', 'textbox', { value: { String: '' }, vocabulary: { String: '/p/Labels' }, placeholder: { String: 'tags' } }),
   ]),
+  base('Labels', 'list', {}, ['ui', 'dsl'].map((tag, i) => base(`Label__${i + 1}`, 'div', {}, [
+    base('tag', 'string', { value: { String: tag } }),
+    base('name', 'string', { value: { String: tag } }),
+  ]))),
   base('Elsewhere', 'div', {}, [
     base('note', 'textbox', { value: { String: '' } }),
   ]),
@@ -147,5 +152,48 @@ describe('a press with a form on the page', () => {
     await pressAdd()
     const [[, sent]] = calls('run_overseer_event')
     expect(sent.typed.map((t) => t.node_path.join('/'))).toEqual(['p/Elsewhere/note'])
+  })
+})
+
+describe('a textbox with a vocabulary', () => {
+  beforeEach(() => {
+    setupDOM()
+    invoke.mockReset()
+    invoke.mockImplementation(async () => null)
+  })
+
+  const field = () => document.querySelector(`[data-path='${JSON.stringify(['p', 'NewTask', 'labels'])}']`)
+  const chips = () => Array.from(field().querySelectorAll('.tag-chip:not(.tag-option)')).map((c) => c.dataset.tag)
+  const pick = (tag) => {
+    field().querySelector('.tag-add').click()
+    Array.from(document.querySelectorAll('.tag-option')).find((o) => o.dataset.tag === tag).click()
+  }
+
+  it('picks tags the way a tags field does, saying what goes there while it is empty', () => {
+    render()
+    expect(field().classList.contains('tags-field')).toBe(true)
+    expect(field().querySelector('.tag-placeholder').textContent).toBe('tags')
+    pick('ui')
+    pick('dsl')
+    expect(chips()).toEqual(['ui', 'dsl'])
+    expect(invoke.mock.calls, 'a pick reached the backend').toEqual([])
+  })
+
+  it('sends what was picked with a press, and is emptied like any box', async () => {
+    render()
+    pick('ui')
+    pick('dsl')
+    invoke.mockImplementation(async (cmd) =>
+      cmd === 'run_overseer_event'
+        ? { text: 'TEXT-2', changes: [], nodes: null, wrote: true, emptied: [['p', 'NewTask', 'labels']] }
+        : null)
+    await app.renderer.emitEvent(
+      app.currentDocument[0].children[0].children[2],
+      document.querySelector(`[data-path='${JSON.stringify(['p', 'NewTask', 'add'])}']`),
+      'click')
+
+    const [[, sent]] = calls('run_overseer_event')
+    expect(sent.typed).toEqual([{ node_path: ['p', 'NewTask', 'labels'], value: { String: 'ui, dsl' } }])
+    expect(chips(), 'the picks were not emptied').toEqual([])
   })
 })

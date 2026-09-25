@@ -251,14 +251,8 @@ impl FormulaEvaluator {
                             }
                         }
                         Some((p, current))
-                    } else if path[0] == ".." {
-                        // Parent hops
-                        let mut hops = 1usize;
-                        let mut idx = 1usize;
-                        while idx < path.len() && path[idx] == ".." {
-                            hops += 1;
-                            idx += 1;
-                        }
+                    } else if let Some((hops, idx)) = FormulaEvaluator::steps_up(path) {
+                        // Parent hops, none for `./`
                         if ctx.node_path.len() < hops {
                             return None;
                         }
@@ -1111,7 +1105,25 @@ impl FormulaEvaluator {
         )))
     }
 
-    /// Resolve a path reference like ../field or ../../other
+    /// How far up a relative path starts, and where its names begin.
+    ///
+    /// `..` is one step up from the node the formula belongs to and each further `..` another; a
+    /// leading `.` is none - the node itself. `None` for a path that is not relative that way.
+    fn steps_up(path: &[String]) -> Option<(usize, usize)> {
+        let mut hops = match path.first().map(|s| s.as_str()) {
+            Some("..") => 1usize,
+            Some(".") => 0usize,
+            _ => return None,
+        };
+        let mut idx = 1usize;
+        while idx < path.len() && path[idx] == ".." {
+            hops += 1;
+            idx += 1;
+        }
+        Some((hops, idx))
+    }
+
+    /// Resolve a path reference like ../field, ../../other or ./own
     fn resolve_path_reference(
         path: &[String],
         context: &EvaluationContext,
@@ -1249,7 +1261,7 @@ impl FormulaEvaluator {
         }
 
         // Case A: identifier-based relative path (e.g., GrandChild/Inner/x)
-        if path[0] != ".." {
+        if Self::steps_up(path).is_none() {
             // If first segment is a bound variable naming a node, resolve relative to it
             if let Some(BoundValue::Node(start)) = context.var_bindings.get(&path[0]) {
                 // Traverse remaining segments from the bound node
@@ -1459,21 +1471,10 @@ impl FormulaEvaluator {
             )));
         }
 
-        // Case B: ../-prefixed paths
-        // Only ../-prefixed paths are supported in this branch
-        if path[0] != ".." {
-            return Err(OverseerError::FormulaError(
-                "Path must start with '..'".to_string(),
-            ));
-        }
-
-        // Count how many parent hops ('..') we have
-        let mut hops = 1usize;
-        let mut idx = 1usize;
-        while idx < path.len() && path[idx] == ".." {
-            hops += 1;
-            idx += 1;
-        }
+        // Case B: ../-prefixed paths, and ./ ones, which are the same with no hops
+        let (hops, idx) = Self::steps_up(path).ok_or_else(|| {
+            OverseerError::FormulaError("Path must start with '..' or './'".to_string())
+        })?;
         // Remaining path after hopping up
         let remaining = &path[idx..];
         if remaining.is_empty() {
@@ -1541,6 +1542,15 @@ impl FormulaEvaluator {
                 &p,
                 context.document_root,
             );
+        }
+
+        // `./` names the node's own, and nothing else will do: the looking further below is for
+        // a `..` that lands short, and a `./` that does not find its field is simply wrong.
+        if hops == 0 {
+            return Err(OverseerError::FormulaError(format!(
+                "Unknown field '{}' on this node",
+                last
+            )));
         }
 
         // A `..` that lands one level short of what it meant.
@@ -1693,7 +1703,7 @@ impl FormulaEvaluator {
             )));
         }
         // Identifier-based path from nearest ancestor
-        if path[0] != ".." {
+        if Self::steps_up(path).is_none() {
             // Variable-anchored: start from bound node if available
             if let Some(BoundValue::Node(start)) = context.var_bindings.get(&path[0]) {
                 let mut node = *start;
@@ -1799,13 +1809,10 @@ impl FormulaEvaluator {
             )));
         }
 
-        // ../ path
-        let mut hops = 1usize;
-        let mut idx = 1usize;
-        while idx < path.len() && path[idx] == ".." {
-            hops += 1;
-            idx += 1;
-        }
+        // ../ path, or ./ with no hops
+        let (hops, idx) = Self::steps_up(path).ok_or_else(|| {
+            OverseerError::FormulaError("Path must start with '..' or './'".to_string())
+        })?;
         let remaining = &path[idx..];
         if context.node_path.len() < hops {
             return Err(OverseerError::FormulaError(
@@ -2873,6 +2880,7 @@ fn primary_expression(input: &str) -> IResult<&str, FormulaExpression> {
             bool_literal,
             current_path_reference,
             relative_path_reference,
+            own_path_reference,
             path_reference,
             number,
             field_reference,
@@ -2996,6 +3004,24 @@ fn path_reference(input: &str) -> IResult<&str, FormulaExpression> {
             FormulaExpression::PathReference(path)
         },
     )(input)
+}
+
+/// Parse paths from the node the formula belongs to, like ./field or ./group/field.
+///
+/// The node's own, and nothing further up. A bare `field` finds the same thing when it is there,
+/// but goes on looking through every ancestor when it is not, and `../field` starts a level too
+/// high to say it - so an action on a pressable entry, which runs from the entry itself, had no
+/// way to name the entry's own field and be sure of getting nothing else.
+fn own_path_reference(input: &str) -> IResult<&str, FormulaExpression> {
+    use nom::multi::separated_list1;
+    let (input, _) = tag("./")(input)?;
+    let (input, segments) = separated_list1(
+        char('/'),
+        take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-'),
+    )(input)?;
+    let mut path = vec![".".to_string()];
+    path.extend(segments.iter().map(|s| s.to_string()));
+    Ok((input, FormulaExpression::PathReference(path)))
 }
 
 /// Parse current-node anchored paths like /child or /child/grandchild
@@ -3914,13 +3940,7 @@ impl FormulaEvaluator {
             }
             return Some((walked, current));
         }
-        if path[0] == ".." {
-            let mut hops = 1usize;
-            let mut idx = 1usize;
-            while idx < path.len() && path[idx] == ".." {
-                hops += 1;
-                idx += 1;
-            }
+        if let Some((hops, idx)) = Self::steps_up(path) {
             if context.node_path.len() < hops {
                 return None;
             }

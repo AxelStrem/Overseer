@@ -190,14 +190,22 @@ float Average = $(../Tasks/Data.average(Priority))
 
 ### 5. Path References
 
-Use filesystem-like paths to reference other nodes:
+Use filesystem-like paths to reference other nodes. A path starts from the node the formula
+belongs to - a field, or for a parameter or an action, the node that carries it:
 
 ```overseer
-../Task              // Parent's Task child
-../../Statistics     // Grandparent's Statistics child
-./Data/5/Header      // Local path to 5th item's Header
-../file.os/Tasks     // Reference to another file
+./Data/Header        // this node's own Data, and its Header - and only this node's
+../Task              // the parent's Task: `..` is one step up
+../../Statistics     // the grandparent's Statistics
+Data/Header          // Data looked for on this node, then on each ancestor in turn
+/Tasks/Data          // from the nearest ancestor holding a Tasks, else the top of the document
 ```
+
+`./` and a bare name find the same thing when it is there. The difference is what happens when
+it is not: a bare name goes on looking through every ancestor, and `./` stops, so it names this
+node's field or nothing. Action paths take the same forms - `set (path="./done")`.
+
+Another document is reached through a mount rather than a path - see "Mounting another document".
 
 ### 6. Array Indexing
 
@@ -322,6 +330,8 @@ Notes:
 
 A `textbox` is a field drawn as a box to type into. It takes the cursor with one tap, where a
 string is edited with a double one, and `placeholder` says what goes in it while it is empty.
+Given a `vocabulary`, it picks tags from that list instead of being typed into - the same chips
+and picker as a `tags` field - and what is picked is held the same way as anything typed.
 
 What is typed belongs to whoever is typing, and is never written to the file - the way
 `mutable="guarded"` works. The file says what the box starts with, through the usual means, a
@@ -380,7 +390,8 @@ div Item (layout="horizontal") {
 ```
 
 The actions run from the div's own place, one level down from where a button inside it would
-stand - so a bare `$(amount)` is the entry's own field, where a button would say `$(../amount)`.
+stand - so `$(./amount)` is the entry's own field, where a button would say `$(../amount)`. A bare
+`$(amount)` finds it too, but would go on to an ancestor's `amount` if the entry had none.
 
 Something inside the div that can be changed keeps its own taps, and nothing reaches the div: a
 field that can be edited, a checkbox that can be ticked, a button with an `on click` of its own, a
@@ -794,7 +805,7 @@ div Tasks {
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
 - **Mounts**: `source`, `lazy`, `mutable`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`
-- **Tags**: `vocabulary`
+- **Tags**: `vocabulary` (on a `tags` field, or a `textbox` that picks rather than takes typing)
 
 ---
 

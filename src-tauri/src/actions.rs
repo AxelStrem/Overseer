@@ -1365,6 +1365,10 @@ impl ActionExecutor {
             // Minimum depth allowed before processing ".."
             let min_len = if anchored { 0 } else { 1 };
             for seg in segments {
+                // The node the action belongs to, as a formula's `./` is.
+                if seg == "." {
+                    continue;
+                }
                 if seg == ".." {
                     // Up to the enclosing node the document actually names. A `div` used to
                     // group fields for layout is not something an author thinks of as

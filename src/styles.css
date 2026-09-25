@@ -801,6 +801,12 @@ body {
     color: var(--text-secondary);
 }
 
+/* What a tag-picking box says while nothing is picked, as a typed one says it in its placeholder. */
+.tag-placeholder {
+    color: var(--text-secondary);
+    margin-right: 6px;
+}
+
 .textbox-input:focus {
     border-color: var(--primary-color);
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);

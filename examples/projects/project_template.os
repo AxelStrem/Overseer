@@ -265,14 +265,15 @@ tab project (label="Project", mutable=true) {
     // Filled in here and added in one press. What is typed into these boxes is the page's and
     // never the file's, so a half-written task is not saved, backed up or seen by the bot; the
     // press copies the boxes into a new entry by their names, turns the points into a number, and
-    // empties them. A box left empty leaves the template's value - one point in particular, so
-    // whatever the task is put under has something to divide by. The moment it was added is its
-    // key, and the block says that rather than the form.
+    // empties them. The tags are picked, as they are everywhere else, rather than typed. A box
+    // left empty leaves the template's value - one point in particular, so whatever the task is
+    // put under has something to divide by. The moment it was added is its key, and the block
+    // says that rather than the form.
     div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
         textbox handle (label="", placeholder="id", width=11%) = ""
         textbox title (label="", placeholder="what needs doing", width=38%) = ""
         textbox parent (label="", placeholder="under", width=11%) = ""
-        textbox labels (label="", placeholder="tags", width=16%) = ""
+        textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=16%) = ""
         textbox points (label="", placeholder="pts", width=7%) = ""
         button add (label="+ task", margin=0, width=12%) {
             on click {
