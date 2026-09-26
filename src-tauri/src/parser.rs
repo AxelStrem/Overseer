@@ -593,9 +593,21 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     let (next, _) = multispace0(cur)?;
     cur = next;
 
+    // A dash followed by a plain value is a list entry that is that value - see
+    // `parse_dash_value_capture`. Looked for before a name, which would otherwise take a number.
+    let dash_value = if node_type_value.as_deref() == Some("-") {
+        parse_dash_value_capture(cur).ok()
+    } else {
+        None
+    };
+
     // Parse optional name
     let name_start_ptr = cur.as_ptr() as usize;
-    let (after_name, name_opt) = opt(parse_identifier)(cur)?;
+    let (after_name, name_opt) = if dash_value.is_some() {
+        (cur, None)
+    } else {
+        opt(parse_identifier)(cur)?
+    };
     let mut node_name_value: Option<String> = None;
     cur = after_name;
     if let Some(name_token) = name_opt {
@@ -611,7 +623,11 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
         cur.chars().take(50).collect::<String>()
     );
     let params_start_ptr = cur.as_ptr() as usize;
-    let (after_params, parameters_with_order) = opt(parse_parameters)(cur)?;
+    let (after_params, parameters_with_order) = if dash_value.is_some() {
+        (cur, None)
+    } else {
+        opt(parse_parameters)(cur)?
+    };
     cur = after_params;
     if parameters_with_order.is_some() {
         let params_end_ptr = cur.as_ptr() as usize;
@@ -637,7 +653,10 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
         cur.chars().take(50).collect::<String>()
     );
     let body_start_ptr = cur.as_ptr() as usize;
-    let body_kind = if let Ok((after_assign, capture)) = parse_value_assignment_capture(cur) {
+    let body_kind = if let Some((after_value, capture)) = dash_value {
+        cur = after_value;
+        BodyKind::DirectValue(capture)
+    } else if let Ok((after_assign, capture)) = parse_value_assignment_capture(cur) {
         cur = after_assign;
         // A body may follow the value. Looked for here rather than left to the caller, which
         // read it as the next sibling and let its closing brace close the block this node is
@@ -905,6 +924,48 @@ fn parse_direct_value_capture(input: &str) -> IResult<&str, DirectValueCapture> 
                 nom::error::ErrorKind::Tag,
             )));
         }
+    }
+    let end_ptr = remaining.as_ptr() as usize;
+    Ok((
+        remaining,
+        DirectValueCapture {
+            value,
+            span: (start_ptr, end_ptr),
+        },
+    ))
+}
+
+/// A plain value after a dash - `- "milk"`, `- 3`, `- true` - which is the entry itself, where a
+/// dash followed by a name is a field of one: `- priority = 5`.
+///
+/// Told apart by the line: a value that ends it is an entry, one with anything after it but a
+/// comment or a closing brace is the start of something else, and the dash reads as before. The
+/// value used to be looked for only when nothing at all came after it, so inside a list - where
+/// the next line is the next entry - it never was: `- "a"` came out as a bare dash and a node named
+/// `a`, and `- 1` as a dash *named* 1 with no value, so a list of two counted four, or two of
+/// nothing. The file came back unchanged only because saving replays the source text.
+///
+/// Literals only. A named colour or a border style is a parameter's business, not a list's.
+fn parse_dash_value_capture(input: &str) -> IResult<&str, DirectValueCapture> {
+    let start_ptr = input.as_ptr() as usize;
+    let (remaining, value) = alt((
+        parse_null_value,
+        parse_formula_value,
+        parse_boolean_value,
+        parse_number_value,
+        parse_quoted_string_value,
+        parse_unquoted_string_value,
+    ))(input)?;
+    let rest_of_line = remaining.split('\n').next().unwrap_or("").trim();
+    let ends_the_line = rest_of_line.is_empty()
+        || rest_of_line.starts_with("//")
+        || rest_of_line.starts_with("/*")
+        || rest_of_line.starts_with('}');
+    if !ends_the_line {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
     }
     let end_ptr = remaining.as_ptr() as usize;
     Ok((

@@ -1637,33 +1637,29 @@ fn resolve_node_templates(
                                 type_name,
                                 val
                             );
-                            // Create a node of the specified simple type
-                            let mut resolved_item = OverseerNode {
-                                name: list_item.name.clone(),
-                                node_type: type_name.clone(),
-                                template: None,
-                                parameters: HashMap::new(),
-                                children: Vec::new(),
-                                is_hierarchy_transparent: false,
-                                param_order: Vec::new(),
-                                raw_value_literal: None,
-                                authored_dash: false,
-                                child_original_index: None,
-                                leading_blank_lines: 0,
-                                source_snapshot: None,
-                                source_id: None,
-                                source_fingerprint: None,
-                            };
-                            resolved_item
-                                .parameters
-                                .insert("value".to_string(), val.clone());
-                            let (indent_unit, newline) = node
-                                .source_snapshot
-                                .as_ref()
-                                .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
-                                .unwrap_or((None, None));
-                            resolved_item
-                                .synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                            // The entry as it was read, given the list's type - not a new node in
+                            // its place. A new one had no source to be written back from, so the
+                            // list could not be replayed as written and every entry came out at
+                            // the list's own depth, and the gap after the list went. It never
+                            // showed while the parser dropped these values, because an entry with
+                            // no value was kept as it was.
+                            let mut resolved_item = list_item.clone();
+                            resolved_item.node_type = type_name.clone();
+                            resolved_item.parameters.insert("value".to_string(), val.clone());
+                            // Named the way `append` names the ones it adds, rather than every
+                            // entry answering to `-`: an address has to tell them apart.
+                            if resolved_item.name.is_empty() || resolved_item.name == "-" {
+                                resolved_item.name = format!("{}__{}", type_name, _i + 1);
+                            }
+                            if list_item.source_snapshot.is_none() {
+                                let (indent_unit, newline) = node
+                                    .source_snapshot
+                                    .as_ref()
+                                    .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+                                    .unwrap_or((None, None));
+                                resolved_item
+                                    .synthesize_snapshot_with_style_recursive(indent_unit, newline);
+                            }
                             resolved_children.push(resolved_item);
                         } else {
                             debug_resolver!(

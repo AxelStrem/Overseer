@@ -4167,13 +4167,32 @@ export class OverseerRenderer {
             }
         }
 
-        // Helper to convert numeric to px, pass through strings
-        const cssSize = (v) => {
-            if (v === null || v === undefined) return undefined
-            if (typeof v === 'number') return `${v}px`
-            const s = String(v).trim()
-            if (!s) return undefined
-            return s
+        // A margin or padding as CSS says it.
+        //
+        // A parameter arrives as the value it was parsed into - `{ CssSize: { Pixels: 4 } }` for
+        // `4px`, `{ Integer: 0 }` for `0` - and this used to take it for a number or a string, so
+        // `padding=4px` became the style `[object Object]`, which the browser throws away. What
+        // was stated still counted as stated, and so suppressed the default: a field asked for 4px
+        // or 12px and got none at all, and `padding=0` and `margin=0` looked right by accident.
+        // Worked-out values first, for a formula; anything that cannot be said in CSS is skipped
+        // rather than written in.
+        const cssSize = (raw) => {
+            if (raw === null || raw === undefined) return undefined
+            let v = raw
+            if (typeof v === 'object') {
+                if (v.Integer !== undefined) v = v.Integer
+                else if (v.Float !== undefined) v = v.Float
+                else if (v.String !== undefined) v = v.String
+                else v = this.convertCssSizeValue(v)
+            }
+            if (typeof v === 'number') return Number.isFinite(v) ? `${v}px` : undefined
+            if (typeof v !== 'string') return undefined
+            const s = v.trim()
+            return s ? s : undefined
+        }
+        const stated = (name) => {
+            const worked = node.parameters[`_computed_${name}`]
+            return worked !== undefined ? worked : node.parameters[name]
         }
 
         // Apply explicit margin/padding if provided
@@ -4189,37 +4208,37 @@ export class OverseerRenderer {
                                    node.parameters['padding-right'] !== undefined
 
         if (node.parameters.margin !== undefined) {
-            const v = cssSize(node.parameters.margin)
+            const v = cssSize(stated('margin'))
             if (v !== undefined) element.style.margin = v
         }
         if (node.parameters['margin-top'] !== undefined) {
-            const v = cssSize(node.parameters['margin-top']); if (v !== undefined) element.style.marginTop = v
+            const v = cssSize(stated('margin-top')); if (v !== undefined) element.style.marginTop = v
         }
         if (node.parameters['margin-bottom'] !== undefined) {
-            const v = cssSize(node.parameters['margin-bottom']); if (v !== undefined) element.style.marginBottom = v
+            const v = cssSize(stated('margin-bottom')); if (v !== undefined) element.style.marginBottom = v
         }
         if (node.parameters['margin-left'] !== undefined) {
-            const v = cssSize(node.parameters['margin-left']); if (v !== undefined) element.style.marginLeft = v
+            const v = cssSize(stated('margin-left')); if (v !== undefined) element.style.marginLeft = v
         }
         if (node.parameters['margin-right'] !== undefined) {
-            const v = cssSize(node.parameters['margin-right']); if (v !== undefined) element.style.marginRight = v
+            const v = cssSize(stated('margin-right')); if (v !== undefined) element.style.marginRight = v
         }
 
         if (node.parameters.padding !== undefined) {
-            const v = cssSize(node.parameters.padding)
+            const v = cssSize(stated('padding'))
             if (v !== undefined) element.style.padding = v
         }
         if (node.parameters['padding-top'] !== undefined) {
-            const v = cssSize(node.parameters['padding-top']); if (v !== undefined) element.style.paddingTop = v
+            const v = cssSize(stated('padding-top')); if (v !== undefined) element.style.paddingTop = v
         }
         if (node.parameters['padding-bottom'] !== undefined) {
-            const v = cssSize(node.parameters['padding-bottom']); if (v !== undefined) element.style.paddingBottom = v
+            const v = cssSize(stated('padding-bottom')); if (v !== undefined) element.style.paddingBottom = v
         }
         if (node.parameters['padding-left'] !== undefined) {
-            const v = cssSize(node.parameters['padding-left']); if (v !== undefined) element.style.paddingLeft = v
+            const v = cssSize(stated('padding-left')); if (v !== undefined) element.style.paddingLeft = v
         }
         if (node.parameters['padding-right'] !== undefined) {
-            const v = cssSize(node.parameters['padding-right']); if (v !== undefined) element.style.paddingRight = v
+            const v = cssSize(stated('padding-right')); if (v !== undefined) element.style.paddingRight = v
         }
 
         // Apply defaults only if not explicitly set
