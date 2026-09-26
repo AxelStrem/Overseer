@@ -64,9 +64,10 @@ tab t (label="T") {
         }
         div Meal (layout="horizontal") {
             string food (label="") = ""
+            // A row for layout, which no path counts as a step: `..` from inside it is the meal.
             div (layout="horizontal") {
-                tags labels (label="", mutable=false) = $(/t/Catalog.filter(|x| x/handle == ../../food)/labels)
-                float calories (label="") = $(/t/Catalog.filter(|x| x/handle == ../../food)/kcal)
+                tags labels (label="", mutable=false) = $(/t/Catalog.filter(|x| x/handle == ../food)/labels)
+                float calories (label="") = $(/t/Catalog.filter(|x| x/handle == ../food)/kcal)
             }
         }
     }

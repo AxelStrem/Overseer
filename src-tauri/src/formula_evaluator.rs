@@ -2502,60 +2502,36 @@ impl FormulaEvaluator {
         if segments.is_empty() {
             return None;
         }
-
-        // Helper: split a segment like "name#k" into (name, Some(k)) or (name, None)
-        fn split_seg(seg: &str) -> (&str, Option<usize>) {
-            if let Some((base, idx_str)) = seg.rsplit_once('#') {
-                if let Ok(k) = idx_str.parse::<usize>() {
-                    return (base, Some(k));
-                }
-            }
-            (seg, None)
-        }
-        // First segment maps to a top-level node name (with optional ordinal)
-        let (root_name, root_ord) = split_seg(&segments[0]);
-        let mut cur_iter = root.iter().filter(|n| n.name == root_name);
-        let mut current = if let Some(ord) = root_ord {
-            cur_iter.nth(ord)?
-        } else {
-            cur_iter.next()?
-        };
+        // A step at a time, looking through wrappers the way the path was built - see
+        // `addressing::Level`. This followed raw children once, which is what made a wrapper a
+        // step of every path and a `..` inside one land on it.
+        let mut current = crate::addressing::step_among(root, &segments[0])?;
         for seg in &segments[1..] {
-            let (name, ord) = split_seg(seg);
-            // IMPORTANT: follow RAW children; disambiguate by ordinal among siblings of same name when provided
-            let mut it = current.children.iter().filter(|c| c.name == name);
-            if let Some(k) = ord {
-                if let Some(next) = it.nth(k) {
-                    current = next;
-                } else {
-                    return None;
-                }
-            } else if let Some(next) = it.next() {
-                current = next;
-            } else {
-                return None;
-            }
+            current = crate::addressing::step_among(&current.children, seg)?;
         }
         Some(current)
     }
 
-    /// The trail of real child names from `node` down to `name`.
+    /// The trail of names from `node` down to `name`, as a path names them.
     ///
-    /// `get_accessible_children` lifts a transparent wrapper's children into its parent, so a
-    /// field declared inside an unnamed div answers to the div's parent - and a path built by
-    /// putting the name straight after the parent names a node that is not where the resolver
-    /// thinks it is. Only transparent children are descended into, which is exactly the
-    /// flattening being undone.
+    /// `get_accessible_children` lifts a transparent child's children into its parent, and this
+    /// walks the same way. A wrapper is looked through and adds no step - a path does not name one,
+    /// see `addressing::Level` - while a transparent node with a name of its own keeps its step.
     fn trail_to_child(node: &OverseerNode, name: &str, trail: &mut Vec<String>) -> bool {
         for child in &node.children {
-            trail.push(child.name.clone());
-            if child.name == name {
-                return true;
+            let wrapper = crate::addressing::is_wrapper(child);
+            if !wrapper {
+                trail.push(child.name.clone());
+                if child.name == name {
+                    return true;
+                }
             }
             if child.is_hierarchy_transparent && Self::trail_to_child(child, name, trail) {
                 return true;
             }
-            trail.pop();
+            if !wrapper {
+                trail.pop();
+            }
         }
         false
     }
@@ -2576,8 +2552,12 @@ impl FormulaEvaluator {
         trail: &mut Vec<String>,
     ) -> Option<OverseerValue> {
         for child in &node.children {
-            trail.push(child.name.clone());
-            if child.name == name {
+            // A wrapper adds no step to the trail, as it adds none to a path.
+            let wrapper = crate::addressing::is_wrapper(child);
+            if !wrapper {
+                trail.push(child.name.clone());
+            }
+            if !wrapper && child.name == name {
                 // Prefer computed/effective value if present
                 if let Some(v) = Self::get_effective_param(&child.parameters, "value") {
                     return Some(v.clone());
@@ -2590,7 +2570,9 @@ impl FormulaEvaluator {
             if let Some(v) = Self::find_value_by_name_deep_from(child, name, trail) {
                 return Some(v);
             }
-            trail.pop();
+            if !wrapper {
+                trail.pop();
+            }
         }
         None
     }

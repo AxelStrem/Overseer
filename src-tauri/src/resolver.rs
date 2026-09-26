@@ -121,20 +121,33 @@ pub const LEFT_OUT: &str = "_left_out_of_view";
 /// food tracker - and one without a sort shows the first few as authored.
 fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
     let snapshot = nodes.clone();
-    fn walk(nodes: &mut Vec<OverseerNode>, root: &[OverseerNode], trail: &mut Vec<String>) {
+    fn walk(
+        nodes: &mut Vec<OverseerNode>,
+        root: &[OverseerNode],
+        trail: &mut Vec<String>,
+        level: &mut crate::addressing::Level,
+    ) {
         for node in nodes.iter_mut() {
-            trail.push(node.name.clone());
+            // A wrapper is no step of the path the entries' sort is worked out against.
+            let wrapper = crate::addressing::is_wrapper(node);
+            if !wrapper {
+                trail.push(level.segment(&node.name));
+            }
             if node.node_type == "list" {
                 if let Some(window) = window_of(node) {
                     name_the_entries(node);
                     narrow(node, window, root, trail);
                 }
             }
-            walk(&mut node.children, root, trail);
-            trail.pop();
+            if wrapper {
+                walk(&mut node.children, root, trail, level);
+            } else {
+                walk(&mut node.children, root, trail, &mut crate::addressing::Level::default());
+                trail.pop();
+            }
         }
     }
-    walk(nodes, &snapshot, &mut Vec::new());
+    walk(nodes, &snapshot, &mut Vec::new(), &mut crate::addressing::Level::default());
 }
 
 /// Give every entry the name it would be instantiated with, before anything is instantiated.
@@ -470,12 +483,14 @@ fn refresh_sort_keys_holding(
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
     use crate::types::OverseerValue;
 
-    // A path's names, without the empty segment an unnamed wrapper leaves or the `#1` a second
-    // unnamed one does.
+    // A path's names, without the numbering a repeated name carries.
     fn names(path: &str) -> Vec<&str> {
         path.split('/')
             .filter(|s| !s.is_empty())
-            .filter(|s| !(s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_digit())))
+            .map(|s| match s.rsplit_once('#') {
+                Some((base, n)) if n.chars().all(|c| c.is_ascii_digit()) => base,
+                _ => s,
+            })
             .collect()
     }
     let touched: Vec<Vec<&str>> = paths.iter().map(|p| names(p)).filter(|p| !p.is_empty()).collect();
@@ -490,6 +505,8 @@ fn refresh_sort_keys_holding(
         path: Vec<String>,
         sort_by: String,
     }
+    // Walked the way every path is built - a wrapper is no step of it, see `addressing::Level` -
+    // with `named` the same path without its numbering, for matching what moved.
     fn find(
         children: &[OverseerNode],
         at: &mut Vec<usize>,
@@ -497,17 +514,20 @@ fn refresh_sort_keys_holding(
         named: &mut Vec<String>,
         touched: &[Vec<&str>],
         found: &mut Vec<Sorted>,
+        level: &mut crate::addressing::Level,
     ) {
         for (i, node) in children.iter().enumerate() {
             if out_of_view(node) {
                 continue;
             }
-            let repeats = children[..i].iter().filter(|c| c.name == node.name).count();
             at.push(i);
-            path.push(if repeats > 0 { format!("{}#{}", node.name, repeats) } else { node.name.clone() });
-            if !node.name.is_empty() {
-                named.push(node.name.clone());
+            if crate::addressing::is_wrapper(node) {
+                find(&node.children, at, path, named, touched, found, level);
+                at.pop();
+                continue;
             }
+            path.push(level.segment(&node.name));
+            named.push(node.name.clone());
             let sort_by = match node.parameters.get("sort_by") {
                 Some(OverseerValue::Formula(s)) | Some(OverseerValue::String(s)) => s.as_str(),
                 _ => "",
@@ -520,16 +540,14 @@ fn refresh_sort_keys_holding(
                     found.push(Sorted { at: at.clone(), path: path.clone(), sort_by: sort_by.to_string() });
                 }
             }
-            find(&node.children, at, path, named, touched, found);
-            if !node.name.is_empty() {
-                named.pop();
-            }
+            find(&node.children, at, path, named, touched, found, &mut crate::addressing::Level::default());
+            named.pop();
             path.pop();
             at.pop();
         }
     }
     let mut found = Vec::new();
-    find(nodes, &mut Vec::new(), &mut Vec::new(), &mut Vec::new(), &touched, &mut found);
+    find(nodes, &mut Vec::new(), &mut Vec::new(), &mut Vec::new(), &touched, &mut found, &mut crate::addressing::Level::default());
 
     fn at_mut<'a>(nodes: &'a mut [OverseerNode], at: &[usize]) -> Option<&'a mut OverseerNode> {
         let (first, rest) = at.split_first()?;
@@ -634,6 +652,7 @@ pub fn compute_chart_series(nodes: &mut Vec<OverseerNode>) {
                 std::ptr::null(),
                 &mut current_path,
                 &snapshot,
+                &mut crate::addressing::Level::default(),
             );
         }
     }
@@ -644,6 +663,8 @@ unsafe fn recursively_compute_chart_series(
     _parent_ptr: *const OverseerNode,
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
+    // Numbers this node's children in the path - see `addressing::Level`.
+    level: &mut crate::addressing::Level,
 ) {
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
     use crate::types::OverseerValue;
@@ -779,30 +800,20 @@ unsafe fn recursively_compute_chart_series(
         }
     }
 
-    // Recurse
+    // Recurse - a wrapper is no step of the path, see `addressing::Level`.
     for idx in 0..node.children.len() {
         let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
-        // Disambiguate duplicate sibling names by appending an ordinal index (name#k)
-        {
-            let child_ref = &*child_ptr;
-            let name = child_ref.name.clone();
-            let k = node
-                .children
-                .iter()
-                .take(idx)
-                .filter(|c| c.name == name)
-                .count();
-            if k > 0 {
-                current_path.push(format!("{}#{}", name, k));
-            } else {
-                current_path.push(name);
-            }
+        if crate::addressing::is_wrapper(&*child_ptr) {
+            recursively_compute_chart_series(child_ptr, node as *const OverseerNode, current_path, document_root, level);
+            continue;
         }
+        current_path.push(level.segment(&(*child_ptr).name));
         recursively_compute_chart_series(
             child_ptr,
             node as *const OverseerNode,
             current_path,
             document_root,
+            &mut crate::addressing::Level::default(),
         );
         current_path.pop();
     }
@@ -2327,20 +2338,31 @@ fn collect_all_node_paths(
     prefix: &mut Vec<String>,
     acc: &mut std::collections::HashSet<String>,
 ) {
+    // The roots as the pass names them, then every level below by `addressing::Level`.
     for (idx, n) in nodes.iter().enumerate() {
         let name = n.name.clone();
-        // Disambiguate duplicate siblings with ordinal like main#1
         let k = nodes.iter().take(idx).filter(|c| c.name == name).count();
-        let seg = if k > 0 {
-            format!("{}#{}", name, k)
-        } else {
-            name
-        };
-        prefix.push(seg);
+        prefix.push(if k > 0 { format!("{}#{}", name, k) } else { name });
         acc.insert(prefix.join("/"));
-        if !n.children.is_empty() {
-            collect_all_node_paths(&n.children, prefix, acc);
+        collect_paths_below(&n.children, prefix, acc, &mut crate::addressing::Level::default());
+        prefix.pop();
+    }
+}
+
+fn collect_paths_below(
+    nodes: &[OverseerNode],
+    prefix: &mut Vec<String>,
+    acc: &mut std::collections::HashSet<String>,
+    level: &mut crate::addressing::Level,
+) {
+    for n in nodes {
+        if crate::addressing::is_wrapper(n) {
+            collect_paths_below(&n.children, prefix, acc, level);
+            continue;
         }
+        prefix.push(level.segment(&n.name));
+        acc.insert(prefix.join("/"));
+        collect_paths_below(&n.children, prefix, acc, &mut crate::addressing::Level::default());
         prefix.pop();
     }
 }
@@ -2440,6 +2462,7 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
                     &mut current_path,
                     &snapshot,
                     &all_paths,
+                    &mut crate::addressing::Level::default(),
                 ) {
                     progress = true;
                 }
@@ -2513,6 +2536,7 @@ fn evaluate_formulas_for_specific_fields(
                     &mut current_path,
                     &snapshot,
                     field_paths,
+                    &mut crate::addressing::Level::default(),
                 ) {
                     progress = true;
                 }
@@ -3205,6 +3229,8 @@ unsafe fn recursively_evaluate_node_formulas_selective(
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
     field_paths: &std::collections::HashSet<String>,
+    // Numbers this node's children in the path - its parent's, when this is a wrapper.
+    level: &mut crate::addressing::Level,
 ) -> bool {
     // Track whether any _computed_* param mutated in this subtree so caller can record progress
     let mut subtree_changed = false;
@@ -3354,35 +3380,37 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         }
     }
 
-    // Always recurse into children to check their paths
+    // Always recurse into children to check their paths. A wrapper is no step of the path - its
+    // children are named as its parent's, see `addressing::Level`.
     let child_len = node.children.len();
     for idx in 0..child_len {
         let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
-        {
-            let child_ref = &*child_ptr;
-            let name = child_ref.name.clone();
-            let k = node
-                .children
-                .iter()
-                .take(idx)
-                .filter(|c| c.name == name)
-                .count();
-            if k > 0 {
-                current_path.push(format!("{}#{}", name, k));
-            } else {
-                current_path.push(name);
-            }
-        }
-        if recursively_evaluate_node_formulas_selective(
-            child_ptr,
-            node as *const OverseerNode,
-            current_path,
-            document_root,
-            field_paths,
-        ) {
+        let wrapper = crate::addressing::is_wrapper(&*child_ptr);
+        let changed = if wrapper {
+            recursively_evaluate_node_formulas_selective(
+                child_ptr,
+                node as *const OverseerNode,
+                current_path,
+                document_root,
+                field_paths,
+                level,
+            )
+        } else {
+            current_path.push(level.segment(&(*child_ptr).name));
+            let changed = recursively_evaluate_node_formulas_selective(
+                child_ptr,
+                node as *const OverseerNode,
+                current_path,
+                document_root,
+                field_paths,
+                &mut crate::addressing::Level::default(),
+            );
+            current_path.pop();
+            changed
+        };
+        if changed {
             subtree_changed = true;
         }
-        current_path.pop();
     }
     subtree_changed
 }
@@ -3397,7 +3425,7 @@ fn compute_list_ui_sort_keys(nodes: &mut Vec<OverseerNode>) {
         let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
         let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
         unsafe {
-            recursively_compute_sort_keys(node_ptr, std::ptr::null(), &mut current_path, &snapshot);
+            recursively_compute_sort_keys(node_ptr, std::ptr::null(), &mut current_path, &snapshot, &mut crate::addressing::Level::default());
         }
     }
 }
@@ -3407,6 +3435,8 @@ unsafe fn recursively_compute_sort_keys(
     _parent_ptr: *const OverseerNode,
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
+    // Numbers this node's children in the path - see `addressing::Level`.
+    level: &mut crate::addressing::Level,
 ) {
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
     use crate::types::OverseerValue;
@@ -3445,29 +3475,20 @@ unsafe fn recursively_compute_sort_keys(
         }
     }
 
-    // Recurse into children
+    // Recurse into children - a wrapper is no step of the path, see `addressing::Level`.
     for c in 0..node.children.len() {
         let child_ptr: *mut OverseerNode = &mut node.children[c] as *mut _;
-        {
-            let child_ref = &*child_ptr;
-            let name = child_ref.name.clone();
-            let k = node
-                .children
-                .iter()
-                .take(c)
-                .filter(|c| c.name == name)
-                .count();
-            if k > 0 {
-                current_path.push(format!("{}#{}", name, k));
-            } else {
-                current_path.push(name);
-            }
+        if crate::addressing::is_wrapper(&*child_ptr) {
+            recursively_compute_sort_keys(child_ptr, node as *const OverseerNode, current_path, document_root, level);
+            continue;
         }
+        current_path.push(level.segment(&(*child_ptr).name));
         recursively_compute_sort_keys(
             child_ptr,
             node as *const OverseerNode,
             current_path,
             document_root,
+            &mut crate::addressing::Level::default(),
         );
         current_path.pop();
     }

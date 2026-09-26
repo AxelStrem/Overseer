@@ -466,19 +466,39 @@ fn carry_over_computed(
     edited: &std::collections::HashSet<String>,
     trail: &mut Vec<String>,
 ) -> bool {
+    carry_over_computed_at(into, from, edited, trail, &mut crate::addressing::Level::default())
+}
+
+/// The same, a level at a time, naming each node as the edited paths do - a wrapper is no step,
+/// see `addressing::Level` - or an edit inside one would not be recognised and its old answer
+/// copied back over it.
+fn carry_over_computed_at(
+    into: &mut [OverseerNode],
+    from: &[OverseerNode],
+    edited: &std::collections::HashSet<String>,
+    trail: &mut Vec<String>,
+    level: &mut crate::addressing::Level,
+) -> bool {
     if into.len() != from.len() {
         return false;
     }
-    for (idx, (fresh, previous)) in into.iter_mut().zip(from.iter()).enumerate() {
+    for (fresh, previous) in into.iter_mut().zip(from.iter()) {
         if fresh.name != previous.name {
             return false;
         }
-        let repeats = from.iter().take(idx).filter(|c| c.name == fresh.name).count();
-        trail.push(if repeats > 0 {
-            format!("{}#{}", fresh.name, repeats)
-        } else {
-            fresh.name.clone()
-        });
+        if crate::addressing::is_wrapper(fresh) {
+            // Its own worked-out values too - a `hidden` on a row - which no edit names.
+            for (key, value) in &previous.parameters {
+                if key.starts_with("_computed_") {
+                    fresh.parameters.insert(key.clone(), value.clone());
+                }
+            }
+            if !carry_over_computed_at(&mut fresh.children, &previous.children, edited, trail, level) {
+                return false;
+            }
+            continue;
+        }
+        trail.push(level.segment(&fresh.name));
         // Not onto what the edit just changed. A field holding a plain value has no formula to
         // work it out again, so copying the old answer over the new one would put the edit back -
         // and everything reading it would agree, convincingly and wrongly.

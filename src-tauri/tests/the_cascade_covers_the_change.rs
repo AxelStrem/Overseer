@@ -14,6 +14,7 @@
 //! that break it. That was the lesson from the last graph, which looked right on small examples
 //! and reported nothing for an aggregate.
 
+use overseer::addressing::{is_wrapper, step_among, Level};
 use overseer::dependencies::{self, Graph};
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::parser;
@@ -21,56 +22,65 @@ use overseer::resolver;
 use overseer::types::{OverseerNode, OverseerValue};
 
 /// Every computed value in the document, by path.
+///
+/// Spelled the way the resolver spells a path - `addressing::Level`: a wrapper is no step, and a
+/// name met twice at one level is `name#1`. Without the same spelling the same node has two
+/// names, and a prediction about one looks like a miss about the other. A wrapper's own values
+/// are its parent's, as the resolver records them.
 fn computed(nodes: &[OverseerNode]) -> std::collections::HashMap<String, String> {
     fn walk(
         nodes: &[OverseerNode],
         trail: &mut Vec<String>,
         out: &mut std::collections::HashMap<String, String>,
+        level: &mut Level,
     ) {
-        for (idx, n) in nodes.iter().enumerate() {
-            // The same spelling the resolver uses: duplicate sibling names carry an ordinal, so
-            // the second unnamed div is `div#1`. Without it the same node has two names and a
-            // prediction about one looks like a miss about the other.
-            let repeats = nodes.iter().take(idx).filter(|c| c.name == n.name).count();
-            trail.push(if repeats > 0 {
-                format!("{}#{}", n.name, repeats)
-            } else {
-                n.name.clone()
-            });
+        for n in nodes {
+            let wrapper = is_wrapper(n);
+            if !wrapper {
+                trail.push(level.segment(&n.name));
+            }
             for (k, v) in &n.parameters {
                 if k.starts_with("_computed_") {
                     out.insert(format!("{}#{}", trail.join("/"), k), format!("{v:?}"));
                 }
             }
-            walk(&n.children, trail, out);
-            trail.pop();
+            if wrapper {
+                walk(&n.children, trail, out, level);
+            } else {
+                walk(&n.children, trail, out, &mut Level::default());
+                trail.pop();
+            }
         }
     }
     let mut out = std::collections::HashMap::new();
-    walk(nodes, &mut Vec::new(), &mut out);
+    walk(nodes, &mut Vec::new(), &mut out, &mut Level::default());
     out
 }
 
-/// Set the raw value at a path, by walking names.
+/// Set the raw value at a path, by the steps the resolver would take to it.
 fn put(nodes: &mut [OverseerNode], path: &[String], value: OverseerValue) -> bool {
-    let Some((first, rest)) = path.split_first() else {
-        return false;
+    let Some((first, rest)) = path.split_first() else { return false };
+    let target = match step_among(nodes, first) {
+        Some(n) => n as *const OverseerNode,
+        None => return false,
     };
-    // Every child of that name, not just the first: unnamed divs all answer to "div", and the
-    // path walks through whichever one actually holds the rest.
-    for node in nodes.iter_mut() {
-        if &node.name != first {
-            continue;
+    fn find_mut(nodes: &mut [OverseerNode], target: *const OverseerNode) -> Option<&mut OverseerNode> {
+        for n in nodes.iter_mut() {
+            if std::ptr::eq(n, target) {
+                return Some(n);
+            }
+            if let Some(found) = find_mut(&mut n.children, target) {
+                return Some(found);
+            }
         }
-        if rest.is_empty() {
-            node.parameters.insert("value".to_string(), value);
-            return true;
-        }
-        if put(&mut node.children, rest, value.clone()) {
-            return true;
-        }
+        None
     }
-    false
+    let Some(node) = find_mut(nodes, target) else { return false };
+    if rest.is_empty() {
+        node.parameters.insert("value".to_string(), value);
+        return true;
+    }
+    put(&mut node.children, rest, value)
 }
 
 /// A field somewhere in the document that holds a plain number, with its path.
@@ -80,23 +90,29 @@ fn some_numbers(nodes: &[OverseerNode], want: usize) -> Vec<(Vec<String>, f64)> 
         trail: &mut Vec<String>,
         out: &mut Vec<(Vec<String>, f64)>,
         want: usize,
+        level: &mut Level,
     ) {
         for n in nodes {
             if out.len() >= want {
                 return;
             }
-            trail.push(n.name.clone());
+            // Named as the resolver names it - see `computed`.
+            if is_wrapper(n) {
+                walk(&n.children, trail, out, want, level);
+                continue;
+            }
+            trail.push(level.segment(&n.name));
             match n.parameters.get("value") {
                 Some(OverseerValue::Integer(i)) => out.push((trail.clone(), *i as f64)),
                 Some(OverseerValue::Float(f)) => out.push((trail.clone(), *f)),
                 _ => {}
             }
-            walk(&n.children, trail, out, want);
+            walk(&n.children, trail, out, want, &mut Level::default());
             trail.pop();
         }
     }
     let mut out = Vec::new();
-    walk(nodes, &mut Vec::new(), &mut out, want);
+    walk(nodes, &mut Vec::new(), &mut out, want, &mut Level::default());
     out
 }
 

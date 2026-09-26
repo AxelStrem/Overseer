@@ -102,6 +102,71 @@ pub fn is_wrapper(node: &OverseerNode) -> bool {
     node.is_hierarchy_transparent && (node.name.is_empty() || node.name == node.node_type)
 }
 
+/// The names given to the nodes at one level of a path, in the order they are met.
+///
+/// Every path the resolver builds - what a formula is worked out against, what the memo is keyed
+/// by, what the dependency graph records, what an action says it wrote - names a node the way an
+/// address does: a wrapper contributes no step of its own, and what is inside it is named as
+/// though it sat in the wrapper's parent. So a level is everything its parent holds with the
+/// wrappers looked through, and a name met a second time there is `name#1`, whichever row it
+/// happens to sit in. A walk keeps one of these per level: a wrapper's children are numbered by
+/// its parent's, anything else's children by a fresh one.
+///
+/// Wrappers are for layout and mean nothing to any logic. They used to be a step in these paths
+/// and not in addresses, so a `..` written inside one landed on it, a level short of where the
+/// document meant - and a formula that had learned to say `../..` for that is one level too far
+/// now, which the documents were changed for when this was.
+#[derive(Default)]
+pub struct Level {
+    seen: std::collections::HashMap<String, usize>,
+}
+
+impl Level {
+    /// The step naming the next node met at this level.
+    pub fn segment(&mut self, name: &str) -> String {
+        let count = self.seen.entry(name.to_string()).or_insert(0);
+        let segment = if *count > 0 {
+            format!("{}#{}", name, count)
+        } else {
+            name.to_string()
+        };
+        *count += 1;
+        segment
+    }
+}
+
+/// A step's name and which of that name it means: `name#2` is the third.
+fn split_step(segment: &str) -> (&str, usize) {
+    if let Some((base, n)) = segment.rsplit_once('#') {
+        if let Ok(k) = n.parse::<usize>() {
+            return (base, k);
+        }
+    }
+    (segment, 0)
+}
+
+/// The node one step of a path names among these nodes, looking through wrappers as the path
+/// was built - see `Level`. A step naming a wrapper itself, which older paths did, still finds it.
+pub fn step_among<'a>(nodes: &'a [OverseerNode], segment: &str) -> Option<&'a OverseerNode> {
+    let (name, which) = split_step(segment);
+    fn walk<'a>(nodes: &'a [OverseerNode], name: &str, which: usize, met: &mut usize) -> Option<&'a OverseerNode> {
+        for node in nodes {
+            if is_wrapper(node) {
+                if let Some(found) = walk(&node.children, name, which, met) {
+                    return Some(found);
+                }
+            } else if node.name == name {
+                if *met == which {
+                    return Some(node);
+                }
+                *met += 1;
+            }
+        }
+        None
+    }
+    walk(nodes, name, which, &mut 0).or_else(|| nodes.iter().filter(|n| n.name == name).nth(which))
+}
+
 /// The children a node has for addressing, with the child indices that reach each.
 ///
 /// A wrapper contributes what is inside it rather than itself, so the path to a node under one

@@ -346,7 +346,14 @@ impl Graph {
     /// into `project/div`, which names a different node, and an edit then recomputes the wrong
     /// thing and leaves the right thing stale. The parameter is always last and always begins
     /// `_computed`.
+    ///
+    /// A formula is recorded as well, under its node and its text - `path$text` - and belongs to
+    /// the node its path names. No path holds a `$`, and a formula's text can hold anything.
     pub fn node_of(key: &str) -> &str {
+        let key = match key.find('$') {
+            Some(at) => &key[..at],
+            None => key,
+        };
         match key.rfind("#_computed") {
             Some(at) => &key[..at],
             None => key,
@@ -392,35 +399,45 @@ impl Graph {
         let mut seen: HashSet<String> = HashSet::new();
         let mut order: Vec<String> = Vec::new();
         let mut queue: VecDeque<String> = changed.iter().cloned().collect();
+        // Every path whose readers have been taken, so that each is taken once.
+        //
+        // What read a path is its own readers and everything that read a container of it - the
+        // second half is what makes an aggregate work: `intake.map(...).sum()` records a read of
+        // the list, and what changed is one meal inside it. But a container is shared by all it
+        // holds, and it was walked again for every one of them the cascade reached. The exercise
+        // log's history reads the whole list of exercises on every row, so the clock ticking one
+        // exercise's colour took those few hundred readers again for each of the hundreds of
+        // values it reached, and that was most of a reopen. Once a container has been taken, so
+        // has everything above it, and the walk up stops there.
+        let mut taken: HashSet<String> = HashSet::new();
 
         while let Some(path) = queue.pop_front() {
-            for dependent in self.readers_of(&path) {
-                if seen.insert(dependent.clone()) {
-                    order.push(dependent.clone());
-                    queue.push_back(dependent);
+            // The path, then its containers. A formula's key carries its text, which has slashes
+            // of its own, so its containers are those of its node.
+            let mut steps: Vec<&str> = vec![path.as_str()];
+            let mut walk = match path.find('$') {
+                Some(at) => &path[..at],
+                None => path.as_str(),
+            };
+            while let Some(cut) = walk.rfind('/') {
+                walk = &walk[..cut];
+                steps.push(walk);
+            }
+            for step in steps {
+                if !taken.insert(step.to_string()) {
+                    break;
+                }
+                let Some(readers) = self.read_by.get(step) else {
+                    continue;
+                };
+                for dependent in readers {
+                    if seen.insert(dependent.clone()) {
+                        order.push(dependent.clone());
+                        queue.push_back(dependent.clone());
+                    }
                 }
             }
         }
         order
-    }
-
-    /// Everything that read this path, or read a container this path sits inside.
-    ///
-    /// The second half is what makes an aggregate work: `intake.map(...).sum()` records a read of
-    /// the list, and what changed is one meal inside it.
-    fn readers_of(&self, path: &str) -> Vec<String> {
-        let mut found: HashSet<String> = HashSet::new();
-        if let Some(direct) = self.read_by.get(path) {
-            found.extend(direct.iter().cloned());
-        }
-        // Every ancestor of the changed path: a read of the list covers a change to its entries.
-        let mut walk = path;
-        while let Some(cut) = walk.rfind('/') {
-            walk = &walk[..cut];
-            if let Some(above) = self.read_by.get(walk) {
-                found.extend(above.iter().cloned());
-            }
-        }
-        found.into_iter().collect()
     }
 }

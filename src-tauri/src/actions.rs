@@ -375,26 +375,46 @@ impl ActionExecutor {
             seg = format!("{}#{}", seg, count);
         }
         out.push(seg);
-        // descend
+        // Descend, naming each step the way every other path is named: a wrapper is no step,
+        // and a repeated name is numbered among everything its level holds with the wrappers
+        // looked through - see `addressing::Level`. This is what a write reports it changed and
+        // what an action's formulas are worked out against, so it has to say what the dependency
+        // graph and the resolver say, or an edit reaches nothing that reads it.
+        fn ordinal(level: &OverseerNode, target: *const OverseerNode, name: &str) -> usize {
+            fn walk(nodes: &[OverseerNode], target: *const OverseerNode, name: &str, met: &mut usize) -> bool {
+                for n in nodes {
+                    if std::ptr::eq(n, target) {
+                        return true;
+                    }
+                    if crate::addressing::is_wrapper(n) {
+                        if walk(&n.children, target, name, met) {
+                            return true;
+                        }
+                    } else if eff(n) == name {
+                        *met += 1;
+                    }
+                }
+                false
+            }
+            let mut met = 0;
+            walk(&level.children, target, name, &mut met);
+            met
+        }
         let mut cur: &OverseerNode = root;
+        let mut level: &OverseerNode = root;
         for idx in indices.iter().skip(1) {
             if *idx >= cur.children.len() {
                 break;
             }
             let child = &cur.children[*idx];
-            let base = eff(child);
-            let prior = cur
-                .children
-                .iter()
-                .take(*idx)
-                .filter(|c| eff(c) == base)
-                .count();
-            let mut seg = base.to_string();
-            if prior > 0 {
-                seg = format!("{}#{}", seg, prior);
-            }
-            out.push(seg);
             cur = child;
+            if crate::addressing::is_wrapper(child) {
+                continue;
+            }
+            let base = eff(child);
+            let prior = ordinal(level, child as *const OverseerNode, base);
+            out.push(if prior > 0 { format!("{}#{}", base, prior) } else { base.to_string() });
+            level = child;
         }
         out
     }

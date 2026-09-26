@@ -126,15 +126,15 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // A field carries eight pixels of padding and eight of margin above and below by
                 // default, so two stacked ones put thirty-two pixels of nothing between two lines
                 // that want two. `spacing` on the column does not help: it never becomes a gap.
-                    string name (font-size=20px, margin=0, padding=0, value-padding="0 8px") = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/name)
+                    string name (font-size=20px, margin=0, padding=0, value-padding="0 8px") = $(FOODS/Catalog.filter(|x| x/handle == ../food)/name)
                     // The part of the name that is not the name - a flavour, a crust, a cut.
                     // Smaller and under it, and drawn at all only when the food has one.
-                    string sub_name (label="", font-size=12px, margin=0, padding=0, value-padding="0 8px", hidden=$(sub_name == "")) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/sub_name)
+                    string sub_name (label="", font-size=12px, margin=0, padding=0, value-padding="0 8px", hidden=$(sub_name == "")) = $(FOODS/Catalog.filter(|x| x/handle == ../food)/sub_name)
                 }
                 // The one figure most meals are read for, at a size to match. It sits beside
                 // the grade rather than in the table below, where it was one number among
                 // thirteen.
-                float calories (suffix=" kcal", precision=0, font-size=32px, width=30%) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/calories * 0.01)
+                float calories (suffix=" kcal", precision=0, font-size=32px, width=30%) = $(grams * FOODS/Catalog.filter(|x| x/handle == ../food)/per_100g/calories * 0.01)
             }
             // What qualifies the meal: which kind of the food it was, what the food is, and how
             // much of it. Kept off the first row so a long name has the width to itself.
@@ -149,7 +149,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // onto the record, where the next resolve would overwrite them from the
                 // catalogue - a change that appears to work and then quietly does not. Change
                 // them in foods.os and every meal that ever ate it says the same new thing.
-                tags labels (label="", vocabulary="tracker_v2/VOCAB/Labels", mutable=false, width=36%) = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/labels)
+                tags labels (label="", vocabulary="tracker_v2/VOCAB/Labels", mutable=false, width=36%) = $(FOODS/Catalog.filter(|x| x/handle == ../food)/labels)
                 // Whichever of these a record states, the other is derived. Both are null here
                 // so neither shadows the other; a record must state one of them.
                 float portions (label="portions", precision=2, format="trim", width=18%, fallback=$(grams / portion_weight), default=1) = null
@@ -200,12 +200,12 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // per 100 g already, which is the side the scheme is defined on, so how much was
                 // eaten does not come into it.
                 <NutriScore> quality {
-                    - kcal = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/calories)
-                    - sugar = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/sugar)
-                    - sat_fat = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/saturated_fat)
-                    - salt = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/salt)
-                    - fibre = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/fibre)
-                    - protein = $(FOODS/Catalog.filter(|x| x/handle == ../../../food)/per_100g/protein)
+                    - kcal = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/calories)
+                    - sugar = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/sugar)
+                    - sat_fat = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/saturated_fat)
+                    - salt = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/salt)
+                    - fibre = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/fibre)
+                    - protein = $(FOODS/Catalog.filter(|x| x/handle == ../../food)/per_100g/protein)
                 }
             }
         }
