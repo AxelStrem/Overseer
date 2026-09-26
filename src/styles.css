@@ -1006,6 +1006,11 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .glyph-ellipsis-v::after { content: '⋮'; font-size: 1.2em; line-height: 1; }
 .glyph-burger::before, .glyph-burger::after, .glyph-burger span { content: ''; display: block; width: 1em; height: 2px; background: currentColor; margin: 2px 0; }
 
+/* A speech bubble: a rounded box with a tail under its left side. */
+.glyph-note { position: relative; width: 1em; height: 1em; }
+.glyph-note::before { content: ''; position: absolute; left: 0.04em; top: 0.1em; width: 0.92em; height: 0.64em; border: 2px solid currentColor; border-radius: 0.18em; box-sizing: border-box; }
+.glyph-note::after { content: ''; position: absolute; left: 0.22em; top: 0.72em; width: 0; height: 0; border-top: 0.24em solid currentColor; border-right: 0.22em solid transparent; }
+
 /* Ensure no pseudo content renders beside labels in some engines */
 .overseer-button::before,
 .overseer-button::after {

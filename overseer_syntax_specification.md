@@ -205,6 +205,11 @@ Data/Header          // Data looked for on this node, then on each ancestor in t
 it is not: a bare name goes on looking through every ancestor, and `./` stops, so it names this
 node's field or nothing. Action paths take the same forms - `set (path="./done")`.
 
+A div with no name is layout and nothing else, and is no step of any path. A field in a row inside
+`div Box` counts `..` from Box, exactly as it would outside the row, so grouping fields for the
+look of them changes nothing they read. The div's own parameters and actions are its container's
+business: `./show` on one reads the container's `show`, and its `..` is the container's parent.
+
 Another document is reached through a mount rather than a path - see "Mounting another document".
 
 ### 6. Array Indexing
@@ -400,6 +405,33 @@ field declared `mutable=false`, a checkbox that only shows something, a date, a 
 with no action of its own. A worked-out value inside a pressable div does not open its formula on
 a double tap either, since its taps are the div's. An entry inside another pressable entry takes
 the tap itself, and the outer one does not see it.
+
+#### Opening a field for editing
+
+`start_editing` opens a field as though it had been double-tapped, with the cursor in it:
+
+```overseer
+div Task (layout="vertical") {
+    div (layout="horizontal") {
+        string title = ""
+        button note (icon="note") {
+            on click {
+                start_editing (path="../comment")
+            }
+        }
+    }
+    string comment (hidden=$(comment == "")) = ""
+}
+```
+
+It is for a field with nowhere to tap. A comment hidden while it is empty takes no room, so the task
+stays one line, and the button beside it opens it. A hidden field is shown for as long as it is
+open, and hidden again if it is closed as empty as it was.
+
+The path is found by the same rules as any other action's, and a field that is not there refuses
+the press. It changes nothing by itself - the field is written when something is typed into it -
+so a press that only opens a field is answered without working the document out again. After
+other actions in the same block, the field opens once they have run.
 
 
 

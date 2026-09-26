@@ -803,7 +803,8 @@ export class OverseerRenderer {
         const n = String(name).toLowerCase()
         // Action nodes are not visual; keep this list in sync with backend
         const actionNames = [
-            'set','inc','dec','toggle','clear','clear_list','ensure_in_list','ensure','remove','append','move','sort','set_now','set_now_ts','activate','deactivate'
+            'set','inc','dec','toggle','clear','clear_list','ensure_in_list','ensure','remove','append','move','sort','set_now','set_now_ts','activate','deactivate',
+            'start_editing'
         ]
         return actionNames.includes(n)
     }
@@ -852,10 +853,11 @@ export class OverseerRenderer {
             if (left === true || String(left).toLowerCase() === 'true') return false
         } catch (_) { /* a node without parameters is not out of view */ }
         
-        // Respect hidden=true on child nodes
+        // Respect hidden=true on child nodes - unless it is open for editing, see
+        // `openFieldForEditing`.
         try {
             const hid = this.getParameterValue(childNode, 'hidden')
-            if (hid === true || String(hid).toLowerCase() === 'true') return false
+            if ((hid === true || String(hid).toLowerCase() === 'true') && !this.isOpenForEditing(childNode)) return false
         } catch(_) {}
         // For buttons specifically, do not render any children other than explicit visual content (none today)
         if (parentType === 'button') return false
@@ -1049,10 +1051,11 @@ export class OverseerRenderer {
         // Record a stable render path on the node for downstream components (charts, events)
         try { node.__overseer_path = Array.isArray(path) ? path.slice() : [] } catch (_) {}
 
-        // Global hidden parameter: skip rendering entire subtree if hidden=true
+        // Global hidden parameter: skip rendering entire subtree if hidden=true - unless it is
+        // open for editing, see `openFieldForEditing`.
         try {
             const hiddenParam = this.getParameterValue(node, 'hidden')
-            if (hiddenParam === true || String(hiddenParam).toLowerCase() === 'true') {
+            if ((hiddenParam === true || String(hiddenParam).toLowerCase() === 'true') && !this.isOpenForEditing(node)) {
                 return
             }
         } catch (_) { /* no-op */ }
@@ -5352,6 +5355,80 @@ export class OverseerRenderer {
         return null
     }
 
+    /**
+     * Open a field for editing because a press asked for it - the `start_editing` action.
+     *
+     * As though it had been double-tapped, and through the same door: each kind of field opens
+     * its own editor on a double tap and knows whether it may be edited at all, so a double tap
+     * is what it is sent. What a tap cannot reach is a field that is not drawn - a comment hidden
+     * while it is empty, which is what this is for - so the field is drawn for as long as it is
+     * open, and hidden again if it is closed as empty as it was.
+     *
+     * Found by the child indices the answer names, in the document the answer has just been
+     * applied to - the way a change is applied, so no addressing is worked out here.
+     */
+    openFieldForEditing(field) {
+        if (!field || !Array.isArray(field.path) || field.path.length === 0) return false
+        const doc = window.app && window.app.currentDocument
+        if (!Array.isArray(doc)) return false
+        const chain = []
+        let level = doc
+        for (const index of field.path) {
+            const node = level && level[index]
+            if (!node) return false
+            chain.push(node)
+            level = Array.isArray(node.children) ? node.children : []
+        }
+        const node = chain[chain.length - 1]
+        // Drawn again from the nearest ancestor that is on screen, since the field may not be.
+        const drawAgain = () => {
+            for (let i = chain.length - 2; i >= 0; i--) {
+                const at = chain[i].__overseer_path
+                if (Array.isArray(at) && at.length > 0 && this.rerenderSubtree(doc, at)) return
+            }
+            this.renderDocument(doc)
+        }
+        if (!this._openForEditing) this._openForEditing = new WeakSet()
+        this._openForEditing.add(node)
+        drawAgain()
+
+        const drawn = node.__uid ? document.querySelector(`[data-uid="${node.__uid}"]`) : null
+        const value = drawn && (drawn.classList.contains('field-value') ? drawn : drawn.querySelector('.field-value'))
+        if (!value) {
+            this._openForEditing.delete(node)
+            drawAgain()
+            return false
+        }
+        value.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        const editor = value.parentNode
+            ? Array.from(value.parentNode.children).find((c) => c.classList && c.classList.contains('field-editor'))
+            : null
+        let closed = false
+        const close = (left) => {
+            if (closed) return
+            closed = true
+            this._openForEditing.delete(node)
+            // Something typed is shown by the write it makes, which says the field is no longer
+            // empty; drawing it again before that arrives would hide it for a moment.
+            if (!String(left ?? '').trim()) drawAgain()
+        }
+        if (!editor) {
+            // Refused - a field that may not be edited here opens nothing.
+            close('')
+            return false
+        }
+        editor.addEventListener('blur', () => close(editor.value))
+        editor.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') close(this.getNodeValue(node))
+        })
+        return true
+    }
+
+    /// Whether a field has been opened for editing and is drawn although it is hidden.
+    isOpenForEditing(node) {
+        return !!(node && this._openForEditing && this._openForEditing.has(node))
+    }
+
     makeFieldEditable(element, node, isMultiline = false) {
         // Capture the old displayed value before editing starts (for selective update diff only)
         const oldValue = element.textContent
@@ -6332,6 +6409,7 @@ export class OverseerRenderer {
             materializedForThisEvent = true
             if (made && made.ran) {
                 this.emptyTextboxes(Array.isArray(made.answer?.emptied) ? made.answer.emptied : [])
+                this.openFieldForEditing(made.answer?.start_editing)
                 return
             }
         }
@@ -6403,6 +6481,8 @@ export class OverseerRenderer {
         let writtenAsAnInstruction = false
         // The textboxes the press copied from, which the page empties once it has repainted.
         let emptied = []
+        // The field the press asked to have opened, once the answer is on screen.
+        let toOpen = null
         let updated = null
         try {
             // Sanitize nodes: deep clone shallowly to strip any live references / accidental arrays in fields.
@@ -6504,6 +6584,7 @@ export class OverseerRenderer {
                     // Forgotten now, so whatever is drawn next draws them empty.
                     emptied = Array.isArray(update.emptied) ? update.emptied : []
                     for (const p of emptied) this._typed.delete(JSON.stringify(p))
+                    toOpen = update.start_editing || null
                 }
                 if (update && Array.isArray(update.changes)) {
                     window.app._currentText = typeof update.text === 'string' ? update.text : null
@@ -6524,6 +6605,7 @@ export class OverseerRenderer {
                     }
                     // Nothing about them changed in the document, so the repaint above left them.
                     this.emptyTextboxes(emptied)
+                    this.openFieldForEditing(toOpen)
                     return
                 }
                 if (update && Array.isArray(update.nodes)) {
@@ -6591,6 +6673,7 @@ export class OverseerRenderer {
             if (!writtenAsAnInstruction) {
                 window.app.markDocumentModified && window.app.markDocumentModified(true)
             }
+            this.openFieldForEditing(toOpen)
         } else {
             // Backend returned a status/boolean or unexpected shape; keep current document
             if (DEBUG_MODE) console.warn('[Overseer] emitEvent returned non-document value; preserving current document:', updated)

@@ -571,6 +571,19 @@ pub struct ResolvedUpdate {
     /// most it can do.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emptied: Vec<Vec<String>>,
+    /// The field a press asked to have opened for editing - see `actions::start_editing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_editing: Option<FieldToEdit>,
+}
+
+/// A field to open for editing, named twice.
+///
+/// By the child indices that reach it in the document as answered, which is what the page finds
+/// it by - the same way it applies a change - and by address, for anyone reading along.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub struct FieldToEdit {
+    pub address: String,
+    pub path: Vec<usize>,
 }
 
 /// The document as its own text reads, rather than as it happens to sit in memory.
@@ -633,6 +646,7 @@ fn finish_update_with(
                 wrote: false,
                 file_text: None,
                 emptied: Vec::new(),
+                start_editing: None,
             })
         }
         None => {
@@ -646,6 +660,7 @@ fn finish_update_with(
                 wrote: false,
                 file_text: None,
                 emptied: Vec::new(),
+                start_editing: None,
             })
         }
     }
@@ -896,6 +911,27 @@ fn change_document(
     // the graph is describing a document that no longer exists. Also when there is no graph for
     // this text, which is what happens when the document was worked out for a viewer rather
     // than plainly. Never wrong, only slower.
+    //
+    // And not at all when nothing ran that could change it: a press that only opens a field for
+    // editing is answered as soon as the field is found.
+    let ran_nothing = report.as_ref().is_some_and(|changed| !changed.acted);
+
+    // Nothing ran that could change it, and the caller holds this very document - it is what the
+    // baseline is. So the answer is that nothing changed, and which field to open, without
+    // writing the document out and comparing it with itself: that was most of what such a press
+    // still cost on tasks.os once nothing was worked out again.
+    if ran_nothing && held_for_the_viewer.is_empty() && baseline.is_some() {
+        return Ok(ResolvedUpdate {
+            start_editing: field_to_edit(report.as_ref(), &nodes),
+            text: as_it_stood,
+            changes: Some(Vec::new()),
+            nodes: None,
+            view_state: Vec::new(),
+            wrote: false,
+            file_text: None,
+            emptied: Vec::new(),
+        });
+    }
     let settled_what_it_reached = report
         .as_ref()
         .filter(|changed| !changed.structural && !changed.fields.is_empty())
@@ -915,7 +951,7 @@ fn change_document(
             remember_graph(&as_it_stood, graph);
             Some(())
         });
-    if settled_what_it_reached.is_none() {
+    if settled_what_it_reached.is_none() && !ran_nothing {
         crate::resolver::resolve_document(&mut nodes);
     }
 
@@ -940,12 +976,21 @@ fn change_document(
     // The caller is shown what it asked for, viewer's values and all. Only the file goes
     // without - and it is told so, because it holds the baseline a later save is checked
     // against and has no other way to learn that this write moved the file.
+    let to_edit = field_to_edit(report.as_ref(), &nodes);
     let mut update = finish_update_with(&as_it_stood, serialized, nodes, baseline)?;
     update.wrote = wrote;
+    update.start_editing = to_edit;
     if wrote && settled.text != update.text {
         update.file_text = Some(settled.text);
     }
     Ok(update)
+}
+
+/// The field a press asked to have opened, found in the document as it now stands - the one the
+/// caller is about to hold, so its indices are the ones the caller finds it by.
+fn field_to_edit(report: Option<&crate::actions::Changed>, nodes: &[OverseerNode]) -> Option<FieldToEdit> {
+    let address = report?.start_editing.clone()?;
+    crate::delta::indices_of(nodes, &address).map(|path| FieldToEdit { address, path })
 }
 
 /// Work a document out as one viewer sees it.

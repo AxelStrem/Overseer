@@ -61,6 +61,22 @@ pub struct Changed {
     /// carried out rather than written down, and the caller decides where a viewer's state
     /// lives. The document is left exactly as it was.
     pub view_state: Vec<(String, OverseerValue)>,
+    /// Whether anything ran that could have changed the document.
+    ///
+    /// A press whose handler only asked for a field to be opened, or whose `if` let nothing
+    /// through, leaves the document exactly as it was - and working it out again anyway cost as
+    /// much as opening it, which on tasks.os is most of a second between tapping and typing.
+    ///
+    /// Erring towards yes, because a no skips working the document out: every action but those
+    /// two says yes, so does noting any change, and so does every way into this module that
+    /// changes a document without an action - a write, an entry made or taken out.
+    pub acted: bool,
+    /// A field the press asked to have opened for editing, by address - see `start_editing`.
+    ///
+    /// Opening one is the page's business, so the action names it and the page does it. An
+    /// address rather than child indices, because a later action in the same press may add or
+    /// remove entries, and the indices are only worked out once the document has settled.
+    pub start_editing: Option<String>,
 }
 
 thread_local! {
@@ -90,6 +106,7 @@ pub fn take_report() -> Option<Changed> {
 fn note_field(address: String) {
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.acted = true;
             if !changed.fields.contains(&address) {
                 changed.fields.push(address);
             }
@@ -117,6 +134,7 @@ fn caller_will_settle_it() -> bool {
 fn note_view_state(address: String, value: OverseerValue) {
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.acted = true;
             changed.view_state.push((address, value));
         }
     });
@@ -293,10 +311,29 @@ pub(crate) fn converted(value: &OverseerValue, to: &str) -> Option<OverseerValue
     }
 }
 
+/// Something ran that may have changed the document.
+fn note_acted() {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.acted = true;
+        }
+    });
+}
+
+/// The field to open for editing once the press is answered. The last one asked for wins.
+fn note_start_editing(address: String) {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.start_editing = Some(address);
+        }
+    });
+}
+
 /// The document's shape moved, so no address can be trusted to still mean what it did.
 fn note_structural() {
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.acted = true;
             changed.structural = true;
         }
     });
@@ -472,8 +509,10 @@ impl ActionExecutor {
 
         // SAFETY: we use raw pointer to allow nested borrows during traversal of action children
         let owner: &mut OverseerNode = unsafe { &mut *owner_ptr };
-        // Build an internal, disambiguated path for evaluation contexts
-        let owner_eval_path = Self::build_disambiguated_path(&nodes.clone(), &owner_indices);
+        // Build an internal, disambiguated path for evaluation contexts. Read from the document
+        // itself: a copy of the whole of it, made only to read a path, was a fifth of what a press
+        // on tasks.os cost once it no longer worked the document out again.
+        let owner_eval_path = Self::build_disambiguated_path(nodes, &owner_indices);
 
         // 2) Find matching on block(s)
         #[cfg(feature = "debug-resolver")]
@@ -495,6 +534,9 @@ impl ActionExecutor {
                 .iter()
                 .any(|c| c.node_type == "on" && c.name == event_name);
             if !has_on {
+                // Loading or unloading changes what the document holds, whether or not anything
+                // written says so.
+                note_acted();
                 match event_name {
                     "load" => {
                         // Perform load
@@ -584,7 +626,31 @@ impl ActionExecutor {
             action.node_type,
             action.parameters
         );
+        // Everything but these may change the document. An `if` says so through whatever it
+        // lets run, and opening a field changes nothing until somebody types.
+        if !matches!(action.node_type.as_str(), "if" | "start_editing") {
+            note_acted();
+        }
         match action.node_type.as_str() {
+            // Opens a field for editing, as though it had been double-tapped.
+            //
+            // For the field that is not there to tap: a comment that takes no room until it has
+            // something to say is hidden while it is empty, so a button beside it opens it. The
+            // page does the opening; this finds the field by the same rules as every other
+            // action's path, so `../comment` means here what it means to `set`, and names it in
+            // the answer. Nothing is written, and a field that is not there is refused like any
+            // other target.
+            "start_editing" => {
+                let target = Self::require_string(&action.parameters, "path")?;
+                let (segments, _param, anchored) = Self::split_path_and_param(&target);
+                let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
+                    .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+                let address = crate::delta::address_at(nodes, &indices).ok_or_else(|| {
+                    OverseerError::ValidationError(format!("{} names nothing that can be shown", target))
+                })?;
+                note_start_editing(address);
+                Ok(())
+            }
             "if" => {
                 // if(cond=...) { <actions...> }
                 // Evaluate cond in owner's context (defaults to false if missing)
@@ -2746,6 +2812,7 @@ impl ActionExecutor {
         key_value: OverseerValue,
         goes: WhereItGoes,
     ) -> Result<String, OverseerError> {
+        note_acted();
         Self::ensure_in_list(
             nodes,
             &[],
@@ -2822,6 +2889,7 @@ impl ActionExecutor {
         list_path: &str,
         overrides: &Vec<OverseerNode>,
     ) -> Result<(), OverseerError> {
+        note_acted();
         Self::append_to_list(nodes, &[], list_path, None, None, overrides)
     }
 
@@ -2834,6 +2902,7 @@ impl ActionExecutor {
         nodes: &mut Vec<OverseerNode>,
         entry_path: &str,
     ) -> Result<(), OverseerError> {
+        note_acted();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(entry_path);
         let indices = Self::resolve_target_indices(&nodes, &[], anchored, &segments)
             .ok_or_else(|| {
@@ -2873,6 +2942,7 @@ impl ActionExecutor {
         target: &str,
         value: OverseerValue,
     ) -> Result<(), OverseerError> {
+        note_acted();
         Self::set_value(nodes, &[], &[], target, value)
     }
 

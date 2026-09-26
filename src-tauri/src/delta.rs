@@ -125,6 +125,19 @@ pub fn diff(before: &[OverseerNode], after: &[OverseerNode]) -> Vec<DocumentChan
     changes
 }
 
+/// The address of the node these child indices reach, if it has one - a wrapper has none.
+pub fn address_at(nodes: &[OverseerNode], indices: &[usize]) -> Option<String> {
+    index_paths(nodes)
+        .into_iter()
+        .find(|(_, path)| path.as_slice() == indices)
+        .map(|(address, _)| address)
+}
+
+/// The child indices that reach an address, in this document.
+pub fn indices_of(nodes: &[OverseerNode], address: &str) -> Option<Vec<usize>> {
+    index_paths(nodes).remove(address)
+}
+
 /// Every address in a document with the child indices that reach it.
 fn index_paths(nodes: &[OverseerNode]) -> HashMap<String, Vec<usize>> {
     fn go(

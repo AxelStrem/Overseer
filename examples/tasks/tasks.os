@@ -48,7 +48,7 @@ tab tasks (label="Tasks", mutable=true) {
             bool overdue (hidden=true) = $(has_deadline && minutes_since(../deadline) > 0)
 
             div (layout="horizontal", margin=0, alignment="center") {
-                string title (label="", font-size=18px, width=34%) = ""
+                string title (label="", font-size=18px, width=31%) = ""
 
                 // What kind of thing this is. Set by the rule that opened it, or by hand for a
                 // one-off, and carried into the history when it closes.
@@ -66,6 +66,15 @@ tab tasks (label="Tasks", mutable=true) {
                 int difficulty (label="", format="trim", width=6%) = 1
                 int priority (label="", font-size=18px, width=8%) =
                     $(../base_priority + ../priority_gain * days_since(../added))
+
+                // Opens the comment under the task. It takes no room while it is empty, so this is
+                // where one is started - grey until there is something in it.
+                button note (icon="note", margin=0, width=3%,
+                             font-color=$(../comment == "" ? "#6b7280" : "inherit")) {
+                    on click {
+                        start_editing (path="../comment")
+                    }
+                }
                 button done (label="done", margin=0, width=8%) {
                     on click {
                         append (list="/tasks/History") {
@@ -77,6 +86,7 @@ tab tasks (label="Tasks", mutable=true) {
                             - labels = $(../labels)
                             - deadline = $(../deadline)
                             - was_late = $(../overdue)
+                            - comment = $(../comment)
                         }
                         remove (from="/tasks/Open", keyField="added", keyValue=$(../added))
                     }
@@ -100,6 +110,7 @@ tab tasks (label="Tasks", mutable=true) {
                             - labels = $(../labels)
                             - deadline = $(../deadline)
                             - was_late = $(../overdue)
+                            - comment = $(../comment)
                             - failed = true
                         }
                         remove (from="/tasks/Open", keyField="added", keyValue=$(../added))
@@ -126,6 +137,13 @@ tab tasks (label="Tasks", mutable=true) {
             float priority_gain (hidden=true) = 0
 
             string description (label="", font-size=13px, hidden=$(description == "")) = ""
+
+            // Anything worth saying about this one occurrence - why it was failed, or that
+            // somebody else did it. Not the rule's `description`, which says the same thing every
+            // time. Hidden while it is empty, so a task stays one line; the note button in the row
+            // opens it. Carried into the history when the task is closed.
+            string comment (label="", font-size=13px, font-color="#9ca3af",
+                            hidden=$(comment == "")) = ""
         }
 
         // A tag that exists here.
@@ -142,29 +160,45 @@ tab tasks (label="Tasks", mutable=true) {
 
         // Something done. Difficulty travels with it: the history is what any statistic about
         // how much was got through will be computed from.
-        div Record (layout="horizontal", margin=0, alignment="center") {
-            timestamp done_at (format="datetime", width=20%) = "2026-01-01T00:00:00Z"
-            timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
-            string rule (hidden=true) = ""
-            string title (width=38%) = ""
+        div Record (layout="vertical", margin=0, spacing=2) {
+            div (layout="horizontal", margin=0, padding=0, alignment="center") {
+                timestamp done_at (format="datetime", width=20%) = "2026-01-01T00:00:00Z"
+                timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
+                string rule (hidden=true) = ""
+                string title (width=35%) = ""
 
-            // Kept, rather than looked up from the rule afterwards. A record is what happened,
-            // and what a task was called at the time is part of that: re-tagging a rule next
-            // month should not silently re-tag what was finished last month.
-            tags labels (label="", vocabulary="/tasks/Labels", width=16%) = ""
+                // Kept, rather than looked up from the rule afterwards. A record is what happened,
+                // and what a task was called at the time is part of that: re-tagging a rule next
+                // month should not silently re-tag what was finished last month.
+                tags labels (label="", vocabulary="/tasks/Labels", width=16%) = ""
 
-            // Whether it was late when it was finished. Worked out once, at the moment the
-            // button was pressed, and stored - the deadline and the doing are both in the
-            // past now, and nothing later should be able to change the answer.
-            timestamp deadline (hidden=true) = ""
-            bool was_late (label="late", width=7%, hidden=$(was_late == false)) = false
+                // Whether it was late when it was finished. Worked out once, at the moment the
+                // button was pressed, and stored - the deadline and the doing are both in the
+                // past now, and nothing later should be able to change the answer.
+                timestamp deadline (hidden=true) = ""
+                bool was_late (label="late", width=7%, hidden=$(was_late == false)) = false
 
-            // Closed without being done. `done_at` is really "closed at" on these - the field
-            // is shared because a record is a record, and every count that means *completed*
-            // filters on this flag rather than on the mere presence of a record.
-            bool failed (label="not done", width=9%, hidden=$(failed == false)) = false
+                // Closed without being done. `done_at` is really "closed at" on these - the field
+                // is shared because a record is a record, and every count that means *completed*
+                // filters on this flag rather than on the mere presence of a record.
+                bool failed (label="not done", width=9%, hidden=$(failed == false)) = false
 
-            int difficulty (label="", format="trim", width=10%) = 1
+                int difficulty (label="", format="trim", width=10%) = 1
+
+                // Opens the comment under the record - for saying afterwards why it went the way
+                // it did, which is often when the reason comes to mind.
+                button note (icon="note", margin=0, width=3%,
+                             font-color=$(../comment == "" ? "#6b7280" : "inherit")) {
+                    on click {
+                        start_editing (path="../comment")
+                    }
+                }
+            }
+
+            // What the task said about itself when it was closed, or what was added here since.
+            // Hidden while it is empty.
+            string comment (label="", font-size=13px, font-color="#9ca3af",
+                            hidden=$(comment == "")) = ""
         }
 
         // A reason for a task to appear.
