@@ -6,6 +6,10 @@
 // renderer, the DSL and the layout are none the wiser, and there is no second copy of the
 // frontend to keep in step with the first.
 (function () {
+    // Said for the page, which opens a document by going to its address here and by loading its
+    // file in the desktop app - see the drawer.
+    window.__OVERSEER_HOST__ = 'browser'
+
     // Which document this tab is looking at. The server has several and, unlike the desktop
     // app, cannot assume - a mount is written relative to the document that declares it.
     //
@@ -72,7 +76,7 @@
         window.addEventListener('DOMContentLoaded', () => {
             const target = document.getElementById('status-message')
             if (target) {
-                target.textContent = 'Open a document by its address, for example /doc/weight_tracker/tracker_v2.os'
+                target.textContent = 'Choose a document from the menu, or open one by its address, for example /doc/tasks.os'
             }
         })
         return

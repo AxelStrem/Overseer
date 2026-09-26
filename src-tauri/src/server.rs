@@ -554,6 +554,28 @@ impl DocumentRoot {
                 Ok(self.undo(&name)?)
             }
             "find_overseer_files" => as_json(self.list()),
+            // The documents kept to hand - see `menu`. The server's list lives in its own folder
+            // and names documents as this server does, so whichever document the page is showing
+            // has nothing to do with it.
+            "menu_places" | "menu_keep" | "menu_drop" | "menu_location" => {
+                let file = self.root.join(crate::menu::FILE);
+                let failed = |e: OverseerError| RequestError::Failed(format!("the menu: {:?}", e));
+                match cmd {
+                    "menu_places" => as_json(crate::menu::places(&file).map_err(failed)?),
+                    "menu_keep" => {
+                        let place = arg_str(args, &["place"])
+                            .ok_or_else(|| RequestError::Rejected("'place' is required".into()))?;
+                        let name = arg_str(args, &["name"]).unwrap_or_default();
+                        as_json(crate::menu::keep(&file, &place, &name).map_err(failed)?)
+                    }
+                    "menu_drop" => {
+                        let place = arg_str(args, &["place"])
+                            .ok_or_else(|| RequestError::Rejected("'place' is required".into()))?;
+                        as_json(crate::menu::drop(&file, &place).map_err(failed)?)
+                    }
+                    _ => as_json(crate::menu::FILE),
+                }
+            }
             other => Err(RequestError::Rejected(format!("no command '{}'", other))),
         })
     }

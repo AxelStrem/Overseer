@@ -433,6 +433,27 @@ impl FileOperations {
         Some(snapshot.full_text[rel_start..rel_end].replace("\r\n", "\n"))
     }
 
+    /// Whether a block, braces and all, holds nothing but whitespace and comments.
+    fn holds_only_trivia(block: &str) -> bool {
+        let inner = block.trim();
+        let inner = inner.strip_prefix('{').unwrap_or(inner);
+        let inner = inner.strip_suffix('}').unwrap_or(inner);
+        let mut rest = inner.to_string();
+        while let Some(open) = rest.find("/*") {
+            match rest[open..].find("*/") {
+                Some(close) => rest.replace_range(open..open + close + 2, " "),
+                None => rest.truncate(open),
+            }
+        }
+        rest.lines().all(|line| {
+            let line = match line.find("//") {
+                Some(at) => &line[..at],
+                None => line,
+            };
+            line.trim().is_empty()
+        })
+    }
+
     fn snapshot_block_inner(snapshot: &NodeSourceSnapshot) -> Option<String> {
         let (body_start, body_end) = snapshot.body_span?;
         if body_end <= body_start {
@@ -1284,10 +1305,19 @@ impl FileOperations {
             // Replay the authored block, braces and all. A node that had no block at all
             // still gets none - the absence of an envelope in the snapshot is what says so,
             // and inventing braces would be just as much of a change as dropping them.
-            if let Some(block) = snapshot
+            //
+            // Only a block that held nothing to begin with, though - whitespace, comments. One
+            // that held entries and has lost them all is not the block that was authored, and
+            // replaying it put back exactly what had been taken out: removing the last entry of
+            // a list answered Ok and left the file as it was.
+            let authored = snapshot
                 .as_ref()
-                .and_then(|snap| Self::snapshot_block_verbatim(snap))
-            {
+                .and_then(|snap| Self::snapshot_block_verbatim(snap));
+            if authored.as_deref().map_or(false, |block| !Self::holds_only_trivia(block)) {
+                output.push_str(" {\n");
+                output.push_str(&indent);
+                output.push('}');
+            } else if let Some(block) = authored {
                 let spacer = snapshot
                     .as_ref()
                     .map(|snap| snap.header.trailing.as_str())

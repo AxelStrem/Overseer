@@ -7,6 +7,7 @@ pub mod delta;
 pub mod docmgr;
 pub mod file_ops;
 pub mod formula_evaluator;
+pub mod menu;
 pub mod mutability;
 pub mod parser;
 pub mod resolver;

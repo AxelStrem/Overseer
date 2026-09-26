@@ -13,6 +13,38 @@ use overseer::file_ops::FileOperations;
 use overseer::types::*;
 use overseer::{app_api, docmgr, file_ops};
 
+/// The documents kept to hand, in this app's own settings folder - see `overseer::menu`. The
+/// desktop's list names files anywhere on this computer, so it is kept here rather than beside
+/// any one of them.
+fn menu_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf> {
+    use tauri::Manager;
+    let folder = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| OverseerError::IoError(format!("no settings folder: {}", e)))?;
+    Ok(folder.join(overseer::menu::FILE))
+}
+
+#[command]
+async fn menu_places(app: tauri::AppHandle) -> Result<Vec<overseer::menu::Place>> {
+    overseer::menu::places(&menu_file(&app)?)
+}
+
+#[command]
+async fn menu_keep(app: tauri::AppHandle, place: String, name: Option<String>) -> Result<Vec<overseer::menu::Place>> {
+    overseer::menu::keep(&menu_file(&app)?, &place, &name.unwrap_or_default())
+}
+
+#[command]
+async fn menu_drop(app: tauri::AppHandle, place: String) -> Result<Vec<overseer::menu::Place>> {
+    overseer::menu::drop(&menu_file(&app)?, &place)
+}
+
+#[command]
+async fn menu_location(app: tauri::AppHandle) -> Result<String> {
+    Ok(menu_file(&app)?.to_string_lossy().to_string())
+}
+
 #[command]
 async fn load_overseer_file(path: String) -> Result<String> {
     // Record the document's directory so a mount's relative source resolves against the
@@ -362,7 +394,11 @@ fn main() {
             run_overseer_event,
             append_overseer_entry,
             remove_overseer_entry,
-            ensure_overseer_entry
+            ensure_overseer_entry,
+            menu_places,
+            menu_keep,
+            menu_drop,
+            menu_location
         ])
         .run(tauri::generate_context!())
     {

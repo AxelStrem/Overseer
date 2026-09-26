@@ -34,6 +34,305 @@ body {
     height: 100vh;
 }
 
+/* The shell: a drawer at the left and the document beside it.
+ *
+ * The drawer holds what the header and the status bar used to - the documents kept to hand, the
+ * open document's path and Undo, the status line - so that folded away it leaves the document
+ * nearly the whole screen, with a small button to bring it back. Beside the page where there is
+ * room; over it, with the page dimmed behind, where there is not. See drawer.js. */
+:root {
+    --drawer-width: 264px;
+}
+
+.drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--drawer-width);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--surface-color);
+    border-right: 1px solid var(--border-color);
+    overflow-y: auto;
+    z-index: 50;
+    transition: transform 160ms ease;
+}
+
+body.drawer-folded .drawer {
+    transform: translateX(-100%);
+}
+
+#main {
+    margin-left: var(--drawer-width);
+    min-height: 100vh;
+    min-width: 0;
+    transition: margin-left 160ms ease;
+}
+
+body.drawer-folded #main {
+    margin-left: 0;
+}
+
+.drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 12px 8px 16px;
+}
+
+.drawer-title {
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+}
+
+.drawer-fold,
+.drawer-open {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: 6px;
+    width: 32px;
+    height: 32px;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.drawer-fold:hover,
+.drawer-open:hover {
+    background: var(--background-color);
+    border-color: var(--border-color);
+    color: var(--text-color);
+}
+
+.drawer-section {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 8px;
+}
+
+.drawer-heading {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+}
+
+.drawer-places {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.drawer-place {
+    display: flex;
+    align-items: center;
+    border-radius: 6px;
+}
+
+.drawer-place:hover {
+    background: var(--background-color);
+}
+
+.drawer-place.current {
+    background: var(--background-color);
+    box-shadow: inset 3px 0 0 var(--primary-color);
+}
+
+.drawer-place-open {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: var(--text-color);
+    padding: 6px 8px;
+    font-size: 14px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.drawer-place.current .drawer-place-open {
+    font-weight: 600;
+}
+
+.drawer-place-drop {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    opacity: 0;
+}
+
+.drawer-place:hover .drawer-place-drop,
+.drawer-place-drop:focus-visible {
+    opacity: 1;
+}
+
+.drawer-place-drop:hover {
+    color: var(--error-color);
+}
+
+/* No hovering on a touch screen, so what hovering would show is always there. */
+@media (hover: none) {
+    .drawer-place-drop {
+        opacity: 0.6;
+    }
+}
+
+.drawer-empty {
+    color: var(--text-secondary);
+    font-size: 13px;
+    padding: 6px 8px;
+}
+
+.drawer-action {
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: var(--text-color);
+    padding: 6px 8px;
+    font-size: 14px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.drawer-action:hover:not(:disabled) {
+    background: var(--background-color);
+}
+
+.drawer-action:disabled {
+    color: var(--text-secondary);
+    cursor: default;
+}
+
+.drawer-action.quiet {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.drawer-path {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 2px 8px 6px;
+    overflow-wrap: anywhere;
+}
+
+.drawer-path:empty {
+    display: none;
+}
+
+.drawer-foot {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 16px 12px;
+    border-top: 1px solid var(--border-color);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* Opening a file and making one are the desktop's; a browser opens documents from the list. */
+body.in-browser .desktop-only {
+    display: none !important;
+}
+
+/* The row above the document: the button that brings the drawer back while it is folded, and the
+   document's own tabs when it has more than one. Gone entirely when it would hold neither. */
+#main-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px 0;
+}
+
+.drawer-open {
+    display: none;
+}
+
+body.drawer-folded .drawer-open {
+    display: inline-block;
+}
+
+#tab-container:not(:has(.tab-button + .tab-button)) {
+    display: none;
+}
+
+body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
+    display: none;
+}
+
+#tab-container {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+#content-display {
+    padding: 12px 20px 20px;
+}
+
+.drawer-backdrop {
+    display: none;
+}
+
+/* What would otherwise go unseen while the status line is folded away. */
+.drawer-notice {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    max-width: min(420px, calc(100vw - 32px));
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--surface-color);
+    border: 1px solid var(--error-color);
+    color: var(--text-color);
+    box-shadow: var(--shadow);
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease;
+    z-index: 60;
+}
+
+.drawer-notice.shown {
+    opacity: 1;
+}
+
+@media (max-width: 767px) {
+    #main {
+        margin-left: 0;
+    }
+
+    body:not(.drawer-folded) .drawer {
+        box-shadow: 0 0 24px rgba(0, 0, 0, 0.3);
+    }
+
+    body:not(.drawer-folded) .drawer-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.35);
+        z-index: 45;
+    }
+
+    #content-display {
+        padding: 8px 10px 16px;
+    }
+}
+
 .toolbar {
     background: var(--surface-color);
     border-bottom: 1px solid var(--border-color);

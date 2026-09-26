@@ -42,6 +42,7 @@ try {
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { OverseerRenderer } from './renderer.js'
 import { FileManager } from './file-manager.js'
+import { Drawer } from './drawer.js'
 
 // Shallow document equality check used to avoid unnecessary re-renders after scheduler ticks
 // If serialization fails, assume different to be safe and apply update.
@@ -2165,6 +2166,8 @@ tab Main {
             filePathElement.style.display = 'none'
             this.setStatus('Ready', 'No file open')
         }
+        // Which document is open is what the drawer marks, and whether it offers to keep it.
+        try { this.drawer && this.drawer.documentChanged() } catch (_) { /* a drawer is a convenience */ }
     }
 
     showWelcomeScreen() {
@@ -2214,12 +2217,25 @@ tab Main {
         } else if (type === 'warning') {
             statusMessage.classList.add('warning')
         }
+        // The status line lives in the drawer, which may be folded away; an error still has to be seen.
+        if (type === 'error') {
+            try { this.drawer && this.drawer.notice(info ? `${message}: ${info}` : message) } catch (_) { /* seen in the drawer */ }
+        }
     }
 }
 
 // Initialize the app when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     const app = new OverseerApp()
+
+    // Started here rather than with the app, so an app made in a test does not go and read a list
+    // of documents nobody asked for.
+    try {
+        app.drawer = new Drawer(app)
+        app.drawer.start()
+    } catch (e) {
+        console.warn('[Overseer] the drawer could not start', e)
+    }
 
     // Dev-only convenience: auto-enable debug UI and auto-open a file if configured
     try {

@@ -29,7 +29,7 @@ fn read(relative: &str) -> String {
 /// Every `invoke('name'` the frontend makes.
 fn asked_for() -> BTreeSet<String> {
     let mut found = BTreeSet::new();
-    for source in ["src/main.js", "src/renderer.js", "src/file-manager.js"] {
+    for source in ["src/main.js", "src/renderer.js", "src/file-manager.js", "src/drawer.js"] {
         let text = read(source);
         let mut rest = text.as_str();
         while let Some(at) = rest.find("invoke('") {
@@ -78,7 +78,9 @@ fn the_server_offers() -> BTreeSet<String> {
             rest = &rest[at + 1..];
             let Some(end) = rest.find('"') else { break };
             let name = &rest[..end];
-            if name.contains("overseer") || name.starts_with("find_") {
+            // The command names the page uses, rather than every string an arm happens to hold -
+            // the drawer's `menu_*` among them.
+            if name.contains("overseer") || name.starts_with("find_") || name.starts_with("menu_") {
                 found.insert(name.to_string());
             }
             rest = &rest[end + 1..];
