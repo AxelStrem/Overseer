@@ -42,6 +42,21 @@ pub struct EvaluationContext<'a> {
     pub var_bindings: std::collections::HashMap<String, BoundValue<'a>>, // lambda variables
 }
 
+thread_local! {
+    /// See `FormulaEvaluator::circles_cut`.
+    static CIRCLES_CUT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// See `FormulaEvaluator::doubts`.
+    static DOUBTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static DOUBTS_SAID: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The document a pass reads from - see `FormulaEvaluator::with_pass_root`.
+struct PassRoot {
+    root: *const OverseerNode,
+    len: usize,
+    paths: Option<std::collections::HashMap<usize, Vec<String>>>,
+}
+
 /// Represents a parsed formula expression
 #[derive(Debug, Clone)]
 pub enum FormulaExpression {
@@ -396,8 +411,7 @@ impl FormulaEvaluator {
                                     .into_iter()
                                     .find(|c| c.name == key_field)
                                 {
-                                    if let Some(v) =
-                                        Self::get_effective_param(&ch.parameters, "value")
+                                    if let Some(v) = Self::value_of_node(ch).as_ref()
                                     {
                                         if Self::compare_values(v, &target)
                                             .map(|o| o == std::cmp::Ordering::Equal)
@@ -520,6 +534,11 @@ impl FormulaEvaluator {
             if let Some(raw) = params.get("value") {
                 // Unset, so what it reads is its fallback or its default - see `value_for_unset`.
                 if matches!(raw, OverseerValue::Null) {
+                    // Skipping a fallback or default nobody has worked out yet, for whatever
+                    // comes after it - see `doubts`.
+                    if Self::unworked(params) {
+                        Self::doubt_about(|| "an unset value's fallback or default skipped".to_string());
+                    }
                     if let Some(stood_in) = Self::value_for_unset(params) {
                         return Some(stood_in);
                     }
@@ -532,14 +551,25 @@ impl FormulaEvaluator {
             if let Some(comp) = params.get("_computed_value") {
                 return Some(comp);
             }
-            // Do NOT return the raw Formula here; let callers evaluate it when needed
+            // Do NOT return the raw Formula here; let callers evaluate it when needed - and they
+            // do, as they can, which is not always where the value lives. See `doubts`.
+            if let Some(OverseerValue::Formula(f)) = params.get("value") {
+                let f = f.clone();
+                Self::doubt_about(move || format!("value not worked out: {}", f.chars().take(60).collect::<String>()));
+            }
             return None;
         } else {
             let shadow = format!("_computed_{}", key);
             if let Some(v) = params.get(&shadow) {
                 return Some(v);
             }
-            return params.get(key);
+            let raw = params.get(key);
+            // The raw formula, for the caller to work out wherever it happens to be - see `doubts`.
+            if let Some(OverseerValue::Formula(f)) = raw {
+                let (k, f) = (key.to_string(), f.clone());
+                Self::doubt_about(move || format!("parameter {} not worked out: {}", k, f.chars().take(50).collect::<String>()));
+            }
+            return raw;
         }
     }
 
@@ -563,30 +593,55 @@ impl FormulaEvaluator {
                 OverseerValue::Formula(f) => {
                     let ctx =
                         EvaluationContext::new_with_current(node, path.to_vec(), document_root);
-                    return FormulaEvaluator::evaluate_formula(f, &ctx);
+                    // A formula that fails reads as the failure the resolver stores for it, not
+                    // as an error that fails the reader too. Read on demand it used to be the
+                    // second and read back from what a pass stored the first, and the two answer
+                    // differently: `kj > 3350` fails outright on an error and is simply false on
+                    // the stored text. So a value read before its source had been stored came out
+                    // one way and was put right a pass later, and every link of a chain that
+                    // started at a failing formula cost a pass of the whole document - the
+                    // tracker's NutriScore block, whose template has no food to look up, was five.
+                    // Come back round to itself, it reads as nothing - what a formula caught in a
+                    // circle has always read as - and the pass knows to look again.
+                    return Ok(Self::work_out_once(path, "value", || {
+                        FormulaEvaluator::evaluate_formula(f, &ctx)
+                    })
+                    .unwrap_or(OverseerValue::Null));
                 }
                 OverseerValue::Null => {
                     // Unset, so the same order the readers use: whatever the fallback answered,
-                    // then the default, then the null it was written as.
-                    if let Some(stood_in) = Self::value_for_unset(&node.parameters) {
-                        return Ok(stood_in.clone());
-                    }
-                    // Nothing computed yet - evaluate the fallback here, in this node's context,
-                    // and fall through to the default if it has nothing to say either.
-                    if let Some(OverseerValue::Formula(f)) = node.parameters.get("fallback") {
-                        let ctx =
-                            EvaluationContext::new_with_current(node, path.to_vec(), document_root);
-                        if let Ok(answered) = FormulaEvaluator::evaluate_formula(f, &ctx) {
-                            if Self::answered(&answered) {
-                                return Ok(answered);
+                    // then the default, then the null it was written as - each as the resolver
+                    // stored it, or worked out here when it has not been yet.
+                    //
+                    // Worked out in that order, too. A literal default used to be taken before a
+                    // fallback formula nobody had worked out yet was tried, so `portions`, stated
+                    // nowhere and falling back to `grams / portion_weight`, read as its default 1
+                    // until a pass had stored the fallback, and as the fallback afterwards. What
+                    // read it was put right a pass later, and so was what read that.
+                    for (declared, shadow) in
+                        [("fallback", "_computed_fallback"), ("default", "_computed_default")]
+                    {
+                        let offered = match node.parameters.get(shadow) {
+                            Some(stored) => Some(stored.clone()),
+                            None => match node.parameters.get(declared) {
+                                Some(OverseerValue::Formula(f)) => {
+                                    Self::work_out_once(path, declared, || {
+                                        let ctx = EvaluationContext::new_with_current(
+                                            node,
+                                            path.to_vec(),
+                                            document_root,
+                                        );
+                                        FormulaEvaluator::evaluate_formula(f, &ctx)
+                                    })
+                                }
+                                Some(literal) => Some(literal.clone()),
+                                None => None,
+                            },
+                        };
+                        if let Some(offered) = offered {
+                            if Self::answered(&offered) {
+                                return Ok(offered);
                             }
-                        }
-                    }
-                    if let Some(OverseerValue::Formula(f)) = node.parameters.get("default") {
-                        let ctx =
-                            EvaluationContext::new_with_current(node, path.to_vec(), document_root);
-                        if let Ok(answered) = FormulaEvaluator::evaluate_formula(f, &ctx) {
-                            return Ok(answered);
                         }
                     }
                     return Ok(OverseerValue::Null);
@@ -599,6 +654,181 @@ impl FormulaEvaluator {
             return Ok(fb.clone());
         }
         Ok(OverseerValue::Null)
+    }
+
+    /// Work out one of a node's formulas on demand, unless it is already being worked out.
+    ///
+    /// A read that finds a formula nobody has worked out works it out, and that read can lead
+    /// back to where it started: `portions` falls back to `grams / portion_weight` and `grams` to
+    /// `portions * portion_weight`, and when a record states neither, each asks the other. The
+    /// second time round the answer is that there is none - so the fallback in progress is not
+    /// answered, the default stands, and nothing is followed forever. A failure is stored as the
+    /// text the resolver stores for it, and reads the same way.
+    pub(crate) fn work_out_once(
+        path: &[String],
+        which: &'static str,
+        work: impl FnOnce() -> Result<OverseerValue, OverseerError>,
+    ) -> Option<OverseerValue> {
+        thread_local! {
+            static IN_FLIGHT: std::cell::RefCell<std::collections::HashSet<(String, &'static str)>> =
+                std::cell::RefCell::new(std::collections::HashSet::new());
+        }
+        let key = (path.join("/"), which);
+        let fresh = IN_FLIGHT.with(|f| f.borrow_mut().insert(key.clone()));
+        if !fresh {
+            CIRCLES_CUT.with(|c| c.set(c.get() + 1));
+            Self::doubt_about(|| format!("circle at {}#{}", key.0, key.1));
+            return None;
+        }
+        let outcome = work();
+        IN_FLIGHT.with(|f| f.borrow_mut().remove(&key));
+        Some(outcome.unwrap_or_else(|_| OverseerValue::String("invalid formula error".to_string())))
+    }
+
+    /// How many times a read has come back round to something already being worked out.
+    ///
+    /// Counted rather than flagged, so a caller can tell whether it happened during its own
+    /// evaluation by comparing before and after - see the memo in `evaluate_formula`.
+    fn circles_cut() -> u64 {
+        CIRCLES_CUT.with(|c| c.get())
+    }
+
+    /// How many reads may have seen something other than what the pass will store.
+    ///
+    /// A pass whose reads all saw what it went on to store is finished: another would work out
+    /// the same things from the same answers and move nothing - which is exactly what the second
+    /// pass of every document did, at a third of the cost of opening it. So the resolver asks this
+    /// instead of running one. A read is in doubt when it met a formula nobody had worked out and
+    /// could not work it out where it lives - a parameter handed back as its raw formula, a value
+    /// with nothing stored and no path to work it out at, a fallback skipped for its default - or
+    /// when it came back round to something already being worked out. Erring towards doubt only
+    /// costs the pass it would have cost anyway.
+    pub fn doubts() -> u64 {
+        DOUBTS.with(|d| d.get())
+    }
+
+    fn doubt() {
+        DOUBTS.with(|d| d.set(d.get() + 1));
+    }
+
+    /// The same, saying what, when profiling - see `take_doubts_said`.
+    fn doubt_about(what: impl FnOnce() -> String) {
+        Self::doubt();
+        if crate::resolver::profile_enabled() {
+            DOUBTS_SAID.with(|d| d.borrow_mut().push(what()));
+        }
+    }
+
+    /// What the doubts since the last call were about, when profiling.
+    pub fn take_doubts_said() -> Vec<String> {
+        DOUBTS_SAID.with(|d| std::mem::take(&mut *d.borrow_mut()))
+    }
+
+    /// Whether reading this node's value means working something out that has not been yet.
+    fn unworked(params: &std::collections::HashMap<String, OverseerValue>) -> bool {
+        match params.get("value") {
+            Some(OverseerValue::Formula(_)) => !params.contains_key("_computed_value"),
+            Some(OverseerValue::Null) => [("fallback", "_computed_fallback"), ("default", "_computed_default")]
+                .iter()
+                .any(|(declared, shadow)| {
+                    matches!(params.get(*declared), Some(OverseerValue::Formula(_)))
+                        && !params.contains_key(*shadow)
+                }),
+            _ => false,
+        }
+    }
+
+    /// The document a pass reads from, while it does. See `value_of_node`.
+    ///
+    /// Held as a pointer because a list's entries are handed to a lambda and to `sum` as bare
+    /// nodes, far from any context that knows the document. Set by the resolver around a pass,
+    /// for exactly as long as the snapshot it points into lives, and nowhere else.
+    fn with_pass_root<R>(f: impl FnOnce(&mut Option<PassRoot>) -> R) -> R {
+        thread_local! {
+            static ROOT: std::cell::RefCell<Option<PassRoot>> = const { std::cell::RefCell::new(None) };
+        }
+        ROOT.with(|cell| f(&mut cell.borrow_mut()))
+    }
+
+    /// Say which document the pass about to run reads from. `end_pass_memo` forgets it.
+    pub fn begin_pass_over(root: &[OverseerNode]) {
+        Self::begin_pass_memo();
+        Self::with_pass_root(|slot| {
+            *slot = Some(PassRoot { root: root.as_ptr(), len: root.len(), paths: None })
+        });
+    }
+
+    /// Where a node of the pass's document is, named as the resolver names it.
+    ///
+    /// Every node's path, gathered the first time one is asked for and kept for the pass - the
+    /// same walk the resolver makes, wrappers looked through and repeated names numbered, so a
+    /// formula worked out here is keyed in the memo exactly as the resolver will key it.
+    fn path_in_pass(node: &OverseerNode) -> Option<(&'static [OverseerNode], Vec<String>)> {
+        Self::with_pass_root(|slot| {
+            let held = slot.as_mut()?;
+            // SAFETY: set by `begin_pass_over` from the snapshot the pass reads, and cleared by
+            // `end_pass_memo` before that snapshot is dropped. Nothing writes to it in between.
+            let root: &'static [OverseerNode] =
+                unsafe { std::slice::from_raw_parts(held.root, held.len) };
+            let paths = held.paths.get_or_insert_with(|| {
+                fn gather(
+                    nodes: &[OverseerNode],
+                    trail: &mut Vec<String>,
+                    level: &mut crate::addressing::Level,
+                    out: &mut std::collections::HashMap<usize, Vec<String>>,
+                ) {
+                    for n in nodes {
+                        // Left out of view, nor anything under it: the resolver works out none of
+                        // it, and a read works out none of it either - it reads such an entry as
+                        // it always has. Nor is that in doubt, since no pass will store more.
+                        if crate::resolver::out_of_view(n) {
+                            continue;
+                        }
+                        if crate::addressing::is_wrapper(n) {
+                            out.insert(n as *const OverseerNode as usize, trail.clone());
+                            gather(&n.children, trail, level, out);
+                        } else {
+                            trail.push(level.segment(&n.name));
+                            out.insert(n as *const OverseerNode as usize, trail.clone());
+                            gather(&n.children, trail, &mut crate::addressing::Level::default(), out);
+                            trail.pop();
+                        }
+                    }
+                }
+                let mut out = std::collections::HashMap::new();
+                // The top level is named without numbering, as the resolver's walk names it.
+                for top in root {
+                    let mut trail = vec![top.name.clone()];
+                    out.insert(top as *const OverseerNode as usize, trail.clone());
+                    gather(&top.children, &mut trail, &mut crate::addressing::Level::default(), &mut out);
+                }
+                out
+            });
+            let path = paths.get(&(node as *const OverseerNode as usize))?.clone();
+            Some((root, path))
+        })
+    }
+
+    /// What a node reached without its path reads as - an entry of a list handed to a lambda, to
+    /// `sum`, to `first` - worked out now if the pass has not got to it.
+    ///
+    /// The stored answer when there is one, exactly as before. When there is not, the entry used
+    /// to read as nothing, or as its formula worked out against the path of whatever was asking,
+    /// where `../food` names something else entirely: a day's total came out 0 on the first pass
+    /// and right on the second, and everything read from the total a pass after that. Worked out
+    /// where the entry really is, it is the answer the pass will store, and the chain is done in
+    /// one pass.
+    fn value_of_node(node: &OverseerNode) -> Option<OverseerValue> {
+        if Self::unworked(&node.parameters) {
+            if let Some((root, path)) = Self::path_in_pass(node) {
+                // Not read on behalf of whatever asked: it read the list this sits in - see
+                // `dependencies::apart`.
+                return crate::dependencies::apart(|| {
+                    Self::get_effective_value_for_node(node, &path, root).ok()
+                });
+            }
+        }
+        Self::get_effective_param(&node.parameters, "value").cloned()
     }
 
     /// Evaluate a formula expression string within the given context
@@ -631,6 +861,7 @@ impl FormulaEvaluator {
     pub fn end_pass_memo() {
         Self::with_memo(|slot| *slot = None);
         Self::with_index_cache(|slot| *slot = None);
+        Self::with_pass_root(|slot| *slot = None);
     }
 
     /// The indexes built during this pass, by the list they describe and the field they key on.
@@ -697,6 +928,7 @@ impl FormulaEvaluator {
         }
         // Worked out under its own name, so its reads can be kept with it as well as attributed
         // to whatever asked. Costs nothing when no graph is being recorded.
+        let cuts_before = Self::circles_cut();
         let (outcome, reads) = crate::dependencies::reads_while(
             // Built only when it will be used: this runs for every formula in the document on
             // every pass, and joining a path and a formula into a string each time made opening
@@ -704,8 +936,15 @@ impl FormulaEvaluator {
             || format!("{}${}", context.node_path.join("/"), formula),
             || Self::evaluate_formula_uncached(formula, context),
         );
+        // Not kept when a circle was cut on the way: that answer is what the formula says with
+        // one of the fields it depends on standing in for itself, which is not what it says. Kept,
+        // it was handed to the next evaluation of the same formula as though it were - `grams /
+        // portion_weight` came out one way on a node's first round and another on its second,
+        // and the value moved a pass later for no reason in the document.
         if let (Some(key), Ok(value)) = (memo_key, outcome.as_ref()) {
-            Self::memo_store(&key, value.clone(), reads);
+            if Self::circles_cut() == cuts_before {
+                Self::memo_store(&key, value.clone(), reads);
+            }
         }
         outcome
     }
@@ -748,6 +987,10 @@ impl FormulaEvaluator {
         });
         if in_progress {
             debug_evaluator!("[EVAL] Cycle detected for key {}, returning Null", key);
+            // A circle cut, like any other - see `circles_cut`. Uncounted, the Null it stands in
+            // with was kept in the memo by whatever was working it out.
+            CIRCLES_CUT.with(|c| c.set(c.get() + 1));
+            Self::doubt_about(|| format!("circle in formula {}", key));
             return Ok(OverseerValue::Null);
         }
 
@@ -984,8 +1227,8 @@ impl FormulaEvaluator {
             return match bound {
                 BoundValue::Value(v) => Ok(v.clone()),
                 BoundValue::Node(n) => {
-                    if let Some(v) = Self::get_effective_param(&n.parameters, "value") {
-                        Ok(v.clone())
+                    if let Some(v) = Self::value_of_node(n) {
+                        Ok(v)
                     } else {
                         Err(OverseerError::FormulaError(format!(
                             "Bound node '{}' has no value",
@@ -1267,8 +1510,8 @@ impl FormulaEvaluator {
                 // Traverse remaining segments from the bound node
                 if path.len() == 1 {
                     // Just the variable name; return its value param if present
-                    if let Some(v) = Self::get_effective_param(&start.parameters, "value") {
-                        return Ok(v.clone());
+                    if let Some(v) = Self::value_of_node(start) {
+                        return Ok(v);
                     }
                     return Err(OverseerError::FormulaError(format!(
                         "Bound node '{}' has no value",
@@ -1320,8 +1563,8 @@ impl FormulaEvaluator {
                 }
                 if traversed_all {
                     // Prefer node's value
-                    if let Some(v) = Self::get_effective_param(&node.parameters, "value") {
-                        return Ok(v.clone());
+                    if let Some(v) = Self::value_of_node(node) {
+                        return Ok(v);
                     }
                     // If no computed value yet and raw value is a Formula, evaluate it now in the child's context
                     if let Some(OverseerValue::Formula(formula_expr)) = node.parameters.get("value")
@@ -3081,12 +3324,11 @@ impl FormulaEvaluator {
     /// tags, rather than each of them needing to learn what a tag is.
     fn items_of(node: &OverseerNode) -> Vec<ListItem<'_>> {
         if node.node_type == "tags" {
-            let text = match node
-                .parameters
-                .get("_computed_value")
-                .or_else(|| node.parameters.get("value"))
-            {
-                Some(OverseerValue::String(s)) => s.clone(),
+            // Worked out if the pass has not got to it: a meal's tags come from its food's entry
+            // in the catalogue, and read before that, every meal had none - so a day's calories
+            // split by diet came out all "other" for a pass, and whatever read the split later.
+            let text = match Self::value_of_node(node) {
+                Some(OverseerValue::String(s)) => s,
                 _ => String::new(),
             };
             return text
@@ -3200,8 +3442,7 @@ impl FormulaEvaluator {
                                     .into_iter()
                                     .find(|c| c.name == key_field)
                                 {
-                                    if let Some(v) =
-                                        Self::get_effective_param(&child.parameters, "value")
+                                    if let Some(v) = Self::value_of_node(child).as_ref()
                                     {
                                         // Relaxed equality: use compare_values to allow int<->string numeric equality, etc.
                                         if Self::compare_values(v, &target_key_value)
@@ -3543,8 +3784,8 @@ impl FormulaEvaluator {
                         let v = match item {
                             ListItem::Value(v) => v.clone(),
                             ListItem::Node(n) => {
-                                if let Some(v) = Self::get_effective_param(&n.parameters, "value") {
-                                    v.clone()
+                                if let Some(v) = Self::value_of_node(n) {
+                                    v
                                 } else {
                                     OverseerValue::String("null".to_string())
                                 }
@@ -3575,8 +3816,8 @@ impl FormulaEvaluator {
         match item {
             ListItem::Value(v) => Self::value_to_number(v).ok(),
             ListItem::Node(n) => {
-                if let Some(v) = Self::get_effective_param(&n.parameters, "value") {
-                    Self::value_to_number(v).ok()
+                if let Some(v) = Self::value_of_node(n) {
+                    Self::value_to_number(&v).ok()
                 } else {
                     None
                 }
@@ -3591,8 +3832,8 @@ impl FormulaEvaluator {
         match item {
             ListItem::Value(v) => Some(v.clone()),
             ListItem::Node(n) => {
-                if let Some(v) = Self::get_effective_param(&n.parameters, "value") {
-                    Some(v.clone())
+                if let Some(v) = Self::value_of_node(n) {
+                    Some(v)
                 } else {
                     None
                 }
@@ -3744,8 +3985,7 @@ impl FormulaEvaluator {
                                     .into_iter()
                                     .find(|c| &c.name == key_field)
                                 {
-                                    if let Some(v) =
-                                        Self::get_effective_param(&ch.parameters, "value")
+                                    if let Some(v) = Self::value_of_node(ch).as_ref()
                                     {
                                         // Relaxed equality using compare_values
                                         if Self::compare_values(v, &target)
@@ -4066,7 +4306,7 @@ impl FormulaEvaluator {
 
     fn field_already_known(node: &OverseerNode, field: &str) -> Option<OverseerValue> {
         let child = Self::accessible_child(node, field)?;
-        Self::get_effective_param(&child.parameters, "value").cloned()
+        Self::value_of_node(child)
     }
 
     /// A predicate of the shape `x/field <op> literal`, in the pieces needed to run it directly.

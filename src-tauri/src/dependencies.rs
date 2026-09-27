@@ -219,6 +219,29 @@ pub fn reads_while<T>(name: impl FnOnce() -> String, work: impl FnOnce() -> T) -
     (out, close_frame())
 }
 
+/// Work something out without anything it reads counting as read by what is being worked out.
+///
+/// For an entry of a list worked out because an aggregate over the list read it before the
+/// resolver got to it. The aggregate has read the list, which covers every entry in it, and the
+/// entry is recorded under its own name as it is worked out - so handing its reads up as well
+/// only made the aggregate depend on the whole of what every entry depends on, and the food
+/// tracker's graph half as big again for no edge the cascade did not already have.
+pub fn apart<T>(work: impl FnOnce() -> T) -> T {
+    if !is_recording() {
+        return work();
+    }
+    BEING_WORKED_OUT.with(|s| s.borrow_mut().push((APART, Vec::new())));
+    let out = work();
+    // Taken off unrecorded: what is inside kept its own reads under its own names.
+    BEING_WORKED_OUT.with(|s| {
+        s.borrow_mut().pop();
+    });
+    out
+}
+
+/// The frame `apart` opens. Named by no path, so nothing is ever recorded against it.
+const APART: PathId = 0;
+
 /// Attribute reads that something else made earlier to whatever is being worked out now.
 pub fn replay_reads(reads: &[String]) {
     if !is_recording() || reads.is_empty() {

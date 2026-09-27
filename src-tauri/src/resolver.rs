@@ -2393,6 +2393,55 @@ fn profile_record_formula(src: &str, elapsed: std::time::Duration) {
     }
 }
 
+/// What a pass changed, with OVERSEER_PROFILE=1: every value that came out different from what it
+/// held when the pass began.
+///
+/// A pass after the first changes only what the first could not finish, so what it moved is the
+/// list of chains still a step behind - which is the question every attempt at fewer passes has
+/// turned on, and which a count of passes cannot answer.
+static PROFILE_MOVED: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+
+fn profile_note_moved(path: &[String], key: &str, was: Option<&OverseerValue>, now: &OverseerValue) {
+    if !profile_enabled() {
+        return;
+    }
+    if let Ok(mut moved) = PROFILE_MOVED.lock() {
+        let short = |v: String| v.chars().take(40).collect::<String>();
+        moved.push(format!(
+            "{}#{}  {} -> {}",
+            path.join("/"),
+            key,
+            short(format!("{:?}", was)),
+            short(format!("{:?}", now))
+        ));
+    }
+}
+
+/// Say what the pass just finished moved, by field and value, and forget it.
+fn profile_report_moved(pass: usize) {
+    if !profile_enabled() {
+        return;
+    }
+    let Ok(mut moved) = PROFILE_MOVED.lock() else { return };
+    if pass > 1 && !moved.is_empty() {
+        let mut by_field: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for key in moved.iter() {
+            let key = key.split("  ").next().unwrap_or(key);
+            let field = key.rsplit('/').next().unwrap_or(key).to_string();
+            *by_field.entry(field).or_insert(0) += 1;
+        }
+        let mut rows: Vec<(String, usize)> = by_field.into_iter().collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let shown: Vec<String> = rows.iter().take(12).map(|(f, n)| format!("{} x{}", f, n)).collect();
+        eprintln!("[PROFILE]   moved {} values: {}", moved.len(), shown.join(", "));
+        for key in moved.iter().filter(|k| !k.contains("_template_")).take(8) {
+            eprintln!("[PROFILE]     e.g. {}", key);
+        }
+    }
+    moved.clear();
+}
+
 /// Report the most expensive formulas and clear the tally.
 pub fn profile_report_formulas(label: &str) {
     if !profile_enabled() {
@@ -2412,6 +2461,66 @@ pub fn profile_report_formulas(label: &str) {
             );
         }
         map.clear();
+    }
+}
+
+/// How many passes over its formulas the last resolve on this thread took - over the whole
+/// document, or over what an edit reached. A second one used to be the rule rather than the
+/// exception, and what a document costs to open is mostly this times its size, so it is worth
+/// being able to pin.
+pub fn passes_taken() -> usize {
+    PASSES_TAKEN.with(|p| p.get())
+}
+
+thread_local! {
+    static PASSES_TAKEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The nodes that read something in doubt while the last pass worked them out - see
+    /// `FormulaEvaluator::doubts`. Everything else that pass stored is final.
+    static DOUBTED: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// The same, only for these nodes - named as the resolver names them, a wrapper by its container.
+fn forget_worked_out_values_at(
+    nodes: &mut [OverseerNode],
+    targets: &std::collections::HashSet<String>,
+) {
+    fn walk(
+        nodes: &mut [OverseerNode],
+        trail: &mut Vec<String>,
+        level: &mut crate::addressing::Level,
+        targets: &std::collections::HashSet<String>,
+    ) {
+        for node in nodes.iter_mut() {
+            let wrapper = crate::addressing::is_wrapper(node);
+            if !wrapper {
+                trail.push(level.segment(&node.name));
+            }
+            if targets.contains(&trail.join("/")) {
+                node.parameters.retain(|key, _| !key.starts_with("_computed_"));
+            }
+            if wrapper {
+                walk(&mut node.children, trail, level, targets);
+            } else {
+                walk(&mut node.children, trail, &mut crate::addressing::Level::default(), targets);
+                trail.pop();
+            }
+        }
+    }
+    for node in nodes.iter_mut() {
+        let mut trail = vec![node.name.clone()];
+        if targets.contains(&node.name) {
+            node.parameters.retain(|key, _| !key.starts_with("_computed_"));
+        }
+        walk(&mut node.children, &mut trail, &mut crate::addressing::Level::default(), targets);
+    }
+}
+
+/// Take away every value a resolve worked out, so the next one starts from what is written.
+fn forget_worked_out_values(nodes: &mut [OverseerNode]) {
+    for node in nodes.iter_mut() {
+        node.parameters.retain(|key, _| !key.starts_with("_computed_"));
+        forget_worked_out_values(&mut node.children);
     }
 }
 
@@ -2441,16 +2550,26 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
     let profiling = profile_enabled();
     let started = std::time::Instant::now();
 
+    // Worked out afresh, as an opened document is. What an earlier resolve left behind may be
+    // stale - this runs again after a press has changed the document - and a read that takes a
+    // stale answer is exactly what makes a further pass necessary. With nothing left behind,
+    // every read in the first pass works out what it needs where it lives, and the first pass is
+    // the last - see `FormulaEvaluator::doubts`.
+    forget_worked_out_values(nodes);
+
     while pass < MAX_PASSES && progress {
         pass += 1;
         progress = false;
+        let doubts_before = FormulaEvaluator::doubts();
+        DOUBTED.with(|d| d.borrow_mut().clear());
         let clone_started = std::time::Instant::now();
         let snapshot = nodes.clone();
         let clone_ms = clone_started.elapsed().as_secs_f64() * 1000.0;
         let pass_started = std::time::Instant::now();
         // Every read in this pass comes from `snapshot`, so results can be cached for its
-        // duration; see FormulaEvaluator::begin_pass_memo.
-        FormulaEvaluator::begin_pass_memo();
+        // duration; see FormulaEvaluator::begin_pass_memo. And a list's entries can be found
+        // where they are, to be worked out when read - see `FormulaEvaluator::value_of_node`.
+        FormulaEvaluator::begin_pass_over(&snapshot);
         let len = nodes.len();
         for i in 0..len {
             let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
@@ -2478,6 +2597,64 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
                 progress,
                 all_paths.len()
             );
+            profile_report_moved(pass);
+        }
+        // Settled, unless something in it read what the pass may not have stored. A second pass
+        // would read every answer this one stored and store the same answers again.
+        let doubted = FormulaEvaluator::doubts() - doubts_before;
+        if profiling {
+            eprintln!("[PROFILE]   {} read(s) in doubt", doubted);
+            let mut said: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            for what in FormulaEvaluator::take_doubts_said() {
+                *said.entry(what).or_insert(0) += 1;
+            }
+            let mut rows: Vec<(String, usize)> = said.into_iter().collect();
+            rows.sort_by(|a, b| b.1.cmp(&a.1));
+            for (what, n) in rows.iter().take(8) {
+                eprintln!("[PROFILE]     {} x{}", what, n);
+            }
+        }
+        if pass == 1 && doubted == 0 {
+            progress = false;
+        }
+        // Some did, and only they can be wrong: a doubt is charged to the node being worked out
+        // when it happened, and nothing worked out with a doubt is remembered for another reader
+        // to take. So those nodes are worked out again from what the pass stored, and if none of
+        // them moves the document is settled - without the pass over all of it that used to be
+        // the only way to find out. If one does, the passes go on as they always have.
+        if pass == 1 && doubted > 0 {
+            let doubted_nodes = DOUBTED.with(|d| std::mem::take(&mut *d.borrow_mut()));
+            let confirm_started = std::time::Instant::now();
+            let snapshot = nodes.clone();
+            FormulaEvaluator::begin_pass_over(&snapshot);
+            let mut moved = false;
+            for i in 0..nodes.len() {
+                let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
+                let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
+                unsafe {
+                    if recursively_evaluate_node_formulas_selective(
+                        node_ptr,
+                        std::ptr::null(),
+                        &mut current_path,
+                        &snapshot,
+                        &doubted_nodes,
+                        &mut crate::addressing::Level::default(),
+                    ) {
+                        moved = true;
+                    }
+                }
+            }
+            FormulaEvaluator::end_pass_memo();
+            if profiling {
+                eprintln!(
+                    "[PROFILE]   {} node(s) in doubt worked out again in {:.1} ms, moved={}",
+                    doubted_nodes.len(),
+                    confirm_started.elapsed().as_secs_f64() * 1000.0,
+                    moved
+                );
+                profile_report_moved(2);
+            }
+            progress = moved;
         }
         debug_resolver!(
             "[RESOLVER] Multi-pass formula evaluation pass {} progress={} ({} total paths)",
@@ -2486,6 +2663,7 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
             all_paths.len()
         );
     }
+    PASSES_TAKEN.with(|p| p.set(pass));
     if profiling {
         eprintln!(
             "[PROFILE] {} pass(es) in {:.1} ms total",
@@ -2513,18 +2691,27 @@ fn evaluate_formulas_for_specific_fields(
         field_paths.len()
     );
     debug_resolver!("[RESOLVER] Field paths target set: {:?}", field_paths);
-    // We run multiple lightweight passes because dependents may require upstream values to be
-    // recomputed earlier in the same selective cycle (e.g. A -> C -> total aggregate). A single
-    // DFS over an arbitrary tree order can leave aggregate formulas stale when their inputs are
-    // later in traversal order. Cap passes to prevent runaway loops.
+    // Passes, because one used to read what the others had stored before the change, and a
+    // chain moved one link a pass: a meal's grams, its calories, the day's totals, the day's
+    // figures per 100 g, their points, the score - and the cap below stopped it at the fourth,
+    // so a day's grade stayed what it was before the edit until the document was opened again.
+    //
+    // So what the change reaches is worked out afresh, as an open is: its stored answers are
+    // taken away first, a read of any of them works it out where it lives, and the first pass
+    // is the last unless something read in it is in doubt - see `FormulaEvaluator::doubts`.
+    // What the change does not reach keeps its answers, which is what makes this selective.
+    forget_worked_out_values_at(nodes, field_paths);
     const MAX_PASSES: usize = 4;
+    let selective_started = std::time::Instant::now();
     let mut pass = 0usize;
     let mut progress = true;
     while pass < MAX_PASSES && progress {
         pass += 1;
         progress = false;
         debug_resolver!("[RESOLVER] Selective pass {}", pass);
+        let doubts_before = FormulaEvaluator::doubts();
         let snapshot = nodes.clone();
+        FormulaEvaluator::begin_pass_over(&snapshot);
         let len = nodes.len();
         for i in 0..len {
             let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
@@ -2542,6 +2729,10 @@ fn evaluate_formulas_for_specific_fields(
                 }
             }
         }
+        FormulaEvaluator::end_pass_memo();
+        if pass == 1 && FormulaEvaluator::doubts() == doubts_before {
+            progress = false;
+        }
         if !progress {
             debug_resolver!("[RESOLVER] No changes in pass {}, stopping", pass);
         }
@@ -2550,6 +2741,15 @@ fn evaluate_formulas_for_specific_fields(
         "[RESOLVER] Selective formula evaluation completed in {} pass(es)",
         pass
     );
+    PASSES_TAKEN.with(|p| p.set(pass));
+    if profile_enabled() {
+        eprintln!(
+            "[PROFILE] selective: {} pass(es) over {} target(s) in {:.1} ms",
+            pass,
+            field_paths.len(),
+            selective_started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 }
 
 /// Selective chart computation that only processes charts affected by specific field changes
@@ -3283,6 +3483,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
             "🔄 Selectively evaluating formulas for node at path: {}",
             current_path_str
         );
+        let doubts_before = FormulaEvaluator::doubts();
 
         // Same formula evaluation logic as the main function
         let formula_pairs: Vec<(String, String)> = node
@@ -3318,11 +3519,16 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                     current_path.join("/"),
                     shadow
                 ));
+                // Said to be in progress while it is worked out, the way a read working it out on
+                // demand says so - see `FormulaEvaluator::work_out_once`. Otherwise a read inside
+                // it that comes back round - `grams` falling back to `portions`, which falls back
+                // to `grams` - works the same fallback out again one level deeper, and cuts the
+                // circle somewhere different from where the next pass will cut it.
                 let worked_out = match source {
-                    OverseerValue::Formula(f) => {
+                    OverseerValue::Formula(f) => FormulaEvaluator::work_out_once(current_path, declared, || {
                         FormulaEvaluator::evaluate_formula(f.as_str(), &context)
-                            .unwrap_or_else(|_| OverseerValue::String("invalid formula error".to_string()))
-                    }
+                    })
+                    .unwrap_or_else(|| OverseerValue::String("invalid formula error".to_string())),
                     other => other,
                 };
                 computed_params.push((shadow.to_string(), worked_out));
@@ -3346,7 +3552,15 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                     shadow_key
                 ));
                 let formula_started = profile_enabled().then(std::time::Instant::now);
-                let evaluated = FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context);
+                // A value is in progress while it is worked out, as a fallback is above.
+                let evaluated = if key == "value" {
+                    FormulaEvaluator::work_out_once(current_path, "value", || {
+                        FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context)
+                    })
+                    .ok_or_else(|| crate::types::OverseerError::FormulaError("already being worked out".to_string()))
+                } else {
+                    FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context)
+                };
                 if let Some(started) = formula_started {
                     profile_record_formula(formula_src.as_str(), started.elapsed());
                 }
@@ -3373,10 +3587,14 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                 };
                 if changed {
                     subtree_changed = true;
+                    profile_note_moved(current_path, &k, node.parameters.get(&k), &v);
                 }
                 node.parameters.insert(k, v); // k could be _computed_value or _computed_paramName
             }
             freeze_if_it_was_asked_for(node, document_root, current_path);
+        }
+        if FormulaEvaluator::doubts() != doubts_before {
+            DOUBTED.with(|d| d.borrow_mut().insert(current_path_str.clone()));
         }
     }
 
