@@ -50,6 +50,20 @@ thread_local! {
     static DOUBTS_SAID: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// The clock held still - see `FormulaEvaluator::pin_the_clock`. Let go when dropped, by the pin
+/// that took the reading and by no other.
+pub struct ClockPin {
+    owned: bool,
+}
+
+impl Drop for ClockPin {
+    fn drop(&mut self) {
+        if self.owned {
+            FormulaEvaluator::set_time_override(None);
+        }
+    }
+}
+
 /// The document a pass reads from - see `FormulaEvaluator::with_pass_root`.
 struct PassRoot {
     root: *const OverseerNode,
@@ -155,6 +169,22 @@ impl FormulaEvaluator {
 
     pub fn get_time_override() -> Option<DateTime<Utc>> {
         Self::TIME_OVERRIDE_UTC.with(|cell| cell.borrow().clone())
+    }
+
+    /// Read the clock once, and have every `now()` answer with that reading until the pin goes.
+    ///
+    /// Each call used to read it afresh, so a minute could turn over halfway through working a
+    /// document out, and two values in one answer disagreed about when it was: a rule's minutes
+    /// since it was last done read one number and the task it opened another. Held at the start of
+    /// every piece of work - a resolve, an open, a press, a write - so everything one answer says
+    /// was worked out at one moment. Nested pins leave the outer one's reading alone, and a clock
+    /// a test has set stays the test's.
+    pub fn pin_the_clock() -> ClockPin {
+        if Self::get_time_override().is_some() {
+            return ClockPin { owned: false };
+        }
+        Self::set_time_override(Some(Utc::now()));
+        ClockPin { owned: true }
     }
 
     /// The clock, read the way a field is.

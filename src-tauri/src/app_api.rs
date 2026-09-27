@@ -338,37 +338,38 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
 /// function of their text, but a task's priority climbs by the day and its deadline passes, and
 /// handing back yesterday's answer for those would be wrong in the way nobody notices.
 fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
-    let graph = graph_for(content)?;
-    if graph.is_empty() {
-        return None;
-    }
-    let mut previous = baseline_copy(content)?;
-    if !graph.reads_the_clock() {
-        return Some(previous);
-    }
-
-    // It does read the clock - but the graph says *where*, and everything else in the document is
+    // It may read the clock - but the graph says *where*, and everything else in the document is
     // a function of its text and has not moved. So only what descends from the clock is worked
     // out again: on a list of tasks that is the priorities and the deadlines, not the rules, not
-    // the history, not the hundred fields that spell out what each one is.
-    let stale = graph.nodes_to_work_out_again(&[crate::formula_evaluator::CLOCK.to_string()]);
+    // the history, not the hundred fields that spell out what each one is. Nothing, for a
+    // document that never asks the time.
+    let stale = crate::document_cache::with_graph(content, |graph| {
+        if graph.is_empty() {
+            None
+        } else if !graph.reads_the_clock() {
+            Some(Vec::new())
+        } else {
+            Some(graph.nodes_to_work_out_again(&[crate::formula_evaluator::CLOCK.to_string()]))
+        }
+    })??;
+    let mut previous = baseline_copy(content)?;
     if stale.is_empty() {
         return Some(previous);
     }
     let targets: std::collections::HashSet<String> = stale.into_iter().collect();
-    let mut graph = graph;
     crate::dependencies::start_recording();
     resolver::resolve_specific_fields(&mut previous, &targets);
     // Charts outright, for the reason given where an edit does the same: a series hangs on a plot
     // child while the reads are recorded against the chart.
     resolver::compute_chart_series(&mut previous);
     // A task gone overdue reads through the other branch now - see `Graph::merge`.
-    graph.merge(crate::dependencies::take_recording());
-    remember_graph(content, graph);
+    crate::document_cache::add_to_graph(content, crate::dependencies::take_recording());
     Some(previous)
 }
 
 fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<OverseerNode>> {
+    // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
+    let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
     // A document with a list showing only part of itself is the same text for everyone and not the
     // same document: a write names an address that has to stay in view, and a copy resolved for
     // somebody else will have left it out. So a resolve holding something in view neither takes
@@ -455,10 +456,6 @@ fn replace_graph(text: &str, fresh: Option<crate::dependencies::Graph>) {
     }
 }
 
-/// The graph for this text, if one is held for this text.
-fn graph_for(text: &str) -> Option<crate::dependencies::Graph> {
-    crate::document_cache::graph_for(text)
-}
 
 /// Drop every graph, so the next resolve works everything out. For tests that need the slow answer
 /// to compare against, and for anything that wants to be sure it is not reading a stale one.
@@ -706,6 +703,8 @@ pub fn execute_event_update(
     node_path: Vec<String>,
     event_name: String,
 ) -> Result<ResolvedUpdate> {
+    // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
+    let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
     // Copied, not taken. Taking it emptied the cache entry for this exact text, and the very
     // next line asked for that document back - so every press paid a full parse and resolve to
     // rebuild what had just been thrown away, to save one clone. On the food tracker that was
@@ -750,9 +749,11 @@ pub fn execute_event_update(
 
     let quick = report
         .filter(|changed| !changed.structural && !changed.fields.is_empty())
-        .and_then(|changed| graph_for(&was).map(|graph| (changed, graph)))
-        .and_then(|(changed, graph)| {
-            let to_redo = graph.nodes_to_work_out_again(&changed.fields);
+        .and_then(|changed| {
+            crate::document_cache::with_graph(&was, |graph| graph.nodes_to_work_out_again(&changed.fields))
+                .map(|to_redo| (changed, to_redo))
+        })
+        .and_then(|(changed, to_redo)| {
             if to_redo.is_empty() {
                 return None;
             }
@@ -766,7 +767,6 @@ pub fn execute_event_update(
             // stopped reaching `quadrupled`. Adding is what covers a press that sends a lookup
             // somewhere new. See `Graph::merge`.
             let phase = std::time::Instant::now();
-            let mut graph = graph;
             crate::dependencies::start_recording();
             resolver::resolve_specific_fields(&mut nodes, &to_redo.into_iter().collect());
             if resolver::profile_enabled() {
@@ -775,19 +775,16 @@ pub fn execute_event_update(
             // Charts outright rather than by the cascade, for the reason the edit path gives:
             // a series hangs on a plot child while the reads are recorded against the chart.
             resolver::compute_chart_series(&mut nodes);
-            // Added to, never replaced - see `Graph::merge`.
-            graph.merge(crate::dependencies::take_recording());
+            // Added to, never replaced - see `Graph::merge`. Under the text this started from, not
+            // the one it produced: `finish_update_with` moves the whole entry onto the new text,
+            // and moving it discards whatever was already held there. The edit path has always
+            // done it this way round.
+            crate::document_cache::add_to_graph(&was, crate::dependencies::take_recording());
             let phase = std::time::Instant::now();
             let text = OverseerFileHandler::serialize_nodes(&nodes).ok()?;
             if resolver::profile_enabled() {
                 eprintln!("[PHASE] press serialize {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
             }
-            // Under the text this started from, not the one it produced: `finish_update_with`
-            // moves the whole entry onto the new text, and moving it discards whatever was
-            // already held there - so a graph stored under the new text is deleted a moment
-            // later, and the press after this one pays a full resolve. The edit path has
-            // always done it this way round.
-            remember_graph(&was, graph);
             Some(text)
         });
 
@@ -907,6 +904,8 @@ fn change_document(
     session: &str,
     work: impl FnOnce(&mut Vec<OverseerNode>) -> Result<()>,
 ) -> Result<ResolvedUpdate> {
+    // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
+    let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
     let as_it_stood = std::fs::read_to_string(path)
         .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
     let baseline = baseline_copy(&as_it_stood);
@@ -1022,22 +1021,23 @@ pub(crate) fn settle_after_change(
     }
     let settled_what_it_reached = report
         .filter(|changed| !changed.structural && !changed.fields.is_empty())
-        .and_then(|changed| graph_for(as_it_stood).map(|graph| (changed, graph)))
-        .and_then(|(changed, graph)| {
-            let to_redo = graph.nodes_to_work_out_again(&changed.fields);
+        .and_then(|changed| {
+            crate::document_cache::with_graph(as_it_stood, |graph| {
+                graph.nodes_to_work_out_again(&changed.fields)
+            })
+        })
+        .and_then(|to_redo| {
             if to_redo.is_empty() {
                 return None;
             }
-            let mut graph = graph;
             crate::dependencies::start_recording();
             crate::resolver::resolve_specific_fields(nodes, &to_redo.into_iter().collect());
             // A series hangs on a plot child while the reads are recorded against the chart, so
             // the cascade does not reach it. The other two paths say the same.
             crate::resolver::compute_chart_series(nodes);
             // What was worked out again says what it reads now, added to what it read before -
-            // see `Graph::merge`. Stored under the text this started from, which `rekey` moves.
-            graph.merge(crate::dependencies::take_recording());
-            remember_graph(as_it_stood, graph);
+            // see `Graph::merge`. Held under the text this started from, which `rekey` moves.
+            crate::document_cache::add_to_graph(as_it_stood, crate::dependencies::take_recording());
             Some(())
         });
     // Worked out whole, and recorded while it is: after a change of shape the graph held for the
@@ -1820,16 +1820,15 @@ pub fn resolve_selective(
                 // Without a graph for this exact text - a document opened elsewhere, or one whose
                 // text has moved on - everything is resolved, which is what happened before and
                 // is never wrong.
-                let ready = graph_for(&content)
-                    .zip(baseline_copy(&content))
-                    .map(|(graph, previous)| {
-                        (graph.nodes_to_work_out_again(&changed_fields), graph, previous)
-                    })
-                    .filter(|(to_redo, _, _)| !to_redo.is_empty());
+                let ready = crate::document_cache::with_graph(&content, |graph| {
+                    graph.nodes_to_work_out_again(&changed_fields)
+                })
+                .zip(baseline_copy(&content))
+                .filter(|(to_redo, _)| !to_redo.is_empty());
 
                 match ready {
                     // Everything that was worked out last time, plus whatever this edit reaches.
-                    Some((to_redo, mut graph, previous))
+                    Some((to_redo, previous))
                         if carry_over_computed(
                             &mut nodes,
                             &previous,
@@ -1849,8 +1848,7 @@ pub fn resolve_selective(
                         // line up. Cheap enough that deciding is not worth the risk of a graph
                         // drawn from last week's numbers.
                         resolver::compute_chart_series(&mut nodes);
-                        graph.merge(crate::dependencies::take_recording());
-                        remember_graph(&content, graph);
+                        crate::document_cache::add_to_graph(&content, crate::dependencies::take_recording());
                     }
                     _ => resolver::resolve_values(&mut nodes),
                 }

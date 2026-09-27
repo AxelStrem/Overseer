@@ -1112,6 +1112,9 @@ impl DocumentRoot {
         let looking_at = crate::viewstate::overlay(session, name);
         let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
 
+        // One reading of the clock for the work and what it reaches - see
+        // `FormulaEvaluator::pin_the_clock`.
+        let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
         crate::actions::start_reporting_and_settling();
         let (outcome, nodes, serialized, report, settled_quickly) = DocumentManager::with_document(dir, || {
             // The quick way, taken whenever it can be: the document as it was last worked out for

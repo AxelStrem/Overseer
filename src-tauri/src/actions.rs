@@ -489,6 +489,9 @@ impl ActionExecutor {
         node_path: &[String],
         event_name: &str,
     ) -> Result<(), OverseerError> {
+        // One reading of the clock for every action in the press and whatever it works out -
+        // see `FormulaEvaluator::pin_the_clock`.
+        let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
         debug_actions!(
             "[ACTIONS] execute_event at {:?} on '{}'",
             node_path,

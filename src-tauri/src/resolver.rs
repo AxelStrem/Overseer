@@ -451,6 +451,8 @@ pub fn resolve_values(nodes: &mut Vec<OverseerNode>) {
 }
 
 pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
+    // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
+    let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
     let profiling = profile_enabled();
     resolve_structure(nodes);
 
@@ -484,6 +486,8 @@ pub fn resolve_specific_fields(
     nodes: &mut Vec<OverseerNode>,
     field_paths: &std::collections::HashSet<String>,
 ) {
+    // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
+    let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
     debug_resolver!(
         "🎯 Selective resolution for {} fields: {:?}",
         field_paths.len(),

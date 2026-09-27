@@ -207,6 +207,33 @@ fn at(store: &mut [Entry], text: &str) -> Option<usize> {
     store.iter().position(|entry| entry.text == text)
 }
 
+/// The graph held for this text, lent to `look` rather than copied out.
+///
+/// Every edit, every press and every reopen that refreshes what reads the clock asks the graph one
+/// question - what a change reaches - and each copied all of it first to ask: 5 ms on the project
+/// tracker and 27 on the food tracker, spent on every one of them. Asked under the store's lock,
+/// held for as long as the question takes and no longer.
+pub fn with_graph<R>(text: &str, look: impl FnOnce(&crate::dependencies::Graph) -> R) -> Option<R> {
+    with(|store| {
+        let found = at(store, text)?;
+        store[found].used = now();
+        store[found].graph.as_ref().map(look)
+    })
+}
+
+/// Add what a later resolve recorded to the graph held for this text, where it is - see
+/// `Graph::merge`. Nothing when no graph is held: what part of a document read is not a graph of
+/// the document. The entry is measured again when it next moves, which every write makes it do.
+pub fn add_to_graph(text: &str, newer: crate::dependencies::Graph) {
+    with(|store| {
+        if let Some(found) = at(store, text) {
+            if let Some(graph) = store[found].graph.as_mut() {
+                graph.merge(newer);
+            }
+        }
+    })
+}
+
 /// The document this text produced, as it last stood, without taking it.
 pub fn nodes_for(text: &str) -> Option<Vec<OverseerNode>> {
     with(|store| {

@@ -52,10 +52,18 @@ fn computed(nodes: &[OverseerNode]) -> Vec<String> {
 
 /// What the difference is, named, because "two vectors differ" is not a useful failure.
 fn settles(source: &str) -> Result<(), String> {
-    let mut nodes = app_api::load_document(source.to_string()).map_err(|e| format!("{e:?}"))?;
+    // Both resolves at one moment. Each holds the clock still for itself, but these are two, and
+    // a document counting minutes moved whenever one turned over between them - which was this
+    // test failing once in a full run and never alone.
+    overseer::formula_evaluator::FormulaEvaluator::set_time_override(Some(chrono::Utc::now()));
+    let mut nodes = app_api::load_document(source.to_string()).map_err(|e| {
+        overseer::formula_evaluator::FormulaEvaluator::set_time_override(None);
+        format!("{e:?}")
+    })?;
     let first = computed(&nodes);
     resolver::resolve_document(&mut nodes);
     let again = computed(&nodes);
+    overseer::formula_evaluator::FormulaEvaluator::set_time_override(None);
 
     if first == again {
         return Ok(());
