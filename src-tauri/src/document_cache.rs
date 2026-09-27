@@ -82,16 +82,34 @@ pub fn footprint(nodes: &[OverseerNode]) -> usize {
             _ => 0,
         }
     }
-    /// What a hash table of `n` entries allocates, near enough: capacity is rounded up to a power
-    /// of two above 8/7 of the length, and every bucket is paid for whether it holds anything.
-    fn table(entries: usize, per_entry: usize) -> usize {
-        if entries == 0 {
+    /// What a node's source snapshot holds, counted once however many nodes share it - see
+    /// `OverseerNode::source_snapshot`. The text it is a view of is counted once as well.
+    fn snapshot(
+        node: &OverseerNode,
+        seen: &mut std::collections::HashSet<usize>,
+        texts: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        let Some(held) = node.source_snapshot.as_ref() else { return 0 };
+        if !seen.insert(std::sync::Arc::as_ptr(held) as usize) {
             return 0;
         }
-        (entries * 8 / 7 + 1).next_power_of_two() * (per_entry + 1)
+        let mut total = std::mem::size_of::<crate::types::NodeSourceSnapshot>()
+            + held.leading_trivia.capacity()
+            + held.trailing_trivia.capacity();
+        if let Some((at, len)) = held.full_text.backing() {
+            if texts.insert(at) {
+                total += len;
+            }
+        }
+        total
     }
-    fn walk(nodes: &[OverseerNode]) -> usize {
-        let bucket = std::mem::size_of::<(std::string::String, crate::types::OverseerValue)>();
+    fn walk(
+        nodes: &[OverseerNode],
+        seen: &mut std::collections::HashSet<usize>,
+        texts: &mut std::collections::HashSet<usize>,
+    ) -> usize {
+        // A list of parameters, not a table - see `types::Params`.
+        let entry = std::mem::size_of::<(std::string::String, crate::types::OverseerValue)>();
         // The slice says how many nodes there are, not how much room the Vec has; the slack a Vec
         // carries is part of what the factor at the end stands in for.
         let mut total = nodes.len() * std::mem::size_of::<OverseerNode>();
@@ -99,7 +117,8 @@ pub fn footprint(nodes: &[OverseerNode]) -> usize {
             total += node.name.capacity() + node.node_type.capacity();
             total += node.template.as_ref().map_or(0, |s| s.capacity());
             total += node.raw_value_literal.as_ref().map_or(0, |s| s.capacity());
-            total += table(node.parameters.len(), bucket);
+            total += node.parameters.len() * entry;
+            total += snapshot(node, seen, texts);
             for (key, value) in &node.parameters {
                 total += key.capacity() + of_value(value);
             }
@@ -108,7 +127,7 @@ pub fn footprint(nodes: &[OverseerNode]) -> usize {
             for key in &node.param_order {
                 total += key.capacity();
             }
-            total += walk(&node.children);
+            total += walk(&node.children, seen, texts);
         }
         total
     }
@@ -116,7 +135,15 @@ pub fn footprint(nodes: &[OverseerNode]) -> usize {
     // and 104% of what was actually allocated - the remainder being allocator rounding and the
     // slack a String or a Vec carries beyond what it was asked for. Rather than pretend to model
     // that, the walk is raised until no document is underestimated.
-    walk(nodes) * 7 / 4
+    //
+    // Checked again after `slimtree` made the parameters a list and the snapshots shared, the same
+    // way, and the walk is close now: 12.9 MB for the food tracker against the allocator's 10.0
+    // for a copy of the tree plus 2.9 of snapshots the copy shares rather than repeats. A factor
+    // of seven quarters over that made the cache hold one heavy document where two fit, so it is
+    // a quarter now - margin, rather than a correction.
+    let mut seen = std::collections::HashSet::new();
+    let mut texts = std::collections::HashSet::new();
+    walk(nodes, &mut seen, &mut texts) * 5 / 4
 }
 
 /// One document, as far as it has been worked out.

@@ -33,9 +33,12 @@ fn resolved(source: &str) -> Vec<OverseerNode> {
 /// Where this field puts its label.
 fn label_layout(nodes: &[OverseerNode], name: &str) -> String {
     let node = find(nodes, name).unwrap_or_else(|| panic!("no node named `{}`", name));
+    // Absent is above the value - the page's default - and only beside it is said, since
+    // `slimtree`: it was on nearly every field to say the default.
     match node.parameters.get("_label_layout") {
         Some(OverseerValue::String(s)) => s.clone(),
-        other => panic!("`{}` has no label layout: {:?}", name, other),
+        None => "vertical".to_string(),
+        other => panic!("`{}` has a label layout that is not one: {:?}", name, other),
     }
 }
 

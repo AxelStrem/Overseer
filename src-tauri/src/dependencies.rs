@@ -354,7 +354,10 @@ impl Graph {
                 }
             }
         }
-        total * 7 / 4
+        // Measured against a counting allocator in `slimtree`: 9.3 MB walked for the food
+        // tracker's graph and 9.4 allocated for a copy of it. The margin is a quarter, as the
+        // tree's is, rather than the three quarters both carried before either was measured.
+        total * 5 / 4
     }
 
     pub fn reads_the_clock(&self) -> bool {

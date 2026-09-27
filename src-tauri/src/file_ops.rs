@@ -385,7 +385,7 @@ impl FileOperations {
         }
     }
 
-    fn emit_trailing_trivia(snapshot: &Option<NodeSourceSnapshot>, output: &mut String) {
+    fn emit_trailing_trivia(snapshot: &Option<std::sync::Arc<NodeSourceSnapshot>>, output: &mut String) {
         if let Some(snap) = snapshot {
             if snap.trailing_trivia.trim().is_empty() {
                 return;
@@ -401,7 +401,7 @@ impl FileOperations {
 
     fn emit_trailing_trivia_if_allowed(
         node: &OverseerNode,
-        snapshot: &Option<NodeSourceSnapshot>,
+        snapshot: &Option<std::sync::Arc<NodeSourceSnapshot>>,
         output: &mut String,
     ) {
         if Self::should_skip_trailing_trivia(node) {
@@ -492,7 +492,7 @@ impl FileOperations {
         false
     }
 
-    fn snapshot_for(node: &OverseerNode) -> Option<NodeSourceSnapshot> {
+    fn snapshot_for(node: &OverseerNode) -> Option<std::sync::Arc<NodeSourceSnapshot>> {
         if let Some(snapshot) = node.source_snapshot.clone() {
             return Some(snapshot);
         }
@@ -834,7 +834,7 @@ impl FileOperations {
                     let text = if snap.full_text.contains("\r\n") {
                         snap.full_text.replace("\r\n", "\n")
                     } else {
-                        snap.full_text.clone()
+                        snap.full_text.to_string()
                     };
                     for line in text.lines() {
                         if line.trim().is_empty() {
@@ -1479,7 +1479,7 @@ impl FileOperations {
                                     let inline_end_abs = (inline_start_abs + newline_idx + 1)
                                         .min(snap.span.0 + snap.full_text.len());
 
-                                    let mut inline_child_records: Vec<(usize, NodeSourceSnapshot)> = Vec::new();
+                                    let mut inline_child_records: Vec<(usize, std::sync::Arc<NodeSourceSnapshot>)> = Vec::new();
                                     for (idx, child) in node.children.iter().enumerate() {
                                         if let Some(child_snap) = Self::snapshot_for(child) {
                                             let start = child_snap.span.0;
@@ -1960,7 +1960,7 @@ impl FileOperations {
         }
 
         replacements.sort_by(|a, b| b.0.cmp(&a.0));
-        let mut patched_text = snapshot.full_text.clone();
+        let mut patched_text = snapshot.full_text.to_string();
         for (start, end, replacement) in replacements {
             if replacement.contains('\n') && snapshot.full_text[start..end].contains("\r\n") {
                 let normalized = replacement.replace('\n', "\r\n");
@@ -2284,7 +2284,7 @@ impl FileOperations {
             return None;
         }
 
-        let mut updated_text = snapshot.full_text.clone();
+        let mut updated_text = snapshot.full_text.to_string();
         if rel_end > updated_text.len() {
             return None;
         }
@@ -2300,7 +2300,7 @@ impl FileOperations {
         snapshot: &NodeSourceSnapshot,
         inline_start_abs: usize,
         inline_end_abs: usize,
-        inline_child_records: &[(usize, NodeSourceSnapshot)],
+        inline_child_records: &[(usize, std::sync::Arc<NodeSourceSnapshot>)],
     ) -> Option<String> {
         if inline_child_records.is_empty() {
             return None;

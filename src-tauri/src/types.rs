@@ -17,7 +17,7 @@ pub struct OverseerNode {
     // paid on every open, over whatever connection the person happens to be on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>, // Path to a template node, e.g., "../TaskTemplate"
-    pub parameters: HashMap<String, OverseerValue>,
+    pub parameters: Params,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<OverseerNode>,
     // If true, children are accessible as if they belong to parent
@@ -38,13 +38,221 @@ pub struct OverseerNode {
     // Number of blank (empty) lines that preceded this node in the source
     #[serde(default, skip_serializing_if = "none_of_them")]
     pub leading_blank_lines: u8,
-    // Snapshot of original source trivia and spans (runtime metadata only)
+    // Snapshot of original source trivia and spans (runtime metadata only).
+    //
+    // Shared rather than owned. Every node carries one, and a template's instances carry copies
+    // of the declaration's - so the food tracker held its 110 KB of text thirty-five times over,
+    // 584 bytes of each node were this field, and every copy of a document copied all of it.
+    // Read far more often than changed; a change makes the node its own copy, `Arc::make_mut`.
     #[serde(skip)]
-    pub source_snapshot: Option<NodeSourceSnapshot>,
+    pub source_snapshot: Option<std::sync::Arc<NodeSourceSnapshot>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_fingerprint: Option<u64>,
+}
+
+/// A node's parameters: a short list of names and values, looked through in order.
+///
+/// It was a hash table per node, and a node holds eight to ten parameters - twenty at the most, on
+/// the real documents - so the table was most of what the parameters cost: sixteen slots of
+/// seventy-three bytes for ten entries, on each of the food tracker's nine thousand nodes. A list
+/// is the entries and nothing else, and looking through ten names is no slower than hashing one.
+///
+/// The same methods the table was used through, so the code reading and writing parameters did
+/// not change. Equal regardless of order, as the table was: a change to a node is found by
+/// comparing its parameters, and the same ones in another order are not a change. Written and
+/// read as a map, so the page sees the object it always has.
+#[derive(Clone, Default)]
+pub struct Params(Vec<(String, OverseerValue)>);
+
+impl Params {
+    pub fn new() -> Self {
+        Params(Vec::new())
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Params(Vec::with_capacity(capacity))
+    }
+
+    fn position(&self, key: &str) -> Option<usize> {
+        self.0.iter().position(|(k, _)| k == key)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&OverseerValue> {
+        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut OverseerValue> {
+        self.0.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.position(key).is_some()
+    }
+
+    /// Set a parameter, handing back what it held before.
+    pub fn insert(&mut self, key: String, value: OverseerValue) -> Option<OverseerValue> {
+        match self.position(&key) {
+            Some(at) => Some(std::mem::replace(&mut self.0[at].1, value)),
+            None => {
+                self.0.push((key, value));
+                None
+            }
+        }
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<OverseerValue> {
+        self.position(key).map(|at| self.0.remove(at).1)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &OverseerValue)> {
+        self.0.iter().map(|(k, v)| (k, v))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut OverseerValue)> {
+        self.0.iter_mut().map(|(k, v)| (&*k, v))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.iter().map(|(k, _)| k)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &OverseerValue> {
+        self.0.iter().map(|(_, v)| v)
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut OverseerValue> {
+        self.0.iter_mut().map(|(_, v)| v)
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut(&String, &mut OverseerValue) -> bool) {
+        self.0.retain_mut(|(k, v)| keep(k, v));
+    }
+
+    /// The parameter of this name, to fill in if it is not there - `.entry(k).or_insert(v)`.
+    pub fn entry(&mut self, key: String) -> ParamEntry<'_> {
+        ParamEntry { params: self, key }
+    }
+}
+
+/// See `Params::entry`.
+pub struct ParamEntry<'a> {
+    params: &'a mut Params,
+    key: String,
+}
+
+impl<'a> ParamEntry<'a> {
+    pub fn or_insert(self, default: OverseerValue) -> &'a mut OverseerValue {
+        let at = match self.params.position(&self.key) {
+            Some(at) => at,
+            None => {
+                self.params.0.push((self.key, default));
+                self.params.0.len() - 1
+            }
+        };
+        &mut self.params.0[at].1
+    }
+}
+
+/// `params[key]`, as the table allowed - and like it, a missing key is a mistake that panics.
+impl<Q: AsRef<str> + ?Sized> std::ops::Index<&Q> for Params {
+    type Output = OverseerValue;
+    fn index(&self, key: &Q) -> &OverseerValue {
+        self.get(key.as_ref())
+            .unwrap_or_else(|| panic!("no parameter `{}`", key.as_ref()))
+    }
+}
+
+impl PartialEq for Params {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().all(|(k, v)| other.get(k) == Some(v))
+    }
+}
+
+impl std::fmt::Debug for Params {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl<'a> IntoIterator for &'a Params {
+    type Item = (&'a String, &'a OverseerValue);
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, (String, OverseerValue)>,
+        fn(&'a (String, OverseerValue)) -> (&'a String, &'a OverseerValue),
+    >;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().map(|(k, v)| (k, v))
+    }
+}
+
+impl IntoIterator for Params {
+    type Item = (String, OverseerValue);
+    type IntoIter = std::vec::IntoIter<(String, OverseerValue)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl FromIterator<(String, OverseerValue)> for Params {
+    fn from_iter<I: IntoIterator<Item = (String, OverseerValue)>>(entries: I) -> Self {
+        let mut params = Params::new();
+        params.extend(entries);
+        params
+    }
+}
+
+impl Extend<(String, OverseerValue)> for Params {
+    fn extend<I: IntoIterator<Item = (String, OverseerValue)>>(&mut self, entries: I) {
+        for (k, v) in entries {
+            self.insert(k, v);
+        }
+    }
+}
+
+impl From<HashMap<String, OverseerValue>> for Params {
+    fn from(map: HashMap<String, OverseerValue>) -> Self {
+        map.into_iter().collect()
+    }
+}
+
+impl Serialize for Params {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.collect_map(self.iter())
+    }
+}
+
+impl<'de> Deserialize<'de> for Params {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct Entries;
+        impl<'de> serde::de::Visitor<'de> for Entries {
+            type Value = Params;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a map of parameters")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> std::result::Result<Params, A::Error> {
+                let mut params = Params::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some((k, v)) = map.next_entry::<String, OverseerValue>()? {
+                    params.insert(k, v);
+                }
+                Ok(params)
+            }
+        }
+        deserializer.deserialize_map(Entries)
+    }
 }
 
 /// For `skip_serializing_if` on a flag that is usually off.
@@ -63,7 +271,7 @@ impl OverseerNode {
             name: name.clone(),
             node_type: name.clone(),
             template: None,
-            parameters: HashMap::new(),
+            parameters: Params::new(),
             children: Vec::new(),
             is_hierarchy_transparent: false,
             param_order: Vec::new(),
@@ -107,7 +315,7 @@ impl OverseerNode {
             name: final_name,
             node_type,
             template: None,
-            parameters: HashMap::new(),
+            parameters: Params::new(),
             children: Vec::new(),
             is_hierarchy_transparent: is_transparent,
             param_order: Vec::new(),
@@ -171,7 +379,7 @@ impl OverseerNode {
     pub fn mark_snapshot_as_template_clone(&mut self) {
         if let Some(existing) = self.source_snapshot.clone() {
             let fingerprint = existing.fingerprint;
-            self.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(&existing));
+            self.source_snapshot = Some(NodeSourceSnapshot::template_clone_of(&existing));
             self.source_fingerprint = Some(fingerprint);
         } else {
             self.source_snapshot = None;
@@ -188,9 +396,7 @@ impl OverseerNode {
     pub fn adopt_template_snapshot(&mut self, template: &OverseerNode) {
         if let Some(template_snapshot) = template.source_snapshot.as_ref() {
             let fingerprint = template_snapshot.fingerprint;
-            self.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(
-                template_snapshot,
-            ));
+            self.source_snapshot = Some(NodeSourceSnapshot::template_clone_of(template_snapshot));
             self.source_fingerprint = Some(fingerprint);
         } else {
             self.source_snapshot = None;
@@ -208,10 +414,10 @@ impl OverseerNode {
         indent_unit: Option<String>,
         newline: Option<String>,
     ) {
-        self.source_snapshot = Some(NodeSourceSnapshot::synthetic_with_style(
+        self.source_snapshot = Some(std::sync::Arc::new(NodeSourceSnapshot::synthetic_with_style(
             indent_unit,
             newline,
-        ));
+        )));
         self.source_fingerprint = None;
         self.source_id = None;
     }
@@ -280,6 +486,81 @@ pub enum SyntheticSnapshotKind {
     RuntimeConstructed,
 }
 
+/// A stretch of a document's text, held as a view into one shared copy of the whole.
+///
+/// A node's snapshot keeps the text it was parsed from, and that text includes everything nested
+/// in it - so a document held its own text once for every level of nesting, and the food tracker
+/// kept 3.6 MB of snapshot text for 110 KB of file. As views, they are the file once, and the
+/// spans say where each one is. Reads like a `str`; something that has to change the text takes
+/// a `String` of it first.
+#[derive(Clone, Default)]
+pub struct SharedText {
+    source: Option<std::sync::Arc<str>>,
+    start: usize,
+    end: usize,
+}
+
+impl SharedText {
+    /// The part of `source` from `start` to `end`.
+    pub fn view(source: std::sync::Arc<str>, start: usize, end: usize) -> Self {
+        let end = end.min(source.len());
+        let start = start.min(end);
+        SharedText { source: Some(source), start, end }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match &self.source {
+            Some(source) => &source[self.start..self.end],
+            None => "",
+        }
+    }
+
+    /// The shared copy this is a view into, by identity and size - for counting what is held once.
+    pub fn backing(&self) -> Option<(usize, usize)> {
+        self.source
+            .as_ref()
+            .map(|source| (std::sync::Arc::as_ptr(source) as *const u8 as usize, source.len()))
+    }
+}
+
+impl std::ops::Deref for SharedText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<String> for SharedText {
+    fn from(text: String) -> Self {
+        let end = text.len();
+        SharedText { source: Some(std::sync::Arc::from(text)), start: 0, end }
+    }
+}
+
+impl From<&str> for SharedText {
+    fn from(text: &str) -> Self {
+        SharedText::from(text.to_string())
+    }
+}
+
+impl PartialEq for SharedText {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl std::fmt::Debug for SharedText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl std::fmt::Display for SharedText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct NodeSourceSnapshot {
     pub span: (usize, usize),
@@ -287,7 +568,7 @@ pub struct NodeSourceSnapshot {
     pub header_span: (usize, usize),
     pub body_span: Option<(usize, usize)>,
     pub trailing_span: Option<(usize, usize)>,
-    pub full_text: String,
+    pub full_text: SharedText,
     pub leading_trivia: String,
     pub header: NodeHeaderSnapshot,
     pub body: NodeBodySnapshot,
@@ -332,6 +613,42 @@ impl NodeSourceSnapshot {
         snapshot.trailing_trivia = without_comments(&snapshot.trailing_trivia);
         snapshot.origin = SnapshotOrigin::Synthetic(SyntheticSnapshotKind::TemplateClone);
         snapshot
+    }
+
+    /// What a node made from a template carries: the template's snapshot as `synthetic_from_template`
+    /// makes it, one copy shared by every node made from the same one.
+    ///
+    /// Each of a list's entries used to get a copy of its own, text and all, so a template with
+    /// forty entries held its text forty-one times. The copy is a function of the template's
+    /// snapshot alone, so it is made once per snapshot and handed out after - remembered by the
+    /// snapshot it came from, weakly, so a template that has gone cannot be mistaken for a new one
+    /// that happens to sit where it did. A copy of a copy is the copy: making one again changes
+    /// nothing.
+    pub fn template_clone_of(template: &std::sync::Arc<Self>) -> std::sync::Arc<Self> {
+        if matches!(template.origin, SnapshotOrigin::Synthetic(SyntheticSnapshotKind::TemplateClone)) {
+            return template.clone();
+        }
+        type Made = (std::sync::Weak<NodeSourceSnapshot>, std::sync::Arc<NodeSourceSnapshot>);
+        thread_local! {
+            static MADE: std::cell::RefCell<std::collections::HashMap<usize, Made>> =
+                std::cell::RefCell::new(std::collections::HashMap::new());
+        }
+        let key = std::sync::Arc::as_ptr(template) as usize;
+        MADE.with(|made| {
+            let mut made = made.borrow_mut();
+            if let Some((source, copy)) = made.get(&key) {
+                if source.upgrade().is_some_and(|alive| std::sync::Arc::ptr_eq(&alive, template)) {
+                    return copy.clone();
+                }
+            }
+            // Kept from growing without bound: what was made from templates since dropped goes.
+            if made.len() > 4096 {
+                made.retain(|_, (source, _)| source.strong_count() > 0);
+            }
+            let copy = std::sync::Arc::new(Self::synthetic_from_template(template));
+            made.insert(key, (std::sync::Arc::downgrade(template), copy.clone()));
+            copy
+        })
     }
 
     pub fn synthetic_with_style(indent_unit: Option<String>, newline: Option<String>) -> Self {

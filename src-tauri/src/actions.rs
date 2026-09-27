@@ -1367,7 +1367,7 @@ impl ActionExecutor {
     }
 
     fn require_string(
-        map: &std::collections::HashMap<String, OverseerValue>,
+        map: &crate::types::Params,
         key: &str,
     ) -> Result<String, OverseerError> {
         match map.get(key) {
@@ -1384,7 +1384,7 @@ impl ActionExecutor {
     }
 
     fn require_value(
-        map: &std::collections::HashMap<String, OverseerValue>,
+        map: &crate::types::Params,
         key: &str,
     ) -> Result<OverseerValue, OverseerError> {
         match map.get(key) {
@@ -1397,7 +1397,7 @@ impl ActionExecutor {
     }
 
     fn get_effective<'a>(
-        params: &'a std::collections::HashMap<String, OverseerValue>,
+        params: &'a crate::types::Params,
         key: &str,
     ) -> Option<&'a OverseerValue> {
         if key == "value" {
@@ -1919,7 +1919,7 @@ impl ActionExecutor {
             name: "_implicit".to_string(),
             node_type: "load_mount".to_string(),
             template: None,
-            parameters: std::collections::HashMap::new(),
+            parameters: crate::types::Params::new(),
             children: vec![],
             is_hierarchy_transparent: false,
             param_order: Vec::new(),
@@ -1943,7 +1943,7 @@ impl ActionExecutor {
             name: "_implicit".to_string(),
             node_type: "unload_mount".to_string(),
             template: None,
-            parameters: std::collections::HashMap::new(),
+            parameters: crate::types::Params::new(),
             children: vec![],
             is_hierarchy_transparent: false,
             param_order: Vec::new(),
@@ -2529,9 +2529,7 @@ impl ActionExecutor {
     fn mark_template_child_recursive_action(node: &mut OverseerNode) {
         if let Some(existing_snapshot) = node.source_snapshot.clone() {
             let fingerprint = existing_snapshot.fingerprint;
-            node.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(
-                &existing_snapshot,
-            ));
+            node.source_snapshot = Some(NodeSourceSnapshot::template_clone_of(&existing_snapshot));
             node.source_fingerprint = Some(fingerprint);
         } else {
             node.source_fingerprint = None;
@@ -2594,7 +2592,7 @@ impl ActionExecutor {
                 node_type: "string".to_string(),
                 template: None,
                 parameters: {
-                    let mut m = std::collections::HashMap::new();
+                    let mut m = crate::types::Params::new();
                     m.insert("value".to_string(), value);
                     m.insert(
                         "_override_present".to_string(),
@@ -3410,7 +3408,8 @@ impl ActionExecutor {
 
     fn apply_list_entry_style(node: &mut OverseerNode, style: &ListEntryStyleGuide) {
         node.leading_blank_lines = style.leading_blank_lines;
-        match node.source_snapshot.as_mut() {
+        // The node's own copy from here on, since the one it has may be shared.
+        match node.source_snapshot.as_mut().map(std::sync::Arc::make_mut) {
             Some(snapshot) => {
                 if let Some(indent) = style.indent_unit.clone() {
                     snapshot.indent_unit = Some(indent);

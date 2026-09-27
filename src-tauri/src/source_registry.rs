@@ -12,7 +12,8 @@ use crate::types::NodeSourceSnapshot;
 /// Everything retained for one parse of one document.
 #[derive(Default)]
 struct ScopeData {
-    snapshots: HashMap<u64, NodeSourceSnapshot>,
+    /// The same snapshots the parsed nodes hold, not copies of them.
+    snapshots: HashMap<u64, std::sync::Arc<NodeSourceSnapshot>>,
     /// Trivia after the last top-level node - comments at the end of that file.
     trailing: String,
     /// Node numbering is per scope, so re-parsing identical text reproduces identical ids.
@@ -204,7 +205,7 @@ impl SourceRegistry {
     ///
     /// Registering outside any parse still works - the snapshot lands in a scope of its own -
     /// so a caller that constructs nodes directly is not silently dropped.
-    pub fn register(snapshot: &NodeSourceSnapshot) -> String {
+    pub fn register(snapshot: &std::sync::Arc<NodeSourceSnapshot>) -> String {
         let scope = match Self::current_scope() {
             Some(s) => s,
             None => {
@@ -239,7 +240,7 @@ impl SourceRegistry {
     }
 
     /// Retrieve a previously registered snapshot by id.
-    pub fn get(id: &str) -> Option<NodeSourceSnapshot> {
+    pub fn get(id: &str) -> Option<std::sync::Arc<NodeSourceSnapshot>> {
         let (scope, node) = parse_id(id)?;
         let scopes = SCOPES.read().ok()?;
         scopes.get(&scope)?.snapshots.get(&node).cloned()

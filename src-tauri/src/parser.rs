@@ -21,7 +21,6 @@ macro_rules! debug_parser {
     };
 }
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::hash::Hasher;
 use twox_hash::XxHash64;
 
@@ -33,6 +32,8 @@ struct ParserInputContext {
 
 thread_local! {
     static PARSER_CONTEXT_STACK: RefCell<Vec<ParserInputContext>> = RefCell::new(Vec::new());
+    /// The text being parsed, shared by every snapshot taken from it - see `SharedText`.
+    static PARSER_SOURCE_STACK: RefCell<Vec<std::sync::Arc<str>>> = RefCell::new(Vec::new());
 }
 
 #[derive(Debug)]
@@ -122,6 +123,7 @@ impl ParserContextGuard {
             len: input.len(),
         };
         PARSER_CONTEXT_STACK.with(|stack| stack.borrow_mut().push(ctx));
+        PARSER_SOURCE_STACK.with(|stack| stack.borrow_mut().push(std::sync::Arc::from(input)));
         ParserContextGuard
     }
 }
@@ -132,6 +134,19 @@ impl Drop for ParserContextGuard {
             let mut stack = stack.borrow_mut();
             stack.pop();
         });
+        PARSER_SOURCE_STACK.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+/// A view of the text being parsed, from `start` to `end` - see `SharedText`.
+fn shared_from_offsets(ctx: ParserInputContext, start: usize, end: usize) -> crate::types::SharedText {
+    match PARSER_SOURCE_STACK.with(|stack| stack.borrow().last().cloned()) {
+        Some(source) if source.len() == ctx.len && end > start && end <= ctx.len => {
+            crate::types::SharedText::view(source, start, end)
+        }
+        _ => crate::types::SharedText::from(slice_from_offsets(ctx, start, end)),
     }
 }
 
@@ -235,7 +250,7 @@ fn assign_snapshot(
         None
     };
 
-    let full_text = slice_from_offsets(ctx, span_start, span_end);
+    let full_text = shared_from_offsets(ctx, span_start, span_end);
     let leading_trivia = if let Some((ls, le)) = leading_span {
         slice_from_offsets(ctx, ls, le)
     } else {
@@ -352,6 +367,8 @@ fn assign_snapshot(
         fingerprint,
         origin: SnapshotOrigin::Parsed,
     };
+    // One copy, held by the node and the registry alike - see `OverseerNode::source_snapshot`.
+    let snapshot = std::sync::Arc::new(snapshot);
     node.source_id = Some(SourceRegistry::register(&snapshot));
     node.source_snapshot = Some(snapshot);
     node.source_fingerprint = Some(fingerprint);
@@ -822,7 +839,7 @@ fn parse_template_value(input: &str) -> IResult<&str, OverseerValue> {
 }
 
 /// Parse node parameters like (param=value, param2=value2) returning (map, order)
-fn parse_parameters(input: &str) -> IResult<&str, (HashMap<String, OverseerValue>, Vec<String>)> {
+fn parse_parameters(input: &str) -> IResult<&str, (crate::types::Params, Vec<String>)> {
     map(
         delimited(
             char('('),
@@ -833,7 +850,7 @@ fn parse_parameters(input: &str) -> IResult<&str, (HashMap<String, OverseerValue
             preceded(multispace0, char(')')),
         ),
         |params: Vec<(String, OverseerValue)>| {
-            let mut map = HashMap::new();
+            let mut map = crate::types::Params::with_capacity(params.len());
             let mut order = Vec::new();
             for (k, v) in params {
                 order.push(k.clone());

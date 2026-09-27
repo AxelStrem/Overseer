@@ -35,7 +35,7 @@ pub enum DocumentChange {
     Parameters {
         address: String,
         path: Vec<usize>,
-        parameters: HashMap<String, OverseerValue>,
+        parameters: crate::types::Params,
     },
     /// The node here has a different shape, and is sent whole.
     Subtree {

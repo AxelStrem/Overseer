@@ -416,7 +416,7 @@ pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
         eprintln!("[PHASE]   layout {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
     let t = std::time::Instant::now();
-    resolve_parameter_inheritance(nodes, &HashMap::new());
+    resolve_parameter_inheritance(nodes, &crate::types::Params::new());
     if profiling {
         eprintln!("[PHASE]   inheritance {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
@@ -1309,7 +1309,7 @@ fn resolve_node_templates(
                                         template: None,
                                         parameters: {
                                             // Start with template parameters as base, but mark them as template-derived
-                                            let mut merged_params = HashMap::new();
+                                            let mut merged_params = crate::types::Params::new();
 
                                             // Add template parameters with _template_ prefix to mark their origin
                                             for (key, value) in &template_node.parameters {
@@ -1562,7 +1562,7 @@ fn resolve_node_templates(
                                             node_type: template_node.name.clone(),
                                             template: None,
                                             parameters: {
-                                                let mut merged_params = HashMap::new();
+                                                let mut merged_params = crate::types::Params::new();
                                                 for (key, value) in &template_node.parameters {
                                                     merged_params.insert(
                                                         format!("_template_{}", key),
@@ -1772,7 +1772,7 @@ fn resolve_node_templates(
             // Start with a clone of the template's declared component name as type (e.g., "Task"),
             // mirroring list templating where we use the template's name as the instantiated type.
             node.node_type = template_node.name.clone();
-            let mut merged_params: HashMap<String, OverseerValue> = HashMap::new();
+            let mut merged_params = crate::types::Params::new();
 
             // Mark template parameters and copy them as defaults
             for (key, value) in &template_node.parameters {
@@ -1968,10 +1968,18 @@ fn resolve_layout_parameters(nodes: &mut Vec<OverseerNode>, parent_layout: Optio
             // inherit the *parent's* layout rather than this one. A field is not a layout
             // parent for whatever is nested under it - a handler, an override - and making it
             // one would flip the arrangement of anything below without being asked to.
-            node.parameters.insert(
-                "_label_layout".to_string(),
-                OverseerValue::String(calculate_effective_layout(node, parent_layout)),
-            );
+            //
+            // Kept only when the label goes beside the value. Above it is what the page does when
+            // the key is absent, and it was on nearly every field of every document - 8,600 on the
+            // food tracker - to say the default.
+            if calculate_effective_layout(node, parent_layout) == "horizontal" {
+                node.parameters.insert(
+                    "_label_layout".to_string(),
+                    OverseerValue::String("horizontal".to_string()),
+                );
+            } else {
+                node.parameters.remove("_label_layout");
+            }
 
             // For non-container nodes, just pass through the parent layout to children
             if !node.children.is_empty() {
@@ -2049,7 +2057,7 @@ pub const INHERITABLE_PARAMS: [&str; 5] = [
 
 fn resolve_parameter_inheritance(
     nodes: &mut Vec<OverseerNode>,
-    parent_params: &HashMap<String, OverseerValue>,
+    parent_params: &crate::types::Params,
 ) {
     for node in nodes.iter_mut() {
         let inheritable_params = INHERITABLE_PARAMS;
@@ -2352,9 +2360,7 @@ fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &Overseer
 fn mark_template_child_recursive(node: &mut OverseerNode) {
     if let Some(existing_snapshot) = node.source_snapshot.clone() {
         let fingerprint = existing_snapshot.fingerprint;
-        node.source_snapshot = Some(NodeSourceSnapshot::synthetic_from_template(
-            &existing_snapshot,
-        ));
+        node.source_snapshot = Some(NodeSourceSnapshot::template_clone_of(&existing_snapshot));
         node.source_fingerprint = Some(fingerprint);
     } else {
         node.source_fingerprint = None;
@@ -3531,11 +3537,15 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         let doubts_before = FormulaEvaluator::doubts();
 
         // Same formula evaluation logic as the main function
+        // Not the `_template_*` ones: those are the serializer's note of what the template said,
+        // kept so it can tell an entry's own value from one it inherited, and nothing reads them
+        // worked out. Worked out anyway they were a value and a formula per field of every entry -
+        // 3,700 of each on the food tracker - stored as `_computed__template_*` for no one.
         let formula_pairs: Vec<(String, String)> = node
             .parameters
             .iter()
             .filter_map(|(k, v)| match v {
-                OverseerValue::Formula(s) => Some((k.clone(), s.clone())),
+                OverseerValue::Formula(s) if !k.starts_with("_template_") => Some((k.clone(), s.clone())),
                 _ => None,
             })
             .collect();

@@ -98,10 +98,13 @@ fn several_documents_are_all_kept() {
 fn the_least_recently_asked_for_is_the_one_that_goes() {
     // A budget small enough to hold some but not all. `first` is deliberately consulted after
     // `second` is stored, so the stalest entry is `second` rather than the oldest one.
+    //
+    // Sized so two fit in the megabyte and three do not - about 410 KB each since `slimtree`,
+    // which made the thirty rows this used to take small enough to fit three.
     with_budget(1, || {
-        let first = document("first", 30);
-        let second = document("second", 30);
-        let third = document("third", 30);
+        let first = document("first", 60);
+        let second = document("second", 60);
+        let third = document("third", 60);
 
         app_api::load_document_with_dependencies(first.clone()).expect("first");
         app_api::load_document_with_dependencies(second.clone()).expect("second");
@@ -245,3 +248,5 @@ fn the_size_of_a_document_is_never_underestimated() {
     app_api::forget_dependencies();
     app_api::forget_baseline();
 }
+
+

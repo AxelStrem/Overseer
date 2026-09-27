@@ -477,7 +477,7 @@ impl FormulaEvaluator {
     /// Deliberately answerable from the document alone. A dependency on a fallback exists only
     /// for an unset field, so knowing this without evaluating anything is what lets that
     /// dependency be worked out ahead of time.
-    pub fn states_a_value(params: &std::collections::HashMap<String, OverseerValue>) -> bool {
+    pub fn states_a_value(params: &crate::types::Params) -> bool {
         match params.get("value") {
             None => false,
             Some(OverseerValue::Null) => false,
@@ -500,7 +500,7 @@ impl FormulaEvaluator {
     /// Returns `None` when neither has anything to offer, and the caller treats the field as the
     /// null it was written as.
     fn value_for_unset<'p>(
-        params: &'p std::collections::HashMap<String, OverseerValue>,
+        params: &'p crate::types::Params,
     ) -> Option<&'p OverseerValue> {
         if let Some(fb) = params.get("_computed_fallback") {
             if Self::answered(fb) {
@@ -525,7 +525,7 @@ impl FormulaEvaluator {
     }
 
     fn get_effective_param<'p>(
-        params: &'p std::collections::HashMap<String, OverseerValue>,
+        params: &'p crate::types::Params,
         key: &str,
     ) -> Option<&'p OverseerValue> {
         // Semantics: for 'value', prefer raw when it's not a Formula; if it's a Formula and no computed shadow yet,
@@ -725,7 +725,7 @@ impl FormulaEvaluator {
     }
 
     /// Whether reading this node's value means working something out that has not been yet.
-    fn unworked(params: &std::collections::HashMap<String, OverseerValue>) -> bool {
+    fn unworked(params: &crate::types::Params) -> bool {
         match params.get("value") {
             Some(OverseerValue::Formula(_)) => !params.contains_key("_computed_value"),
             Some(OverseerValue::Null) => [("fallback", "_computed_fallback"), ("default", "_computed_default")]
