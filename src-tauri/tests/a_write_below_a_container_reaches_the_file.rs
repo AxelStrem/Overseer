@@ -73,6 +73,9 @@ fn write_and_read_back(root: &std::path::Path, address: &str, value: f64) -> Opt
     service
         .set_at("t.os", address, OverseerValue::Float(value))
         .expect("the write was refused");
+    // From the file, which is the question here - not from the document the write left held for
+    // that text, which a bot's write does since `botwrites` and a page's always has.
+    overseer::app_api::forget_baseline();
     let fresh = DocumentRoot::new(root).expect("open again");
     fresh
         .read_at("t.os", address)

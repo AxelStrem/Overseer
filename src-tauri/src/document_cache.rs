@@ -261,6 +261,19 @@ pub fn put_graph(text: &str, graph: crate::dependencies::Graph) {
     put(text, |entry| entry.graph = Some(graph));
 }
 
+/// Take the graph held for this text away, and hand it over.
+///
+/// For a graph that must not be moved onto another text by `rekey`, or must not be kept at all:
+/// after a change of shape the one held describes a document that no longer exists.
+pub fn take_graph(text: &str) -> Option<crate::dependencies::Graph> {
+    with(|store| {
+        let found = at(store, text)?;
+        let graph = store[found].graph.take();
+        store[found].measure();
+        graph
+    })
+}
+
 /// The document has been written out afresh; what is held still describes it, under its new text.
 ///
 /// The old text is named because there may now be several entries and only one of them moved.

@@ -243,6 +243,21 @@ impl DocumentRoot {
     }
 }
 
+/// Whether an address names something the document everyone is shown has worked out: it, and
+/// everything above it, in view.
+///
+/// A list's window leaves old days out, and a write to one needs a resolve that brings it back -
+/// which is not the document anyone else would have got, and so not the one held for its text.
+/// An address that cannot be found here at all is left to the long way, which says what is wrong
+/// with it.
+fn wholly_in_view(nodes: &[OverseerNode], address: &str) -> bool {
+    let parts: Vec<&str> = address.split('/').collect();
+    (1..=parts.len()).all(|reach| {
+        crate::addressing::find(nodes, &parts[..reach].join("/"))
+            .is_some_and(|node| !crate::resolver::out_of_view(node))
+    })
+}
+
 /// Pull a string argument, accepting either spelling the frontend might send.
 fn arg_str(args: &serde_json::Value, names: &[&str]) -> Option<String> {
     names
@@ -1098,26 +1113,49 @@ impl DocumentRoot {
         let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
 
         crate::actions::start_reporting_and_settling();
-        let (outcome, nodes, serialized) = DocumentManager::with_document(dir, || {
-            // Named before the document is resolved, so a list showing only part of itself
-            // keeps whatever this write is about - see `resolver::keeping_in_view`.
-            let _in_view = crate::resolver::keeping_in_view(touching);
-            // Worked out as this viewer sees it, or a second press on a day button would start
-            // from what the file says again and never get past the first step back.
-            let mut nodes = if looking_at.is_empty() {
-                app_api::load_document(text)
+        let (outcome, nodes, serialized, report, settled_quickly) = DocumentManager::with_document(dir, || {
+            // The quick way, taken whenever it can be: the document as it was last worked out for
+            // this very text, when what the write is about is in view there. A write then works
+            // out what it reaches and no more, as the page's writes do - see
+            // `app_api::settle_after_change`. It used to work the whole document out before the
+            // work and again after it, uncached, every time: logging a meal from a message paid
+            // two full resolves of the food tracker.
+            let quick = if looking_at.is_empty() {
+                app_api::worked_out_copy(&text).filter(|nodes| wholly_in_view(nodes, touching))
             } else {
-                let addresses = looking_at.keys().cloned().collect();
-                app_api::resolve_selective(text, addresses, Some(looking_at))
-            }
-            .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))?;
+                None
+            };
+            let quick_way = quick.is_some();
+            // The long way otherwise. Named before the document is resolved, so a list showing
+            // only part of itself keeps whatever this write is about - see
+            // `resolver::keeping_in_view`: someone says on Thursday that they forgot Monday's
+            // dinner, and Monday is out of view in the document everyone else is shown.
+            let _in_view = (!quick_way).then(|| crate::resolver::keeping_in_view(touching));
+            let mut nodes = match quick {
+                Some(nodes) => nodes,
+                // Worked out as this viewer sees it, or a second press on a day button would
+                // start from what the file says again and never get past the first step back.
+                None => if looking_at.is_empty() {
+                    app_api::load_document(text.clone())
+                } else {
+                    let addresses = looking_at.keys().cloned().collect();
+                    app_api::resolve_selective(text.clone(), addresses, Some(looking_at))
+                }
+                .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))?,
+            };
             let outcome = work(&mut nodes)?;
-            // Resolve again: what was written changes what derives from it, and the caller is
-            // about to be shown the result.
-            crate::resolver::resolve_document(&mut nodes);
+            let report = crate::actions::take_report();
+            // What was written changes what derives from it, and the caller is about to be shown
+            // the result.
+            let settled_quickly = if quick_way {
+                Some(app_api::settle_after_change(&mut nodes, &text, report.as_ref()))
+            } else {
+                crate::resolver::resolve_document(&mut nodes);
+                None
+            };
             let serialized = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
                 .map_err(|e| RequestError::Failed(format!("could not serialize: {}", e)))?;
-            Ok::<_, RequestError>((outcome, nodes, serialized))
+            Ok::<_, RequestError>((outcome, nodes, serialized, report, settled_quickly))
         })?;
 
         // Whatever the work said belongs to the viewer is kept against this session, and taken
@@ -1130,9 +1168,8 @@ impl DocumentRoot {
         // The same rules the desktop's own writes follow: what the viewer moved is taken back
         // out of the text, kept against their session instead, and a press that moved nothing
         // else leaves the file alone - no write, no undo point, nothing for the backup to commit.
-        let report = crate::actions::take_report();
         let settled = crate::app_api::settle_the_viewers_values(
-            serialized,
+            serialized.clone(),
             &text_before,
             &held_for_the_viewer,
             report.as_ref(),
@@ -1140,8 +1177,19 @@ impl DocumentRoot {
         for (address, value) in settled.viewers {
             crate::viewstate::set(session, name, &address, value);
         }
-        if settled.worth_writing && settled.text != text_before {
+        let wrote = settled.worth_writing && settled.text != text_before;
+        if wrote {
             self.write_document(&path, name, &settled.text)?;
+        }
+        // Kept for the text the file now holds, so the next write - the bot's, or the page
+        // reopening what the bot just changed - starts from it rather than from nothing. Only when
+        // that text is the document as worked out: a field that is the viewer's is taken back
+        // out before writing, and then the tree describes something the file does not say.
+        if let Some(whole) = settled_quickly {
+            if settled.text == serialized {
+                let now = if wrote { settled.text.as_str() } else { text_before.as_str() };
+                crate::app_api::keep_worked_out(&text_before, now, &nodes, whole);
+            }
         }
         Ok((outcome, nodes))
     }

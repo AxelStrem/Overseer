@@ -401,16 +401,22 @@ impl Graph {
         out
     }
 
-    /// Take in what a later, smaller resolve recorded.
+    /// Take in what a later, smaller resolve recorded, keeping everything already known.
     ///
-    /// A node that was worked out again has said afresh what it read, and that replaces whatever it
-    /// said before - which is what keeps the graph honest when an edit changes where a lookup
-    /// lands. Nodes the smaller resolve did not touch keep the edges they had.
-    pub fn absorb(&mut self, newer: Graph) {
+    /// A union. A value keeps every source it was ever seen reading and gains the ones it reads
+    /// now, so a formula that has started reading something new - `flag ? b : c` once `flag` is
+    /// off - is found from `c` afterwards, which it was not while the graph stayed as the open
+    /// recorded it. Replacing a value's sources with the newer ones was tried and lost edges: a
+    /// value reached but settled without reading again came back with fewer sources than it has,
+    /// and two presses in, the cascade stopped reaching it. A source it no longer reads costs a
+    /// value worked out that did not need to be, which is time and never a wrong answer.
+    pub fn merge(&mut self, newer: Graph) {
         for (value, sources) in newer.reads {
-            self.reads.insert(value, sources);
+            for source in &sources {
+                self.read_by.entry(source.clone()).or_default().insert(value.clone());
+            }
+            self.reads.entry(value).or_default().extend(sources);
         }
-        self.index();
     }
 
     /// Everything that has to be worked out again when these paths change, nearest first.

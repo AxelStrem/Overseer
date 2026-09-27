@@ -189,6 +189,51 @@ fn name_the_entries(list: &mut OverseerNode) {
     }
 }
 
+/// Give every entry of every list the name a parse of the document's text would give it.
+///
+/// An entry is named by its place when it is made - `Task__5`, the fifth child of its list - and
+/// never again. So once one is taken out, or put in anywhere but the end, the survivors in memory
+/// keep names their text no longer gives them: the list runs `Task__4, Task__6`, or a day ensured
+/// at the front of a history is named for the back of it. Both are self-consistent and they
+/// disagree, and the text is the authority - a page, the bot, another session and a cache that
+/// has let the document go all name entries from it. The press path without a file settled this
+/// by parsing its text again; a change worked out from the held document settles it here, before
+/// the document is worked out whole, for a fraction of that.
+///
+/// Only names made by place are touched - `Template__N`, an unnamed entry, a bare dash - never a
+/// name the document gives an entry itself.
+pub fn name_entries_as_parsed(nodes: &mut [OverseerNode]) {
+    for node in nodes.iter_mut() {
+        let base = match node.parameters.get("entry") {
+            Some(OverseerValue::Template(path)) | Some(OverseerValue::String(path)) => path
+                .trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .trim_start_matches("../")
+                .split('/')
+                .last()
+                .unwrap_or("")
+                .to_string(),
+            _ => String::new(),
+        };
+        if !base.is_empty() {
+            let placed = format!("{}__", base);
+            for (at, child) in node.children.iter_mut().enumerate() {
+                let by_place = child.name.is_empty()
+                    || child.name == "-"
+                    || child
+                        .name
+                        .strip_prefix(&placed)
+                        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+                if by_place {
+                    child.name = format!("{}{}", placed, at + 1);
+                }
+            }
+        }
+        name_entries_as_parsed(&mut node.children);
+    }
+}
+
 /// How many entries a list keeps in view, if it says.
 ///
 /// Absent or nought means all of them, so a document says nothing and behaves as it always has.

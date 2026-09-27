@@ -535,8 +535,8 @@ impl ActionExecutor {
                 .any(|c| c.node_type == "on" && c.name == event_name);
             if !has_on {
                 // Loading or unloading changes what the document holds, whether or not anything
-                // written says so.
-                note_acted();
+                // written says so - and its shape.
+                note_structural();
                 match event_name {
                     "load" => {
                         // Perform load
@@ -671,10 +671,13 @@ impl ActionExecutor {
                 Ok(())
             }
             "load_mount" => {
+                // What a mount brings in is part of the document's shape.
+                note_structural();
                 Self::execute_load_mount(nodes, owner_indices, owner_path, action)?;
                 Ok(())
             }
             "unload_mount" => {
+                note_structural();
                 Self::execute_unload_mount(nodes, owner_indices, owner_path, action)?;
                 Ok(())
             }
@@ -689,6 +692,8 @@ impl ActionExecutor {
                     && (action.parameters.contains_key("fromList")
                         || action.parameters.contains_key("fromPath"))
                 {
+                    // Whole nodes copied in: a change of shape, not of a value.
+                    note_structural();
                     // Use a snapshot for all reads to avoid &mut conflicts
                     let snapshot = nodes.clone();
                     // Resolve target indices using snapshot first
@@ -969,6 +974,10 @@ impl ActionExecutor {
                     ));
                 }
                 node.children.clear();
+                // Shape, not value - see `note_structural`. Unsaid, what reached the resolver looked like a
+                // change to values: the graph was asked about a document whose entries had moved, and the
+                // survivors kept names their text no longer gives them.
+                note_structural();
                 // Mark explicit so serializer persists empty explicit list on template instance
                 Self::mark_field_explicit_override(nodes, &indices);
                 Ok(())
@@ -2930,6 +2939,10 @@ impl ActionExecutor {
         }
 
         parent.children.remove(*last);
+        // Shape, not value - see `note_structural`. Unsaid, what reached the resolver looked like a
+        // change to values: the graph was asked about a document whose entries had moved, and the
+        // survivors kept names their text no longer gives them.
+        note_structural();
         // The list's text no longer matches what was parsed from it, so it has to be written
         // out again rather than replayed - the same reason an edit to a value clears this.
         parent.source_fingerprint = None;
@@ -3184,6 +3197,10 @@ impl ActionExecutor {
         overrides: &Vec<OverseerNode>,
         from: Option<&OverseerValue>,
     ) -> Result<(), OverseerError> {
+        // Shape, not value - see `note_structural`. Unsaid, what reached the resolver looked like a
+        // change to values: the graph was asked about a document whose entries had moved, and the
+        // survivors kept names their text no longer gives them.
+        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let snapshot = nodes.clone();
         let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
@@ -3773,6 +3790,8 @@ impl ActionExecutor {
         key_value: &OverseerValue,
         at_index: Option<usize>,
     ) -> Result<(), OverseerError> {
+        // An entry moved is a change of shape - see `note_structural`.
+        note_structural();
         let (from_segments, _p1, from_anchored) = Self::split_path_and_param(from_path);
         let (to_segments, _p2, to_anchored) = Self::split_path_and_param(to_path);
         let snapshot = nodes.clone();

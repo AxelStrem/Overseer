@@ -356,10 +356,15 @@ fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
         return Some(previous);
     }
     let targets: std::collections::HashSet<String> = stale.into_iter().collect();
+    let mut graph = graph;
+    crate::dependencies::start_recording();
     resolver::resolve_specific_fields(&mut previous, &targets);
     // Charts outright, for the reason given where an edit does the same: a series hangs on a plot
     // child while the reads are recorded against the chart.
     resolver::compute_chart_series(&mut previous);
+    // A task gone overdue reads through the other branch now - see `Graph::merge`.
+    graph.merge(crate::dependencies::take_recording());
+    remember_graph(content, graph);
     Some(previous)
 }
 
@@ -434,6 +439,20 @@ fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<Ov
 /// for what that cost and why the budget is in bytes.
 fn remember_graph(text: &str, graph: crate::dependencies::Graph) {
     crate::document_cache::put_graph(text, graph);
+}
+
+/// After the document was worked out whole: the graph recorded while it was, or none.
+///
+/// Called once the entry has been moved onto its new text, because moving it brings the old
+/// graph along and throws away whatever was already held there - a graph stored under the new
+/// text beforehand is gone a moment later. None, when the resolve could not be recorded, still
+/// takes the old one away: no graph means the next edit works everything out, which is slow and
+/// right, where the old graph is fast and wrong.
+fn replace_graph(text: &str, fresh: Option<crate::dependencies::Graph>) {
+    crate::document_cache::take_graph(text);
+    if let Some(graph) = fresh {
+        remember_graph(text, graph);
+    }
 }
 
 /// The graph for this text, if one is held for this text.
@@ -741,17 +760,14 @@ pub fn execute_event_update(
                 eprintln!("[PHASE] press changed {:?} and reaches {} values",
                           changed.fields, to_redo.len());
             }
-            // The graph is left exactly as it was, rather than absorbing what this resolve
-            // recorded. `absorb` replaces a value's sources with the newer ones, and a
-            // selective resolve only re-reads what it recomputed - so a value that was reached
-            // but settled without reading again came back with fewer sources than it has, and
-            // the graph shrank a little on every press. Two presses in, the cascade stopped
-            // reaching `quadrupled` and it held the previous press's answer.
-            //
-            // Nothing here changes what reads what: an action wrote a value, not a formula.
-            // A press that redirects a lookup is the case this does not cover, and it is the
-            // same case the edit path does not cover either; `topo` is where that gets settled.
+            // What this works out again is recorded and added to the graph, never put in place
+            // of what it held - replacing was tried, and a value reached but settled without
+            // reading again came back with fewer sources, until two presses in the cascade
+            // stopped reaching `quadrupled`. Adding is what covers a press that sends a lookup
+            // somewhere new. See `Graph::merge`.
             let phase = std::time::Instant::now();
+            let mut graph = graph;
+            crate::dependencies::start_recording();
             resolver::resolve_specific_fields(&mut nodes, &to_redo.into_iter().collect());
             if resolver::profile_enabled() {
                 eprintln!("[PHASE] press resolve {:.1} ms", phase.elapsed().as_secs_f64() * 1000.0);
@@ -759,6 +775,8 @@ pub fn execute_event_update(
             // Charts outright rather than by the cascade, for the reason the edit path gives:
             // a series hangs on a plot child while the reads are recorded against the chart.
             resolver::compute_chart_series(&mut nodes);
+            // Added to, never replaced - see `Graph::merge`.
+            graph.merge(crate::dependencies::take_recording());
             let phase = std::time::Instant::now();
             let text = OverseerFileHandler::serialize_nodes(&nodes).ok()?;
             if resolver::profile_enabled() {
@@ -776,12 +794,22 @@ pub fn execute_event_update(
     if resolver::profile_enabled() {
         eprintln!("[PHASE] press took the {} way", if quick.is_some() { "short" } else { "long" });
     }
-    let (text, nodes) = match quick {
-        Some(text) => (text, nodes),
-        None => as_its_text_reads(&nodes)?,
+    // The long way parses the new text and works it out, recording as an open does - and then
+    // `finish_update_with` moves the old entry onto that text, graph and all, over the new one.
+    // So the new graph is taken out first and put back after. See `newentry`.
+    let (text, nodes, worked_out_whole) = match quick {
+        Some(text) => (text, nodes, None),
+        None => {
+            let (text, nodes) = as_its_text_reads(&nodes)?;
+            let fresh = crate::document_cache::take_graph(&text);
+            (text, nodes, Some(fresh))
+        }
     };
     let phase = std::time::Instant::now();
     let done = finish_update_with(&was, text, nodes, baseline).map(|mut update| {
+        if let Some(fresh) = worked_out_whole {
+            replace_graph(&update.text, fresh);
+        }
         update.view_state = viewers;
         update
     });
@@ -932,28 +960,7 @@ fn change_document(
             emptied: Vec::new(),
         });
     }
-    let settled_what_it_reached = report
-        .as_ref()
-        .filter(|changed| !changed.structural && !changed.fields.is_empty())
-        .and_then(|changed| graph_for(&as_it_stood).map(|graph| (changed, graph)))
-        .and_then(|(changed, graph)| {
-            let to_redo = graph.nodes_to_work_out_again(&changed.fields);
-            if to_redo.is_empty() {
-                return None;
-            }
-            crate::resolver::resolve_specific_fields(&mut nodes, &to_redo.into_iter().collect());
-            // A series hangs on a plot child while the reads are recorded against the chart, so
-            // the cascade does not reach it. The other two paths say the same.
-            crate::resolver::compute_chart_series(&mut nodes);
-            // Left as it was rather than absorbing what this resolve recorded: a selective
-            // resolve only re-reads what it recomputed, so absorbing shrinks the graph a little
-            // every time. See the press path, where that cost a value its cascade.
-            remember_graph(&as_it_stood, graph);
-            Some(())
-        });
-    if settled_what_it_reached.is_none() && !ran_nothing {
-        crate::resolver::resolve_document(&mut nodes);
-    }
+    let worked_out_whole = settle_after_change(&mut nodes, &as_it_stood, report.as_ref());
 
     let serialized = OverseerFileHandler::serialize_nodes(&nodes)
         .map_err(|e| OverseerError::SerializationError(format!("could not serialize: {}", e)))?;
@@ -978,6 +985,9 @@ fn change_document(
     // against and has no other way to learn that this write moved the file.
     let to_edit = field_to_edit(report.as_ref(), &nodes);
     let mut update = finish_update_with(&as_it_stood, serialized, nodes, baseline)?;
+    if let Some(fresh) = worked_out_whole {
+        replace_graph(&update.text, fresh);
+    }
     update.wrote = wrote;
     update.start_editing = to_edit;
     if wrote && settled.text != update.text {
@@ -991,6 +1001,87 @@ fn change_document(
 fn field_to_edit(report: Option<&crate::actions::Changed>, nodes: &[OverseerNode]) -> Option<FieldToEdit> {
     let address = report?.start_editing.clone()?;
     crate::delta::indices_of(nodes, &address).map(|path| FieldToEdit { address, path })
+}
+
+/// What a change to a worked-out document reaches, worked out - and only that, where it can be.
+///
+/// Shared by every write that starts from a document already worked out: the page's, and the
+/// bot's since `botwrites`. When the change only moved values, the graph held for `as_it_stood`
+/// is asked what they reach and that is worked out, recorded and added to the graph. When it
+/// moved the shape, or there is no graph, the whole document is worked out, recorded while it is,
+/// and that graph is handed back - to go under the new text once the cache entry has moved there,
+/// see `replace_graph`. When nothing ran that could change it, nothing is worked out at all.
+pub(crate) fn settle_after_change(
+    nodes: &mut Vec<OverseerNode>,
+    as_it_stood: &str,
+    report: Option<&crate::actions::Changed>,
+) -> Option<Option<crate::dependencies::Graph>> {
+    let ran_nothing = report.is_some_and(|changed| !changed.acted);
+    if ran_nothing {
+        return None;
+    }
+    let settled_what_it_reached = report
+        .filter(|changed| !changed.structural && !changed.fields.is_empty())
+        .and_then(|changed| graph_for(as_it_stood).map(|graph| (changed, graph)))
+        .and_then(|(changed, graph)| {
+            let to_redo = graph.nodes_to_work_out_again(&changed.fields);
+            if to_redo.is_empty() {
+                return None;
+            }
+            let mut graph = graph;
+            crate::dependencies::start_recording();
+            crate::resolver::resolve_specific_fields(nodes, &to_redo.into_iter().collect());
+            // A series hangs on a plot child while the reads are recorded against the chart, so
+            // the cascade does not reach it. The other two paths say the same.
+            crate::resolver::compute_chart_series(nodes);
+            // What was worked out again says what it reads now, added to what it read before -
+            // see `Graph::merge`. Stored under the text this started from, which `rekey` moves.
+            graph.merge(crate::dependencies::take_recording());
+            remember_graph(as_it_stood, graph);
+            Some(())
+        });
+    // Worked out whole, and recorded while it is: after a change of shape the graph held for the
+    // text describes the document before it, and was moved onto the new text all the same - so an
+    // entry added since was unknown to it, and an edit to that entry reached nothing that reads
+    // it. The meal added and then corrected kept its old calories, and the day its old total,
+    // until the document was opened again. See `newentry`.
+    if settled_what_it_reached.is_some() {
+        return None;
+    }
+    // Named as the text now names them, before anything is worked out or recorded against the
+    // names - see `resolver::name_entries_as_parsed`.
+    if report.is_some_and(|changed| changed.structural) {
+        resolver::name_entries_as_parsed(nodes);
+    }
+    let record = recording_is_on() && !resolver::is_keeping_anything_in_view();
+    if record {
+        crate::dependencies::start_recording();
+    }
+    crate::resolver::resolve_document(nodes);
+    Some(record.then(crate::dependencies::take_recording))
+}
+
+/// A copy of the document as it was last worked out for exactly this text, if one is held.
+pub(crate) fn worked_out_copy(text: &str) -> Option<Vec<OverseerNode>> {
+    baseline_copy(text)
+}
+
+/// Hold a document worked out after a change, under the text it was written as.
+///
+/// `was` is the text it started from, whose entry - the graph with what the change added to it -
+/// moves onto `now`. `whole` is what `settle_after_change` handed back: a graph recorded while
+/// the document was worked out whole, which replaces the moved one.
+pub(crate) fn keep_worked_out(
+    was: &str,
+    now: &str,
+    nodes: &[OverseerNode],
+    whole: Option<Option<crate::dependencies::Graph>>,
+) {
+    crate::document_cache::rekey(was, now);
+    remember(now, nodes);
+    if let Some(fresh) = whole {
+        replace_graph(now, fresh);
+    }
 }
 
 /// Work a document out as one viewer sees it.
@@ -1758,7 +1849,7 @@ pub fn resolve_selective(
                         // line up. Cheap enough that deciding is not worth the risk of a graph
                         // drawn from last week's numbers.
                         resolver::compute_chart_series(&mut nodes);
-                        graph.absorb(crate::dependencies::take_recording());
+                        graph.merge(crate::dependencies::take_recording());
                         remember_graph(&content, graph);
                     }
                     _ => resolver::resolve_values(&mut nodes),
