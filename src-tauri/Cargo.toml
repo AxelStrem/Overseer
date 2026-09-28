@@ -39,7 +39,7 @@ nom = "7.1"
 
 # Only for the `server` binary; see the feature above.
 axum = { version = "0.7", optional = true }
-tower-http = { version = "0.5", features = ["fs", "trace"], optional = true }
+tower-http = { version = "0.5", features = ["fs", "trace", "compression-gzip"], optional = true }
 
 # Regular expressions for dependency extraction
 regex = "1.10"

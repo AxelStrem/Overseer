@@ -584,10 +584,17 @@ async fn serve() {
     // Outside the access check, so a refused request gives its memory back too.
     let app = app.layer(axum::middleware::from_fn(give_back_memory));
     // Presenting the token is how a browser gets in, so this sits outside that check.
+    //
+    // And everything compressed on the way out, for whoever asks - a browser always does, and so
+    // does the bot's client. An answer is the same few parameter names over and over: opening the
+    // food tracker is 4.9 MB of JSON and 239 KB gzipped, which on a phone is the difference
+    // between seconds of transfer and none worth mentioning. The default level: the fastest one
+    // saves the server about 20 ms on the largest answer and sends 300 KB more for it.
     let app = Router::new()
         .route("/auth", get(sign_in))
         .merge(app)
-        .with_state(state);
+        .with_state(state)
+        .layer(tower_http::compression::CompressionLayer::new());
 
     let addr = SocketAddr::new(bind, port);
     if access.is_restricted() {
