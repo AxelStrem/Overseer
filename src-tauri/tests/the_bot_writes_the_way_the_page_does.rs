@@ -8,9 +8,10 @@
 //!
 //! Now, when the document is held for exactly the text in the file and what the write is about is
 //! in view there, the write starts from it and works out what it reaches - the graph asked for a
-//! value, the whole document recorded for a change of shape - and what comes out is kept for the
-//! text written, so the next write, or the page reopening it, starts from that. A write to a day
-//! the window leaves out still takes the long way, which is the one that can reach it.
+//! value, and carried through an entry made or taken out, see `a_change_of_shape_is_followed` - and
+//! what comes out is kept for the text written, so the next write, or the page reopening it,
+//! starts from that. A write to a day the window leaves out still takes the long way, which is the
+//! one that can reach it.
 
 use overseer::server::DocumentRoot;
 use overseer::types::*;

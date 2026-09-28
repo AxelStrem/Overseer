@@ -202,8 +202,12 @@ fn name_the_entries(list: &mut OverseerNode) {
 ///
 /// Only names made by place are touched - `Template__N`, an unnamed entry, a bare dash - never a
 /// name the document gives an entry itself.
-pub fn name_entries_as_parsed(nodes: &mut [OverseerNode]) {
-    for node in nodes.iter_mut() {
+///
+/// Says what it renamed, as `(list, was, now)` with the list named as the dependency graph names
+/// it, outer lists before the lists inside them - which is what carrying the graph through the
+/// change needs, see `app_api::follow_the_shape`.
+pub fn name_entries_as_parsed(nodes: &mut [OverseerNode]) -> Vec<(String, String, String)> {
+    fn entries_of(node: &mut OverseerNode, trail: &[String], renamed: &mut Vec<(String, String, String)>) {
         let base = match node.parameters.get("entry") {
             Some(OverseerValue::Template(path)) | Some(OverseerValue::String(path)) => path
                 .trim()
@@ -216,22 +220,88 @@ pub fn name_entries_as_parsed(nodes: &mut [OverseerNode]) {
                 .to_string(),
             _ => String::new(),
         };
-        if !base.is_empty() {
-            let placed = format!("{}__", base);
-            for (at, child) in node.children.iter_mut().enumerate() {
-                let by_place = child.name.is_empty()
-                    || child.name == "-"
-                    || child
-                        .name
-                        .strip_prefix(&placed)
-                        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
-                if by_place {
-                    child.name = format!("{}{}", placed, at + 1);
-                }
+        if base.is_empty() {
+            return;
+        }
+        let placed = format!("{}__", base);
+        for (at, child) in node.children.iter_mut().enumerate() {
+            let by_place = child.name.is_empty()
+                || child.name == "-"
+                || child
+                    .name
+                    .strip_prefix(&placed)
+                    .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+            let named = format!("{}{}", placed, at + 1);
+            if by_place && child.name != named {
+                let was = std::mem::replace(&mut child.name, named.clone());
+                renamed.push((trail.join("/"), was, named));
             }
         }
-        name_entries_as_parsed(&mut node.children);
     }
+    // Walked as every path is built - see `addressing::Level` - with the names given here.
+    fn below(
+        children: &mut [OverseerNode],
+        trail: &mut Vec<String>,
+        level: &mut crate::addressing::Level,
+        renamed: &mut Vec<(String, String, String)>,
+    ) {
+        for node in children.iter_mut() {
+            if crate::addressing::is_wrapper(node) {
+                entries_of(node, trail, renamed);
+                below(&mut node.children, trail, level, renamed);
+                continue;
+            }
+            trail.push(level.segment(&node.name));
+            entries_of(node, trail, renamed);
+            below(&mut node.children, trail, &mut crate::addressing::Level::default(), renamed);
+            trail.pop();
+        }
+    }
+    let mut renamed = Vec::new();
+    for node in nodes.iter_mut() {
+        let mut trail = vec![node.name.clone()];
+        entries_of(node, &trail, &mut renamed);
+        below(&mut node.children, &mut trail, &mut crate::addressing::Level::default(), &mut renamed);
+    }
+    renamed
+}
+
+/// Whether a list shows only some of its entries - see `apply_list_windows`.
+pub fn is_windowed(node: &OverseerNode) -> bool {
+    window_of(node).is_some()
+}
+
+/// The path of every node from this one down, as the resolver names them - for an entry just
+/// made, which nothing has worked out and the graph has never seen.
+pub fn paths_within(node: &OverseerNode, path: &str) -> std::collections::HashSet<String> {
+    let mut paths = std::collections::HashSet::new();
+    paths.insert(path.to_string());
+    let mut prefix: Vec<String> = path.split('/').map(str::to_string).collect();
+    collect_paths_below(&node.children, &mut prefix, &mut paths, &mut crate::addressing::Level::default());
+    paths
+}
+
+/// Work out what a change of shape reaches, and nothing else - the targets the graph named, and
+/// every node of an entry just made.
+///
+/// The rest of what a whole resolve does is left out because it has nothing to do: an entry is
+/// made from a template that was instantiated with the document, so there are no templates left to
+/// copy, and a list that shows only some of its entries is never followed here, so no window moves.
+/// Layout and inheritance are what an entry just made still lacks from its place in the document,
+/// and they are cheap enough to run over all of it.
+pub fn resolve_after_a_change_of_shape(
+    nodes: &mut Vec<OverseerNode>,
+    targets: &std::collections::HashSet<String>,
+) {
+    let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
+    let profiling = profile_enabled();
+    let t = std::time::Instant::now();
+    resolve_layout_parameters(nodes, None);
+    resolve_parameter_inheritance(nodes, &crate::types::Params::new());
+    if profiling {
+        eprintln!("[PHASE]   layout and inheritance {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
+    resolve_specific_fields(nodes, targets);
 }
 
 /// How many entries a list keeps in view, if it says.
@@ -254,14 +324,36 @@ fn narrow(
     root: &[OverseerNode],
     trail: &mut Vec<String>,
 ) {
+    // An entry as written, or as instantiated from the list's template. Only the first kind were
+    // counted, which is all a document just parsed holds - and a document worked out again after a
+    // change holds the second kind for every entry in view. So the entries in view were not
+    // entries: an entry added never left view, the count of those left out came out short - 50 of
+    // the food tracker's 53 - and an entry that should have come back into view never did.
+    let template = match node.parameters.get("entry") {
+        Some(OverseerValue::Template(path)) => path
+            .trim_matches(['<', '>'])
+            .trim_start_matches("../")
+            .split('/')
+            .last()
+            .unwrap_or("")
+            .to_string(),
+        _ => String::new(),
+    };
     let entries: Vec<usize> = node
         .children
         .iter()
         .enumerate()
-        .filter(|(_, child)| child.node_type == "list_item" || child.node_type == "-")
+        .filter(|(_, child)| {
+            child.node_type == "list_item"
+                || child.node_type == "-"
+                || (!template.is_empty() && child.node_type == template)
+        })
         .map(|(at, _)| at)
         .collect();
     if entries.len() <= window {
+        for at in entries {
+            node.children[at].parameters.remove(OUT_OF_VIEW);
+        }
         node.parameters.remove(LEFT_OUT);
         return;
     }
@@ -312,10 +404,14 @@ fn narrow(
         })
         .collect();
 
+    // Both ways, since a document worked out again has been narrowed before: what is in the window
+    // now may have been out of it last time.
     let mut left_out = 0;
-    for (at, _) in order.into_iter().skip(window) {
+    for (rank, (at, _)) in order.into_iter().enumerate() {
         // Named by this interaction, so it stays - see `keeping_in_view`.
-        if addressable.get(at).is_some_and(|segment| is_wanted(segment)) {
+        let in_view = rank < window || addressable.get(at).is_some_and(|segment| is_wanted(segment));
+        if in_view {
+            node.children[at].parameters.remove(OUT_OF_VIEW);
             continue;
         }
         node.children[at]
@@ -453,6 +549,7 @@ pub fn resolve_values(nodes: &mut Vec<OverseerNode>) {
 pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
     let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
+    WORKED_OUT_WHOLE.with(|n| n.set(n.get() + 1));
     let profiling = profile_enabled();
     resolve_structure(nodes);
 
@@ -2525,6 +2622,17 @@ pub fn profile_report_formulas(label: &str) {
 /// being able to pin.
 pub fn passes_taken() -> usize {
     PASSES_TAKEN.with(|p| p.get())
+}
+
+thread_local! {
+    static WORKED_OUT_WHOLE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has worked a document out whole. A change that should have been
+/// followed through the graph and was worked out whole anyway gives the same answer, only slower -
+/// so the answer cannot tell the two apart, and this can.
+pub fn times_worked_out_whole() -> usize {
+    WORKED_OUT_WHOLE.with(|n| n.get())
 }
 
 thread_local! {

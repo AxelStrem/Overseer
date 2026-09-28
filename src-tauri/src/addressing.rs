@@ -167,6 +167,17 @@ pub fn step_among<'a>(nodes: &'a [OverseerNode], segment: &str) -> Option<&'a Ov
     walk(nodes, name, which, &mut 0).or_else(|| nodes.iter().filter(|n| n.name == name).nth(which))
 }
 
+/// The node a whole path names, built the way the resolver and the dependency graph build them -
+/// see `Level`. Not an address: no step is a key.
+pub fn node_at_path<'a>(nodes: &'a [OverseerNode], path: &str) -> Option<&'a OverseerNode> {
+    let mut steps = path.split('/');
+    let mut node = step_among(nodes, steps.next()?)?;
+    for step in steps {
+        node = step_among(&node.children, step)?;
+    }
+    Some(node)
+}
+
 /// The children a node has for addressing, with the child indices that reach each.
 ///
 /// A wrapper contributes what is inside it rather than itself, so the path to a node under one

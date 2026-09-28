@@ -266,6 +266,17 @@ pub fn replay_reads(reads: &[String]) {
     }
 }
 
+/// The step a path takes below `list`, and the rest of it: `list/Task__3/title#_computed_value` is
+/// `Task__3` and `/title#_computed_value`. Nothing when the path is not under `list`.
+///
+/// A step ends where the next one starts, where a worked-out value is named, or where a formula's
+/// text begins - that text can hold slashes of its own. An entry's name holds none of these.
+pub fn entry_step<'a>(path: &'a str, list: &str) -> Option<(&'a str, &'a str)> {
+    let below = path.strip_prefix(list)?.strip_prefix('/')?;
+    let end = below.find(['/', '#', '$']).unwrap_or(below.len());
+    Some((&below[..end], &below[end..]))
+}
+
 /// What was read by what, and the other way round.
 #[derive(Debug, Default, Clone)]
 pub struct Graph {
@@ -419,6 +430,73 @@ impl Graph {
                 self.read_by.entry(source.clone()).or_default().insert(value.clone());
             }
             self.reads.entry(value).or_default().extend(sources);
+        }
+    }
+
+    /// Every path under this one that something read - the fields of an entry, say, which the
+    /// cascade from the entry itself does not reach, since it walks up from a change and never
+    /// down. For an entry taken out: whatever read one of its fields read something now gone.
+    pub fn read_under(&self, at: &str) -> Vec<String> {
+        self.read_by
+            .keys()
+            .filter(|path| entry_step(path, at).is_some())
+            .cloned()
+            .collect()
+    }
+
+    /// Carry what the graph knows about a list's entries to where they are now.
+    ///
+    /// The entries in `gone` were taken out: what they worked out goes with them, and so does every
+    /// mention of them as something read, or a cascade would go on naming values that are not
+    /// there - and, once a survivor takes the name, values that are somewhere else. Each entry in
+    /// `renamed` is called by its new name, which a list naming its entries by place gives every
+    /// entry after one taken out or put in ahead of it - see `resolver::name_entries_as_parsed`.
+    /// All at once, so an entry can take the name another has just given up.
+    ///
+    /// Both are named by the step below `list`, as the graph knew them before the change.
+    pub fn follow_entries(
+        &mut self,
+        list: &str,
+        gone: &HashSet<String>,
+        renamed: &HashMap<String, String>,
+    ) {
+        if gone.is_empty() && renamed.is_empty() {
+            return;
+        }
+        // What becomes of one path: `None` when it went, the new path when it moved.
+        let moved = |path: &str| -> Option<Option<String>> {
+            let (step, rest) = entry_step(path, list)?;
+            if gone.contains(step) {
+                return Some(None);
+            }
+            let to = renamed.get(step)?;
+            Some(Some(format!("{}/{}{}", list, to, rest)))
+        };
+        for side in [&mut self.reads, &mut self.read_by] {
+            // The keys first, then whatever each set holds.
+            let keys: Vec<String> = side.keys().filter(|k| moved(k).is_some()).cloned().collect();
+            let mut carried: Vec<(String, HashSet<String>)> = Vec::with_capacity(keys.len());
+            for key in keys {
+                let others = side.remove(&key).unwrap_or_default();
+                if let Some(Some(to)) = moved(&key) {
+                    carried.push((to, others));
+                }
+            }
+            for (key, others) in carried {
+                side.entry(key).or_default().extend(others);
+            }
+            for others in side.values_mut() {
+                if !others.iter().any(|o| moved(o).is_some()) {
+                    continue;
+                }
+                *others = others
+                    .drain()
+                    .filter_map(|o| match moved(&o) {
+                        None => Some(o),
+                        Some(to) => to,
+                    })
+                    .collect();
+            }
         }
     }
 

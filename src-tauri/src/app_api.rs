@@ -906,6 +906,14 @@ fn change_document(
 ) -> Result<ResolvedUpdate> {
     // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
     let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
+    // Where the time goes, with OVERSEER_PROFILE=1.
+    let mut since = std::time::Instant::now();
+    let mut phase = |what: &str| {
+        if resolver::profile_enabled() {
+            eprintln!("[PHASE] change {} {:.1} ms", what, since.elapsed().as_secs_f64() * 1000.0);
+        }
+        since = std::time::Instant::now();
+    };
     let as_it_stood = std::fs::read_to_string(path)
         .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
     let baseline = baseline_copy(&as_it_stood);
@@ -924,20 +932,28 @@ fn change_document(
     } else {
         load_document(as_it_stood.clone())?
     };
+    phase("load");
 
     crate::actions::start_reporting_and_settling();
+    // Worked out plainly - from the cache or opened just now, which caches it - so the graph held
+    // for this text describes it, and a change of shape can be followed through the graph. Not
+    // when it was worked out for a viewer.
+    let _following = held_for_the_viewer
+        .is_empty()
+        .then(|| crate::actions::follow_against(&as_it_stood));
     work(&mut nodes)?;
     let report = crate::actions::take_report();
+    phase("work");
 
     // What was written changes what derives from it, and the caller is about to be shown it -
     // but working the whole document out again to find out costs as much as opening it did. The
     // graph already knows what reads what, so it is asked instead, exactly as the press path
     // asks it. On tasks.os that was most of a second per edit.
     //
-    // The long way when the graph cannot say: a change of shape renames everything after it, so
-    // the graph is describing a document that no longer exists. Also when there is no graph for
-    // this text, which is what happens when the document was worked out for a viewer rather
-    // than plainly. Never wrong, only slower.
+    // An entry made or taken out is followed through the graph as well - see `follow_the_shape`.
+    // The long way when the graph cannot say: the shape moved some other way, or a list showing
+    // only part of itself moved. Also when there is no graph for this text, which is what happens
+    // when the document was worked out for a viewer rather than plainly. Never wrong, only slower.
     //
     // And not at all when nothing ran that could change it: a press that only opens a field for
     // editing is answered as soon as the field is found.
@@ -960,9 +976,11 @@ fn change_document(
         });
     }
     let worked_out_whole = settle_after_change(&mut nodes, &as_it_stood, report.as_ref());
+    phase("settle");
 
     let serialized = OverseerFileHandler::serialize_nodes(&nodes)
         .map_err(|e| OverseerError::SerializationError(format!("could not serialize: {}", e)))?;
+    phase("serialize");
 
     let settled = settle_the_viewers_values(
         serialized.clone(),
@@ -978,6 +996,7 @@ fn change_document(
         write_file_keeping_a_step_back(path, &settled.text)
             .map_err(|e| OverseerError::IoError(format!("could not write the document: {}", e)))?;
     }
+    phase("write");
 
     // The caller is shown what it asked for, viewer's values and all. Only the file goes
     // without - and it is told so, because it holds the baseline a later save is checked
@@ -987,6 +1006,7 @@ fn change_document(
     if let Some(fresh) = worked_out_whole {
         replace_graph(&update.text, fresh);
     }
+    phase("answer");
     update.wrote = wrote;
     update.start_editing = to_edit;
     if wrote && settled.text != update.text {
@@ -1006,18 +1026,40 @@ fn field_to_edit(report: Option<&crate::actions::Changed>, nodes: &[OverseerNode
 ///
 /// Shared by every write that starts from a document already worked out: the page's, and the
 /// bot's since `botwrites`. When the change only moved values, the graph held for `as_it_stood`
-/// is asked what they reach and that is worked out, recorded and added to the graph. When it
-/// moved the shape, or there is no graph, the whole document is worked out, recorded while it is,
-/// and that graph is handed back - to go under the new text once the cache entry has moved there,
-/// see `replace_graph`. When nothing ran that could change it, nothing is worked out at all.
+/// is asked what they reach and that is worked out, recorded and added to the graph. When it made
+/// or took out entries, and the caller said it holds the document that graph describes - see
+/// `actions::follow_against` - the graph is carried through the change and the same is done,
+/// and the graph handed back. When the shape moved some other way, or there is no graph, the
+/// whole document is worked out, recorded while it is, and that graph is handed back. A graph
+/// handed back goes under the new text once the cache entry has moved there, see
+/// `replace_graph`. When nothing ran that could change it, nothing is worked out at all.
 pub(crate) fn settle_after_change(
     nodes: &mut Vec<OverseerNode>,
     as_it_stood: &str,
     report: Option<&crate::actions::Changed>,
 ) -> Option<Option<crate::dependencies::Graph>> {
+    // Whatever was being followed ends here, whichever way this goes.
+    let following = crate::actions::stop_following().filter(|it| it.text == as_it_stood);
     let ran_nothing = report.is_some_and(|changed| !changed.acted);
     if ran_nothing {
         return None;
+    }
+    // Entries made or taken out, carried through the graph - see `follow_the_shape`. The graph is
+    // the one a settle between two actions already carried, or the one held for the text.
+    if let (Some(changed), Some(mut following)) = (
+        report.filter(|changed| changed.structural && !changed.shape_unknown),
+        following,
+    ) {
+        let graph = following
+            .graph
+            .take()
+            .or_else(|| crate::document_cache::take_graph(as_it_stood));
+        if let Some(mut graph) = graph {
+            let unseen = &changed.fields[following.fields_settled.min(changed.fields.len())..];
+            if follow_the_shape(nodes, &mut graph, unseen, &changed.shapes).is_some() {
+                return Some(Some(graph));
+            }
+        }
     }
     let settled_what_it_reached = report
         .filter(|changed| !changed.structural && !changed.fields.is_empty())
@@ -1059,6 +1101,178 @@ pub(crate) fn settle_after_change(
     }
     crate::resolver::resolve_document(nodes);
     Some(record.then(crate::dependencies::take_recording))
+}
+
+/// Settle what the actions of a press have changed so far, for the actions still to come to read.
+///
+/// The same as the settle at the end - `follow_the_shape` - when the caller holds the document the
+/// graph describes. False when it cannot be done, and the caller works the document out whole, as
+/// it always did between actions; the settle at the end then does as well.
+pub(crate) fn settle_so_far(nodes: &mut Vec<OverseerNode>) -> bool {
+    let Some(mut following) = crate::actions::stop_following() else {
+        return false;
+    };
+    let Some((fields, shapes, unknown)) = crate::actions::report_so_far() else {
+        return false;
+    };
+    if unknown {
+        return false;
+    }
+    let graph = following
+        .graph
+        .take()
+        .or_else(|| crate::document_cache::take_graph(&following.text));
+    let Some(mut graph) = graph else {
+        return false;
+    };
+    let unseen = &fields[following.fields_settled.min(fields.len())..];
+    if follow_the_shape(nodes, &mut graph, unseen, &shapes).is_none() {
+        // The graph may be half carried, and it is gone from the cache: nothing after this can
+        // follow anything with it.
+        crate::actions::note_shape_unknown();
+        return false;
+    }
+    crate::actions::shapes_seen_to(shapes.len());
+    following.graph = Some(graph);
+    following.fields_settled = fields.len();
+    crate::actions::keep_following(following);
+    true
+}
+
+/// Carry entries made and taken out through the graph, and work out what the change reaches and
+/// nothing else. `None` when it cannot be, and the document is worked out whole.
+///
+/// A change of shape used to be worked out whole because the graph was describing a document that
+/// no longer existed. What moves is less than it looked: an entry made is new, and nothing has
+/// read it yet except through its list; an entry taken out takes its values with it, and what read
+/// them is found through the graph before they go; and a list naming its entries by place renames
+/// every one after the change, which is a rename and not a change of value - nothing a formula can
+/// say depends on where an entry sits or what it is called. So the graph is asked what the list
+/// and the removed entries reach, in the names it knows; the entries are named as the text now
+/// names them, and the graph carried along; and what it named is worked out, with every node of an
+/// entry just made. On the food tracker logging a meal reached 58 nodes of the 3,937 it has
+/// formulas on; marking a task done reached 90 on its way into the history and 65 on its way out
+/// of the open list, of 3,514.
+///
+/// Not followed, and worked out whole: a list showing only some of its entries, since which ones
+/// is decided by working the document out; a list holding two entries of one name, where a name
+/// says nothing about which; and a list inside another that also changed, whose names would have
+/// to be carried through each other's.
+fn follow_the_shape(
+    nodes: &mut Vec<OverseerNode>,
+    graph: &mut crate::dependencies::Graph,
+    fields: &[String],
+    shapes: &[crate::actions::Shape],
+) -> Option<()> {
+    use crate::actions::Shape;
+    use std::collections::{HashMap, HashSet};
+    if fields.is_empty() && shapes.is_empty() {
+        return Some(());
+    }
+    let started = std::time::Instant::now();
+
+    let mut lists: Vec<&str> = Vec::new();
+    for shape in shapes {
+        if !lists.contains(&shape.list()) {
+            lists.push(shape.list());
+        }
+    }
+    for list in &lists {
+        let node = crate::addressing::node_at_path(nodes, list)?;
+        if node.node_type != "list" || resolver::is_windowed(node) || resolver::out_of_view(node) {
+            return None;
+        }
+        let mut names = HashSet::new();
+        if !node.children.iter().all(|entry| names.insert(entry.name.as_str())) {
+            return None;
+        }
+    }
+    let nested = |a: &str, b: &str| b.len() > a.len() && b.starts_with(a) && b[a.len()..].starts_with('/');
+    if lists.iter().any(|a| lists.iter().any(|b| nested(a, b))) {
+        return None;
+    }
+
+    // What it reaches, asked in the names the graph knows. An entry taken out is read through
+    // its fields as well as whole, and the cascade walks up from a change and never down.
+    let mut changed: Vec<String> = fields.to_vec();
+    let mut gone: HashMap<&str, HashSet<String>> = HashMap::new();
+    for shape in shapes {
+        changed.push(shape.list().to_string());
+        if let Shape::Removed { list, entry } = shape {
+            let at = format!("{}/{}", list, entry);
+            changed.extend(graph.read_under(&at));
+            changed.push(at);
+            gone.entry(list.as_str()).or_default().insert(entry.clone());
+        }
+    }
+    let reached = graph.nodes_to_work_out_again(&changed);
+
+    // Named as the text now names them, and the graph carried along. A rename anywhere this
+    // change was not said to be means the names had moved before it, and the graph cannot say in
+    // which names it was recorded.
+    let mut renames: HashMap<&str, HashMap<String, String>> = HashMap::new();
+    for (list, was, now) in resolver::name_entries_as_parsed(nodes) {
+        let list: &str = lists.iter().find(|l| **l == list)?;
+        renames.entry(list).or_default().insert(was, now);
+    }
+    let (nothing_gone, no_renames) = (HashSet::new(), HashMap::new());
+    for list in &lists {
+        graph.follow_entries(
+            list,
+            gone.get(list).unwrap_or(&nothing_gone),
+            renames.get(list).unwrap_or(&no_renames),
+        );
+    }
+
+    // What the graph named, in the names it has now.
+    let now_called = |path: &str| -> Option<String> {
+        for list in &lists {
+            if let Some((step, rest)) = crate::dependencies::entry_step(path, list) {
+                if gone.get(list).is_some_and(|g| g.contains(step)) {
+                    return None;
+                }
+                if let Some(to) = renames.get(list).and_then(|r| r.get(step)) {
+                    return Some(format!("{}/{}{}", list, to, rest));
+                }
+                break;
+            }
+        }
+        Some(path.to_string())
+    };
+    let mut targets: HashSet<String> = reached.iter().filter_map(|path| now_called(path)).collect();
+    let from_the_graph = targets.len();
+    // Every node of an entry just made: nothing has worked it out, and the graph has never seen
+    // it. One made from a template is copied from the template as the document already has it,
+    // so there is nothing left to instantiate - and one that is not is not followed.
+    for shape in shapes {
+        if let Shape::Added { list, entry } = shape {
+            let entry = renames.get(list.as_str()).and_then(|r| r.get(entry)).unwrap_or(entry);
+            let path = format!("{}/{}", list, entry);
+            let node = crate::addressing::node_at_path(nodes, &path)?;
+            if node.node_type == "list_item" || node.node_type == "-" {
+                return None;
+            }
+            targets.extend(resolver::paths_within(node, &path));
+        }
+    }
+    if resolver::profile_enabled() {
+        eprintln!(
+            "[PHASE]   followed {} change(s) of shape in {:.1} ms: {} node(s) the graph named, {} in all",
+            shapes.len(),
+            started.elapsed().as_secs_f64() * 1000.0,
+            from_the_graph,
+            targets.len()
+        );
+    }
+
+    // Recorded, and added to the graph - see `Graph::merge`.
+    crate::dependencies::start_recording();
+    resolver::resolve_after_a_change_of_shape(nodes, &targets);
+    // Charts outright, for the reason the other paths give: a series hangs on a plot child while
+    // the reads are recorded against the chart.
+    resolver::compute_chart_series(nodes);
+    graph.merge(crate::dependencies::take_recording());
+    Some(())
 }
 
 /// A copy of the document as it was last worked out for exactly this text, if one is held.

@@ -1116,6 +1116,14 @@ impl DocumentRoot {
         // `FormulaEvaluator::pin_the_clock`.
         let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
         crate::actions::start_reporting_and_settling();
+        // Where the time goes, with OVERSEER_PROFILE=1.
+        let mut since = std::time::Instant::now();
+        fn phase(what: &str, since: &mut std::time::Instant) {
+            if crate::resolver::profile_enabled() {
+                eprintln!("[PHASE] {} {:.1} ms", what, since.elapsed().as_secs_f64() * 1000.0);
+            }
+            *since = std::time::Instant::now();
+        }
         let (outcome, nodes, serialized, report, settled_quickly) = DocumentManager::with_document(dir, || {
             // The quick way, taken whenever it can be: the document as it was last worked out for
             // this very text, when what the write is about is in view there. A write then works
@@ -1129,6 +1137,9 @@ impl DocumentRoot {
                 None
             };
             let quick_way = quick.is_some();
+            // Then it holds the very document the graph for this text describes, so a change of
+            // shape can be followed through the graph - see `app_api::settle_after_change`.
+            let _following = quick_way.then(|| crate::actions::follow_against(&text));
             // The long way otherwise. Named before the document is resolved, so a list showing
             // only part of itself keeps whatever this write is about - see
             // `resolver::keeping_in_view`: someone says on Thursday that they forgot Monday's
@@ -1146,8 +1157,10 @@ impl DocumentRoot {
                 }
                 .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))?,
             };
+            phase("edit load", &mut since);
             let outcome = work(&mut nodes)?;
             let report = crate::actions::take_report();
+            phase("edit work", &mut since);
             // What was written changes what derives from it, and the caller is about to be shown
             // the result.
             let settled_quickly = if quick_way {
@@ -1156,8 +1169,10 @@ impl DocumentRoot {
                 crate::resolver::resolve_document(&mut nodes);
                 None
             };
+            phase("edit settle", &mut since);
             let serialized = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
                 .map_err(|e| RequestError::Failed(format!("could not serialize: {}", e)))?;
+            phase("edit serialize", &mut since);
             Ok::<_, RequestError>((outcome, nodes, serialized, report, settled_quickly))
         })?;
 
@@ -1180,10 +1195,12 @@ impl DocumentRoot {
         for (address, value) in settled.viewers {
             crate::viewstate::set(session, name, &address, value);
         }
+        phase("edit viewers", &mut since);
         let wrote = settled.worth_writing && settled.text != text_before;
         if wrote {
             self.write_document(&path, name, &settled.text)?;
         }
+        phase("edit write", &mut since);
         // Kept for the text the file now holds, so the next write - the bot's, or the page
         // reopening what the bot just changed - starts from it rather than from nothing. Only when
         // that text is the document as worked out: a field that is the viewer's is taken back
@@ -1194,6 +1211,7 @@ impl DocumentRoot {
                 crate::app_api::keep_worked_out(&text_before, now, &nodes, whole);
             }
         }
+        phase("edit keep", &mut since);
         Ok((outcome, nodes))
     }
 

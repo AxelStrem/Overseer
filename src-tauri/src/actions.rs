@@ -53,9 +53,16 @@ pub struct Changed {
     /// The addresses whose values moved, named the way the dependency graph names them.
     pub fields: Vec<String>,
     /// Whether the shape of the document changed - an entry added, removed or reordered. When it
-    /// did, every address after the change may mean something else, so the graph is no use and
-    /// the whole document is worked out again.
+    /// did, every address after the change may mean something else.
     pub structural: bool,
+    /// The changes of shape that can be followed, in the order they were made: an entry made in a
+    /// list or taken out of one. The graph can be carried through those - see
+    /// `app_api::follow_the_shape` - rather than the whole document worked out again.
+    pub shapes: Vec<Shape>,
+    /// Whether the shape moved in a way `shapes` does not say - a list cleared, reordered or
+    /// copied into, a mount brought in. Then nothing short of working the document out whole will
+    /// do, which is what every change of shape did before `shapecost`.
+    pub shape_unknown: bool,
     /// Writes the document said belong to whoever is looking rather than to the document -
     /// `mutable="guarded"`, in force here or anywhere above. They are named and their values
     /// carried out rather than written down, and the caller decides where a viewer's state
@@ -79,10 +86,44 @@ pub struct Changed {
     pub start_editing: Option<String>,
 }
 
+/// An entry made in a list or taken out of one, named the way the dependency graph names them.
+///
+/// `entry` is what the entry was called at that moment. In a list that names its entries by place
+/// that is not what the text calls it afterwards - see `resolver::name_entries_as_parsed` - and
+/// the settle works out the difference.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Shape {
+    Added { list: String, entry: String },
+    Removed { list: String, entry: String },
+}
+
+impl Shape {
+    pub fn list(&self) -> &str {
+        match self {
+            Shape::Added { list, .. } | Shape::Removed { list, .. } => list,
+        }
+    }
+}
+
+/// A write whose actions change the document worked out for `text`, whose graph says what reads
+/// what - see `follow_against`.
+pub struct Following {
+    pub text: String,
+    /// The graph, once a change of shape has been followed with it between two actions. Taken
+    /// out of the cache for the rest of the write, because it describes the document as it is
+    /// becoming rather than the text it was held under - and a write that fails halfway leaves
+    /// no graph behind rather than a wrong one.
+    pub graph: Option<crate::dependencies::Graph>,
+    /// How many of the report's fields a settle between actions has already seen to.
+    pub fields_settled: usize,
+}
+
 thread_local! {
     /// Whether whoever asked is going to work the document out afterwards - see
     /// `caller_will_settle_it`.
     static CALLER_SETTLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// See `follow_against`.
+    static FOLLOWING: std::cell::RefCell<Option<Following>> = const { std::cell::RefCell::new(None) };
     /// Collected here rather than returned, because an action runs six levels down through
     /// `if` blocks and mount handlers, and threading a return through all of them would touch
     /// every arm to say nothing. The same shape as `dependencies::start_recording`.
@@ -94,7 +135,63 @@ thread_local! {
 /// For a caller that does not work the document out afterwards, so the event settles it itself.
 pub fn start_reporting() {
     CALLER_SETTLES.with(|it| it.set(false));
+    FOLLOWING.with(|f| *f.borrow_mut() = None);
     REPORT.with(|r| *r.borrow_mut() = Some(Changed::default()));
+}
+
+/// Say that the document these actions change is the one worked out for this text, as the cache
+/// holds it - so the graph held for the text describes it, and a change of shape can be followed
+/// through the graph rather than the document worked out whole. Said after reporting starts, and
+/// forgotten when it next does.
+///
+/// Only a caller holding exactly that document may say it: one worked out for a viewer, or with
+/// something held in view, is not what the graph was recorded against.
+///
+/// Forgotten when the guard goes, so a write that fails halfway leaves nothing behind for the next
+/// thing this thread runs to follow a different document with.
+#[must_use]
+pub fn follow_against(text: &str) -> FollowingGuard {
+    FOLLOWING.with(|f| {
+        *f.borrow_mut() = Some(Following { text: text.to_string(), graph: None, fields_settled: 0 })
+    });
+    FollowingGuard
+}
+
+pub struct FollowingGuard;
+
+impl Drop for FollowingGuard {
+    fn drop(&mut self) {
+        FOLLOWING.with(|f| *f.borrow_mut() = None);
+    }
+}
+
+/// Stop following, and take what was being followed.
+pub(crate) fn stop_following() -> Option<Following> {
+    FOLLOWING.with(|f| f.borrow_mut().take())
+}
+
+/// Carry on following, with what a settle between actions made of it.
+pub(crate) fn keep_following(following: Following) {
+    FOLLOWING.with(|f| *f.borrow_mut() = Some(following));
+}
+
+/// What the report says so far, for a settle between actions: the fields, the changes of shape not
+/// yet seen to, and whether one could not be said.
+pub(crate) fn report_so_far() -> Option<(Vec<String>, Vec<Shape>, bool)> {
+    REPORT.with(|r| {
+        r.borrow()
+            .as_ref()
+            .map(|changed| (changed.fields.clone(), changed.shapes.clone(), changed.shape_unknown))
+    })
+}
+
+/// The first `seen` changes of shape have been seen to, and are not the caller's to settle again.
+pub(crate) fn shapes_seen_to(seen: usize) {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.shapes.drain(..seen.min(changed.shapes.len()));
+        }
+    });
 }
 
 /// Stop, and take what was noted. `None` when nobody asked.
@@ -335,6 +432,27 @@ fn note_structural() {
         if let Some(changed) = r.borrow_mut().as_mut() {
             changed.acted = true;
             changed.structural = true;
+            changed.shape_unknown = true;
+        }
+    });
+}
+
+/// The document's shape moved in a way that can be said - see `Shape`.
+fn note_shape(shape: Shape) {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.acted = true;
+            changed.structural = true;
+            changed.shapes.push(shape);
+        }
+    });
+}
+
+/// Whatever a settle between actions could not follow, the caller cannot either.
+pub(crate) fn note_shape_unknown() {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.shape_unknown = true;
         }
     });
 }
@@ -595,8 +713,12 @@ impl ActionExecutor {
                     // 800 ms of the 1,600 a logged meal cost. A structural action at the end
                     // leaves the change pending like any other, and the resolve below or the
                     // caller answers for it.
+                    //
+                    // And in place means what the change reaches, where the graph can follow it:
+                    // `done` on a task appends to the history and then removes the task, and the
+                    // resolve between the two was a third of the press.
                     if Self::action_changes_structure(&action.node_type) && at < last {
-                        resolver::resolve_document(nodes);
+                        Self::settle_for_what_comes_next(nodes);
                         pending_changes = false;
                     } else {
                         pending_changes = true;
@@ -615,6 +737,18 @@ impl ActionExecutor {
 
         // Note: do not run timers here; scheduling handles timer firing.
         Ok(())
+    }
+
+    /// Settle what the actions so far changed, for the ones still to come to read.
+    ///
+    /// Followed through the graph when the caller holds the document its graph was recorded
+    /// against and will settle the rest itself - see `app_api::settle_so_far`. Worked out whole
+    /// otherwise, which is what always happened here.
+    fn settle_for_what_comes_next(nodes: &mut Vec<OverseerNode>) {
+        if caller_will_settle_it() && crate::app_api::settle_so_far(nodes) {
+            return;
+        }
+        resolver::resolve_document(nodes);
     }
 
 
@@ -2727,9 +2861,6 @@ impl ActionExecutor {
         key_value: OverseerValue,
         goes: WhereItGoes,
     ) -> Result<String, OverseerError> {
-        // Shape, not value: what this does moves the addresses of everything after
-        // it, so nothing the graph knows survives it.
-        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         // Clone nodes snapshot for immutable searches to avoid aliasing
         let snapshot = nodes.clone();
@@ -2737,6 +2868,8 @@ impl ActionExecutor {
             .ok_or_else(|| {
                 OverseerError::ValidationError(format!("List not found: {}", list_path))
             })?;
+        // Named before the entry is made, as the graph names the list - see `Shape`.
+        let list_address = Self::build_disambiguated_path(&snapshot, &indices).join("/");
         let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("List not found: {}", list_path))
         })?;
@@ -2807,6 +2940,9 @@ impl ActionExecutor {
         // The list's text no longer matches what was parsed from it, so it has to be written out
         // again rather than replayed - the same reason removing an entry clears this.
         list_node.source_fingerprint = None;
+        // Shape, not value - and only when an entry was made: finding the one already there
+        // changes nothing.
+        note_shape(Shape::Added { list: list_address, entry: made.clone() });
         Ok(made)
     }
 
@@ -2841,14 +2977,13 @@ impl ActionExecutor {
         key_field: &str,
         key_value: &OverseerValue,
     ) -> Result<(), OverseerError> {
-        // Shape, not value: what this does moves the addresses of everything after
-        // it, so nothing the graph knows survives it.
-        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let indices = Self::resolve_target_indices(&nodes, owner_path, anchored, &segments)
             .ok_or_else(|| {
                 OverseerError::ValidationError(format!("List not found: {}", list_path))
             })?;
+        // As the graph names the list - see `Shape`.
+        let list_address = Self::build_disambiguated_path(nodes, &indices).join("/");
         let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("List not found: {}", list_path))
         })?;
@@ -2874,7 +3009,9 @@ impl ActionExecutor {
                 Self::value_equals_with_key_precision(&list_node, v, key_value)
             })
         }) {
-            list_node.children.remove(pos);
+            let gone = list_node.children.remove(pos);
+            // Shape, not value - and only when something was taken out.
+            note_shape(Shape::Removed { list: list_address, entry: gone.name });
             // The list no longer matches the text it was read from. Saying so is what
             // makes the removal stick: the serializer replays a node from its source
             // snapshot while the fingerprint still matches, and every remaining entry
@@ -2922,6 +3059,8 @@ impl ActionExecutor {
         let (last, parent_indices) = indices
             .split_last()
             .ok_or_else(|| OverseerError::ValidationError("Nothing to remove".to_string()))?;
+        // As the graph names the list - see `Shape`.
+        let list_address = Self::build_disambiguated_path(nodes, parent_indices).join("/");
 
         let parent = Self::get_node_mut_by_indices(nodes, parent_indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("No list holds {}", entry_path))
@@ -2939,11 +3078,11 @@ impl ActionExecutor {
             )));
         }
 
-        parent.children.remove(*last);
-        // Shape, not value - see `note_structural`. Unsaid, what reached the resolver looked like a
-        // change to values: the graph was asked about a document whose entries had moved, and the
+        let gone = parent.children.remove(*last);
+        // Shape, not value - see `Shape`. Unsaid, what reached the resolver looked like a change
+        // to values: the graph was asked about a document whose entries had moved, and the
         // survivors kept names their text no longer gives them.
-        note_structural();
+        note_shape(Shape::Removed { list: list_address, entry: gone.name });
         // The list's text no longer matches what was parsed from it, so it has to be written
         // out again rather than replayed - the same reason an edit to a value clears this.
         parent.source_fingerprint = None;
@@ -3067,15 +3206,14 @@ impl ActionExecutor {
         overrides: &Vec<OverseerNode>,
         from: Option<&OverseerValue>,
     ) -> Result<(), OverseerError> {
-        // Shape, not value: what this does moves the addresses of everything after
-        // it, so nothing the graph knows survives it.
-        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let snapshot = nodes.clone();
         let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
             .ok_or_else(|| {
                 OverseerError::ValidationError(format!("List not found: {}", list_path))
             })?;
+        // As the graph names the list - see `Shape`.
+        let list_address = Self::build_disambiguated_path(&snapshot, &indices).join("/");
         let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("List not found: {}", list_path))
         })?;
@@ -3139,10 +3277,13 @@ impl ActionExecutor {
                     )?;
                     Self::apply_list_entry_style(&mut new_item, &style_guide);
                     Self::mark_the_entry_as_new(&mut new_item);
+                    let made = new_item.name.clone();
                     list_node.children.push(new_item);
                     Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
                     Self::mark_field_explicit_override(nodes, &indices);
+                    // Shape, not value - see `Shape`.
+                    note_shape(Shape::Added { list: list_address, entry: made });
                 }
                 OverseerValue::String(type_name) => {
                     // Simple type list requires a value
@@ -3170,10 +3311,12 @@ impl ActionExecutor {
                     item.parameters.insert("value".to_string(), val);
                     Self::apply_list_entry_style(&mut item, &style_guide);
                     Self::mark_the_entry_as_new(&mut item);
+                    let made = item.name.clone();
                     list_node.children.push(item);
                     Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
                     Self::mark_field_explicit_override(nodes, &indices);
+                    note_shape(Shape::Added { list: list_address, entry: made });
                 }
                 _ => {
                     return Err(OverseerError::ValidationError(
@@ -3198,16 +3341,14 @@ impl ActionExecutor {
         overrides: &Vec<OverseerNode>,
         from: Option<&OverseerValue>,
     ) -> Result<(), OverseerError> {
-        // Shape, not value - see `note_structural`. Unsaid, what reached the resolver looked like a
-        // change to values: the graph was asked about a document whose entries had moved, and the
-        // survivors kept names their text no longer gives them.
-        note_structural();
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let snapshot = nodes.clone();
         let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
             .ok_or_else(|| {
                 OverseerError::ValidationError(format!("List not found: {}", list_path))
             })?;
+        // As the graph names the list - see `Shape`.
+        let list_address = Self::build_disambiguated_path(&snapshot, &indices).join("/");
         let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("List not found: {}", list_path))
         })?;
@@ -3266,10 +3407,15 @@ impl ActionExecutor {
                     )?;
                     Self::apply_list_entry_style(&mut new_item, &style_guide);
                     Self::mark_the_entry_as_new(&mut new_item);
+                    let made = new_item.name.clone();
                     list_node.children.insert(0, new_item);
                     Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
                     Self::mark_field_explicit_override(nodes, &indices);
+                    // Shape, not value - see `Shape`. Unsaid, what reached the resolver looked like
+                    // a change to values: the graph was asked about a document whose entries had
+                    // moved, and the survivors kept names their text no longer gives them.
+                    note_shape(Shape::Added { list: list_address, entry: made });
                 }
                 OverseerValue::String(type_name) => {
                     let val = value_opt.ok_or_else(|| {
@@ -3296,10 +3442,12 @@ impl ActionExecutor {
                     item.parameters.insert("value".to_string(), val);
                     Self::apply_list_entry_style(&mut item, &style_guide);
                     Self::mark_the_entry_as_new(&mut item);
+                    let made = item.name.clone();
                     list_node.children.insert(0, item);
                     Self::harmonize_list_entry_spacing(list_node, &style_guide);
                     // Mark this list field as explicitly overridden so mutations persist on template instances
                     Self::mark_field_explicit_override(nodes, &indices);
+                    note_shape(Shape::Added { list: list_address, entry: made });
                 }
                 _ => {
                     return Err(OverseerError::ValidationError(
