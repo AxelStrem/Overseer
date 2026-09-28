@@ -78,23 +78,18 @@ fn press(text: String, entry: &str) -> (String, Vec<OverseerNode>) {
         .iter()
         .map(|s| s.to_string())
         .collect();
+    // What the caller holds before the press, which is what an answer describing changes is
+    // applied to.
+    let mut held = app_api::load_document(text.clone()).expect("open");
     let update = app_api::execute_event_update(text, path, "click".into()).expect("event");
-    let nodes = update
-        .nodes
-        .clone()
-        .or_else(|| {
-            update.changes.as_ref().and_then(|changes| {
-                changes.iter().find_map(|c| match c {
-                    overseer::delta::DocumentChange::Subtree { address, node, .. }
-                        if address == "tasks/Open" =>
-                    {
-                        Some(vec![node.clone()])
-                    }
-                    _ => None,
-                })
-            })
-        })
-        .expect("the answer described neither the document nor the list");
+    let nodes = match (update.nodes, update.changes) {
+        (Some(nodes), _) => nodes,
+        (None, Some(changes)) => {
+            overseer::delta::apply(&mut held, changes);
+            held
+        }
+        (None, None) => panic!("the answer described neither the document nor what changed"),
+    };
     (update.text, nodes)
 }
 

@@ -165,10 +165,11 @@ fn an_entry_can_be_taken_out_again() {
 }
 
 #[test]
-fn the_list_is_described_whole_rather_than_field_by_field() {
-    // Because the entries after the new one have been renamed. A description that named them
-    // individually would be naming things that have moved; one that hands back the list says
-    // exactly as much and cannot be misapplied.
+fn the_list_is_described_by_its_entries() {
+    // Not whole, which a history of tasks made megabytes, and not field by field either: the
+    // entries after a new one may have been renamed, and a description naming them one by one
+    // would be naming things that have moved. The list's entries in their new order, each kept
+    // under the name it has now or sent new, say exactly as much and cannot be misapplied.
     serialised(|| {
         let root = a_root("whole");
         let service = DocumentRoot::new(&root).expect("open the root");
@@ -179,15 +180,18 @@ fn the_list_is_described_whole_rather_than_field_by_field() {
             .get("changes")
             .and_then(|c| c.as_array())
             .unwrap_or_else(|| panic!("no changes to apply: {}", answer));
-        let describes_the_list = changes.iter().any(|c| {
-            c.get("kind").and_then(|k| k.as_str()) == Some("subtree")
-                && c.get("address").and_then(|a| a.as_str()) == Some("day/intake")
-        });
-        assert!(
-            describes_the_list,
-            "the list was not handed back whole: {:?}",
-            changes
-        );
+        let entries = changes
+            .iter()
+            .find(|c| {
+                c.get("kind").and_then(|k| k.as_str()) == Some("entries")
+                    && c.get("address").and_then(|a| a.as_str()) == Some("day/intake")
+            })
+            .and_then(|c| c.get("entries"))
+            .and_then(|e| e.as_array())
+            .unwrap_or_else(|| panic!("the list was not described by its entries: {:?}", changes));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], json!({ "kept": 0, "name": "Meal__1" }), "the meal already there was not kept");
+        assert!(entries[1].get("node").is_some(), "the new meal was not sent: {:?}", entries[1]);
         assert_eq!(answer.get("wrote").and_then(|w| w.as_bool()), Some(true));
     });
 }

@@ -14,7 +14,6 @@
 //! settled without reading again would come back with fewer sources than it has.
 
 use overseer::app_api;
-use overseer::delta::DocumentChange;
 use overseer::types::*;
 
 const DOCUMENT: &str = r#"tab t (label="T", mutable=true) {
@@ -76,30 +75,7 @@ fn take(page: &mut Vec<OverseerNode>, answer: app_api::ResolvedUpdate) {
         *page = whole;
         return;
     }
-    fn at<'a>(nodes: &'a mut Vec<OverseerNode>, path: &[usize]) -> &'a mut OverseerNode {
-        let mut node = &mut nodes[path[0]];
-        for i in &path[1..] {
-            node = &mut node.children[*i];
-        }
-        node
-    }
-    let mut removals = Vec::new();
-    for change in answer.changes.expect("an answer describes something") {
-        match change {
-            DocumentChange::Parameters { path, parameters, .. } => at(page, &path).parameters = parameters,
-            DocumentChange::Subtree { path, node, .. } => *at(page, &path) = node,
-            DocumentChange::Removed { path, .. } => removals.push(path),
-        }
-    }
-    removals.sort();
-    for path in removals.into_iter().rev() {
-        let (last, parent) = path.split_last().unwrap();
-        if parent.is_empty() {
-            page.remove(*last);
-        } else {
-            at(page, parent).children.remove(*last);
-        }
-    }
+    overseer::delta::apply(page, answer.changes.expect("an answer describes something"));
 }
 
 fn number(page: &[OverseerNode], address: &str) -> Option<f64> {

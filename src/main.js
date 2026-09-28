@@ -266,6 +266,21 @@ export class OverseerApp {
         } catch (_) { /* non-fatal: a missed marker costs a saved value, not a crash */ }
     }
 
+    // Whether new parameters would draw a node any differently. Not when all that moved is the
+    // serializer's note of what is overridden, or what this page keeps on a node for itself:
+    // marking a task done notes its two lists and the tab as overridden, and drawing the tab again
+    // for that was most of what the first press after opening cost the page.
+    drawnDifferently(before, after) {
+        const unseen = new Set(['_explicit_overrides', '_explicit_child_override', '_override_present', '_uid'])
+        const was = before || {}
+        const now = after || {}
+        for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {
+            if (unseen.has(key)) continue
+            if (JSON.stringify(was[key]) !== JSON.stringify(now[key])) return true
+        }
+        return false
+    }
+
     // Apply a described change to the document in hand, returning the nodes to repaint.
     //
     // Changes are located by child index rather than by name, so none of the addressing the
@@ -286,14 +301,20 @@ export class OverseerApp {
         const listFor = (path) => (path.length <= 1 ? doc : (nodeAt(path.slice(0, -1)) || {}).children)
         const touched = []
         const note = (node) => { if (node && !touched.includes(node)) touched.push(node) }
+        // Nodes whose own parameters changed in a way that shows - see `drawnDifferently`.
+        const reparametrised = new Set()
 
         for (const change of changes || []) {
             if (change.kind === 'parameters') {
                 const node = nodeAt(change.path)
                 if (!node) continue
                 this._carryGuardedMarkers(node, change.parameters)
+                const shows = this.drawnDifferently(node.parameters, change.parameters)
                 node.parameters = change.parameters
-                note(node)
+                if (shows) {
+                    reparametrised.add(node)
+                    note(node)
+                }
             } else if (change.kind === 'subtree') {
                 const list = listFor(change.path)
                 if (!list) continue
@@ -301,7 +322,40 @@ export class OverseerApp {
                 // The replaced node is new and has never been rendered, so the parent is what
                 // knows where it belongs on screen.
                 note(change.path.length <= 1 ? null : nodeAt(change.path.slice(0, -1)))
+            } else if (change.kind === 'entries') {
+                // A list's entries in their new order: each kept from where it stood here, under
+                // the name it has now - an entry named by its place is renamed when one ahead of
+                // it goes - or sent whole. The list used to come whole instead, and a history of
+                // tasks is megabytes. Applied before anything inside the entries, whose paths
+                // count in the new order.
+                const list = nodeAt(change.path)
+                if (!list) continue
+                const before = list.children || []
+                const added = []
+                let renamed = false
+                list.children = (change.entries || []).map((entry) => {
+                    if (entry.node) {
+                        added.push(entry.node)
+                        return entry.node
+                    }
+                    const kept = before[entry.kept]
+                    if (kept && typeof entry.name === 'string' && kept.name !== entry.name) {
+                        kept.name = entry.name
+                        renamed = true
+                    }
+                    return kept
+                }).filter(Boolean)
+                const dropped = before.filter((entry) => !list.children.includes(entry))
+                // For the repaint: only what came and went is drawn, where it can be - see
+                // `repaintEntries`. An entry renamed has the old name in the paths on screen, so
+                // then the list is drawn again whole, and each entry with its name.
+                list.__entries_changed = { added, dropped, renamed }
+                note(list)
             }
+        }
+        // A list whose own parameters changed as well is drawn again whole.
+        for (const node of reparametrised) {
+            if (node.__entries_changed) node.__entries_changed.whole = true
         }
         // Removals shift the indices of their later siblings, so they are applied from the end.
         const removals = (changes || []).filter(c => c.kind === 'removed')

@@ -13,7 +13,6 @@
 //! renamed entries, and that the document ends up as a fresh open of the file has it.
 
 use overseer::app_api;
-use overseer::delta::DocumentChange;
 use overseer::resolver::times_worked_out_whole;
 use overseer::types::*;
 
@@ -129,38 +128,7 @@ fn take(page: &mut Vec<OverseerNode>, answer: app_api::ResolvedUpdate) {
         *page = whole;
         return;
     }
-    fn at<'a>(nodes: &'a mut Vec<OverseerNode>, path: &[usize]) -> &'a mut OverseerNode {
-        let mut node = &mut nodes[path[0]];
-        for i in &path[1..] {
-            node = &mut node.children[*i];
-        }
-        node
-    }
-    let mut removals = Vec::new();
-    for change in answer.changes.expect("an answer describes something") {
-        match change {
-            DocumentChange::Parameters { path, parameters, .. } => at(page, &path).parameters = parameters,
-            DocumentChange::Subtree { path, node, .. } => {
-                let (last, parent) = path.split_last().unwrap();
-                let siblings = if parent.is_empty() { &mut *page } else { &mut at(page, parent).children };
-                if *last == siblings.len() {
-                    siblings.push(node);
-                } else {
-                    siblings[*last] = node;
-                }
-            }
-            DocumentChange::Removed { path, .. } => removals.push(path),
-        }
-    }
-    removals.sort();
-    for path in removals.into_iter().rev() {
-        let (last, parent) = path.split_last().unwrap();
-        if parent.is_empty() {
-            page.remove(*last);
-        } else {
-            at(page, parent).children.remove(*last);
-        }
-    }
+    overseer::delta::apply(page, answer.changes.expect("an answer describes something"));
 }
 
 fn number(page: &[OverseerNode], address: &str) -> Option<f64> {

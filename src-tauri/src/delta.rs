@@ -9,10 +9,13 @@
 //! Nodes are matched by the addresses in [`crate::addressing`], which survive a resolve, so
 //! "the node at this address now reads 3" is meaningful across two separate parses.
 //!
-//! A node whose children changed shape is reported as a whole subtree rather than as a
-//! sequence of insertions and removals. That is a deliberate trade: a shape change is rare
-//! next to a value change, the subtree is usually small next to the document, and it spares
-//! both sides an index arithmetic that is easy to get subtly wrong.
+//! A list whose entries came, went or moved is reported as its entries in their new order, each
+//! one either kept from where it was in the recipient's document or sent whole - see
+//! [`DocumentChange::Entries`]. The recipient builds the list's children from that in one step,
+//! so no index arithmetic crosses from one change to another. Any other node whose children
+//! changed shape is sent as a whole subtree, which is what every list used to be: a trade that
+//! held while a change of shape was rare and a list small, and stopped holding at a history of
+//! tasks - marking one done sent 4.5 MB of it.
 
 use crate::addressing;
 use crate::types::*;
@@ -45,6 +48,28 @@ pub enum DocumentChange {
     },
     /// There is no longer a node here.
     Removed { address: String, path: Vec<usize> },
+    /// The entries of the list here, in their new order - each kept from where it stood among the
+    /// list's children in the recipient's document, or sent whole. An entry not named is gone.
+    ///
+    /// A kept entry carries its name, which a list naming its entries by place changes for every
+    /// entry after one taken out or put in ahead of it, while its address - its key - stays. What
+    /// changed inside a kept entry follows as changes of its own, with paths in the new order,
+    /// so this one has to be applied before them.
+    Entries {
+        address: String,
+        path: Vec<usize>,
+        entries: Vec<Entry>,
+    },
+}
+
+/// One entry of a list, as [`DocumentChange::Entries`] names it.
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum Entry {
+    /// The entry at this index among the list's children before, now called `name`.
+    Kept { kept: usize, name: String },
+    /// An entry the recipient has never had.
+    New { node: OverseerNode },
 }
 
 impl DocumentChange {
@@ -52,7 +77,8 @@ impl DocumentChange {
         match self {
             DocumentChange::Parameters { address, .. }
             | DocumentChange::Subtree { address, .. }
-            | DocumentChange::Removed { address, .. } => address,
+            | DocumentChange::Removed { address, .. }
+            | DocumentChange::Entries { address, .. } => address,
         }
     }
 
@@ -60,7 +86,8 @@ impl DocumentChange {
         match self {
             DocumentChange::Parameters { path, .. }
             | DocumentChange::Subtree { path, .. }
-            | DocumentChange::Removed { path, .. } => path,
+            | DocumentChange::Removed { path, .. }
+            | DocumentChange::Entries { path, .. } => path,
         }
     }
 }
@@ -85,18 +112,23 @@ pub fn diff(before: &[OverseerNode], after: &[OverseerNode]) -> Vec<DocumentChan
 
     let mut changes = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let mut left_out: Vec<String> = Vec::new();
     compare(
         None,
         &addressing::effective_roots(after),
         "",
         &[],
         &previous,
-        &mut seen,
-        &mut changes,
+        &mut Walk { seen: &mut seen, changes: &mut changes, left_out: &mut left_out },
     );
 
     // Whatever the previous document had here and this one does not. A node inside a subtree
-    // that was replaced wholesale is already accounted for by that subtree.
+    // that was replaced wholesale is already accounted for by that subtree, and an entry a list's
+    // new entries leave out, with everything inside it, by the list.
+    //
+    // Nothing else below a list reported by its entries can be gone: a node goes only from a
+    // parent whose children changed shape, and that parent is reported by its entries or whole.
+    // So every removal left is located where the lists above it have not moved.
     let replaced: Vec<&str> = changes
         .iter()
         .filter(|c| matches!(c, DocumentChange::Subtree { .. }))
@@ -109,6 +141,11 @@ pub fn diff(before: &[OverseerNode], after: &[OverseerNode]) -> Vec<DocumentChan
             !replaced
                 .iter()
                 .any(|parent| address.starts_with(&format!("{}/", parent)))
+        })
+        .filter(|address| {
+            !left_out
+                .iter()
+                .any(|entry| *address == entry || address.starts_with(&format!("{}/", entry)))
         })
         .collect();
     gone.sort();
@@ -166,61 +203,192 @@ fn index_paths(nodes: &[OverseerNode]) -> HashMap<String, Vec<usize>> {
     out
 }
 
+/// What a walk of the new document collects.
+struct Walk<'a> {
+    /// Every address the new document has that the old one had too.
+    seen: &'a mut HashSet<String>,
+    changes: &'a mut Vec<DocumentChange>,
+    /// The entries a list's new entries leave out, by their addresses in the old document.
+    left_out: &'a mut Vec<String>,
+}
+
 fn compare(
     parent: Option<&OverseerNode>,
     children: &[(Vec<usize>, &OverseerNode)],
     prefix: &str,
     path: &[usize],
     previous: &HashMap<String, &OverseerNode>,
-    seen: &mut HashSet<String>,
-    changes: &mut Vec<DocumentChange>,
+    walk: &mut Walk,
 ) {
     let segments = addressing::segments_for(parent, children);
     for (segment, (relative, node)) in segments.iter().zip(children) {
-        let address = join(prefix, segment);
         let mut here = path.to_vec();
         here.extend(relative.iter().copied());
-        seen.insert(address.clone());
+        compare_one(join(prefix, segment), here, node, previous, walk);
+    }
+}
 
-        let Some(was) = previous.get(&address) else {
-            // Nothing was here before, so there is nothing to compare against.
-            changes.push(DocumentChange::Subtree {
-                address,
-                path: here,
-                node: (*node).clone(),
-            });
-            continue;
-        };
+fn compare_one(
+    address: String,
+    here: Vec<usize>,
+    node: &OverseerNode,
+    previous: &HashMap<String, &OverseerNode>,
+    walk: &mut Walk,
+) {
+    walk.seen.insert(address.clone());
 
-        let before_children = addressing::child_segments(was);
-        let after_children = addressing::child_segments(node);
-        if before_children != after_children {
-            // The shape moved; send the subtree and stop descending. Its descendants stay out
-            // of `seen` on purpose - they are covered by the subtree, and the removal pass
-            // skips anything beneath a replaced address.
-            changes.push(DocumentChange::Subtree {
-                address,
-                path: here,
-                node: (*node).clone(),
-            });
-            continue;
-        }
+    let Some(was) = previous.get(&address) else {
+        // Nothing was here before, so there is nothing to compare against.
+        walk.changes.push(DocumentChange::Subtree { address, path: here, node: node.clone() });
+        return;
+    };
 
-        if was.parameters != node.parameters {
-            changes.push(DocumentChange::Parameters {
+    let before_children = addressing::child_segments(was);
+    let after_children = addressing::child_segments(node);
+    if before_children != after_children {
+        if let Some((entries, kept, left_out)) = entries_of(was, node, &before_children, &after_children) {
+            if was.parameters != node.parameters {
+                walk.changes.push(DocumentChange::Parameters {
+                    address: address.clone(),
+                    path: here.clone(),
+                    parameters: node.parameters.clone(),
+                });
+            }
+            walk.changes.push(DocumentChange::Entries {
                 address: address.clone(),
                 path: here.clone(),
-                parameters: node.parameters.clone(),
+                entries,
             });
+            walk.left_out.extend(left_out.iter().map(|segment| join(&address, segment)));
+            // What changed inside each entry kept, in the order the entries are in now.
+            for at in kept {
+                let mut inside = here.clone();
+                inside.push(at);
+                compare_one(join(&address, &after_children[at]), inside, &node.children[at], previous, walk);
+            }
+            return;
         }
-        compare(
-            Some(node),
-            &addressing::effective_children(node),
-            &address,
-            &here,
-            previous,
-            seen,
-            changes,
-        );
+        // The shape moved; send the subtree and stop descending. Its descendants stay out of
+        // `seen` on purpose - they are covered by the subtree, and the removal pass skips
+        // anything beneath a replaced address.
+        walk.changes.push(DocumentChange::Subtree { address, path: here, node: node.clone() });
+        return;
+    }
+
+    if was.parameters != node.parameters {
+        walk.changes.push(DocumentChange::Parameters {
+            address: address.clone(),
+            path: here.clone(),
+            parameters: node.parameters.clone(),
+        });
+    }
+    compare(Some(node), &addressing::effective_children(node), &address, &here, previous, walk);
+}
+
+/// A node's children as entries kept or sent, when they can be told that way: with no wrapper
+/// among them, so each child is one step of an address, and with at least one kept - otherwise
+/// the whole node says the same in fewer words. Matched by address, as everything here is, so in
+/// a list naming its entries by place an entry kept may be a neighbour of the one it was, with
+/// what differs following as changes of its own.
+///
+/// The entries, the indices of those kept among the new children, and the old steps of those
+/// left out.
+fn entries_of(
+    was: &OverseerNode,
+    node: &OverseerNode,
+    before: &[String],
+    after: &[String],
+) -> Option<(Vec<Entry>, Vec<usize>, Vec<String>)> {
+    let plain = |n: &OverseerNode| !n.children.iter().any(addressing::is_wrapper);
+    if !plain(was) || !plain(node) || before.len() != was.children.len() || after.len() != node.children.len() {
+        return None;
+    }
+    let stood: HashMap<&str, usize> = before.iter().enumerate().map(|(at, s)| (s.as_str(), at)).collect();
+    let mut entries = Vec::with_capacity(after.len());
+    let mut kept = Vec::new();
+    let mut taken: HashSet<usize> = HashSet::new();
+    for (at, segment) in after.iter().enumerate() {
+        match stood.get(segment.as_str()) {
+            Some(&from) => {
+                taken.insert(from);
+                kept.push(at);
+                entries.push(Entry::Kept { kept: from, name: node.children[at].name.clone() });
+            }
+            None => entries.push(Entry::New { node: node.children[at].clone() }),
+        }
+    }
+    if kept.is_empty() {
+        return None;
+    }
+    let left_out = before
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| !taken.contains(at))
+        .map(|(_, segment)| segment.clone())
+        .collect();
+    Some((entries, kept, left_out))
+}
+
+/// Apply changes to the document they were worked out against, as the page does.
+///
+/// The page has its own copy, in `applyDocumentChanges`; this one is what the tests hold an
+/// answer to - that applied to the document before, it gives the document after. In order,
+/// because what changed inside a list's entries is located in their new order, and removals
+/// last and from the end, because they are located in the document as it was.
+pub fn apply(nodes: &mut Vec<OverseerNode>, changes: Vec<DocumentChange>) {
+    fn siblings<'a>(nodes: &'a mut Vec<OverseerNode>, parent: &[usize]) -> Option<&'a mut Vec<OverseerNode>> {
+        let mut list = nodes;
+        for at in parent {
+            list = &mut list.get_mut(*at)?.children;
+        }
+        Some(list)
+    }
+    fn at<'a>(nodes: &'a mut Vec<OverseerNode>, path: &[usize]) -> Option<&'a mut OverseerNode> {
+        let (last, parent) = path.split_last()?;
+        siblings(nodes, parent)?.get_mut(*last)
+    }
+    let mut removals = Vec::new();
+    for change in changes {
+        match change {
+            DocumentChange::Parameters { path, parameters, .. } => {
+                if let Some(node) = at(nodes, &path) {
+                    node.parameters = parameters;
+                }
+            }
+            DocumentChange::Subtree { path, node, .. } => {
+                let Some((last, parent)) = path.split_last() else { continue };
+                let Some(list) = siblings(nodes, parent) else { continue };
+                if *last == list.len() {
+                    list.push(node);
+                } else if let Some(slot) = list.get_mut(*last) {
+                    *slot = node;
+                }
+            }
+            DocumentChange::Entries { path, entries, .. } => {
+                let Some(list) = at(nodes, &path) else { continue };
+                let mut before: Vec<Option<OverseerNode>> =
+                    std::mem::take(&mut list.children).into_iter().map(Some).collect();
+                list.children = entries
+                    .into_iter()
+                    .filter_map(|entry| match entry {
+                        Entry::Kept { kept, name } => before.get_mut(kept)?.take().map(|mut node| {
+                            node.name = name;
+                            node
+                        }),
+                        Entry::New { node } => Some(node),
+                    })
+                    .collect();
+            }
+            DocumentChange::Removed { path, .. } => removals.push(path),
+        }
+    }
+    removals.sort();
+    for path in removals.into_iter().rev() {
+        let Some((last, parent)) = path.split_last() else { continue };
+        if let Some(list) = siblings(nodes, parent) {
+            if *last < list.len() {
+                list.remove(*last);
+            }
+        }
     }
 }

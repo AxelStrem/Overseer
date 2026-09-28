@@ -232,30 +232,7 @@ fn tasks_shown(nodes: &[OverseerNode]) -> Vec<String> {
 
 /// What `applyDocumentChanges` does on the page.
 fn apply(nodes: &mut Vec<OverseerNode>, changes: Vec<DocumentChange>) {
-    fn at<'a>(nodes: &'a mut Vec<OverseerNode>, path: &[usize]) -> &'a mut OverseerNode {
-        let mut node = &mut nodes[path[0]];
-        for i in &path[1..] {
-            node = &mut node.children[*i];
-        }
-        node
-    }
-    let mut removals = Vec::new();
-    for change in changes {
-        match change {
-            DocumentChange::Parameters { path, parameters, .. } => at(nodes, &path).parameters = parameters,
-            DocumentChange::Subtree { path, node, .. } => *at(nodes, &path) = node,
-            DocumentChange::Removed { path, .. } => removals.push(path),
-        }
-    }
-    removals.sort();
-    for path in removals.into_iter().rev() {
-        let (last, parent) = path.split_last().unwrap();
-        if parent.is_empty() {
-            nodes.remove(*last);
-        } else {
-            at(nodes, parent).children.remove(*last);
-        }
-    }
+    overseer::delta::apply(nodes, changes);
 }
 
 #[test]

@@ -922,24 +922,173 @@ export class OverseerRenderer {
                 if (!all.includes(proxy)) all.push(proxy)
             }
         } catch (_) { /* non-fatal */ }
+        // What has been drawn afresh in this pass, so nothing inside it is drawn a second time.
+        const drawn = []
+        const within = (path) => Array.isArray(path)
+            && drawn.some((d) => d.length <= path.length && d.every((s, i) => s === path[i]))
+        const redraw = (path) => {
+            if (!Array.isArray(path) || path.length === 0 || !this.rerenderSubtree(doc, path)) return false
+            drawn.push(path.slice())
+            return true
+        }
         for (const node of all) {
             const path = node && node.__overseer_path
+            const entries = node && node.__entries_changed
+            if (node) delete node.__entries_changed
+            if (within(path)) continue
+            if (entries && this.repaintEntries(node, entries)) continue
+            if (redraw(path)) continue
+            // Not on screen, and nothing to draw while it still is not: a field of a template, a
+            // value that is hidden, anything under a hidden container. Every press on tasks.os
+            // used to end in drawing the whole document for this, since marking a task done
+            // moves the counts kept on the hidden template of a rule.
+            const chain = this.ancestorsOf(doc, node)
+            if (chain && this.leftUndrawn(node, chain)) continue
+            // To be seen now: the nearest thing above it that is on screen draws it.
+            if (chain && chain.slice().reverse().some((above) => within(above.__overseer_path) || redraw(above.__overseer_path))) continue
             // Reported under the profiling flag rather than the debug one: falling back to a
             // full render is the cost this exists to avoid, so it should be visible to whoever
             // is measuring, and the debug flag needs a query string the desktop app has no way
             // to set.
-            if (!Array.isArray(path) || path.length === 0) {
-                if (PROFILE) console.warn(`[profile] FULL RENDER: '${node && node.name}' has no rendered position`)
-                this.renderDocument(doc)
-                return false
-            }
-            if (!this.rerenderSubtree(doc, path)) {
-                if (PROFILE) console.warn(`[profile] FULL RENDER: '${node && node.name}' is not on screen at ${JSON.stringify(path)}`)
-                this.renderDocument(doc)
-                return false
-            }
+            if (PROFILE) console.warn(`[profile] FULL RENDER: '${node && node.name}' is not on screen at ${JSON.stringify(path)}`)
+            this.renderDocument(doc)
+            return false
         }
         return true
+    }
+
+    /// The nodes above this one, outermost first - found by looking, since a node does not know its
+    /// parent. Null when it is not in the document.
+    ancestorsOf(doc, target) {
+        const chain = []
+        const look = (nodes) => {
+            for (const n of nodes || []) {
+                if (n === target) return true
+                chain.push(n)
+                if (look(n.children)) return true
+                chain.pop()
+            }
+            return false
+        }
+        return look(doc) ? chain : null
+    }
+
+    /// Whether a node is left off the screen as things stand, by itself or by anything above it -
+    /// by the same rules drawing it would follow.
+    leftUndrawn(node, chain) {
+        const links = [...chain, node]
+        for (let i = 0; i < links.length; i++) {
+            const n = links[i]
+            if (typeof n?.name === 'string' && n.name.startsWith('_')) return true
+            if (i > 0) {
+                if (!this.shouldRenderChild(links[i - 1], n)) return true
+                continue
+            }
+            const hidden = this.getParameterValue(n, 'hidden')
+            if ((hidden === true || String(hidden).toLowerCase() === 'true') && !this.isOpenForEditing(n)) return true
+        }
+        return false
+    }
+
+    /// Draw what a list's new entries changed, rather than the list: those sent new put in where
+    /// the list sorts them, those gone taken off, those kept left as they are - see the `entries`
+    /// change in `applyDocumentChanges`. A history of tasks is most of what that page draws, and
+    /// drawing it again for one entry more was most of what marking a task done cost the page.
+    ///
+    /// False when it cannot be done this way, and the list is drawn again whole: an entry was
+    /// renamed, and its elements carry the old name in their paths; the list changed in some other
+    /// way as well; it is a table, which lays its rows out across the list; or what is on screen
+    /// does not come out in the order the list sorts.
+    repaintEntries(list, change) {
+        const path = list.__overseer_path
+        if (!Array.isArray(path) || path.length === 0 || change.renamed || change.whole) return false
+        if (String(this.getParameterValue(list, 'view') || '') === 'table') return false
+        const element = this.drawnElementAt(path, 'overseer-list')
+        if (!element) return false
+        // Each entry's element, by the uid it was drawn with - looked up once, since a history
+        // holds hundreds and asking each element in turn for each entry costs their square.
+        const drawnFor = new Map()
+        for (const el of element.children) {
+            const uid = el.getAttribute('data-uid')
+            if (uid) drawnFor.set(uid, el)
+        }
+        const entryElement = (node) => (node && node.__uid && drawnFor.get(node.__uid)) || null
+
+        for (const gone of change.dropped || []) {
+            entryElement(gone)?.remove()
+            if (gone && gone.__uid) drawnFor.delete(gone.__uid)
+        }
+
+        const ordered = this.inDisplayOrder(list)
+        const inherited = { backgroundColor: getComputedStyle(element).backgroundColor || null }
+        for (const node of change.added || []) {
+            if (!this.shouldRenderChild(list, node)) continue
+            const at = ordered.indexOf(node)
+            const next = ordered.slice(at + 1).map(entryElement).find(Boolean) || null
+            const last = next ? null : ordered.slice(0, at).map(entryElement).filter(Boolean).pop() || null
+            // With nothing drawn either side there is nowhere to say it goes.
+            if (!next && !last) return false
+            const wrapper = document.createElement('div')
+            this.renderNode(node, wrapper, inherited, this.childPathFor(list, node, path))
+            const fresh = wrapper.firstElementChild
+            if (!fresh) continue
+            if (next) element.insertBefore(fresh, next)
+            else last.after(fresh)
+            if (node.__uid) drawnFor.set(node.__uid, fresh)
+        }
+
+        // What is on screen, in the order the list sorts - or it is drawn again.
+        const sorted = ordered.map(entryElement).filter(Boolean)
+        const entries = new Set(sorted)
+        const onScreen = Array.from(element.children).filter((el) => entries.has(el))
+        if (onScreen.length !== sorted.length || onScreen.some((el, i) => el !== sorted[i])) return false
+        try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
+        return true
+    }
+
+    /// A list's entries in the order it shows them: by `_ui_sort_key`, and where it says nothing,
+    /// by where they stand.
+    inDisplayOrder(list) {
+        return (list.children || [])
+            .map((ch, idx) => ({ ch, idx }))
+            .sort((a, b) => {
+                const ka = (a.ch?.parameters && a.ch.parameters['_ui_sort_key'] !== undefined) ? a.ch.parameters['_ui_sort_key'] : a.idx
+                const kb = (b.ch?.parameters && b.ch.parameters['_ui_sort_key'] !== undefined) ? b.ch.parameters['_ui_sort_key'] : b.idx
+                const va = this.coerceSortKey(ka)
+                const vb = this.coerceSortKey(kb)
+                if (va < vb) return -1
+                if (va > vb) return 1
+                return a.idx - b.idx
+            })
+            .map((x) => x.ch)
+    }
+
+    /// The element drawn for this path, preferring one of this class and the one nearest the top.
+    drawnElementAt(pathArray, expectedClass) {
+        // Compared as the text it was written as - see `renderNode` - rather than read back from
+        // every element on the page, which on tasks.os is thousands of paths parsed per repaint.
+        const wanted = JSON.stringify(pathArray)
+        let matches
+        try {
+            const quoted = wanted.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+            matches = Array.from(document.querySelectorAll(`[data-path="${quoted}"]`))
+        } catch (_) {
+            matches = Array.from(document.querySelectorAll('[data-path]')).filter((el) => el.getAttribute('data-path') === wanted)
+        }
+        if (matches.length === 0) return null
+        let candidates = matches
+        if (expectedClass) {
+            const typed = matches.filter((el) => el.classList && el.classList.contains(expectedClass))
+            if (typed.length > 0) candidates = typed
+        }
+        let el = null
+        let bestDepth = Number.POSITIVE_INFINITY
+        for (const cand of candidates) {
+            let depth = 0, cur = cand
+            while (cur && cur !== document.body) { depth++; cur = cur.parentElement }
+            if (depth < bestDepth) { bestDepth = depth; el = cand }
+        }
+        return el
     }
 
     renderDocument(overseerDocument) {
@@ -7094,34 +7243,9 @@ export class OverseerRenderer {
                 }
             })()
 
-            // Gather all elements whose dataset.path matches exactly
-            const all = Array.from(document.querySelectorAll('[data-path]'))
-            const matches = []
-            for (const cand of all) {
-                try {
-                    const p = JSON.parse(cand.dataset.path || '[]')
-                    if (Array.isArray(p) && p.length === pathArray.length && p.every((v, i) => v === pathArray[i])) {
-                        matches.push(cand)
-                    }
-                } catch (_) { /* ignore */ }
-            }
-            if (matches.length === 0) return false
-
-            // Prefer elements that look like the expected container class (avoids transparent descendants)
-            let candidates = matches
-            if (expectedClass) {
-                const typed = matches.filter(el => el.classList && el.classList.contains(expectedClass))
-                if (typed.length > 0) candidates = typed
-            }
-
-            // Choose the shallowest element (closest to the root) to represent the subtree root
-            let el = null
-            let bestDepth = Number.POSITIVE_INFINITY
-            for (const cand of candidates) {
-                let depth = 0, cur = cand
-                while (cur && cur !== document.body) { depth++; cur = cur.parentElement }
-                if (depth < bestDepth) { bestDepth = depth; el = cand }
-            }
+            // The element with exactly this path - preferring one that looks like the expected
+            // container, which avoids transparent descendants, and the shallowest of those.
+            const el = this.drawnElementAt(pathArray, expectedClass)
             if (!el || !el.parentElement) return false
             const parent = el.parentElement
             const idx = Array.prototype.indexOf.call(parent.children, el)
@@ -7144,6 +7268,10 @@ export class OverseerRenderer {
                 try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return true
             }
+            // It draws as nothing now - hidden since, say - so what was drawn for it goes. This
+            // used to fall back to drawing the whole document, which draws it as nothing too.
+            el.remove()
+            return true
         } catch (e) {
             if (DEBUG_MODE) console.warn('Failed to re-render subtree:', e)
         }

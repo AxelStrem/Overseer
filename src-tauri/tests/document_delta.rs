@@ -151,19 +151,119 @@ fn an_inserted_entry_reports_the_list_and_leaves_its_neighbours_alone() {
     let after = app_api::load_document(inserted).unwrap();
 
     let changes = delta::diff(&before, &after);
+    let entries = changes
+        .iter()
+        .find_map(|c| match c {
+            DocumentChange::Entries { address, entries, .. } if address == "t/Rows" => Some(entries),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "the list whose entries changed was not reported by them, got {:?}",
+                changes.iter().map(|c| c.address()).collect::<Vec<_>>()
+            )
+        });
+    assert!(matches!(&entries[0], delta::Entry::New { node } if node.name == "Row__1"), "{:?}", entries[0]);
     assert!(
-        changes
-            .iter()
-            .any(|c| matches!(c, DocumentChange::Subtree { address, .. } if address == "t/Rows")),
-        "the list whose shape changed was not sent, got {:?}",
-        changes.iter().map(|c| c.address()).collect::<Vec<_>>()
+        matches!(&entries[1..], [delta::Entry::Kept { kept: 0, name: a }, delta::Entry::Kept { kept: 1, name: b }]
+            if a == "Row__2" && b == "Row__3"),
+        "the neighbours were not kept, under the names their places give them now: {:?}",
+        &entries[1..]
     );
-    // The entries that did not move must not be reported separately - they came with the list.
+    // The entries that did not move must not be reported separately - they were kept as they were.
     assert!(
         !changes.iter().any(|c| c.address().starts_with("t/Rows/[")),
-        "entries inside the replaced list were reported again: {:?}",
+        "entries that did not change were reported again: {:?}",
         changes.iter().map(|c| c.address()).collect::<Vec<_>>()
     );
+}
+
+/// What the page shows of a document: every node's name, type and parameters, and its children.
+fn shown(nodes: &[OverseerNode]) -> serde_json::Value {
+    serde_json::Value::Array(
+        nodes
+            .iter()
+            .map(|n| {
+                serde_json::json!({
+                    "name": n.name,
+                    "type": n.node_type,
+                    "parameters": serde_json::to_value(&n.parameters).unwrap(),
+                    "children": shown(&n.children),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The changes between two texts, having checked that applied to the first they give the second.
+fn applied(before: &str, after: &str) -> Vec<DocumentChange> {
+    DocumentManager::set_current_document(None);
+    let before = app_api::load_document(before.to_string()).unwrap();
+    let after = app_api::load_document(after.to_string()).unwrap();
+    let changes = delta::diff(&before, &after);
+    let mut held = before.clone();
+    delta::apply(&mut held, changes.clone());
+    assert_eq!(shown(&held), shown(&after), "the changes applied do not give the document: {:?}",
+        changes.iter().map(|c| c.address()).collect::<Vec<_>>());
+    changes
+}
+
+const PLACED: &str = r#"tab t (mutable=true) {
+    div (hidden=true) {
+        div Meal (layout="vertical") {
+            float grams = 0
+            float calories = $(grams * 2)
+        }
+    }
+    list intake (entry=<Meal>) {
+        - {
+            - grams = 1
+        }
+        - {
+            - grams = 2
+        }
+        - {
+            - grams = 3
+        }
+    }
+    float total = $(intake.map(|x| x/calories).sum())
+}
+"#;
+
+#[test]
+fn applied_to_the_document_before_the_changes_give_the_document_after() {
+    let b = "        - {\n            - id = \"b\"\n            - qty = 2\n        }\n";
+    let z = "        - {\n            - id = \"z\"\n            - qty = 9\n        }\n";
+    let rows = "    list Rows (entry=<Row>, key=\"id\") {\n";
+    // Keyed: one put in front, one taken out, one added at the end, and one put in front while
+    // another changes - what changed inside that one is located in the new order.
+    applied(KEYED, &KEYED.replace(rows, &format!("{}{}", rows, z)));
+    applied(KEYED, &KEYED.replace(b, ""));
+    applied(KEYED, &KEYED.replace(b, &format!("{}{}", b, z)));
+    let changes = applied(KEYED, &KEYED.replace(rows, &format!("{}{}", rows, z)).replace("- qty = 2", "- qty = 5"));
+    assert!(changes.iter().any(|c| matches!(c, DocumentChange::Parameters { address, .. } if address.starts_with("t/Rows/[b]"))));
+
+    // Named by place: taking out the middle one renames the last, and what it holds differs from
+    // what was held under that name.
+    let two = "        - {\n            - grams = 2\n        }\n";
+    applied(PLACED, &PLACED.replace(two, ""));
+    applied(PLACED, &PLACED.replace(two, &format!("{}        - {{\n            - grams = 7\n        }}\n", two)));
+    applied(PLACED, &PLACED.replace("    list intake (entry=<Meal>) {\n", "    list intake (entry=<Meal>) {\n        - {\n            - grams = 7\n        }\n"));
+}
+
+#[test]
+fn an_entry_added_to_a_long_list_costs_the_entry_not_the_list() {
+    let many: String = (0..200)
+        .map(|i| format!("        - {{\n            - id = \"r{:03}\"\n            - qty = {}\n        }}\n", i, i))
+        .collect();
+    let rows = "    list Rows (entry=<Row>, key=\"id\") {\n";
+    let long = KEYED.replace(rows, &format!("{}{}", rows, many));
+    let one_more = long.replace(rows, &format!("{}        - {{\n            - id = \"new\"\n            - qty = 1\n        }}\n", rows));
+    let changes = applied(&long, &one_more);
+    DocumentManager::set_current_document(None);
+    let list = serde_json::to_string(overseer::addressing::find(&app_api::load_document(one_more).unwrap(), "t/Rows").unwrap()).unwrap().len();
+    let sent = serde_json::to_string(&changes).unwrap().len();
+    assert!(sent * 10 < list, "one entry added sent {} bytes of a {} byte list", sent, list);
 }
 
 #[test]
