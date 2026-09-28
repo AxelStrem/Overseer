@@ -41,6 +41,65 @@ impl Drop for MountResolveSuspended {
     }
 }
 
+/// The file a mount was read from, on the mount - see `mounts_held`.
+pub const MOUNT_FILE: &str = "_mount_file";
+/// How that file stood when it was read - see `mount_stamp`.
+pub const MOUNT_STAMP: &str = "_mount_stamp";
+
+/// When a file was last written and how long it is: what decides whether something read from it
+/// is still what it says. Anything that changes the file changes at least one of them.
+fn file_stamp(path: &str) -> Option<(std::time::SystemTime, u64)> {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok().map(|t| (t, m.len())))
+}
+
+/// The same, as the text a mount keeps it in. A file that is not there has a stamp of its own, so
+/// a mount that failed for want of one is found stale when it appears.
+pub fn mount_stamp(path: &str) -> String {
+    match file_stamp(path) {
+        Some((written, length)) => {
+            let nanos = written
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default();
+            format!("{}:{}", nanos, length)
+        }
+        None => "absent".to_string(),
+    }
+}
+
+/// Every file a document's mounts were read from, and how each stood then.
+///
+/// A document worked out and held has what its mounts brought in inside it - the food catalog,
+/// inside the food tracker - and is held under its own text, which a food added to the catalog
+/// does not change. So it went on being handed out with the catalog as it was: a food the bot had
+/// just added could not be recorded, and every figure of the meal was an error, until something
+/// changed the tracker's own text. Held with this, it is only handed out while every one of these
+/// files still stands as it did - see `document_cache`.
+pub fn mounts_held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
+    fn walk(nodes: &[OverseerNode], out: &mut Vec<(String, String)>) {
+        for node in nodes {
+            if node.node_type == "mount" {
+                if let (Some(OverseerValue::String(file)), Some(OverseerValue::String(stamp))) =
+                    (node.parameters.get(MOUNT_FILE), node.parameters.get(MOUNT_STAMP))
+                {
+                    if !out.iter().any(|(f, s)| f == file && s == stamp) {
+                        out.push((file.clone(), stamp.clone()));
+                    }
+                }
+                // What a mount brought in is a document of its own, whose mounts it held when
+                // it was read - not this one's to answer for.
+                continue;
+            }
+            walk(&node.children, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(nodes, &mut out);
+    out
+}
+
 /// What an action touched.
 ///
 /// An action reported nothing until now, so the only safe thing to do after one was to serialize
@@ -2110,9 +2169,7 @@ impl ActionExecutor {
         static CACHE: LazyLock<Mutex<std::collections::HashMap<String, (Stamp, Vec<OverseerNode>)>>> =
             LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
-        let stamp = std::fs::metadata(path)
-            .ok()
-            .and_then(|m| m.modified().ok().map(|t| (t, m.len())));
+        let stamp = file_stamp(path);
 
         if let Some(stamp) = stamp {
             if let Ok(cache) = CACHE.lock() {
@@ -2206,12 +2263,18 @@ impl ActionExecutor {
         };
         // Load source nodes with error capture and status updates
         let mut load_error: Option<String> = None;
+        // The file read, and how it stood when it was - see `mount_stamp`.
+        let mut read_from: Option<(String, String)> = None;
         let loaded_roots: Vec<OverseerNode> = if let Some(fp) = file_path_opt {
             // A mount's source is written relative to the document that declares it, not to
             // wherever the process happens to be running from.
             let fp = crate::docmgr::manager::DocumentManager::resolve_from_document(&fp)
                 .to_string_lossy()
                 .to_string();
+            // Taken before the file is read, so a write landing in between makes the stamp older
+            // than what was read, and the next look finds it stale - never the other way round.
+            let file = std::fs::canonicalize(&fp).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| fp.clone());
+            read_from = Some((file.clone(), mount_stamp(&file)));
             match Self::load_mounted_document(&fp) {
                 Ok(ext_nodes) => ext_nodes,
                 Err(message) => {
@@ -2281,6 +2344,18 @@ impl ActionExecutor {
             Self::get_node_mut_by_indices(nodes, &target_indices).ok_or_else(|| {
                 OverseerError::ValidationError("load_mount target not found".to_string())
             })?;
+        // Which file this came from and how it stood, whether it loaded or not: a document held
+        // worked out has this mount's content inside it, and is only as current as that file.
+        match &read_from {
+            Some((file, stamp)) => {
+                mount_node.parameters.insert(MOUNT_FILE.to_string(), OverseerValue::String(file.clone()));
+                mount_node.parameters.insert(MOUNT_STAMP.to_string(), OverseerValue::String(stamp.clone()));
+            }
+            None => {
+                mount_node.parameters.remove(MOUNT_FILE);
+                mount_node.parameters.remove(MOUNT_STAMP);
+            }
+        }
         if let Some(err) = load_error {
             mount_node.children.clear();
             mount_node.parameters.insert(
@@ -2343,6 +2418,9 @@ impl ActionExecutor {
             OverseerValue::String("unloaded".to_string()),
         );
         mount_node.parameters.remove("_mount_error");
+        // Nothing of the file is held any more, so nothing depends on it.
+        mount_node.parameters.remove(MOUNT_FILE);
+        mount_node.parameters.remove(MOUNT_STAMP);
         Ok(())
     }
 

@@ -160,6 +160,20 @@ struct Entry {
     bytes: usize,
     /// When this was last asked for, so the least useful entry is the one that goes.
     used: u64,
+    /// The files the tree's mounts were read from, and how each stood then - see
+    /// `actions::mounts_held`. The text is not all a tree was worked out from.
+    mounts: Vec<(String, String)>,
+}
+
+impl Entry {
+    /// Whether every file its mounts were read from still stands as it did. A food added to the
+    /// catalog changes the catalog's file and not the food tracker's text, and a tracker held from
+    /// before it was handed out as current until something else moved it.
+    fn mounts_unchanged(&self) -> bool {
+        self.mounts
+            .iter()
+            .all(|(file, stamp)| crate::actions::mount_stamp(file) == *stamp)
+    }
 }
 
 impl Entry {
@@ -203,8 +217,16 @@ fn with<R>(work: impl FnOnce(&mut Vec<Entry>) -> R) -> R {
     work(&mut store)
 }
 
-fn at(store: &mut [Entry], text: &str) -> Option<usize> {
-    store.iter().position(|entry| entry.text == text)
+/// Where the entry for this text is - and nowhere, once a file its mounts were read from has
+/// changed: then what it holds is let go, tree and graph, and whoever asked works the document out
+/// from the files as though it had never been held.
+fn at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
+    let found = store.iter().position(|entry| entry.text == text)?;
+    if !store[found].mounts_unchanged() {
+        store.remove(found);
+        return None;
+    }
+    Some(found)
 }
 
 /// The graph held for this text, lent to `look` rather than copied out.
@@ -279,6 +301,7 @@ fn put(text: &str, work: impl FnOnce(&mut Entry)) {
                     graph: None,
                     bytes: 0,
                     used: 0,
+                    mounts: Vec::new(),
                 });
                 store.len() - 1
             }
@@ -297,7 +320,10 @@ pub fn put_nodes(text: &str, nodes: &[OverseerNode]) {
     if budget_bytes() == 0 {
         return;
     }
-    put(text, |entry| entry.nodes = Some(nodes.to_vec()));
+    put(text, |entry| {
+        entry.mounts = crate::actions::mounts_held(nodes);
+        entry.nodes = Some(nodes.to_vec());
+    });
 }
 
 /// The same, when the caller has a document it no longer needs.
@@ -305,7 +331,10 @@ pub fn own_nodes(text: &str, nodes: Vec<OverseerNode>) {
     if budget_bytes() == 0 {
         return;
     }
-    put(text, |entry| entry.nodes = Some(nodes));
+    put(text, |entry| {
+        entry.mounts = crate::actions::mounts_held(&nodes);
+        entry.nodes = Some(nodes);
+    });
 }
 
 pub fn put_graph(text: &str, graph: crate::dependencies::Graph) {
