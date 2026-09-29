@@ -786,18 +786,22 @@ unsafe fn initialize_and_validate_mount_nodes_rec(node_ptr: *mut OverseerNode) {
 /// the chart, so the two do not line up - and a chart drawn from stale numbers is exactly the kind
 /// of wrong nobody notices. Measured at about twenty milliseconds on the documents here, against
 /// seconds for the full resolve this replaces, so the safe answer is also nearly free.
+///
+/// Over the document itself rather than a copy of it, the way a pass over formulas is - see
+/// `recursively_evaluate_node_formulas_selective`. The copy was nearly all of what this cost, and
+/// it runs on every edit.
 pub fn compute_chart_series(nodes: &mut Vec<OverseerNode>) {
-    let snapshot = nodes.clone();
-    let len = nodes.len();
-    for i in 0..len {
-        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-        unsafe {
+    let root: *mut [OverseerNode] = nodes.as_mut_slice();
+    unsafe {
+        let first = root as *mut OverseerNode;
+        for i in 0..root.len() {
+            let node_ptr = first.add(i);
+            let mut current_path = vec![(*node_ptr).name.clone()];
             recursively_compute_chart_series(
                 node_ptr,
                 std::ptr::null(),
                 &mut current_path,
-                &snapshot,
+                root as *const [OverseerNode],
                 &mut crate::addressing::Level::default(),
             );
         }
@@ -808,129 +812,139 @@ unsafe fn recursively_compute_chart_series(
     node_ptr: *mut OverseerNode,
     _parent_ptr: *const OverseerNode,
     current_path: &mut Vec<String>,
-    document_root: &[OverseerNode],
+    // The document being written: read from while a chart's series are worked out, and written
+    // to once they are.
+    document_root: *const [OverseerNode],
     // Numbers this node's children in the path - see `addressing::Level`.
     level: &mut crate::addressing::Level,
 ) {
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
     use crate::types::OverseerValue;
 
-    let node: &mut OverseerNode = &mut *node_ptr;
-
     // Process chart nodes: collect bounds across plots
-    if node.node_type == "chart" {
-        // A chart's series is worked out here rather than with the formulas, so it has to say what
-        // it is working out or the lists it reads are recorded against nobody - and an edit to a
-        // reading would leave the graph it is drawn on showing the old one.
-        let _recording = crate::dependencies::WorkingOut::value(&format!(
-            "{}#_computed_series",
-            current_path.join("/")
-        ));
+    if (*node_ptr).node_type == "chart" {
+        // Worked out with nothing written, and written afterwards.
+        let mut series_of: Vec<(usize, String)> = Vec::new();
         let mut global_min_x: Option<f64> = None;
         let mut global_max_x: Option<f64> = None;
         let mut global_min_y: Option<f64> = None;
         let mut global_max_y: Option<f64> = None;
+        {
+            let node: &OverseerNode = &*node_ptr;
+            let document_root: &[OverseerNode] = &*document_root;
+            // A chart's series is worked out here rather than with the formulas, so it has to say what
+            // it is working out or the lists it reads are recorded against nobody - and an edit to a
+            // reading would leave the graph it is drawn on showing the old one.
+            let _recording = crate::dependencies::WorkingOut::value(&format!(
+                "{}#_computed_series",
+                current_path.join("/")
+            ));
 
-        // Iterate plot children
-        for plot in node.children.iter_mut().filter(|c| c.node_type == "plot") {
-            // Build an evaluation context for source resolution
-            let ctx = EvaluationContext::new(current_path.clone(), document_root);
+            // Iterate plot children
+            for (plot_at, plot) in node.children.iter().enumerate().filter(|(_, c)| c.node_type == "plot") {
+                // Build an evaluation context for source resolution
+                let ctx = EvaluationContext::new(current_path.clone(), document_root);
 
-            // Resolve source: support plain path string OR a processed list via method chain
-            enum SourceItems<'a> {
-                FromPath(Vec<String>, &'a OverseerNode),
-                FromList(Vec<String>, Vec<&'a OverseerNode>),
-            }
-            let source_items: Option<SourceItems> = match plot.parameters.get("source") {
-                Some(OverseerValue::String(s)) => resolve_path_from(document_root, current_path, s)
-                    .map(|(p, n)| SourceItems::FromPath(p, n)),
-                Some(OverseerValue::Formula(f)) => {
-                    // Try to evaluate to a string path first
-                    match FormulaEvaluator::evaluate_formula(f, &ctx) {
-                        Ok(OverseerValue::String(s)) => {
-                            resolve_path_from(document_root, current_path, &s)
-                                .map(|(p, n)| SourceItems::FromPath(p, n))
-                        }
-                        _ => {
-                            // Fall back: treat the formula as a list-source expression
-                            match FormulaEvaluator::evaluate_list_source_nodes(f, &ctx) {
-                                Ok((p, items)) => Some(SourceItems::FromList(p, items)),
-                                Err(_) => None,
+                // Resolve source: support plain path string OR a processed list via method chain
+                enum SourceItems<'a> {
+                    FromPath(Vec<String>, &'a OverseerNode),
+                    FromList(Vec<String>, Vec<&'a OverseerNode>),
+                }
+                let source_items: Option<SourceItems> = match plot.parameters.get("source") {
+                    Some(OverseerValue::String(s)) => resolve_path_from(document_root, current_path, s)
+                        .map(|(p, n)| SourceItems::FromPath(p, n)),
+                    Some(OverseerValue::Formula(f)) => {
+                        // Try to evaluate to a string path first
+                        match FormulaEvaluator::evaluate_formula(f, &ctx) {
+                            Ok(OverseerValue::String(s)) => {
+                                resolve_path_from(document_root, current_path, &s)
+                                    .map(|(p, n)| SourceItems::FromPath(p, n))
+                            }
+                            _ => {
+                                // Fall back: treat the formula as a list-source expression
+                                match FormulaEvaluator::evaluate_list_source_nodes(f, &ctx) {
+                                    Ok((p, items)) => Some(SourceItems::FromList(p, items)),
+                                    Err(_) => None,
+                                }
                             }
                         }
                     }
-                }
-                _ => None,
-            };
-
-            if let Some(source_items) = source_items {
-                // Prepare item iteration and path seeds
-                let (source_path_vec, items, source_ref_opt): (
-                    Vec<String>,
-                    Vec<&OverseerNode>,
-                    Option<&OverseerNode>,
-                ) = match source_items {
-                    SourceItems::FromPath(p, n) => {
-                        (p.clone(), n.get_accessible_children(), Some(n))
-                    }
-                    SourceItems::FromList(p, list) => (p, list, None),
-                };
-                let mut series: Vec<(f64, f64)> = Vec::new();
-
-                // Fetch x/y expressions
-                let x_src = if let Some(val) = plot.parameters.get("x") {
-                    match val {
-                        OverseerValue::Formula(s) => Some(s.as_str()),
-                        OverseerValue::String(s) => Some(s.as_str()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                let y_src = match plot.parameters.get("y") {
-                    Some(OverseerValue::Formula(s)) => Some(s.as_str()),
-                    Some(OverseerValue::String(s)) => Some(s.as_str()),
                     _ => None,
                 };
-                if x_src.is_none() || y_src.is_none() {
-                    continue;
-                }
-                let x_src = x_src.unwrap();
-                let y_src = y_src.unwrap();
 
-                for item in items {
-                    // Build item path for context
-                    let mut item_path = source_path_vec.clone();
-                    item_path.push(item.name.clone());
-                    let ctx = EvaluationContext::new_with_current_and_parent(
-                        item,
-                        source_ref_opt,
-                        item_path,
-                        document_root,
-                    );
+                if let Some(source_items) = source_items {
+                    // Prepare item iteration and path seeds
+                    let (source_path_vec, items, source_ref_opt): (
+                        Vec<String>,
+                        Vec<&OverseerNode>,
+                        Option<&OverseerNode>,
+                    ) = match source_items {
+                        SourceItems::FromPath(p, n) => {
+                            (p.clone(), n.get_accessible_children(), Some(n))
+                        }
+                        SourceItems::FromList(p, list) => (p, list, None),
+                    };
+                    let mut series: Vec<(f64, f64)> = Vec::new();
 
-                    let x_val = FormulaEvaluator::evaluate_lambda_on_item(x_src, &ctx, item).ok();
-                    let y_val = FormulaEvaluator::evaluate_lambda_on_item(y_src, &ctx, item).ok();
+                    // Fetch x/y expressions
+                    let x_src = if let Some(val) = plot.parameters.get("x") {
+                        match val {
+                            OverseerValue::Formula(s) => Some(s.as_str()),
+                            OverseerValue::String(s) => Some(s.as_str()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    let y_src = match plot.parameters.get("y") {
+                        Some(OverseerValue::Formula(s)) => Some(s.as_str()),
+                        Some(OverseerValue::String(s)) => Some(s.as_str()),
+                        _ => None,
+                    };
+                    if x_src.is_none() || y_src.is_none() {
+                        continue;
+                    }
+                    let x_src = x_src.unwrap();
+                    let y_src = y_src.unwrap();
 
-                    if let (Some(xv), Some(yv)) = (to_f64(x_val), to_f64(y_val)) {
-                        if xv.is_finite() && yv.is_finite() {
-                            // Update bounds
-                            global_min_x = Some(global_min_x.map_or(xv, |m| m.min(xv)));
-                            global_max_x = Some(global_max_x.map_or(xv, |m| m.max(xv)));
-                            global_min_y = Some(global_min_y.map_or(yv, |m| m.min(yv)));
-                            global_max_y = Some(global_max_y.map_or(yv, |m| m.max(yv)));
-                            series.push((xv, yv));
+                    for item in items {
+                        // Build item path for context
+                        let mut item_path = source_path_vec.clone();
+                        item_path.push(item.name.clone());
+                        let ctx = EvaluationContext::new_with_current_and_parent(
+                            item,
+                            source_ref_opt,
+                            item_path,
+                            document_root,
+                        );
+
+                        let x_val = FormulaEvaluator::evaluate_lambda_on_item(x_src, &ctx, item).ok();
+                        let y_val = FormulaEvaluator::evaluate_lambda_on_item(y_src, &ctx, item).ok();
+
+                        if let (Some(xv), Some(yv)) = (to_f64(x_val), to_f64(y_val)) {
+                            if xv.is_finite() && yv.is_finite() {
+                                // Update bounds
+                                global_min_x = Some(global_min_x.map_or(xv, |m| m.min(xv)));
+                                global_max_x = Some(global_max_x.map_or(xv, |m| m.max(xv)));
+                                global_min_y = Some(global_min_y.map_or(yv, |m| m.min(yv)));
+                                global_max_y = Some(global_max_y.map_or(yv, |m| m.max(yv)));
+                                series.push((xv, yv));
+                            }
                         }
                     }
-                }
 
-                // Store series as JSON string
-                let json = series_to_json(&series);
-                plot.parameters
-                    .insert("_computed_series".to_string(), OverseerValue::String(json));
+                    // Stored as a JSON string, once nothing is being read.
+                    series_of.push((plot_at, series_to_json(&series)));
+                }
             }
         }
 
+        let node: &mut OverseerNode = &mut *node_ptr;
+        for (plot_at, json) in series_of {
+            node.children[plot_at]
+                .parameters
+                .insert("_computed_series".to_string(), OverseerValue::String(json));
+        }
         // Store computed bounds on the chart
         if let (Some(xmin), Some(xmax), Some(ymin), Some(ymax)) =
             (global_min_x, global_max_x, global_min_y, global_max_y)
@@ -947,16 +961,16 @@ unsafe fn recursively_compute_chart_series(
     }
 
     // Recurse - a wrapper is no step of the path, see `addressing::Level`.
-    for idx in 0..node.children.len() {
-        let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
+    for idx in 0..(*node_ptr).children.len() {
+        let child_ptr: *mut OverseerNode = (*node_ptr).children.as_mut_ptr().add(idx);
         if crate::addressing::is_wrapper(&*child_ptr) {
-            recursively_compute_chart_series(child_ptr, node as *const OverseerNode, current_path, document_root, level);
+            recursively_compute_chart_series(child_ptr, node_ptr as *const OverseerNode, current_path, document_root, level);
             continue;
         }
         current_path.push(level.segment(&(*child_ptr).name));
         recursively_compute_chart_series(
             child_ptr,
-            node as *const OverseerNode,
+            node_ptr as *const OverseerNode,
             current_path,
             document_root,
             &mut crate::addressing::Level::default(),
@@ -1137,19 +1151,8 @@ fn resolve_path_from<'a>(
 /// Once. A field that has been frozen states a value, and a field that states a value is never
 /// frozen again, so the marker on the entry can be left where it is: it is internal, so it never
 /// reaches the file, and it is gone the next time the document is read.
-fn freeze_if_it_was_asked_for(
-    node: &mut OverseerNode,
-    document_root: &[OverseerNode],
-    current_path: &[String],
-) {
-    let asked_to_freeze = matches!(
-        node.parameters.get("freeze"),
-        Some(OverseerValue::Boolean(true))
-    );
-    if !asked_to_freeze
-        || FormulaEvaluator::states_a_value(&node.parameters)
-        || !inside_something_just_created(document_root, current_path)
-    {
+fn freeze_if_it_was_asked_for(node: &mut OverseerNode, asked_where_it_is_new: bool) {
+    if !asked_where_it_is_new || FormulaEvaluator::states_a_value(&node.parameters) {
         return;
     }
     let settled = node
@@ -1170,6 +1173,14 @@ fn freeze_if_it_was_asked_for(
     );
     node.parameters.remove("_computed_value");
     node.source_fingerprint = None;
+}
+
+/// Whether a field asks to be frozen and sits inside an entry just created - the half of
+/// `freeze_if_it_was_asked_for` that reads the document, so it is asked while nothing is written.
+fn asks_to_freeze_here(node: &OverseerNode, document_root: &[OverseerNode], current_path: &[String]) -> bool {
+    matches!(node.parameters.get("freeze"), Some(OverseerValue::Boolean(true)))
+        && !FormulaEvaluator::states_a_value(&node.parameters)
+        && inside_something_just_created(document_root, current_path)
 }
 
 /// Whether this node sits inside an entry that was created a moment ago.
@@ -2606,7 +2617,8 @@ pub fn profile_report_formulas(label: &str) {
         let total: f64 = rows.iter().map(|r| r.2).sum();
         eprintln!("[PROFILE] {}: {:.1} ms across {} distinct formulas", label, total, rows.len());
         for (src, count, ms) in rows.iter().take(8) {
-            let shown: String = src.chars().take(76).collect();
+            // On one line, since a formula written over several would break the report up.
+            let shown: String = src.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(76).collect();
             eprintln!(
                 "[PROFILE]   {:>8.1} ms  {:>5} calls  {:>6.3} ms/call  {}",
                 ms, count, ms / *count as f64, shown
@@ -2725,38 +2737,15 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
         progress = false;
         let doubts_before = FormulaEvaluator::doubts();
         DOUBTED.with(|d| d.borrow_mut().clear());
-        let clone_started = std::time::Instant::now();
-        let snapshot = nodes.clone();
-        let clone_ms = clone_started.elapsed().as_secs_f64() * 1000.0;
         let pass_started = std::time::Instant::now();
-        // Every read in this pass comes from `snapshot`, so results can be cached for its
-        // duration; see FormulaEvaluator::begin_pass_memo. And a list's entries can be found
-        // where they are, to be worked out when read - see `FormulaEvaluator::value_of_node`.
-        FormulaEvaluator::begin_pass_over(&snapshot);
-        let len = nodes.len();
-        for i in 0..len {
-            let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-            let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-            unsafe {
-                if recursively_evaluate_node_formulas_selective(
-                    node_ptr,
-                    std::ptr::null(),
-                    &mut current_path,
-                    &snapshot,
-                    &all_paths,
-                    &mut crate::addressing::Level::default(),
-                ) {
-                    progress = true;
-                }
-            }
+        if one_pass_over(nodes, &all_paths) {
+            progress = true;
         }
-        FormulaEvaluator::end_pass_memo();
         if profiling {
             eprintln!(
-                "[PROFILE] pass {} took {:.1} ms (clone {:.1} ms) progress={} paths={}",
+                "[PROFILE] pass {} took {:.1} ms progress={} paths={}",
                 pass,
                 pass_started.elapsed().as_secs_f64() * 1000.0,
-                clone_ms,
                 progress,
                 all_paths.len()
             );
@@ -2788,26 +2777,7 @@ fn evaluate_formulas_in_document_multi_pass(nodes: &mut Vec<OverseerNode>) {
         if pass == 1 && doubted > 0 {
             let doubted_nodes = DOUBTED.with(|d| std::mem::take(&mut *d.borrow_mut()));
             let confirm_started = std::time::Instant::now();
-            let snapshot = nodes.clone();
-            FormulaEvaluator::begin_pass_over(&snapshot);
-            let mut moved = false;
-            for i in 0..nodes.len() {
-                let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-                let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-                unsafe {
-                    if recursively_evaluate_node_formulas_selective(
-                        node_ptr,
-                        std::ptr::null(),
-                        &mut current_path,
-                        &snapshot,
-                        &doubted_nodes,
-                        &mut crate::addressing::Level::default(),
-                    ) {
-                        moved = true;
-                    }
-                }
-            }
-            FormulaEvaluator::end_pass_memo();
+            let moved = one_pass_over(nodes, &doubted_nodes);
             if profiling {
                 eprintln!(
                     "[PROFILE]   {} node(s) in doubt worked out again in {:.1} ms, moved={}",
@@ -2873,26 +2843,9 @@ fn evaluate_formulas_for_specific_fields(
         progress = false;
         debug_resolver!("[RESOLVER] Selective pass {}", pass);
         let doubts_before = FormulaEvaluator::doubts();
-        let snapshot = nodes.clone();
-        FormulaEvaluator::begin_pass_over(&snapshot);
-        let len = nodes.len();
-        for i in 0..len {
-            let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-            let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-            unsafe {
-                if recursively_evaluate_node_formulas_selective(
-                    node_ptr,
-                    std::ptr::null(),
-                    &mut current_path,
-                    &snapshot,
-                    field_paths,
-                    &mut crate::addressing::Level::default(),
-                ) {
-                    progress = true;
-                }
-            }
+        if one_pass_over(nodes, field_paths) {
+            progress = true;
         }
-        FormulaEvaluator::end_pass_memo();
         if pass == 1 && FormulaEvaluator::doubts() == doubts_before {
             progress = false;
         }
@@ -2912,6 +2865,9 @@ fn evaluate_formulas_for_specific_fields(
             field_paths.len(),
             selective_started.elapsed().as_secs_f64() * 1000.0
         );
+        // Which formulas that was - as the whole resolve says, now that most of what is worked
+        // out is worked out here.
+        profile_report_formulas("selective formulas");
     }
 }
 
@@ -3436,182 +3392,71 @@ fn plot_depends_on_fields(
     false
 }
 
-/// Recursively traverses the node tree, evaluating formulas along the way.
-/// It maintains the path to the current node, which is crucial for the EvaluationContext.
-#[allow(dead_code)]
-unsafe fn recursively_evaluate_node_formulas(
-    node_ptr: *mut OverseerNode,
-    _parent_ptr: *const OverseerNode,
-    current_path: &mut Vec<String>,
-    document_root: &[OverseerNode],
-) {
-    let node: &mut OverseerNode = &mut *node_ptr;
-    let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() {
-        None
-    } else {
-        Some(&*_parent_ptr)
-    };
-    // Skip evaluating formulas for nodes inside action handler blocks (on click)
-    if let Some(p) = _parent_ref {
-        if p.node_type == "on" {
-            // Do not evaluate formulas in action payloads at load time; they'll be evaluated on action execution
-            return;
-        }
-    }
-    // Context is created per-pass below to avoid long-lived borrows while we mutate parameters
-
-    // Evaluate formulas in this node's parameters, but preserve original values.
-    // Store computed results under shadow keys: _computed_<key> (or _computed_value for value).
-    // To support intra-node dependencies (A depends on B on the same node), run a small fixed-point with 2 passes.
-    // Collect owned copies of (key, formula_string) to avoid holding borrows while we later mutate parameters
-    let formula_pairs: Vec<(String, String)> = node
-        .parameters
-        .iter()
-        .filter_map(|(k, v)| match v {
-            OverseerValue::Formula(s) if k != "fallback" => Some((k.clone(), s.clone())),
-            _ => None,
-        })
-        .collect();
-
-    // Run up to 2 passes so values depending on other same-node formulas can pick up computed shadows.
-    for _ in 0..2 {
-        // Create a fresh context each pass; its immutable borrow ends before we mutate parameters
-        let context = EvaluationContext::new_with_current_and_parent(
-            node,
-            _parent_ref,
-            current_path.to_vec(),
-            document_root,
-        );
-        let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
-        // Compute fallback first if declared - and only where it could ever be read. A fallback
-        // is consulted when the stated value is null and at no other time, so computing one for a
-        // field that states a value is work for an answer nobody can see.
-        //
-        // It is also how the food tracker came never to settle. `portions` falls back to grams
-        // over the portion weight and `grams` falls back to portions times it, so a record that
-        // states one has the other derived - correctly - while the stated one's unused fallback
-        // was recomputed every pass from the derived one. Multiplying and dividing by the same
-        // weight does not return the same bits, so the pair changed forever and the document was
-        // still moving when the pass limit stopped it.
-        // Only an unset field reads either of these - see `states_a_value`.
-        let unset = !FormulaEvaluator::states_a_value(&node.parameters);
-        for (declared, shadow) in [("fallback", "_computed_fallback"), ("default", "_computed_default")] {
-            let Some(source) = node.parameters.get(declared).cloned().filter(|_| unset) else {
-                continue;
-            };
-            let _recording = crate::dependencies::WorkingOut::value(&format!(
-                "{}#{}",
-                current_path.join("/"),
-                shadow
-            ));
-            let worked_out = match source {
-                OverseerValue::Formula(f) => {
-                    FormulaEvaluator::evaluate_formula(f.as_str(), &context)
-                        .unwrap_or_else(|_| OverseerValue::String("invalid formula error".to_string()))
-                }
-                other => other,
-            };
-            computed_params.push((shadow.to_string(), worked_out));
-        }
-        for (key, formula_src) in &formula_pairs {
-            debug_resolver!(
-                "[RESOLVER] Evaluating formula in {}.{}: {}",
-                node.name,
-                key,
-                formula_src
-            );
-            let shadow_key = if key == "value" {
-                "_computed_value".to_string()
-            } else {
-                format!("_computed_{}", key)
-            };
-            match FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context) {
-                Ok(result) => {
-                    debug_resolver!("[RESOLVER] Formula result: {:?}", result);
-                    computed_params.push((shadow_key, result));
-                }
-                Err(_err) => {
-                    debug_resolver!("[RESOLVER] Formula error at {}.{}", node.name, key);
-                    computed_params.push((
-                        shadow_key,
-                        OverseerValue::String("invalid formula error".to_string()),
-                    ));
-                }
-            }
-        }
-        // Drop context before mutating node.parameters
-        drop(context);
-        // Merge computed shadow params into node.parameters (do not overwrite originals).
-        // Insert after each pass so subsequent passes can read newly available _computed_* values.
-        for (k, v) in computed_params {
-            // Never overwrite original formula in 'value' with computed primitive; store only in shadow key
-            if k == "_computed_value" {
-                node.parameters.insert(k, v);
-            } else {
-                node.parameters.insert(k, v);
+/// One pass over the document, working out the formulas of `targets` and of what lies above them.
+/// True when anything came out different from what was stored.
+///
+/// Over the document itself, not a copy - see `recursively_evaluate_node_formulas_selective`. The
+/// pass's memo is kept for its duration, and a list's entries can be found where they are, to be
+/// worked out when read - see `FormulaEvaluator::value_of_node`. Every pointer into the document
+/// is taken from one, so the references made from them while a node is worked out and the writes
+/// made between are to the same document by the same route.
+fn one_pass_over(nodes: &mut Vec<OverseerNode>, targets: &std::collections::HashSet<String>) -> bool {
+    let root: *mut [OverseerNode] = nodes.as_mut_slice();
+    let mut moved = false;
+    FormulaEvaluator::begin_pass_over(root);
+    unsafe {
+        let first = root as *mut OverseerNode;
+        for i in 0..root.len() {
+            let node_ptr = first.add(i);
+            let mut current_path = vec![(*node_ptr).name.clone()];
+            if recursively_evaluate_node_formulas_selective(
+                node_ptr,
+                std::ptr::null(),
+                &mut current_path,
+                root as *const [OverseerNode],
+                targets,
+                &mut crate::addressing::Level::default(),
+            ) {
+                moved = true;
             }
         }
     }
-
-    freeze_if_it_was_asked_for(node, document_root, current_path);
-
-    // Recursively evaluate formulas in children
-    let child_len = node.children.len();
-    for idx in 0..child_len {
-        let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
-        // Disambiguate duplicate sibling names by appending ordinal (name#k)
-        {
-            let child_ref = &*child_ptr;
-            let name = child_ref.name.clone();
-            let k = node
-                .children
-                .iter()
-                .take(idx)
-                .filter(|c| c.name == name)
-                .count();
-            if k > 0 {
-                current_path.push(format!("{}#{}", name, k));
-            } else {
-                current_path.push(name);
-            }
-        }
-        recursively_evaluate_node_formulas(
-            child_ptr,
-            node as *const OverseerNode,
-            current_path,
-            document_root,
-        );
-        current_path.pop();
-    }
+    FormulaEvaluator::end_pass_memo();
+    moved
 }
 
-/// Selective version that only evaluates formulas for nodes in specific field paths
+/// Work out the formulas of the nodes named in `field_paths`, and of every node above one, from
+/// here down.
+///
+/// Reads come from the document being written - `document_root` is it, not a copy. A pass used to
+/// copy the whole document first so that what it read could not move under it, which was a third
+/// of what an edit's working out cost on the heavy documents; since reads work out on demand what
+/// they need, what they find already stored in the document is the same answer. So the document is
+/// held as a pointer, and a reference is made from it only while a node's formulas are worked out,
+/// when nothing is written: what they come to is written afterwards, once every reference into the
+/// document is gone.
 unsafe fn recursively_evaluate_node_formulas_selective(
     node_ptr: *mut OverseerNode,
     _parent_ptr: *const OverseerNode,
     current_path: &mut Vec<String>,
-    document_root: &[OverseerNode],
+    document_root: *const [OverseerNode],
     field_paths: &std::collections::HashSet<String>,
     // Numbers this node's children in the path - its parent's, when this is a wrapper.
     level: &mut crate::addressing::Level,
 ) -> bool {
     // Track whether any _computed_* param mutated in this subtree so caller can record progress
     let mut subtree_changed = false;
-    let node: &mut OverseerNode = &mut *node_ptr;
-    // Out of view, so not worked out. Nothing under it either - see `apply_list_windows`.
-    if out_of_view(node) {
-        return false;
-    }
-    let _parent_ref: Option<&OverseerNode> = if _parent_ptr.is_null() {
-        None
-    } else {
-        Some(&*_parent_ptr)
-    };
-
-    // Skip evaluating formulas for nodes inside action handler blocks
-    if let Some(p) = _parent_ref {
-        if p.node_type == "on" {
-            return false; // Skip action handler blocks entirely
+    {
+        let node: &OverseerNode = &*node_ptr;
+        // Out of view, so not worked out. Nothing under it either - see `apply_list_windows`.
+        if out_of_view(node) {
+            return false;
+        }
+        // Skip evaluating formulas for nodes inside action handler blocks
+        if let Some(p) = _parent_ptr.as_ref() {
+            if p.node_type == "on" {
+                return false; // Skip action handler blocks entirely
+            }
         }
     }
 
@@ -3653,7 +3498,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         // kept so it can tell an entry's own value from one it inherited, and nothing reads them
         // worked out. Worked out anyway they were a value and a formula per field of every entry -
         // 3,700 of each on the food tracker - stored as `_computed__template_*` for no one.
-        let formula_pairs: Vec<(String, String)> = node
+        let formula_pairs: Vec<(String, String)> = (*node_ptr)
             .parameters
             .iter()
             .filter_map(|(k, v)| match v {
@@ -3664,88 +3509,96 @@ unsafe fn recursively_evaluate_node_formulas_selective(
 
         // Run up to 2 passes for intra-node dependencies
         for _ in 0..2 {
-            let context = EvaluationContext::new_with_current_and_parent(
-                node,
-                _parent_ref,
-                current_path.to_vec(),
-                document_root,
-            );
-            let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
-            // Compute fallback first (parity with full evaluator) so dependents can read
-            // _computed_fallback immediately - and only where it could ever be read. See the
-            // note on the same guard in the full evaluator: a fallback belongs to a field that
-            // states no value, and computing the others is what kept this document moving.
-            // Only an unset field reads either of these - see `states_a_value`.
-            let unset = !FormulaEvaluator::states_a_value(&node.parameters);
-            for (declared, shadow) in [("fallback", "_computed_fallback"), ("default", "_computed_default")] {
-                let Some(source) = node.parameters.get(declared).cloned().filter(|_| unset) else {
-                    continue;
-                };
-                let _recording = crate::dependencies::WorkingOut::value(&format!(
-                    "{}#{}",
-                    current_path.join("/"),
-                    shadow
-                ));
-                // Said to be in progress while it is worked out, the way a read working it out on
-                // demand says so - see `FormulaEvaluator::work_out_once`. Otherwise a read inside
-                // it that comes back round - `grams` falling back to `portions`, which falls back
-                // to `grams` - works the same fallback out again one level deeper, and cuts the
-                // circle somewhere different from where the next pass will cut it.
-                let worked_out = match source {
-                    OverseerValue::Formula(f) => FormulaEvaluator::work_out_once(current_path, declared, || {
-                        FormulaEvaluator::evaluate_formula(f.as_str(), &context)
-                    })
-                    .unwrap_or_else(|| OverseerValue::String("invalid formula error".to_string())),
-                    other => other,
-                };
-                computed_params.push((shadow.to_string(), worked_out));
-            }
-            for (key, formula_src) in &formula_pairs {
-                debug_resolver!(
-                    "[RESOLVER] Selectively evaluating formula in {}.{}: {}",
-                    node.name,
-                    key,
-                    formula_src
+            // Worked out while nothing is written - see above.
+            let (computed_params, freeze) = {
+                let node: &OverseerNode = &*node_ptr;
+                let document: &[OverseerNode] = &*document_root;
+                let context = EvaluationContext::new_with_current_and_parent(
+                    node,
+                    _parent_ptr.as_ref(),
+                    current_path.to_vec(),
+                    document,
                 );
-                let shadow_key = if key == "value" {
-                    "_computed_value".to_string()
-                } else {
-                    format!("_computed_{}", key)
-                };
-                // Whatever this formula reads is read on behalf of this value.
-                let _recording = crate::dependencies::WorkingOut::value(&format!(
-                    "{}#{}",
-                    current_path.join("/"),
-                    shadow_key
-                ));
-                let formula_started = profile_enabled().then(std::time::Instant::now);
-                // A value is in progress while it is worked out, as a fallback is above.
-                let evaluated = if key == "value" {
-                    FormulaEvaluator::work_out_once(current_path, "value", || {
+                let mut computed_params: Vec<(String, OverseerValue)> = Vec::new();
+                // Compute fallback first (parity with full evaluator) so dependents can read
+                // _computed_fallback immediately - and only where it could ever be read. See the
+                // note on the same guard in the full evaluator: a fallback belongs to a field that
+                // states no value, and computing the others is what kept this document moving.
+                // Only an unset field reads either of these - see `states_a_value`.
+                let unset = !FormulaEvaluator::states_a_value(&node.parameters);
+                for (declared, shadow) in [("fallback", "_computed_fallback"), ("default", "_computed_default")] {
+                    let Some(source) = node.parameters.get(declared).cloned().filter(|_| unset) else {
+                        continue;
+                    };
+                    let _recording = crate::dependencies::WorkingOut::value(&format!(
+                        "{}#{}",
+                        current_path.join("/"),
+                        shadow
+                    ));
+                    // Said to be in progress while it is worked out, the way a read working it out
+                    // on demand says so - see `FormulaEvaluator::work_out_once`. Otherwise a read
+                    // inside it that comes back round - `grams` falling back to `portions`, which
+                    // falls back to `grams` - works the same fallback out again one level deeper,
+                    // and cuts the circle somewhere different from where the next pass will cut it.
+                    let worked_out = match source {
+                        OverseerValue::Formula(f) => FormulaEvaluator::work_out_once(current_path, declared, || {
+                            FormulaEvaluator::evaluate_formula(f.as_str(), &context)
+                        })
+                        .unwrap_or_else(|| OverseerValue::String("invalid formula error".to_string())),
+                        other => other,
+                    };
+                    computed_params.push((shadow.to_string(), worked_out));
+                }
+                for (key, formula_src) in &formula_pairs {
+                    debug_resolver!(
+                        "[RESOLVER] Selectively evaluating formula in {}.{}: {}",
+                        node.name,
+                        key,
+                        formula_src
+                    );
+                    let shadow_key = if key == "value" {
+                        "_computed_value".to_string()
+                    } else {
+                        format!("_computed_{}", key)
+                    };
+                    // Whatever this formula reads is read on behalf of this value.
+                    let _recording = crate::dependencies::WorkingOut::value(&format!(
+                        "{}#{}",
+                        current_path.join("/"),
+                        shadow_key
+                    ));
+                    let formula_started = profile_enabled().then(std::time::Instant::now);
+                    // A value is in progress while it is worked out, as a fallback is above.
+                    let evaluated = if key == "value" {
+                        FormulaEvaluator::work_out_once(current_path, "value", || {
+                            FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context)
+                        })
+                        .ok_or_else(|| crate::types::OverseerError::FormulaError("already being worked out".to_string()))
+                    } else {
                         FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context)
-                    })
-                    .ok_or_else(|| crate::types::OverseerError::FormulaError("already being worked out".to_string()))
-                } else {
-                    FormulaEvaluator::evaluate_formula(formula_src.as_str(), &context)
-                };
-                if let Some(started) = formula_started {
-                    profile_record_formula(formula_src.as_str(), started.elapsed());
-                }
-                match evaluated {
-                    Ok(result) => {
-                        debug_resolver!("[RESOLVER] Formula result: {:?}", result);
-                        computed_params.push((shadow_key, result));
+                    };
+                    if let Some(started) = formula_started {
+                        profile_record_formula(formula_src.as_str(), started.elapsed());
                     }
-                    Err(_err) => {
-                        debug_resolver!("[RESOLVER] Formula error at {}.{}", node.name, key);
-                        computed_params.push((
-                            shadow_key,
-                            OverseerValue::String("invalid formula error".to_string()),
-                        ));
+                    match evaluated {
+                        Ok(result) => {
+                            debug_resolver!("[RESOLVER] Formula result: {:?}", result);
+                            computed_params.push((shadow_key, result));
+                        }
+                        Err(_err) => {
+                            debug_resolver!("[RESOLVER] Formula error at {}.{}", node.name, key);
+                            computed_params.push((
+                                shadow_key,
+                                OverseerValue::String("invalid formula error".to_string()),
+                            ));
+                        }
                     }
                 }
-            }
-            drop(context);
+                drop(context);
+                (computed_params, asks_to_freeze_here(node, document, current_path))
+            };
+            // Then written, with nothing read from the document meanwhile.
+            let node: &mut OverseerNode = &mut *node_ptr;
             for (k, v) in computed_params {
                 // Prevent formula clobber: if this is the shadow key it's safe; raw 'value' never replaced here
                 let changed = match node.parameters.get(&k) {
@@ -3758,7 +3611,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                 }
                 node.parameters.insert(k, v); // k could be _computed_value or _computed_paramName
             }
-            freeze_if_it_was_asked_for(node, document_root, current_path);
+            freeze_if_it_was_asked_for(node, freeze);
         }
         if FormulaEvaluator::doubts() != doubts_before {
             DOUBTED.with(|d| d.borrow_mut().insert(current_path_str.clone()));
@@ -3767,14 +3620,14 @@ unsafe fn recursively_evaluate_node_formulas_selective(
 
     // Always recurse into children to check their paths. A wrapper is no step of the path - its
     // children are named as its parent's, see `addressing::Level`.
-    let child_len = node.children.len();
+    let child_len = (*node_ptr).children.len();
     for idx in 0..child_len {
-        let child_ptr: *mut OverseerNode = &mut node.children[idx] as *mut _;
+        let child_ptr: *mut OverseerNode = (*node_ptr).children.as_mut_ptr().add(idx);
         let wrapper = crate::addressing::is_wrapper(&*child_ptr);
         let changed = if wrapper {
             recursively_evaluate_node_formulas_selective(
                 child_ptr,
-                node as *const OverseerNode,
+                node_ptr as *const OverseerNode,
                 current_path,
                 document_root,
                 field_paths,
@@ -3784,7 +3637,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
             current_path.push(level.segment(&(*child_ptr).name));
             let changed = recursively_evaluate_node_formulas_selective(
                 child_ptr,
-                node as *const OverseerNode,
+                node_ptr as *const OverseerNode,
                 current_path,
                 document_root,
                 field_paths,

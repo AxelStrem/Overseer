@@ -265,6 +265,15 @@ pub fn nodes_for(text: &str) -> Option<Vec<OverseerNode>> {
     })
 }
 
+/// The document this text produced, lent to `look` rather than copied out - for a question that
+/// decides whether to take it at all.
+pub fn with_nodes<R>(text: &str, look: impl FnOnce(&[OverseerNode]) -> R) -> Option<R> {
+    with(|store| {
+        let found = at(store, text)?;
+        store[found].nodes.as_deref().map(look)
+    })
+}
+
 /// The same, handed over rather than copied.
 ///
 /// For a caller that is about to replace it anyway: on a large document a copy costs more than the

@@ -522,13 +522,23 @@ impl Graph {
         let mut taken: HashSet<String> = HashSet::new();
 
         while let Some(path) = queue.pop_front() {
-            // The path, then its containers. A formula's key carries its text, which has slashes
-            // of its own, so its containers are those of its node.
+            // The path, the node it belongs to, then that node's containers. A formula's key
+            // carries its text, which has slashes of its own, so its containers are those of its
+            // node.
+            //
+            // The node, because a value to be worked out again is a node's value, and what read
+            // the node read it. Its key - `t/total#_computed_value` - is what the cascade holds,
+            // while a reader records the node, `t/total`. This used to be reached anyway, and only
+            // by accident: every read of a formula found it not yet worked out and worked it out
+            // on the spot, which handed what that read up to the reader, so `share` was recorded
+            // as reading the list `total` adds up as well as `total`. A read that finds the value
+            // already stored records `total` alone, and the chain stopped at it.
+            let node = Self::node_of(&path);
             let mut steps: Vec<&str> = vec![path.as_str()];
-            let mut walk = match path.find('$') {
-                Some(at) => &path[..at],
-                None => path.as_str(),
-            };
+            if node != path {
+                steps.push(node);
+            }
+            let mut walk = node;
             while let Some(cut) = walk.rfind('/') {
                 walk = &walk[..cut];
                 steps.push(walk);

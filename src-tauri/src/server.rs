@@ -186,7 +186,12 @@ impl DocumentRoot {
         address: &str,
         event: &str,
     ) -> std::result::Result<EventOutcome, RequestError> {
-        let (_, nodes) = self.edit(name, address, |nodes| {
+        // What surrounds the button, or the node itself when it has nothing above it.
+        let reported = match address.rsplit_once('/') {
+            Some((parent, _)) => parent,
+            None => address,
+        };
+        let (_, (gone, found)) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
@@ -204,6 +209,15 @@ impl DocumentRoot {
             ActionExecutor::execute_event(nodes, &path, event).map_err(|e| {
                 RequestError::Failed(format!("could not run '{}' on '{}': {:?}", event, address, e))
             })
+        }, |nodes| {
+            // Whether the thing pressed is still there, asked of the thing pressed. It used to be
+            // read off whether what surrounds it was, which is the same question for a button
+            // that removes the entry it sits on - but a pressed entry that removes itself is
+            // surrounded by its list, which stays, and it answered that nothing had gone.
+            let gone = crate::addressing::find(nodes, address).is_none();
+            let found = crate::addressing::find(nodes, reported)
+                .map(|node| (child_addresses(reported, node), node.clone()));
+            (gone, found)
         })?;
 
         self.journal(serde_json::json!({
@@ -214,20 +228,10 @@ impl DocumentRoot {
             "event": event,
         }));
 
-        // What surrounds the button, or the node itself when it has nothing above it.
-        let reported = match address.rsplit_once('/') {
-            Some((parent, _)) => parent,
-            None => address,
-        };
-        // Whether the thing pressed is still there, asked of the thing pressed. It used to be
-        // read off whether what surrounds it was, which is the same question for a button that
-        // removes the entry it sits on - but a pressed entry that removes itself is surrounded
-        // by its list, which stays, and it answered that nothing had gone.
-        let gone = crate::addressing::find(&nodes, address).is_none();
-        match crate::addressing::find(&nodes, reported) {
-            Some(node) => Ok(EventOutcome {
-                child_addresses: child_addresses(reported, node),
-                node: Some(node.clone()),
+        match found {
+            Some((child_addresses, node)) => Ok(EventOutcome {
+                child_addresses,
+                node: Some(node),
                 address: reported.to_string(),
                 gone,
             }),
@@ -1082,13 +1086,17 @@ impl DocumentRoot {
     /// mean a write to an older entry failing for a reason nobody could see. Naming the address
     /// before the document is resolved keeps what the write is about in view, and costs nothing:
     /// it is one more entry instantiated, not another resolve.
-    fn edit<T>(
+    ///
+    /// `answer` is shown the document once it has settled, for the caller to take what it will
+    /// answer with; then the document is held for the next write, handed over rather than copied.
+    fn edit<T, A>(
         &self,
         name: &str,
         touching: &str,
         work: impl FnOnce(&mut Vec<OverseerNode>) -> std::result::Result<T, RequestError>,
-    ) -> std::result::Result<(T, Vec<OverseerNode>), RequestError> {
-        self.edit_for("", name, touching, work)
+        answer: impl FnOnce(&[OverseerNode]) -> A,
+    ) -> std::result::Result<(T, A), RequestError> {
+        self.edit_for("", name, touching, work, answer)
     }
 
     /// The same, on behalf of one viewer.
@@ -1097,13 +1105,14 @@ impl DocumentRoot {
     /// file: the action reports it instead, and it is kept against this session. So pressing
     /// "previous day" changes what this page sees and nothing else - no write, no undo point,
     /// nothing for the backup to commit, and another page still looking at its own day.
-    fn edit_for<T>(
+    fn edit_for<T, A>(
         &self,
         session: &str,
         name: &str,
         touching: &str,
         work: impl FnOnce(&mut Vec<OverseerNode>) -> std::result::Result<T, RequestError>,
-    ) -> std::result::Result<(T, Vec<OverseerNode>), RequestError> {
+        answer: impl FnOnce(&[OverseerNode]) -> A,
+    ) -> std::result::Result<(T, A), RequestError> {
         let path = self.resolve(name)?;
         let text = std::fs::read_to_string(&path)
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
@@ -1131,11 +1140,12 @@ impl DocumentRoot {
             // `app_api::settle_after_change`. It used to work the whole document out before the
             // work and again after it, uncached, every time: logging a meal from a message paid
             // two full resolves of the food tracker.
-            let quick = if looking_at.is_empty() {
-                app_api::worked_out_copy(&text).filter(|nodes| wholly_in_view(nodes, touching))
-            } else {
-                None
-            };
+            //
+            // Taken rather than copied, and handed back once settled - see
+            // `app_api::take_worked_out`.
+            let in_view = looking_at.is_empty()
+                && crate::document_cache::with_nodes(&text, |nodes| wholly_in_view(nodes, touching)) == Some(true);
+            let quick = if in_view { app_api::take_worked_out(&text) } else { None };
             let quick_way = quick.is_some();
             // Then it holds the very document the graph for this text describes, so a change of
             // shape can be followed through the graph - see `app_api::settle_after_change`.
@@ -1158,7 +1168,19 @@ impl DocumentRoot {
                 .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))?,
             };
             phase("edit load", &mut since);
-            let outcome = work(&mut nodes)?;
+            let outcome = match work(&mut nodes) {
+                Ok(outcome) => outcome,
+                Err(refused) => {
+                    // Refused before anything ran - the bot's own checks, a key already there - so
+                    // what was taken is exactly what was held, and goes back. After something ran
+                    // it may be half changed, and is let go.
+                    let acted = crate::actions::take_report().is_some_and(|changed| changed.acted);
+                    if quick_way && !acted {
+                        app_api::hold_again(&text, nodes);
+                    }
+                    return Err(refused);
+                }
+            };
             let report = crate::actions::take_report();
             phase("edit work", &mut since);
             // What was written changes what derives from it, and the caller is about to be shown
@@ -1205,14 +1227,15 @@ impl DocumentRoot {
         // reopening what the bot just changed - starts from it rather than from nothing. Only when
         // that text is the document as worked out: a field that is the viewer's is taken back
         // out before writing, and then the tree describes something the file does not say.
+        let answered = answer(&nodes);
         if let Some(whole) = settled_quickly {
             if settled.text == serialized {
                 let now = if wrote { settled.text.as_str() } else { text_before.as_str() };
-                crate::app_api::keep_worked_out(&text_before, now, &nodes, whole);
+                crate::app_api::keep_worked_out(&text_before, now, nodes, whole);
             }
         }
         phase("edit keep", &mut since);
-        Ok((outcome, nodes))
+        Ok((outcome, answered))
     }
 
     /// Refuse a save built on a document that has since moved on.
@@ -1349,7 +1372,7 @@ impl DocumentRoot {
     ) -> std::result::Result<WriteOutcome, RequestError> {
         let overrides = crate::app_api::entry_overrides(fields);
 
-        let (_, nodes) = self.edit(name, address, |nodes| {
+        let (_, node) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
@@ -1381,7 +1404,7 @@ impl DocumentRoot {
             reject_duplicate_key(target, fields)?;
             ActionExecutor::append_entry(nodes, &format!("/{}", path.join("/")), &overrides)
                 .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))
-        })?;
+        }, |nodes| crate::addressing::find(nodes, address).cloned())?;
 
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
@@ -1391,8 +1414,7 @@ impl DocumentRoot {
             "fields": fields,
         }));
 
-        let node = crate::addressing::find(&nodes, address)
-            .cloned()
+        let node = node
             .ok_or_else(|| RequestError::Failed("the list vanished while being written".into()))?;
         Ok(WriteOutcome {
             child_addresses: child_addresses(address, &node),
@@ -1408,13 +1430,13 @@ impl DocumentRoot {
         address: &str,
         value: OverseerValue,
     ) -> std::result::Result<WriteOutcome, RequestError> {
-        let (_, nodes) = self.edit(name, address, |nodes| {
+        let (_, node) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
             ActionExecutor::assign_value(nodes, &format!("/{}", path.join("/")), value.clone())
                 .map_err(|e| RequestError::Failed(format!("could not set the value: {:?}", e)))
-        })?;
+        }, |nodes| crate::addressing::find(nodes, address).cloned())?;
 
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
@@ -1424,8 +1446,7 @@ impl DocumentRoot {
             "value": value,
         }));
 
-        let node = crate::addressing::find(&nodes, address)
-            .cloned()
+        let node = node
             .ok_or_else(|| RequestError::Failed("the node vanished while being written".into()))?;
         Ok(WriteOutcome {
             child_addresses: child_addresses(address, &node),
@@ -1466,7 +1487,7 @@ impl DocumentRoot {
                 ))
             })?;
 
-        let (_, nodes) = self.edit(name, address, |nodes| {
+        let (_, node) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
@@ -1487,7 +1508,7 @@ impl DocumentRoot {
             }
             ActionExecutor::remove_entry(nodes, &format!("/{}", path.join("/")))
                 .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))
-        })?;
+        }, |nodes| crate::addressing::find(nodes, &parent_address).cloned())?;
 
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
@@ -1496,8 +1517,7 @@ impl DocumentRoot {
             "address": address,
         }));
 
-        let node = crate::addressing::find(&nodes, &parent_address)
-            .cloned()
+        let node = node
             .ok_or_else(|| RequestError::Failed("the list vanished while being written".into()))?;
         Ok(WriteOutcome {
             child_addresses: child_addresses(&parent_address, &node),

@@ -916,19 +916,29 @@ fn change_document(
     };
     let as_it_stood = std::fs::read_to_string(path)
         .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
-    let baseline = baseline_copy(&as_it_stood);
     // Worked out as this viewer sees it, or a second press on a day button would start from what
     // the file says again and never get past the first step back.
     let looking_at = crate::viewstate::overlay(session, document);
     let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
+    // The document as it was last worked out, for exactly this text - taken, not copied. Parsing
+    // and resolving it again produces the same thing and costs what opening it cost, which on
+    // tasks.os was most of the second every edit took; the cache is keyed by the text, so a hit
+    // means the file has not moved since, and the graph for it is held under the same key.
+    let held = if looking_at.is_empty() { take_worked_out(&as_it_stood) } else { None };
+    // What the change is described against, which needs a copy: the one copy this makes. It was
+    // two, one to describe against and another to work on.
+    let mut baseline = Baseline {
+        put_back: held.is_some(),
+        copy: match &held {
+            Some(nodes) => Some(nodes.clone()),
+            None => baseline_copy(&as_it_stood),
+        },
+        text: as_it_stood.clone(),
+    };
     let mut nodes = if !looking_at.is_empty() {
         resolve_selective(as_it_stood.clone(), held_for_the_viewer.clone(), Some(looking_at))?
-    } else if let Some(already) = baseline.clone() {
-        // The document as it was last worked out, for exactly this text. Parsing and resolving
-        // it again produces the same thing and costs what opening it cost - which on tasks.os
-        // was most of the second every edit took. The cache is keyed by the text, so a hit means
-        // the file has not moved since, and the graph for it is held under the same key.
-        already
+    } else if let Some(held) = held {
+        held
     } else {
         load_document(as_it_stood.clone())?
     };
@@ -963,7 +973,7 @@ fn change_document(
     // baseline is. So the answer is that nothing changed, and which field to open, without
     // writing the document out and comparing it with itself: that was most of what such a press
     // still cost on tasks.os once nothing was worked out again.
-    if ran_nothing && held_for_the_viewer.is_empty() && baseline.is_some() {
+    if ran_nothing && held_for_the_viewer.is_empty() && baseline.copy.is_some() {
         return Ok(ResolvedUpdate {
             start_editing: field_to_edit(report.as_ref(), &nodes),
             text: as_it_stood,
@@ -1002,7 +1012,7 @@ fn change_document(
     // without - and it is told so, because it holds the baseline a later save is checked
     // against and has no other way to learn that this write moved the file.
     let to_edit = field_to_edit(report.as_ref(), &nodes);
-    let mut update = finish_update_with(&as_it_stood, serialized, nodes, baseline)?;
+    let mut update = finish_update_with(&as_it_stood, serialized, nodes, baseline.used())?;
     if let Some(fresh) = worked_out_whole {
         replace_graph(&update.text, fresh);
     }
@@ -1013,6 +1023,32 @@ fn change_document(
         update.file_text = Some(settled.text);
     }
     Ok(update)
+}
+
+/// The document a change is described against - a copy of the one taken out of the cache to work
+/// on, so it goes back into the cache if the change does not finish: refused, failed to write,
+/// or found to have run nothing. Once the change is described it is used up, and what the change
+/// produced is held instead.
+struct Baseline {
+    text: String,
+    copy: Option<Vec<OverseerNode>>,
+    /// Whether the document was taken out, and so is owed back. A copy made while it stayed held
+    /// is only a copy.
+    put_back: bool,
+}
+
+impl Baseline {
+    fn used(&mut self) -> Option<Vec<OverseerNode>> {
+        self.copy.take()
+    }
+}
+
+impl Drop for Baseline {
+    fn drop(&mut self) {
+        if let Some(copy) = self.copy.take().filter(|_| self.put_back) {
+            hold_again(&self.text, copy);
+        }
+    }
 }
 
 /// The field a press asked to have opened, found in the document as it now stands - the one the
@@ -1275,24 +1311,36 @@ fn follow_the_shape(
     Some(())
 }
 
-/// A copy of the document as it was last worked out for exactly this text, if one is held.
-pub(crate) fn worked_out_copy(text: &str) -> Option<Vec<OverseerNode>> {
-    baseline_copy(text)
+/// The document as it was last worked out for exactly this text, taken rather than copied.
+///
+/// For a write that puts it back when it is done, as `keep_worked_out` does. A copy of the food
+/// tracker is over twenty milliseconds, and a write used to make one to start from and another
+/// to keep. A write that fails after changing it leaves nothing held, and the next one works the
+/// document out from its text - slower, and never wrong. See `hold_again` for one that failed
+/// before changing anything.
+pub(crate) fn take_worked_out(text: &str) -> Option<Vec<OverseerNode>> {
+    crate::document_cache::take_nodes(text)
+}
+
+/// Hold a document again under the text it was taken for, as it was taken.
+pub(crate) fn hold_again(text: &str, nodes: Vec<OverseerNode>) {
+    crate::document_cache::own_nodes(text, nodes);
 }
 
 /// Hold a document worked out after a change, under the text it was written as.
 ///
 /// `was` is the text it started from, whose entry - the graph with what the change added to it -
 /// moves onto `now`. `whole` is what `settle_after_change` handed back: a graph recorded while
-/// the document was worked out whole, which replaces the moved one.
+/// the document was worked out whole, which replaces the moved one. The document itself is handed
+/// over rather than copied in.
 pub(crate) fn keep_worked_out(
     was: &str,
     now: &str,
-    nodes: &[OverseerNode],
+    nodes: Vec<OverseerNode>,
     whole: Option<Option<crate::dependencies::Graph>>,
 ) {
     crate::document_cache::rekey(was, now);
-    remember(now, nodes);
+    crate::document_cache::own_nodes(now, nodes);
     if let Some(fresh) = whole {
         replace_graph(now, fresh);
     }

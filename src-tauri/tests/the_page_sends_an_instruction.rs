@@ -136,6 +136,9 @@ fn a_page_that_has_not_opened_it_is_given_the_whole_document() {
     serialised(|| {
         let root = a_root("cold");
         let service = DocumentRoot::new(&root).expect("open the root");
+        // Nothing held for this text, whichever test ran before: every test here writes the same
+        // document, and one refused leaves it held as it was opened.
+        overseer::app_api::forget_baseline();
         let answer = set(&service, "alice", &["day", "recorded"], 4);
         assert!(answer.get("changes").is_some_and(|c| c.is_null()));
         assert!(
@@ -338,5 +341,28 @@ fn reusing_the_worked_out_document_answers_the_same() {
             "what derives from the change was not worked out:\n{}",
             text_of(&warm_answer)
         );
+    });
+}
+
+#[test]
+fn a_refused_change_leaves_the_document_held() {
+    // Taken to be changed rather than copied, and put back as it was when the change is refused.
+    serialised(|| {
+        let root = a_root("refusedheld");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        service.open_for("alice", "day.os").expect("the page opens it");
+        let refused = service.command_for(
+            "alice",
+            Some("day.os"),
+            "write_overseer_values",
+            &json!({ "values": [{ "node_path": ["day", "nothing_of_the_sort"], "value": { "Integer": 7 } }] }),
+        );
+        assert!(refused.is_err());
+        assert!(
+            overseer::document_cache::nodes_for(&on_disk(&root)).is_some(),
+            "the refused change let the document go"
+        );
+        let answer = set(&service, "alice", &["day", "recorded"], 4);
+        assert!(answer.get("changes").is_some_and(|c| c.is_array()), "the next change was answered whole: {}", answer);
     });
 }

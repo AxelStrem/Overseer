@@ -204,3 +204,24 @@ fn after_a_removal_the_entries_are_named_as_their_text_names_them() {
         assert_eq!(computed(&now), computed(&fresh(&sandbox)));
     });
 }
+
+#[test]
+fn a_write_refused_before_it_changed_anything_leaves_the_document_held() {
+    // A write takes the document held for its text rather than copying it, and puts it back when
+    // it is refused before anything ran - the bot's own checks refuse a good many writes. Let go
+    // instead, the next write would work the whole document out again.
+    serialised(|| {
+        let (sandbox, documents) = sandbox("refused");
+        let fields = [("no_such_field".to_string(), OverseerValue::Float(1.0))].into_iter().collect();
+        assert!(documents.append_at("d.os", &format!("{}/intake", TODAY), &fields).is_err());
+        assert!(
+            overseer::document_cache::nodes_for(&text(&sandbox)).is_some(),
+            "the refused write let the document go"
+        );
+        let whole = overseer::resolver::times_worked_out_whole();
+        documents
+            .set_at("d.os", &format!("{}/intake/Meal__1/grams", TODAY), OverseerValue::Float(80.0))
+            .expect("the next write");
+        assert_eq!(overseer::resolver::times_worked_out_whole(), whole, "the next write worked it out whole");
+    });
+}

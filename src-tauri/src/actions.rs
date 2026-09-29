@@ -850,18 +850,23 @@ impl ActionExecutor {
             "if" => {
                 // if(cond=...) { <actions...> }
                 // Evaluate cond in owner's context (defaults to false if missing)
-                let snapshot = nodes.clone();
+                // Read where it is - see the key of `remove`.
                 let cond_val = match action.parameters.get("cond") {
-                    Some(v) => Self::evaluate_in_context(v, owner_path, &snapshot)?,
+                    Some(v) => Self::evaluate_in_context(v, owner_path, nodes)?,
                     None => OverseerValue::Boolean(false),
                 };
                 if Self::to_bool(&cond_val) {
-                    for child in &action.children {
-                        let res = Self::execute_action(nodes, owner_indices, owner_path, child);
-                        if let Err(e) = res {
-                            return Err(e);
+                    // Settled between the actions it lets through by the rule the press itself
+                    // follows - see `execute_event`: in place when the shape moved and another
+                    // action is still to read it, and otherwise left to whatever settles the
+                    // press. It used to work the whole document out after every one of them, and
+                    // the tag form's one append paid that before the press was settled anyway.
+                    let last = action.children.len().saturating_sub(1);
+                    for (at, child) in action.children.iter().enumerate() {
+                        Self::execute_action(nodes, owner_indices, owner_path, child)?;
+                        if Self::action_changes_structure(&child.node_type) && at < last {
+                            Self::settle_for_what_comes_next(nodes);
                         }
-                        resolver::resolve_document(nodes);
                     }
                 }
                 Ok(())
@@ -1092,8 +1097,10 @@ impl ActionExecutor {
                 } else {
                     // Always evaluate a Formula now in the owner's context to avoid stale _computed_value
                     if let Some(OverseerValue::Formula(expr)) = action.parameters.get("value") {
-                        let snapshot = nodes.clone();
-                        let ctx = EvaluationContext::new(owner_path.to_vec(), &snapshot);
+                        // Read where it is: nothing is written while it is worked out, and a copy
+                        // of the whole document to read one value from was over twenty
+                        // milliseconds - `done` on a task paid it for the key of its `remove`.
+                        let ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
                         FormulaEvaluator::evaluate_formula(expr, &ctx)?
                     } else if let Some(v) = action.parameters.get("value") {
                         v.clone()
@@ -1247,8 +1254,10 @@ impl ActionExecutor {
                 };
                 let key_value = match action.parameters.get("keyValue") {
                     Some(OverseerValue::Formula(expr)) => {
-                        let snapshot = nodes.clone();
-                        let ctx = EvaluationContext::new(owner_path.to_vec(), &snapshot);
+                        // Read where it is: nothing is written while it is worked out, and a copy
+                        // of the whole document to read one value from was over twenty
+                        // milliseconds - `done` on a task paid it for the key of its `remove`.
+                        let ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
                         FormulaEvaluator::evaluate_formula(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
@@ -1325,8 +1334,10 @@ impl ActionExecutor {
                 };
                 let key_value = match action.parameters.get("keyValue") {
                     Some(OverseerValue::Formula(expr)) => {
-                        let snapshot = nodes.clone();
-                        let ctx = EvaluationContext::new(owner_path.to_vec(), &snapshot);
+                        // Read where it is: nothing is written while it is worked out, and a copy
+                        // of the whole document to read one value from was over twenty
+                        // milliseconds - `done` on a task paid it for the key of its `remove`.
+                        let ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
                         FormulaEvaluator::evaluate_formula(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
@@ -1349,10 +1360,10 @@ impl ActionExecutor {
                 let key_field =
                     Self::require_string(&action.parameters, "keyField").unwrap_or_default();
                 let field_name = Self::require_string(&action.parameters, "field")?;
-                // Evaluate keyValue and value in the owner's context (if provided as formulas)
-                let snapshot = nodes.clone();
+                // Evaluate keyValue and value in the owner's context (if provided as formulas) -
+                // read where they are, before anything is written; see the key of `remove`.
                 let key_value = match action.parameters.get("keyValue") {
-                    Some(v) => Self::evaluate_in_context(v, owner_path, &snapshot)?,
+                    Some(v) => Self::evaluate_in_context(v, owner_path, nodes)?,
                     None => {
                         return Err(OverseerError::ValidationError(
                             "set_in_list.keyValue required".to_string(),
@@ -1360,17 +1371,17 @@ impl ActionExecutor {
                     }
                 };
                 let new_value = match action.parameters.get("value") {
-                    Some(v) => Self::evaluate_in_context(v, owner_path, &snapshot)?,
+                    Some(v) => Self::evaluate_in_context(v, owner_path, nodes)?,
                     None => {
                         return Err(OverseerError::ValidationError(
                             "set_in_list.value required".to_string(),
                         ))
                     }
                 };
-                // Resolve list by path using snapshot for path calculation, then mutate on nodes
+                // Resolve the list by path, then mutate it
                 let (segments, _explicit_param, anchored) = Self::split_path_and_param(&list_path);
                 let indices = match Self::resolve_target_indices(
-                    &snapshot, owner_path, anchored, &segments,
+                    nodes, owner_path, anchored, &segments,
                 ) {
                     Some(ix) => ix,
                     None => {
@@ -1502,8 +1513,10 @@ impl ActionExecutor {
                 };
                 let key_value = match action.parameters.get("keyValue") {
                     Some(OverseerValue::Formula(expr)) => {
-                        let snapshot = nodes.clone();
-                        let ctx = EvaluationContext::new(owner_path.to_vec(), &snapshot);
+                        // Read where it is: nothing is written while it is worked out, and a copy
+                        // of the whole document to read one value from was over twenty
+                        // milliseconds - `done` on a task paid it for the key of its `remove`.
+                        let ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
                         FormulaEvaluator::evaluate_formula(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
@@ -2940,77 +2953,88 @@ impl ActionExecutor {
         goes: WhereItGoes,
     ) -> Result<String, OverseerError> {
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
-        // Clone nodes snapshot for immutable searches to avoid aliasing
-        let snapshot = nodes.clone();
-        let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
+        let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
             .ok_or_else(|| {
                 OverseerError::ValidationError(format!("List not found: {}", list_path))
             })?;
         // Named before the entry is made, as the graph names the list - see `Shape`.
-        let list_address = Self::build_disambiguated_path(&snapshot, &indices).join("/");
+        let list_address = Self::build_disambiguated_path(nodes, &indices).join("/");
+
+        // Everything the entry is made from, read before anything is written - the way `append`
+        // makes one, see `put_entry_in`, and for the same reason: a copy of the whole document
+        // taken to read the template from while the list was held open was over twenty
+        // milliseconds of making the first entry of a day.
+        let new_item = {
+            let document: &Vec<OverseerNode> = nodes;
+            let list_node = Self::get_node_ref_by_indices(document, &indices).ok_or_else(|| {
+                OverseerError::ValidationError(format!("List not found: {}", list_path))
+            })?;
+            if list_node.node_type != "list" {
+                return Err(OverseerError::ValidationError(
+                    "ensure_in_list.target is not a list".to_string(),
+                ));
+            }
+
+            // Derive key field from list parameters if not provided
+            let effective_key_field = if !key_field.is_empty() {
+                key_field.to_string()
+            } else if let Some(OverseerValue::String(s)) = list_node.parameters.get("key") {
+                s.clone()
+            } else {
+                return Err(OverseerError::ValidationError(
+                    "ensure_in_list.keyField missing and list has no key".to_string(),
+                ));
+            };
+
+            // Already there: nothing to make, and the caller is told which one it is. Saying so
+            // rather than just "done" is what lets one instruction mean "make sure of this entry
+            // and then write into it" - the same sentence whether the entry was a preview a moment
+            // ago or has been in the file for a month.
+            if let Some(found) = list_node.children.iter().find(|it| {
+                Self::get_field_value(it, &effective_key_field).map_or(false, |v| {
+                    Self::value_equals_with_key_precision(list_node, v, &key_value)
+                })
+            }) {
+                return Ok(found.name.clone());
+            }
+
+            // Find template by name (accept both "Record" and "<Record>" forms)
+            let tn = if template_name.starts_with('<')
+                && template_name.ends_with('>')
+                && template_name.len() >= 2
+            {
+                &template_name[1..template_name.len() - 1]
+            } else {
+                template_name
+            };
+            let template_def = Self::find_node_by_name(document, tn).ok_or_else(|| {
+                OverseerError::ValidationError(format!("Template not found: {}", template_name))
+            })?;
+            let style_guide = Self::derive_list_entry_style(list_node, goes == WhereItGoes::First);
+            let mut new_item = Self::clone_from_template(template_def);
+            Self::set_field_value_on_item(&mut new_item, &effective_key_field, key_value);
+            // Apply layout opposite to parent list's effective layout (to match default alternation rule)
+            if let Some(OverseerValue::String(parent_eff)) =
+                list_node.parameters.get("_effective_layout")
+            {
+                let opp = Self::opposite_layout(parent_eff);
+                new_item
+                    .parameters
+                    .insert("_effective_layout".to_string(), OverseerValue::String(opp));
+            }
+            // Assign a unique instance name mirroring resolver reload semantics (e.g., T__1, T__2)
+            // This prevents duplicate sibling names that break name-based path resolution during formula evaluation.
+            let ordinal = list_node.children.len() + 1; // 1-based index after append
+            new_item.name = format!("{}__{}", template_def.name, ordinal);
+            Self::apply_list_entry_style(&mut new_item, &style_guide);
+            Self::mark_the_entry_as_new(&mut new_item);
+            new_item
+        };
+
+        let made = new_item.name.clone();
         let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("List not found: {}", list_path))
         })?;
-        if list_node.node_type != "list" {
-            return Err(OverseerError::ValidationError(
-                "ensure_in_list.target is not a list".to_string(),
-            ));
-        }
-
-        // Derive key field from list parameters if not provided
-        let effective_key_field = if !key_field.is_empty() {
-            key_field.to_string()
-        } else if let Some(OverseerValue::String(s)) = list_node.parameters.get("key") {
-            s.clone()
-        } else {
-            return Err(OverseerError::ValidationError(
-                "ensure_in_list.keyField missing and list has no key".to_string(),
-            ));
-        };
-
-        // Already there: nothing to make, and the caller is told which one it is. Saying so
-        // rather than just "done" is what lets one instruction mean "make sure of this entry and
-        // then write into it" - the same sentence whether the entry was a preview a moment ago or
-        // has been in the file for a month.
-        if let Some(found) = list_node.children.iter().find(|it| {
-            Self::get_field_value(it, &effective_key_field).map_or(false, |v| {
-                Self::value_equals_with_key_precision(list_node, v, &key_value)
-            })
-        }) {
-            return Ok(found.name.clone());
-        }
-
-        // Find template by name (accept both "Record" and "<Record>" forms)
-        let tn = if template_name.starts_with('<')
-            && template_name.ends_with('>')
-            && template_name.len() >= 2
-        {
-            &template_name[1..template_name.len() - 1]
-        } else {
-            template_name
-        };
-        let template_def = Self::find_node_by_name(&snapshot, tn).ok_or_else(|| {
-            OverseerError::ValidationError(format!("Template not found: {}", template_name))
-        })?;
-        let style_guide = Self::derive_list_entry_style(list_node, goes == WhereItGoes::First);
-        let mut new_item = Self::clone_from_template(template_def);
-        Self::set_field_value_on_item(&mut new_item, &effective_key_field, key_value);
-        // Apply layout opposite to parent list's effective layout (to match default alternation rule)
-        if let Some(OverseerValue::String(parent_eff)) =
-            list_node.parameters.get("_effective_layout")
-        {
-            let opp = Self::opposite_layout(parent_eff);
-            new_item
-                .parameters
-                .insert("_effective_layout".to_string(), OverseerValue::String(opp));
-        }
-        // Assign a unique instance name mirroring resolver reload semantics (e.g., T__1, T__2)
-        // This prevents duplicate sibling names that break name-based path resolution during formula evaluation.
-        let ordinal = list_node.children.len() + 1; // 1-based index after append
-        new_item.name = format!("{}__{}", template_def.name, ordinal);
-        Self::apply_list_entry_style(&mut new_item, &style_guide);
-        Self::mark_the_entry_as_new(&mut new_item);
-        let made = new_item.name.clone();
         match goes {
             WhereItGoes::First => list_node.children.insert(0, new_item),
             WhereItGoes::Last => list_node.children.push(new_item),
@@ -3284,29 +3308,68 @@ impl ActionExecutor {
         overrides: &Vec<OverseerNode>,
         from: Option<&OverseerValue>,
     ) -> Result<(), OverseerError> {
+        Self::put_entry_in(nodes, owner_path, list_path, template_name, value_opt, overrides, from, WhereItGoes::Last)
+    }
+
+    fn prepend_to_list(
+        nodes: &mut Vec<OverseerNode>,
+        owner_path: &[String],
+        list_path: &str,
+        template_name: Option<&str>,
+        value_opt: Option<OverseerValue>,
+        overrides: &Vec<OverseerNode>,
+        from: Option<&OverseerValue>,
+    ) -> Result<(), OverseerError> {
+        Self::put_entry_in(nodes, owner_path, list_path, template_name, value_opt, overrides, from, WhereItGoes::First)
+    }
+
+    /// Make an entry for a list and put it at one end - what `append` and `prepend` do.
+    ///
+    /// The entry is made from what the document says before anything is written: the list's
+    /// template, what a copy from a form supplies, the overrides worked out in the owner's
+    /// context. It used to be made against a copy of the whole document taken for the purpose, so
+    /// that the list could be held open for writing meanwhile - over twenty milliseconds of every
+    /// append, and so of every meal logged and every task done.
+    #[allow(clippy::too_many_arguments)]
+    fn put_entry_in(
+        nodes: &mut Vec<OverseerNode>,
+        owner_path: &[String],
+        list_path: &str,
+        template_name: Option<&str>,
+        value_opt: Option<OverseerValue>,
+        overrides: &Vec<OverseerNode>,
+        from: Option<&OverseerValue>,
+        goes: WhereItGoes,
+    ) -> Result<(), OverseerError> {
+        let verb = match goes {
+            WhereItGoes::First => "prepend",
+            WhereItGoes::Last => "append",
+        };
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
-        let snapshot = nodes.clone();
-        let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
+        let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
             .ok_or_else(|| {
                 OverseerError::ValidationError(format!("List not found: {}", list_path))
             })?;
         // As the graph names the list - see `Shape`.
-        let list_address = Self::build_disambiguated_path(&snapshot, &indices).join("/");
-        let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
-            OverseerError::ValidationError(format!("List not found: {}", list_path))
-        })?;
-        if list_node.node_type != "list" {
-            return Err(OverseerError::ValidationError(
-                "append.target is not a list".to_string(),
-            ));
-        }
+        let list_address = Self::build_disambiguated_path(nodes, &indices).join("/");
 
-        let style_guide = Self::derive_list_entry_style(list_node, false);
-
-        // Determine entry type
-        if let Some(entry) = list_node.parameters.get("entry") {
-            match entry {
-                OverseerValue::Template(t) => {
+        let (new_item, style_guide) = {
+            let document: &Vec<OverseerNode> = nodes;
+            let list_node = Self::get_node_ref_by_indices(document, &indices).ok_or_else(|| {
+                OverseerError::ValidationError(format!("List not found: {}", list_path))
+            })?;
+            if list_node.node_type != "list" {
+                return Err(OverseerError::ValidationError(format!(
+                    "{}.target is not a list",
+                    verb
+                )));
+            }
+            let style_guide = Self::derive_list_entry_style(list_node, goes == WhereItGoes::First);
+            // A unique instance name (T__1, T__2) whichever end it goes, so no two siblings share
+            // one. Its place settles its name afterwards - see `resolver::name_entries_as_parsed`.
+            let ordinal = list_node.children.len() + 1;
+            let mut new_item = match list_node.parameters.get("entry") {
+                Some(OverseerValue::Template(t)) => {
                     // Choose template: explicit override or list entry template
                     let chosen_template_name = if let Some(name) = template_name {
                         name.to_string()
@@ -3320,7 +3383,7 @@ impl ActionExecutor {
                             trimmed.to_string()
                         }
                     };
-                    let template_def = Self::find_node_by_name(&snapshot, &chosen_template_name)
+                    let template_def = Self::find_node_by_name(document, &chosen_template_name)
                         .ok_or_else(|| {
                             OverseerError::ValidationError(format!(
                                 "Template not found: {}",
@@ -3337,41 +3400,26 @@ impl ActionExecutor {
                             .parameters
                             .insert("_effective_layout".to_string(), OverseerValue::String(opp));
                     }
-                    // Assign a unique instance name (e.g., T__1, T__2) to avoid duplicate sibling names.
-                    // Using current length+1 reflects the creation order and matches resolver's reload naming convention.
-                    let ordinal = list_node.children.len() + 1;
                     new_item.name = format!("{}__{}", template_def.name, ordinal);
                     // Apply evaluated overrides from action block, after whatever a copy supplies
                     let mut all = match from {
-                        Some(from) => Self::overrides_copied_from(&snapshot, owner_path, from, template_def, overrides)?,
+                        Some(from) => Self::overrides_copied_from(document, owner_path, from, template_def, overrides)?,
                         None => Vec::new(),
                     };
                     all.extend(overrides.iter().cloned());
-                    Self::apply_overrides_evaluated(
-                        &mut new_item,
-                        &all,
-                        owner_path,
-                        &snapshot,
-                    )?;
-                    Self::apply_list_entry_style(&mut new_item, &style_guide);
-                    Self::mark_the_entry_as_new(&mut new_item);
-                    let made = new_item.name.clone();
-                    list_node.children.push(new_item);
-                    Self::harmonize_list_entry_spacing(list_node, &style_guide);
-                    // Mark this list field as explicitly overridden so mutations persist on template instances
-                    Self::mark_field_explicit_override(nodes, &indices);
-                    // Shape, not value - see `Shape`.
-                    note_shape(Shape::Added { list: list_address, entry: made });
+                    Self::apply_overrides_evaluated(&mut new_item, &all, owner_path, document)?;
+                    new_item
                 }
-                OverseerValue::String(type_name) => {
+                Some(OverseerValue::String(type_name)) => {
                     // Simple type list requires a value
                     let val = value_opt.ok_or_else(|| {
-                        OverseerError::ValidationError(
-                            "append.value required for simple list".to_string(),
-                        )
+                        OverseerError::ValidationError(format!(
+                            "{}.value required for simple list",
+                            verb
+                        ))
                     })?;
                     let mut item = OverseerNode {
-                        name: format!("{}__{}", type_name, list_node.children.len() + 1),
+                        name: format!("{}__{}", type_name, ordinal),
                         node_type: type_name.clone(),
                         template: None,
                         parameters: Default::default(),
@@ -3387,157 +3435,41 @@ impl ActionExecutor {
                         source_fingerprint: None,
                     };
                     item.parameters.insert("value".to_string(), val);
-                    Self::apply_list_entry_style(&mut item, &style_guide);
-                    Self::mark_the_entry_as_new(&mut item);
-                    let made = item.name.clone();
-                    list_node.children.push(item);
-                    Self::harmonize_list_entry_spacing(list_node, &style_guide);
-                    // Mark this list field as explicitly overridden so mutations persist on template instances
-                    Self::mark_field_explicit_override(nodes, &indices);
-                    note_shape(Shape::Added { list: list_address, entry: made });
+                    item
                 }
-                _ => {
-                    return Err(OverseerError::ValidationError(
-                        "append: unsupported entry type".to_string(),
-                    ))
+                Some(_) => {
+                    return Err(OverseerError::ValidationError(format!(
+                        "{}: unsupported entry type",
+                        verb
+                    )))
                 }
-            }
-        } else {
-            return Err(OverseerError::ValidationError(
-                "append: list has no entry parameter".to_string(),
-            ));
-        }
-        Ok(())
-    }
+                None => {
+                    return Err(OverseerError::ValidationError(format!(
+                        "{}: list has no entry parameter",
+                        verb
+                    )))
+                }
+            };
+            Self::apply_list_entry_style(&mut new_item, &style_guide);
+            Self::mark_the_entry_as_new(&mut new_item);
+            (new_item, style_guide)
+        };
 
-    fn prepend_to_list(
-        nodes: &mut Vec<OverseerNode>,
-        owner_path: &[String],
-        list_path: &str,
-        template_name: Option<&str>,
-        value_opt: Option<OverseerValue>,
-        overrides: &Vec<OverseerNode>,
-        from: Option<&OverseerValue>,
-    ) -> Result<(), OverseerError> {
-        let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
-        let snapshot = nodes.clone();
-        let indices = Self::resolve_target_indices(&snapshot, owner_path, anchored, &segments)
-            .ok_or_else(|| {
-                OverseerError::ValidationError(format!("List not found: {}", list_path))
-            })?;
-        // As the graph names the list - see `Shape`.
-        let list_address = Self::build_disambiguated_path(&snapshot, &indices).join("/");
+        let made = new_item.name.clone();
         let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("List not found: {}", list_path))
         })?;
-        if list_node.node_type != "list" {
-            return Err(OverseerError::ValidationError(
-                "prepend.target is not a list".to_string(),
-            ));
+        match goes {
+            WhereItGoes::First => list_node.children.insert(0, new_item),
+            WhereItGoes::Last => list_node.children.push(new_item),
         }
-
-        let style_guide = Self::derive_list_entry_style(list_node, true);
-
-        if let Some(entry) = list_node.parameters.get("entry") {
-            match entry {
-                OverseerValue::Template(t) => {
-                    let chosen_template_name = if let Some(name) = template_name {
-                        name.to_string()
-                    } else {
-                        let raw = t.split('/').last().unwrap_or("");
-                        let trimmed = raw.trim();
-                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2
-                        {
-                            trimmed[1..trimmed.len() - 1].to_string()
-                        } else {
-                            trimmed.to_string()
-                        }
-                    };
-                    let template_def = Self::find_node_by_name(&snapshot, &chosen_template_name)
-                        .ok_or_else(|| {
-                            OverseerError::ValidationError(format!(
-                                "Template not found: {}",
-                                chosen_template_name
-                            ))
-                        })?;
-                    let mut new_item = Self::clone_from_template(template_def);
-                    if let Some(OverseerValue::String(parent_eff)) =
-                        list_node.parameters.get("_effective_layout")
-                    {
-                        let opp = Self::opposite_layout(parent_eff);
-                        new_item
-                            .parameters
-                            .insert("_effective_layout".to_string(), OverseerValue::String(opp));
-                    }
-                    // Name as if appended to the front: use current length+1 to maintain unique names
-                    let ordinal = list_node.children.len() + 1;
-                    new_item.name = format!("{}__{}", template_def.name, ordinal);
-                    let mut all = match from {
-                        Some(from) => Self::overrides_copied_from(&snapshot, owner_path, from, template_def, overrides)?,
-                        None => Vec::new(),
-                    };
-                    all.extend(overrides.iter().cloned());
-                    Self::apply_overrides_evaluated(
-                        &mut new_item,
-                        &all,
-                        owner_path,
-                        &snapshot,
-                    )?;
-                    Self::apply_list_entry_style(&mut new_item, &style_guide);
-                    Self::mark_the_entry_as_new(&mut new_item);
-                    let made = new_item.name.clone();
-                    list_node.children.insert(0, new_item);
-                    Self::harmonize_list_entry_spacing(list_node, &style_guide);
-                    // Mark this list field as explicitly overridden so mutations persist on template instances
-                    Self::mark_field_explicit_override(nodes, &indices);
-                    // Shape, not value - see `Shape`. Unsaid, what reached the resolver looked like
-                    // a change to values: the graph was asked about a document whose entries had
-                    // moved, and the survivors kept names their text no longer gives them.
-                    note_shape(Shape::Added { list: list_address, entry: made });
-                }
-                OverseerValue::String(type_name) => {
-                    let val = value_opt.ok_or_else(|| {
-                        OverseerError::ValidationError(
-                            "prepend.value required for simple list".to_string(),
-                        )
-                    })?;
-                    let mut item = OverseerNode {
-                        name: format!("{}__{}", type_name, list_node.children.len() + 1),
-                        node_type: type_name.clone(),
-                        template: None,
-                        parameters: Default::default(),
-                        children: Vec::new(),
-                        is_hierarchy_transparent: false,
-                        param_order: Vec::new(),
-                        raw_value_literal: None,
-                        authored_dash: false,
-                        child_original_index: None,
-                        leading_blank_lines: 0,
-                        source_snapshot: None,
-                        source_id: None,
-                        source_fingerprint: None,
-                    };
-                    item.parameters.insert("value".to_string(), val);
-                    Self::apply_list_entry_style(&mut item, &style_guide);
-                    Self::mark_the_entry_as_new(&mut item);
-                    let made = item.name.clone();
-                    list_node.children.insert(0, item);
-                    Self::harmonize_list_entry_spacing(list_node, &style_guide);
-                    // Mark this list field as explicitly overridden so mutations persist on template instances
-                    Self::mark_field_explicit_override(nodes, &indices);
-                    note_shape(Shape::Added { list: list_address, entry: made });
-                }
-                _ => {
-                    return Err(OverseerError::ValidationError(
-                        "prepend: unsupported entry type".to_string(),
-                    ))
-                }
-            }
-        } else {
-            return Err(OverseerError::ValidationError(
-                "prepend: list has no entry parameter".to_string(),
-            ));
-        }
+        Self::harmonize_list_entry_spacing(list_node, &style_guide);
+        // Mark this list field as explicitly overridden so mutations persist on template instances
+        Self::mark_field_explicit_override(nodes, &indices);
+        // Shape, not value - see `Shape`. Unsaid, what reached the resolver looked like a change to
+        // values: the graph was asked about a document whose entries had moved, and the survivors
+        // kept names their text no longer gives them.
+        note_shape(Shape::Added { list: list_address, entry: made });
         Ok(())
     }
 

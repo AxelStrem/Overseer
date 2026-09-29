@@ -288,3 +288,26 @@ fn the_real_documents_hold_up() {
         complaints.join("\n")
     );
 }
+
+#[test]
+fn a_chain_through_stored_values_is_followed_to_its_end() {
+    // What the cascade holds is a value - `t/b#_computed_value` - and what a reader records is the
+    // node it read, `t/b`. The cascade used to look only at the value, and reached `c` only because
+    // the read that recorded `b` had worked `b` out on the spot and handed up what that read too.
+    // Once a pass reads the document it is writing, `b` is often already stored, `c` records `b`
+    // alone, and the chain stopped there: a meal added moved the day's grams and not the figures
+    // per hundred grams worked out from them.
+    dependencies::start_recording();
+    {
+        let _b = dependencies::WorkingOut::value("t/b#_computed_value");
+        dependencies::note_read(&["t".to_string(), "a".to_string()]);
+    }
+    {
+        let _c = dependencies::WorkingOut::value("t/c#_computed_value");
+        dependencies::note_read(&["t".to_string(), "b".to_string()]);
+    }
+    let graph = dependencies::take_recording();
+    let reached = graph.nodes_to_work_out_again(&["t/a".to_string()]);
+    assert!(reached.contains(&"t/b".to_string()), "{:?}", reached);
+    assert!(reached.contains(&"t/c".to_string()), "the chain stopped at the value it read: {:?}", reached);
+}

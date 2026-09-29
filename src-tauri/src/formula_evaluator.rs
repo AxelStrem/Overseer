@@ -781,10 +781,13 @@ impl FormulaEvaluator {
     }
 
     /// Say which document the pass about to run reads from. `end_pass_memo` forgets it.
-    pub fn begin_pass_over(root: &[OverseerNode]) {
+    ///
+    /// By pointer, because it is the document being written: a reference held for the pass would
+    /// be one into what the pass writes between the nodes it works out.
+    pub fn begin_pass_over(root: *const [OverseerNode]) {
         Self::begin_pass_memo();
         Self::with_pass_root(|slot| {
-            *slot = Some(PassRoot { root: root.as_ptr(), len: root.len(), paths: None })
+            *slot = Some(PassRoot { root: root as *const OverseerNode, len: root.len(), paths: None })
         });
     }
 
@@ -796,8 +799,9 @@ impl FormulaEvaluator {
     fn path_in_pass(node: &OverseerNode) -> Option<(&'static [OverseerNode], Vec<String>)> {
         Self::with_pass_root(|slot| {
             let held = slot.as_mut()?;
-            // SAFETY: set by `begin_pass_over` from the snapshot the pass reads, and cleared by
-            // `end_pass_memo` before that snapshot is dropped. Nothing writes to it in between.
+            // SAFETY: set by `begin_pass_over` from the document the pass reads, and cleared by
+            // `end_pass_memo` before the pass lets go of it. Asked only while a node's formulas are
+            // worked out, when nothing is written; the pass writes between, when nothing asks.
             let root: &'static [OverseerNode] =
                 unsafe { std::slice::from_raw_parts(held.root, held.len) };
             let paths = held.paths.get_or_insert_with(|| {
