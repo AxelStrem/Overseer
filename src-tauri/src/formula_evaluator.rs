@@ -187,6 +187,13 @@ impl FormulaEvaluator {
         ClockPin { owned: true }
     }
 
+    /// What time it is for the work in hand - the pinned reading when there is one - without it
+    /// counting as a formula reading the clock. For the machinery that decides what to work out
+    /// again, which is not itself worked out.
+    pub fn pinned_now() -> DateTime<Utc> {
+        Self::get_time_override().unwrap_or_else(Utc::now)
+    }
+
     /// The clock, read the way a field is.
     ///
     /// Every function that asks what time it is asks through here, so a value that depends on the

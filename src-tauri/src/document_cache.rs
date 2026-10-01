@@ -163,6 +163,8 @@ struct Entry {
     /// The files the tree's mounts were read from, and how each stood then - see
     /// `actions::mounts_held`. The text is not all a tree was worked out from.
     mounts: Vec<(String, String)>,
+    /// The minute what reads the clock was last worked out in - see `clock_caught_up`.
+    clock_minute: Option<i64>,
 }
 
 impl Entry {
@@ -265,6 +267,26 @@ pub fn nodes_for(text: &str) -> Option<Vec<OverseerNode>> {
     })
 }
 
+/// Whether what reads the clock in the document held for this text was worked out in this minute.
+///
+/// Every function a document asks the time with answers in minutes or coarser - the minute of the
+/// day, minutes since, days since, the same day - so within one minute there is nothing for the
+/// clock to have moved. Several writes in a row are the usual shape of things: four foods from one
+/// message, three tasks marked done, the sweep opening a morning's tasks. The first brings the
+/// document up to the minute and the rest find it there.
+pub fn clock_caught_up(text: &str, minute: i64) -> bool {
+    with(|store| at(store, text).is_some_and(|found| store[found].clock_minute == Some(minute)))
+}
+
+/// Say that what reads the clock in the document held for this text was worked out in this minute.
+pub fn clock_worked_out_in(text: &str, minute: i64) {
+    with(|store| {
+        if let Some(found) = at(store, text) {
+            store[found].clock_minute = Some(minute);
+        }
+    })
+}
+
 /// The document this text produced, lent to `look` rather than copied out - for a question that
 /// decides whether to take it at all.
 pub fn with_nodes<R>(text: &str, look: impl FnOnce(&[OverseerNode]) -> R) -> Option<R> {
@@ -311,6 +333,7 @@ fn put(text: &str, work: impl FnOnce(&mut Entry)) {
                     bytes: 0,
                     used: 0,
                     mounts: Vec::new(),
+                    clock_minute: None,
                 });
                 store.len() - 1
             }

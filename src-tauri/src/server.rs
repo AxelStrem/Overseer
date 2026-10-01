@@ -1145,7 +1145,11 @@ impl DocumentRoot {
             // `app_api::take_worked_out`.
             let in_view = looking_at.is_empty()
                 && crate::document_cache::with_nodes(&text, |nodes| wholly_in_view(nodes, touching)) == Some(true);
-            let quick = if in_view { app_api::take_worked_out(&text) } else { None };
+            // And brought up to the moment before anything reads it: held from when it was last
+            // worked out, what reads the clock is as old as that - see
+            // `app_api::catch_up_with_the_clock`. Without a graph to say what that is, the long way.
+            let quick = if in_view { app_api::take_worked_out(&text) } else { None }
+                .and_then(|mut nodes| app_api::catch_up_with_the_clock(&text, &mut nodes).map(|()| nodes));
             let quick_way = quick.is_some();
             // Then it holds the very document the graph for this text describes, so a change of
             // shape can be followed through the graph - see `app_api::settle_after_change`.

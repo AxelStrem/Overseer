@@ -338,11 +338,26 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
 /// function of their text, but a task's priority climbs by the day and its deadline passes, and
 /// handing back yesterday's answer for those would be wrong in the way nobody notices.
 fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
-    // It may read the clock - but the graph says *where*, and everything else in the document is
-    // a function of its text and has not moved. So only what descends from the clock is worked
-    // out again: on a list of tasks that is the priorities and the deadlines, not the rules, not
-    // the history, not the hundred fields that spell out what each one is. Nothing, for a
-    // document that never asks the time.
+    let mut previous = baseline_copy(content)?;
+    catch_up_with_the_clock(content, &mut previous)?;
+    Some(previous)
+}
+
+/// Work out again whatever reads the clock, in a document held from when it was last worked out.
+/// `None` when there is no graph to say what that is, and the document cannot be trusted as held.
+///
+/// It may read the clock - but the graph says *where*, and everything else in the document is a
+/// function of its text and has not moved. So only what descends from the clock is worked out
+/// again: on a list of tasks that is the priorities and the deadlines, not the rules, not the
+/// history, not the hundred fields that spell out what each one is. Nothing, for a document that
+/// never asks the time.
+///
+/// Asked before a document held is opened again, and before a write starts from one. The write
+/// used not to ask, and what it read was as old as the document held: the sweep's press that
+/// opens the morning's tasks read how many hours were left until each was due from the evening
+/// before, and every one of them opened already overdue - `Morning hygiene`, due by ten, due
+/// thirteen hours before it appeared.
+pub(crate) fn catch_up_with_the_clock(content: &str, nodes: &mut Vec<OverseerNode>) -> Option<()> {
     let stale = crate::document_cache::with_graph(content, |graph| {
         if graph.is_empty() {
             None
@@ -352,19 +367,30 @@ fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
             Some(graph.nodes_to_work_out_again(&[crate::formula_evaluator::CLOCK.to_string()]))
         }
     })??;
-    let mut previous = baseline_copy(content)?;
     if stale.is_empty() {
-        return Some(previous);
+        return Some(());
+    }
+    // Nothing to do when it was brought up to this very minute already - see
+    // `document_cache::clock_caught_up`.
+    let minute = this_minute();
+    if crate::document_cache::clock_caught_up(content, minute) {
+        return Some(());
     }
     let targets: std::collections::HashSet<String> = stale.into_iter().collect();
     crate::dependencies::start_recording();
-    resolver::resolve_specific_fields(&mut previous, &targets);
+    resolver::resolve_specific_fields(nodes, &targets);
     // Charts outright, for the reason given where an edit does the same: a series hangs on a plot
     // child while the reads are recorded against the chart.
-    resolver::compute_chart_series(&mut previous);
+    resolver::compute_chart_series(nodes);
     // A task gone overdue reads through the other branch now - see `Graph::merge`.
     crate::document_cache::add_to_graph(content, crate::dependencies::take_recording());
-    Some(previous)
+    crate::document_cache::clock_worked_out_in(content, minute);
+    Some(())
+}
+
+/// The minute the work in hand is happening in, by the clock it reads.
+fn this_minute() -> i64 {
+    crate::formula_evaluator::FormulaEvaluator::pinned_now().timestamp().div_euclid(60)
 }
 
 fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<OverseerNode>> {
@@ -420,6 +446,7 @@ fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<Ov
             // can be answered with a change rather than with the document.
             if ordinary {
                 remember(&content, &nodes);
+                crate::document_cache::clock_worked_out_in(&content, this_minute());
             }
             Ok(nodes)
         }
@@ -937,8 +964,13 @@ fn change_document(
     };
     let mut nodes = if !looking_at.is_empty() {
         resolve_selective(as_it_stood.clone(), held_for_the_viewer.clone(), Some(looking_at))?
-    } else if let Some(held) = held {
-        held
+    } else if let Some(mut held) = held {
+        // Brought up to the moment before anything reads it - see `catch_up_with_the_clock`. After
+        // the copy above, so what moved with the clock is part of what the caller is told.
+        match catch_up_with_the_clock(&as_it_stood, &mut held) {
+            Some(()) => held,
+            None => load_document(as_it_stood.clone())?,
+        }
     } else {
         load_document(as_it_stood.clone())?
     };
