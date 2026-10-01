@@ -145,6 +145,17 @@ tab project (label="Project", mutable=true) {
             // the way to being filled in.
             int points (label="pts", format="trim", width=6%) = 1
 
+            // Opens the commentary under the row. It is hidden while it is empty, which left a task
+            // nobody had said anything about with nowhere to tap to start - the same trouble a
+            // task's comment had in the task manager, answered the same way. Grey until there is
+            // something to read.
+            button note (icon="note", margin=0, width=3%,
+                         font-color=$(../commentary == "" ? "#6b7280" : "inherit")) {
+                on click {
+                    start_editing (path="../commentary")
+                }
+            }
+
             // Finished. The same two actions as the task manager's done button, and for the
             // same reason: nothing is edited into place, so History is a record of what
             // happened rather than of what the list looks like now.
@@ -229,18 +240,31 @@ tab project (label="Project", mutable=true) {
         // Keeps its points and its tags: any figure about what this project got through will be
         // computed from here, and the tags are how "how much of it was interface work" gets
         // answered.
-        div Finished (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center") {
-            timestamp finished_at (format="datetime", precision="minutes", width=20%) =
-                "2026-01-01T00:00:00Z"
-            timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
-            string title (width=40%) = ""
-            // Kept so a task can still count what has been finished under it, and so a finished
-            // task's own children can still find it.
-            string handle (hidden=true) = ""
-            string parent (hidden=true) = ""
-            tags labels (label="", vocabulary="/project/Labels", width=24%) = ""
-            int points (label="", format="trim", width=6%) = 0
-            string commentary (hidden=true) = ""
+        div Finished (layout="vertical", margin=0, spacing=2) {
+            div (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center") {
+                timestamp finished_at (format="datetime", precision="minutes", width=20%) =
+                    "2026-01-01T00:00:00Z"
+                timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
+                string title (width=40%) = ""
+                // Kept so a task can still count what has been finished under it, and so a
+                // finished task's own children can still find it.
+                string handle (hidden=true) = ""
+                string parent (hidden=true) = ""
+                tags labels (label="", vocabulary="/project/Labels", width=24%) = ""
+                int points (label="", format="trim", width=6%) = 0
+
+                // Opens the commentary. Grey while there is none.
+                button note (icon="note", margin=0, width=3%,
+                             font-color=$(../commentary == "" ? "#6b7280" : "inherit")) {
+                    on click {
+                        start_editing (path="../commentary")
+                    }
+                }
+            }
+
+            // Carried over from the task when it was finished, and kept out of sight: a history
+            // this long would be mostly commentary. Drawn while the note button has it open.
+            string commentary (label="", font-size=11px, font-color="#9ca3af", hidden=true) = ""
         }
     }
 

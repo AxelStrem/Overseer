@@ -5552,14 +5552,20 @@ export class OverseerRenderer {
         const editor = value.parentNode
             ? Array.from(value.parentNode.children).find((c) => c.classList && c.classList.contains('field-editor'))
             : null
+        // Hidden by its declaration rather than by a formula: nothing written into it will show
+        // it, and nothing that comes back will put it away either.
+        const hidden = this.getParameterValue(node, 'hidden')
+        const hiddenForGood = this.getRawFormulaText(node, 'hidden') === null
+            && (hidden === true || String(hidden).toLowerCase() === 'true')
         let closed = false
         const close = (left) => {
             if (closed) return
             closed = true
             this._openForEditing.delete(node)
             // Something typed is shown by the write it makes, which says the field is no longer
-            // empty; drawing it again before that arrives would hide it for a moment.
-            if (!String(left ?? '').trim()) drawAgain()
+            // empty; drawing it again before that arrives would hide it for a moment. Unless it
+            // is hidden for good, and then it goes as it is closed.
+            if (hiddenForGood || !String(left ?? '').trim()) drawAgain()
         }
         if (!editor) {
             // Refused - a field that may not be edited here opens nothing.

@@ -338,9 +338,18 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
 /// function of their text, but a task's priority climbs by the day and its deadline passes, and
 /// handing back yesterday's answer for those would be wrong in the way nobody notices.
 fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
-    let mut previous = baseline_copy(content)?;
-    catch_up_with_the_clock(content, &mut previous)?;
-    Some(previous)
+    // Brought up to the minute where it is held, and a copy handed out - so the next read, and a
+    // write following it, find the one held current too, rather than a copy current and the one
+    // held still the night before's. See `document_cache::clock_worked_out_in`.
+    let mut held = take_worked_out(content)?;
+    if catch_up_with_the_clock(content, &mut held).is_none() {
+        hold_again(content, held);
+        return None;
+    }
+    let copy = held.clone();
+    hold_again(content, held);
+    crate::document_cache::clock_worked_out_in(content, this_minute());
+    Some(copy)
 }
 
 /// Work out again whatever reads the clock, in a document held from when it was last worked out.
@@ -382,9 +391,10 @@ pub(crate) fn catch_up_with_the_clock(content: &str, nodes: &mut Vec<OverseerNod
     // Charts outright, for the reason given where an edit does the same: a series hangs on a plot
     // child while the reads are recorded against the chart.
     resolver::compute_chart_series(nodes);
-    // A task gone overdue reads through the other branch now - see `Graph::merge`.
+    // A task gone overdue reads through the other branch now - see `Graph::merge`. Not marked
+    // current here: these may be a copy, and only the document held can be - whoever puts it back
+    // says so, see `document_cache::clock_worked_out_in`.
     crate::document_cache::add_to_graph(content, crate::dependencies::take_recording());
-    crate::document_cache::clock_worked_out_in(content, minute);
     Some(())
 }
 
@@ -1048,6 +1058,11 @@ fn change_document(
     if let Some(fresh) = worked_out_whole {
         replace_graph(&update.text, fresh);
     }
+    // Held now, and current: brought up to the minute before the change, or opened in it. Not for
+    // a document worked out as one viewer sees it, which is not the one anyone else is handed.
+    if held_for_the_viewer.is_empty() {
+        crate::document_cache::clock_worked_out_in(&update.text, this_minute());
+    }
     phase("answer");
     update.wrote = wrote;
     update.start_editing = to_edit;
@@ -1373,6 +1388,9 @@ pub(crate) fn keep_worked_out(
 ) {
     crate::document_cache::rekey(was, now);
     crate::document_cache::own_nodes(now, nodes);
+    // Brought up to the minute before the write - see `catch_up_with_the_clock` - and worked out
+    // since in the same minute.
+    crate::document_cache::clock_worked_out_in(now, this_minute());
     if let Some(fresh) = whole {
         replace_graph(now, fresh);
     }

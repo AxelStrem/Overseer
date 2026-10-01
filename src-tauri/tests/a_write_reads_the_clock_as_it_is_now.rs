@@ -50,9 +50,9 @@ fn serialised<T>(body: impl FnOnce() -> T) -> T {
 }
 
 /// A moment at this hour and minute of the local day - which is the day `minutes_of_day` counts in.
-fn at_local(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+fn at_local(month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
     chrono::Local
-        .with_ymd_and_hms(2026, 9, day, hour, minute, 0)
+        .with_ymd_and_hms(2026, month, day, hour, minute, 0)
         .single()
         .expect("a local moment")
         .with_timezone(&Utc)
@@ -95,11 +95,11 @@ fn the_bot_opening_a_task_in_the_morning_works_from_the_morning() {
         let root = root("bot");
         let documents = DocumentRoot::new(&root).unwrap();
         // Worked out and held late the evening before.
-        let evening = at_local(28, 23, 38);
+        let evening = at_local(9, 28, 23, 38);
         FormulaEvaluator::set_time_override(Some(evening));
         documents.open("d.os").expect("open");
 
-        let morning = at_local(29, 7, 4);
+        let morning = at_local(9, 29, 7, 4);
         FormulaEvaluator::set_time_override(Some(morning));
         documents.run_event("d.os", "t/open", "click").expect("the press");
         assert_eq!(
@@ -115,12 +115,12 @@ fn the_page_opening_a_task_in_the_morning_works_from_the_morning() {
     serialised(|| {
         let root = root("page");
         let file = root.join("d.os").to_string_lossy().to_string();
-        let evening = at_local(28, 23, 38);
+        let evening = at_local(9, 28, 23, 38);
         FormulaEvaluator::set_time_override(Some(evening));
         let page = overseer::app_api::load_document(DOCUMENT.to_string()).expect("open");
         let button = overseer::addressing::name_path(&page, "t/open").expect("the button");
 
-        let morning = at_local(29, 7, 4);
+        let morning = at_local(9, 29, 7, 4);
         FormulaEvaluator::set_time_override(Some(morning));
         let answer = overseer::app_api::run_event_at(&file, "d.os", button, "click".into(), "s", Vec::new())
             .expect("the press");
@@ -132,5 +132,26 @@ fn the_page_opening_a_task_in_the_morning_works_from_the_morning() {
             "the page was left showing the evening's clock: {:?}",
             changes.iter().map(|c| c.address()).collect::<Vec<_>>()
         );
+    });
+}
+
+#[test]
+fn the_sweep_reading_the_rules_before_it_presses_still_works_from_the_morning() {
+    // The sweep reads the rules to see which are due, then presses each one's `add` - within the
+    // same minute. Opening a document brought a copy of it up to the minute and marked the one
+    // held as though it had been, so the press that followed found it "already caught up" and read
+    // the evening's figures: every task of 2026-10-01 opened overdue, a day after the fix that
+    // should have stopped it.
+    serialised(|| {
+        let root = root("sweep");
+        let documents = DocumentRoot::new(&root).unwrap();
+        FormulaEvaluator::set_time_override(Some(at_local(9, 30, 23, 58)));
+        documents.open("d.os").expect("open");
+
+        let morning = at_local(10, 1, 8, 4);
+        FormulaEvaluator::set_time_override(Some(morning));
+        documents.read_at("d.os", "t").expect("the sweep reads what is due");
+        documents.run_event("d.os", "t/open", "click").expect("then presses");
+        assert_eq!(given(&root), due_in_minutes(morning), "the press read the evening's figures");
     });
 }

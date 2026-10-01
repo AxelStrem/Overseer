@@ -33,7 +33,8 @@ const base = (name, node_type, parameters = {}, children = [], transparent = fal
 // t / Open / Task__1 / [ key, (row: title, note), comment ]
 const COMMENT = [0, 0, 0, 2]
 
-const theDocument = ({ mutable = true, comment = '' } = {}) => [base('t', 'tab', { mutable: { Boolean: mutable } }, [
+// `hiddenForGood`: hidden by its declaration, as a finished task's commentary is in a project.
+const theDocument = ({ mutable = true, comment = '', hiddenForGood = false } = {}) => [base('t', 'tab', { mutable: { Boolean: mutable } }, [
   base('Open', 'list', { key: { String: 'key' } }, [
     base('Task__1', 'div', {}, [
       base('key', 'string', { value: { String: 'a' }, hidden: { Boolean: true } }),
@@ -43,11 +44,13 @@ const theDocument = ({ mutable = true, comment = '' } = {}) => [base('t', 'tab',
           base('click', 'on', {}, [base('start_editing', 'start_editing', { path: { String: '../comment' } })]),
         ]),
       ], true),
-      base('comment', 'string', {
-        value: { String: comment },
-        hidden: { Formula: 'comment == ""' },
-        _computed_hidden: { Boolean: comment === '' },
-      }),
+      base('comment', 'string', hiddenForGood
+        ? { value: { String: comment }, hidden: { Boolean: true } }
+        : {
+          value: { String: comment },
+          hidden: { Formula: 'comment == ""' },
+          _computed_hidden: { Boolean: comment === '' },
+        }),
     ]),
   ]),
 ])]
@@ -131,6 +134,19 @@ describe('a press that opens a field', () => {
     box.dispatchEvent(new window.Event('blur'))
     expect(drawnComment(), 'the typed comment vanished before its write came back').not.toBeNull()
     expect(app.renderer.isOpenForEditing(commentNode())).toBe(false)
+  })
+
+  it('opens a field hidden for good, and puts it away once it is closed with something in it', async () => {
+    // No write will hide it, since it is hidden whatever it says - so it would sit on screen,
+    // looking like a field that shows, until something happened to draw its row again.
+    render({ hiddenForGood: true, comment: 'already said' })
+    expect(drawnComment()).toBeNull()
+    await pressNote()
+    expect(editor().value).toBe('already said')
+    const box = editor()
+    box.value = 'said again'
+    box.dispatchEvent(new window.Event('blur'))
+    expect(drawnComment(), 'a field hidden for good was left drawn').toBeNull()
   })
 
   it('opens a comment that is already showing', async () => {

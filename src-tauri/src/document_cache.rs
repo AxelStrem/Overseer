@@ -279,6 +279,13 @@ pub fn clock_caught_up(text: &str, minute: i64) -> bool {
 }
 
 /// Say that what reads the clock in the document held for this text was worked out in this minute.
+///
+/// Said of the document the entry holds, by whoever put it there knowing - after an open worked it
+/// out, after a write that brought it up to the minute and handed it back. Putting a document in
+/// unsays it, since a document put back can be one taken before it was brought up to date. It
+/// used to be said by whatever brought *a* document up to date, and an open does that to a copy:
+/// the sweep read the rules, the copy it was given was current, the one held was marked current and
+/// was not, and the press that followed within the minute read the night before's figures.
 pub fn clock_worked_out_in(text: &str, minute: i64) {
     with(|store| {
         if let Some(found) = at(store, text) {
@@ -355,6 +362,9 @@ pub fn put_nodes(text: &str, nodes: &[OverseerNode]) {
     put(text, |entry| {
         entry.mounts = crate::actions::mounts_held(nodes);
         entry.nodes = Some(nodes.to_vec());
+        // How current what reads the clock is, is for whoever knows to say - see
+        // `clock_worked_out_in`.
+        entry.clock_minute = None;
     });
 }
 
@@ -366,6 +376,7 @@ pub fn own_nodes(text: &str, nodes: Vec<OverseerNode>) {
     put(text, |entry| {
         entry.mounts = crate::actions::mounts_held(&nodes);
         entry.nodes = Some(nodes);
+        entry.clock_minute = None;
     });
 }
 
