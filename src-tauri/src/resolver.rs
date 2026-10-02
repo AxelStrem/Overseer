@@ -2172,6 +2172,16 @@ fn resolve_parameter_inheritance(
     parent_params: &crate::types::Params,
 ) {
     for node in nodes.iter_mut() {
+        // Not into what a press runs. An action is never drawn, so a style handed to one means
+        // nothing - until an action copies itself somewhere: `- title = $(../title)` in an
+        // `append` is a node like any other, and every parameter it holds is applied to the new
+        // entry's field. Handed the colour of the entry the button sat in, it gave that colour to
+        // the field, which then never took the colour of where it now was, since a node that
+        // already holds a style keeps it. So a task done while overdue went into the history red,
+        // field by field, wherever a coloured entry was moved to another list.
+        if node.node_type == "on" {
+            continue;
+        }
         let inheritable_params = INHERITABLE_PARAMS;
 
         // Inherit each styling parameter from parent if not explicitly set
