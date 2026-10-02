@@ -1411,10 +1411,10 @@ impl ActionExecutor {
                     ));
                 };
                 // Find matching item and set field value
-                if let Some(item) = list_node.children.iter_mut().find(|it| {
-                    Self::get_field_value(it, &effective_key_field)
-                        .map_or(false, |v| Self::value_equals(v, &key_value))
-                }) {
+                let holding = Self::the_one_holding(list_node, &effective_key_field, &key_value, &list_path, "change", |v| {
+                    Self::value_equals(v, &key_value)
+                })?;
+                if let Some(item) = holding.and_then(|at| list_node.children.get_mut(at)) {
                     Self::set_field_value_on_item(item, &field_name, new_value);
                 }
                 Ok(())
@@ -3072,6 +3072,41 @@ impl ActionExecutor {
         )
     }
 
+    /// Where the one entry of a list holding `value` in `field` stands, if any does.
+    ///
+    /// Refused when several do, rather than taking the first. The first of several used to be
+    /// the one removed, changed or moved, and the press asking was nearly always about another:
+    /// `finish` on the fourth of four project tasks sharing an `added` stamp recorded that one as
+    /// finished and took the first off the list - gone, and recorded nowhere. A refused press
+    /// writes nothing at all, so the worst it costs is the press.
+    fn the_one_holding(
+        list: &OverseerNode,
+        field: &str,
+        value: &OverseerValue,
+        list_path: &str,
+        doing: &str,
+        holds: impl Fn(&OverseerValue) -> bool,
+    ) -> Result<Option<usize>, OverseerError> {
+        let holding: Vec<usize> = list
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| Self::get_field_value(it, field).map_or(false, &holds))
+            .map(|(at, _)| at)
+            .collect();
+        if holding.len() > 1 {
+            return Err(OverseerError::ValidationError(format!(
+                "{} entries of {} hold {} = {}, so which one to {} is not clear; nothing was changed",
+                holding.len(),
+                list_path,
+                field,
+                as_text(value).unwrap_or_else(|| format!("{:?}", value)),
+                doing
+            )));
+        }
+        Ok(holding.first().copied())
+    }
+
     fn remove_from_list(
         nodes: &mut Vec<OverseerNode>,
         owner_path: &[String],
@@ -3106,11 +3141,10 @@ impl ActionExecutor {
             ));
         };
 
-        if let Some(pos) = list_node.children.iter().position(|it| {
-            Self::get_field_value(it, &effective_key_field).map_or(false, |v| {
-                Self::value_equals_with_key_precision(&list_node, v, key_value)
-            })
-        }) {
+        let holding = Self::the_one_holding(list_node, &effective_key_field, key_value, list_path, "remove", |v| {
+            Self::value_equals_with_key_precision(list_node, v, key_value)
+        })?;
+        if let Some(pos) = holding {
             let gone = list_node.children.remove(pos);
             // Shape, not value - and only when something was taken out.
             note_shape(Shape::Removed { list: list_address, entry: gone.name });
@@ -3987,10 +4021,9 @@ impl ActionExecutor {
                     "move.keyField missing and list has no key".to_string(),
                 ));
             };
-            if let Some(pos) = list_node.children.iter().position(|it| {
-                Self::get_field_value(it, &effective_key_field)
-                    .map_or(false, |v| Self::value_equals(v, key_value))
-            }) {
+            if let Some(pos) = Self::the_one_holding(list_node, &effective_key_field, key_value, from_path, "move", |v| {
+                Self::value_equals(v, key_value)
+            })? {
                 let item = list_node.children.remove(pos);
                 let insert_at = at_index.unwrap_or(list_node.children.len());
                 let idx = if insert_at > list_node.children.len() {
@@ -4024,10 +4057,9 @@ impl ActionExecutor {
                         "move.keyField missing and list has no key".to_string(),
                     ));
                 };
-                if let Some(pos) = from_node.children.iter().position(|it| {
-                    Self::get_field_value(it, &effective_key_field)
-                        .map_or(false, |v| Self::value_equals(v, key_value))
-                }) {
+                if let Some(pos) = Self::the_one_holding(from_node, &effective_key_field, key_value, from_path, "move", |v| {
+                    Self::value_equals(v, key_value)
+                })? {
                     Some(from_node.children.remove(pos))
                 } else {
                     None

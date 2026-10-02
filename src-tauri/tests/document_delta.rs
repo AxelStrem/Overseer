@@ -281,3 +281,25 @@ fn a_removed_entry_is_reported_as_removed() {
         changes.iter().map(|c| c.address()).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_list_whose_entries_share_a_key_is_sent_whole() {
+    // Two entries holding one key share an address, and address is how a change is matched to
+    // what it changes. Described entry by entry, both were matched to the same one: four project
+    // tasks sharing an `added` stamp drew as four copies of one of them once a fifth was added,
+    // until the page was reloaded.
+    let a = "            - id = \"a\"\n";
+    let shared = KEYED.replace("            - id = \"b\"\n", a);
+    assert_eq!(shared.matches(a).count(), 2, "the two rows do not share a key");
+    let z = "        - {\n            - id = \"z\"\n            - qty = 9\n        }\n";
+    let rows = "    list Rows (entry=<Row>, key=\"id\") {\n";
+
+    let changes = applied(&shared, &shared.replace(rows, &format!("{}{}", rows, z)));
+    assert!(
+        changes.iter().any(|c| matches!(c, DocumentChange::Subtree { address, .. } if address == "t/Rows")),
+        "the list was described entry by entry: {:?}",
+        changes.iter().map(|c| c.address()).collect::<Vec<_>>()
+    );
+    // One of the two changed where it stands: matched by address, it was compared with the other.
+    applied(&shared, &shared.replace("- qty = 2", "- qty = 5"));
+}

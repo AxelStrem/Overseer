@@ -245,6 +245,14 @@ fn compare_one(
 
     let before_children = addressing::child_segments(was);
     let after_children = addressing::child_segments(node);
+    // Two entries at one address - a keyed list where two entries hold the same key - cannot be
+    // told apart by address, and address is how everything here is matched. Described entry by
+    // entry, all of them were matched to the same one: four project tasks sharing an `added`
+    // stamp drew as four copies of one of them after a fifth was added. So the node goes whole.
+    if repeats(&before_children) || repeats(&after_children) {
+        walk.changes.push(DocumentChange::Subtree { address, path: here, node: node.clone() });
+        return;
+    }
     if before_children != after_children {
         if let Some((entries, kept, left_out)) = entries_of(was, node, &before_children, &after_children) {
             if was.parameters != node.parameters {
@@ -283,6 +291,11 @@ fn compare_one(
         });
     }
     compare(Some(node), &addressing::effective_children(node), &address, &here, previous, walk);
+}
+
+fn repeats(segments: &[String]) -> bool {
+    let mut seen = HashSet::with_capacity(segments.len());
+    segments.iter().any(|s| !seen.insert(s.as_str()))
 }
 
 /// A node's children as entries kept or sent, when they can be told that way: with no wrapper

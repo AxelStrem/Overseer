@@ -79,13 +79,15 @@ tab project (label="Project", mutable=true) {
             // sake of four characters. They are wider than the value alone would need
             // because the label is now sharing the width with it.
 
-            // What a child names when it says this is its parent. Short, because it is typed
-            // by hand: the list is keyed by `added`, which is stable for addressing and no use
-            // at all for a person to type.
+            // What this task is called: the list's key, and what a child names when it says this is
+            // its parent. Short, because it is typed by hand.
             //
-            // Nothing enforces that these are unique or that the tree has no loops. Two tasks
-            // sharing a handle are treated as one by anything counting children; two naming
-            // each other read as an error. Both are assumed not to happen.
+            // The list was keyed by `added`, the one value nothing types - until four tasks written
+            // in by hand shared one, and the page took them for one another. A handle already had
+            // to be unique and to stay as first typed, or a child loses its parent, so as the key
+            // it asks nothing new, and an address reads `Items/[rulescan]`. The form refuses an
+            // empty or taken one. Nothing stops a handle being changed afterwards, or two tasks
+            // naming each other; both are assumed not to happen.
             string handle (label="id", font-size=11px, width=8%) = ""
 
             // In bold when there is something under it, so the shape of the plan shows in a list
@@ -187,7 +189,7 @@ tab project (label="Project", mutable=true) {
                         - points = $(../points)
                         - commentary = $(../commentary)
                     }
-                    remove (from="/project/Items", keyField="added", keyValue=$(../added))
+                    remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
                 }
             }
 
@@ -294,8 +296,10 @@ tab project (label="Project", mutable=true) {
     // press copies the boxes into a new entry by their names, turns the points into a number, and
     // empties them. The tags are picked, as they are everywhere else, rather than typed. A box
     // left empty leaves the template's value - one point in particular, so whatever the task is
-    // put under has something to divide by. The moment it was added is its key, and the block
-    // says that rather than the form.
+    // put under has something to divide by. Its id is the list's key, so the press does nothing
+    // when the id is empty or already taken - by an open task or by a finished one, whose children
+    // still find it by that id - and the boxes keep what was typed, to be put right, as the tag
+    // form's do.
     div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
         textbox handle (label="", placeholder="id", width=11%) = ""
         textbox title (label="", placeholder="what needs doing", width=38%) = ""
@@ -304,8 +308,10 @@ tab project (label="Project", mutable=true) {
         textbox points (label="", placeholder="pts", width=7%) = ""
         button add (label="+ task", margin=0, width=12%) {
             on click {
-                append (list="/project/Items", from="..") {
-                    - added = $(now())
+                if (cond=$(../handle != "" && /project/Items.filter(|x| x/handle == ../handle).count() == 0 && /project/History.filter(|x| x/handle == ../handle).count() == 0)) {
+                    append (list="/project/Items", from="..") {
+                        - added = $(now())
+                    }
                 }
             }
         }
@@ -323,7 +329,7 @@ tab project (label="Project", mutable=true) {
     // look at: both things under it are finished, so it reads 100%, offers `finish` and waits.
     // Its own two points are not paid until that is pressed - and until it is, more work can go
     // under it.
-    list Items (entry=<Item>, key="added", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", hover-text=true, sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
+    list Items (entry=<Item>, key="handle", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", hover-text=true, sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
         - {
             - added = "2026-09-01T09:00:00+04:00"
             - handle = "editor"
