@@ -588,7 +588,18 @@ pub fn forget_baseline() {
 #[derive(serde::Serialize)]
 pub struct ResolvedUpdate {
     /// The text of the new document, for the caller to send with the next interaction.
+    ///
+    /// Not sent to the page with a described change - see `for_the_page` - and so left out
+    /// when empty rather than sent empty: a page taking an empty text for the document would
+    /// build its next change on nothing.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub text: String,
+    /// The text, named rather than sent: what `load_overseer_text` gives back for it.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub version: String,
+    /// `file_text` named the same way, when it differs from the text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_version: Option<String>,
     /// What changed, when the previous document was known.
     pub changes: Option<Vec<crate::delta::DocumentChange>>,
     /// The whole document, when it was not and there is nothing to describe a change against.
@@ -693,6 +704,8 @@ fn finish_update_with(
             crate::document_cache::own_nodes(&text, resolved);
             Ok(ResolvedUpdate {
                 text,
+                version: String::new(),
+                file_version: None,
                 changes: Some(changes),
                 nodes: None,
                 view_state: Vec::new(),
@@ -707,6 +720,8 @@ fn finish_update_with(
             remember(&text, &resolved);
             Ok(ResolvedUpdate {
                 text,
+                version: String::new(),
+                file_version: None,
                 changes: None,
                 nodes: Some(resolved),
                 view_state: Vec::new(),
@@ -1019,6 +1034,8 @@ fn change_document(
         return Ok(ResolvedUpdate {
             start_editing: field_to_edit(report.as_ref(), &nodes),
             text: as_it_stood,
+            version: String::new(),
+            file_version: None,
             changes: Some(Vec::new()),
             nodes: None,
             view_state: Vec::new(),
@@ -1685,6 +1702,86 @@ pub fn still_says_what_it_did(on_disk: &str, was: Option<&str>) -> bool {
         None => true,
         Some(was) => canonicalize_document(on_disk) == canonicalize_document(was),
     }
+}
+
+/// The same, for a caller that holds the file only by its version - see `for_the_page`.
+///
+/// Exact rather than canonical: the version names the text this side wrote, so a file saying
+/// anything else, even only differently laid out, was written by something else since.
+pub fn still_is_version(on_disk: &str, version: Option<&str>) -> bool {
+    match version {
+        None => true,
+        Some(version) => version_of(on_disk) == version,
+    }
+}
+
+/// A text named in a few bytes.
+///
+/// FNV-1a rather than the standard library's hasher, whose output may change from one build to
+/// the next: a page left open across a deploy still holds versions the new server has to read the
+/// same way. The length rides along so two texts would have to collide at the same length too.
+pub fn version_of(text: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:016x}-{}", hash, text.len())
+}
+
+/// The texts handed out by version, newest last, for `load_overseer_text` to give back.
+///
+/// A page needs the text of its document only when something goes the long way - a write was
+/// refused and is worked out from the text instead, or there is no file yet - so it is kept here
+/// for when it is asked for rather than sent with every answer. A few, because a page only ever
+/// asks for the one it was last told about; one that is gone by then is rebuilt from the document
+/// the page holds, which is what the page did before this existed.
+static HANDED_OUT: std::sync::Mutex<Vec<(String, std::sync::Arc<str>)>> =
+    std::sync::Mutex::new(Vec::new());
+const HANDED_OUT_KEPT: usize = 12;
+
+fn hand_out(text: String) -> String {
+    let version = version_of(&text);
+    let mut kept = HANDED_OUT.lock().unwrap_or_else(|e| e.into_inner());
+    kept.retain(|(held, _)| held != &version);
+    kept.push((version.clone(), std::sync::Arc::from(text)));
+    let over = kept.len().saturating_sub(HANDED_OUT_KEPT);
+    kept.drain(..over);
+    version
+}
+
+/// The text a version names: one handed out lately, or the file if that is what it says now.
+pub fn text_of_version(path: &str, version: &str) -> Option<String> {
+    let kept = HANDED_OUT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, text)) = kept.iter().rev().find(|(held, _)| held == version) {
+        return Some(text.to_string());
+    }
+    drop(kept);
+    let on_disk = std::fs::read_to_string(path).ok()?;
+    (version_of(&on_disk) == version).then_some(on_disk)
+}
+
+/// An answer as the page is sent it: a described change without the document's text.
+///
+/// The text was nearly all of every answer - 222 KB of the 267 KB a press on tasks.os came back
+/// with, 31 KB of the 36 KB after compression, and all but half a kilobyte of a field write - and
+/// the page reads it only when something goes the long way. So it is named by its version and
+/// kept here, and `load_overseer_text` gives it back when it is wanted. The file's own text, which
+/// differs when a viewer's values are in play, goes the same way.
+///
+/// A whole document keeps its text: it is a fraction of that answer, and a page given a whole
+/// document is about to work from it. The file's text goes either way, since all the page does
+/// with it is check a later save against it - which its version does as well.
+pub fn for_the_page(mut update: ResolvedUpdate) -> ResolvedUpdate {
+    if let Some(file) = update.file_text.take() {
+        update.file_version = Some(hand_out(file));
+    }
+    if update.changes.is_none() {
+        update.version = version_of(&update.text);
+        return update;
+    }
+    update.version = hand_out(std::mem::take(&mut update.text));
+    update
 }
 
 /// Write a document, keeping what it said so the write can be taken back.

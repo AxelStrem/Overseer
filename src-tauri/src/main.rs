@@ -66,6 +66,13 @@ async fn load_overseer_file(path: String) -> Result<String> {
     }
 }
 
+/// The text an answer named by its version rather than sent - see `app_api::for_the_page`.
+/// Nothing when it is no longer kept and the file says something else.
+#[command]
+async fn load_overseer_text(path: String, version: String) -> Result<Option<String>> {
+    Ok(app_api::text_of_version(&path, &version))
+}
+
 // Save a regenerated document provided by the caller. We canonicalize via the serializer so
 // snapshot-driven trivia (comments/whitespace) is reapplied without needing the original text.
 #[command]
@@ -94,13 +101,20 @@ async fn save_overseer_file_from_text(
     content: String,
     guarded: Option<Vec<app_api::GuardedRevert>>,
     original: Option<String>,
+    // The same by version, which is all the window holds of a file it last heard of from an
+    // instruction's answer - see `app_api::for_the_page`.
+    original_version: Option<String>,
 ) -> Result<()> {
     // What the window was working from. If the file no longer says that, something else has
     // written since - the server, the bot, another window - and this text was built without
     // it. Writing anyway discards that write and says nothing.
-    if let Some(was) = original.as_deref() {
+    if original.is_some() || original_version.is_some() {
         if let Ok(on_disk) = std::fs::read_to_string(&path) {
-            if !app_api::still_says_what_it_did(&on_disk, Some(was)) {
+            let still = match original.as_deref() {
+                Some(was) => app_api::still_says_what_it_did(&on_disk, Some(was)),
+                None => app_api::still_is_version(&on_disk, original_version.as_deref()),
+            };
+            if !still {
                 return Err(OverseerError::ValidationError(format!(
                     "'{}' has changed since it was opened here. Saving now would throw that change away, so nothing has been written. Open it again and make the edit.",
                     path
@@ -132,7 +146,7 @@ async fn write_overseer_values(
     path: String,
     values: Vec<app_api::ValueWrite>,
 ) -> Result<app_api::ResolvedUpdate> {
-    app_api::write_values_at(&path, &path, values, THE_WINDOW)
+    app_api::write_values_at(&path, &path, values, THE_WINDOW).map(app_api::for_the_page)
 }
 
 /// Add an entry to a list, with whatever fields the page has for it.
@@ -149,6 +163,7 @@ async fn append_overseer_entry(
         fields.unwrap_or_default(),
         THE_WINDOW,
     )
+    .map(app_api::for_the_page)
 }
 
 /// Make sure a list has the entry a view is pointed at, and apply the edit that asked for it.
@@ -160,7 +175,7 @@ async fn ensure_overseer_entry(
     path: String,
     wanted: app_api::EntryWanted,
 ) -> Result<app_api::ResolvedUpdate> {
-    app_api::ensure_entry_at(&path, &path, wanted, THE_WINDOW)
+    app_api::ensure_entry_at(&path, &path, wanted, THE_WINDOW).map(app_api::for_the_page)
 }
 
 /// And take one out.
@@ -169,7 +184,7 @@ async fn remove_overseer_entry(
     path: String,
     entry_path: Vec<String>,
 ) -> Result<app_api::ResolvedUpdate> {
-    app_api::remove_entry_at(&path, &path, entry_path, THE_WINDOW)
+    app_api::remove_entry_at(&path, &path, entry_path, THE_WINDOW).map(app_api::for_the_page)
 }
 
 /// Run one handler, the same way.
@@ -181,6 +196,7 @@ async fn run_overseer_event(
     typed: Option<Vec<app_api::ValueWrite>>,
 ) -> Result<app_api::ResolvedUpdate> {
     app_api::run_event_at(&path, &path, node_path, event_name, THE_WINDOW, typed.unwrap_or_default())
+        .map(app_api::for_the_page)
 }
 
 #[command]
@@ -376,6 +392,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_overseer_file,
+            load_overseer_text,
             save_overseer_file,
             save_overseer_file_from_text,
             save_overseer_file_with_original,

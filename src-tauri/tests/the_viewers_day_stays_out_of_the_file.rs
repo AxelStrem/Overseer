@@ -87,6 +87,17 @@ fn set(service: &DocumentRoot, session: &str, field: &str, value: &str) {
         .expect("the write was refused");
 }
 
+
+/// What the answer shows the caller: its text, or the text its version names when it carries a
+/// described change - see `app_api::for_the_page`.
+fn shown(answer: &serde_json::Value) -> String {
+    if let Some(text) = answer.get("text").and_then(|t| t.as_str()) {
+        return text.to_string();
+    }
+    let version = answer.get("version").and_then(|v| v.as_str()).expect("neither a text nor a version");
+    overseer::app_api::text_of_version("", version).expect("the version names no text")
+}
+
 #[test]
 fn a_later_press_does_not_carry_it_in() {
     serialised(|| {
@@ -134,7 +145,7 @@ fn the_viewer_still_sees_the_day_they_moved_to() {
         let service = DocumentRoot::new(&root).expect("open the root");
         press(&service, "alice", "back");
         let answer = press(&service, "alice", "record");
-        let shown = answer.get("text").and_then(|t| t.as_str()).expect("no text");
+        let shown = &shown(&answer);
         assert!(
             !shown.contains("= $(today())"),
             "the viewer was put back to today by their own write"
@@ -153,7 +164,7 @@ fn one_viewers_day_does_not_reach_another_through_the_file() {
         press(&service, "alice", "record");
 
         let bob = press(&service, "bob", "record");
-        let shown = bob.get("text").and_then(|t| t.as_str()).expect("no text");
+        let shown = &shown(&bob);
         assert!(
             shown.contains("= $(today())"),
             "Bob was moved to the day Alice was looking at:\n{}",

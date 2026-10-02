@@ -202,13 +202,14 @@ fn a_press_that_moves_both_says_what_the_file_holds() {
         press(&service, "alpha", "back");
         let answer = press(&service, "alpha", "bump");
         assert_eq!(answer.get("wrote").and_then(|w| w.as_bool()), Some(true));
+        // Said by version rather than in full - see `an_answer_names_the_text_rather_than_sending_it`.
         let said = answer
-            .get("file_text")
+            .get("file_version")
             .and_then(|f| f.as_str())
             .expect("it did not say what the file holds");
         assert_eq!(
             said,
-            on_disk(&root),
+            overseer::app_api::version_of(&on_disk(&root)),
             "what it said the file holds is not what the file holds"
         );
     });

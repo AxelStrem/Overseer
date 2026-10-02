@@ -719,7 +719,7 @@ export class OverseerRenderer {
             // and the press that followed kept its preview path and named a node the document
             // does not have. Silently, because that is how a press that names nothing fails.
             if (Array.isArray(update.changes)) {
-                window.app._currentText = typeof update.text === 'string' ? update.text : null
+                window.app.tookTheText(update)
                 try {
                     const touched = window.app.applyDocumentChanges(
                         window.app.currentDocument, update.changes)
@@ -728,7 +728,7 @@ export class OverseerRenderer {
                     if (DEBUG_MODE) console.warn('[Overseer] repaint after making the entry failed', e)
                 }
             } else if (Array.isArray(update.nodes)) {
-                window.app._currentText = typeof update.text === 'string' ? update.text : null
+                window.app.tookTheText(update)
                 const older = window.app.currentDocument
                 try { this._tagGuardedChangesAfterBackendUpdate(older, update.nodes) } catch (_) {}
                 try {
@@ -6742,7 +6742,7 @@ export class OverseerRenderer {
                     toOpen = update.start_editing || null
                 }
                 if (update && Array.isArray(update.changes)) {
-                    window.app._currentText = typeof update.text === 'string' ? update.text : null
+                    window.app.tookTheText(update)
                     const touched = window.app.applyDocumentChanges(window.app.currentDocument, update.changes)
                     try {
                         this.repaintNodes(touched, window.app.currentDocument)
@@ -6768,9 +6768,15 @@ export class OverseerRenderer {
                     nextText = typeof update.text === 'string' ? update.text : null
                 }
             }
-            if (knownText !== null && (updated === undefined || updated === null)) {
+            // The long way, from the text: fetched now if the last answer only named it, since a
+            // press that goes as an instruction never needs it and fetching it first would cost
+            // every press what only a refused one needs.
+            const theLongWay = (updated === undefined || updated === null) && !materializedForThisEvent
+                ? (knownText ?? await window.app.textInHand())
+                : null
+            if (theLongWay !== null && (updated === undefined || updated === null)) {
                 const answer = await invoke('execute_overseer_event_with_text', {
-                    content: knownText,
+                    content: theLongWay,
                     node_path: path,
                     nodePath: path,
                     event_name: eventName,
@@ -6807,7 +6813,7 @@ export class OverseerRenderer {
             // An event can restructure the document. When the backend returned the new text
             // with it, that text describes the result and the next interaction can use it;
             // otherwise the app has no accurate text and must rebuild it once.
-            try { window.app._currentText = nextText } catch(_) {}
+            try { window.app._currentText = nextText; window.app._textVersion = null } catch(_) {}
             const oldDoc = window.app.currentDocument
             // Tag any backend-driven changes under mutable=guarded so they remain UI-only until save
             try { this._tagGuardedChangesAfterBackendUpdate(oldDoc, newDoc) } catch(_) {}

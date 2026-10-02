@@ -362,6 +362,19 @@ impl DocumentRoot {
                     .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", path, e)))?;
                 Ok(serde_json::Value::String(text))
             }
+            // The text an answer named by its version rather than sent - see
+            // `app_api::for_the_page`. Nothing when it is no longer kept and the file says
+            // something else, and the page then builds the text from the document it holds.
+            "load_overseer_text" => {
+                let path = arg_str(args, &["path"])
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                let version = arg_str(args, &["version"])
+                    .ok_or_else(|| RequestError::Rejected("'version' is required".into()))?;
+                let file = self.resolve(&path)?;
+                Ok(app_api::text_of_version(file.to_string_lossy().as_ref(), &version)
+                    .map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null))
+            }
             "parse_overseer_content" => {
                 let content = arg_str(args, &["content"])
                     .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
@@ -425,14 +438,14 @@ impl DocumentRoot {
                         })?,
                     };
                 as_json(
-                    app_api::append_entry_at(
+                    app_api::for_the_page(app_api::append_entry_at(
                         at.to_string_lossy().as_ref(),
                         named,
                         list,
                         fields,
                         session,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))?,
+                    .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))?),
                 )
             }
             "remove_overseer_entry" => {
@@ -441,13 +454,13 @@ impl DocumentRoot {
                 let at = self.resolve(named)?;
                 let entry = arg_strings(args, &["entry_path", "entryPath"]);
                 as_json(
-                    app_api::remove_entry_at(
+                    app_api::for_the_page(app_api::remove_entry_at(
                         at.to_string_lossy().as_ref(),
                         named,
                         entry,
                         session,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))?,
+                    .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))?),
                 )
             }
             "ensure_overseer_entry" => {
@@ -457,7 +470,7 @@ impl DocumentRoot {
                 let at = self.resolve(named)?;
                 let wanted: app_api::EntryWanted = from_value(args, "wanted")?;
                 as_json(
-                    app_api::ensure_entry_at(
+                    app_api::for_the_page(app_api::ensure_entry_at(
                         at.to_string_lossy().as_ref(),
                         named,
                         wanted,
@@ -465,7 +478,7 @@ impl DocumentRoot {
                     )
                     .map_err(|e| {
                         RequestError::Failed(format!("could not make the entry: {:?}", e))
-                    })?,
+                    })?),
                 )
             }
             "write_overseer_values" => {
@@ -475,13 +488,13 @@ impl DocumentRoot {
                 let at = self.resolve(named)?;
                 let values: Vec<app_api::ValueWrite> = from_value(args, "values")?;
                 as_json(
-                    app_api::write_values_at(
+                    app_api::for_the_page(app_api::write_values_at(
                         at.to_string_lossy().as_ref(),
                         named,
                         values,
                         session,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not write: {:?}", e)))?,
+                    .map_err(|e| RequestError::Failed(format!("could not write: {:?}", e)))?),
                 )
             }
             "run_overseer_event" => {
@@ -499,7 +512,7 @@ impl DocumentRoot {
                     _ => Vec::new(),
                 };
                 as_json(
-                    app_api::run_event_at(
+                    app_api::for_the_page(app_api::run_event_at(
                         at.to_string_lossy().as_ref(),
                         named,
                         path,
@@ -507,7 +520,7 @@ impl DocumentRoot {
                         session,
                         typed,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not run the event: {:?}", e)))?,
+                    .map_err(|e| RequestError::Failed(format!("could not run the event: {:?}", e)))?),
                 )
             }
             "serialize_overseer_nodes" | "serialize_overseer_nodes_raw" => {
@@ -1034,7 +1047,12 @@ impl DocumentRoot {
                 // What the page was working from. If the file no longer says that, something
                 // else has written since - the bot, or another tab - and this text was built
                 // without it. Refusing is the only answer that cannot lose the other write.
-                Self::refuse_if_moved_on(&path, &name, arg_str(args, &["original"]).as_deref())?;
+                Self::refuse_if_moved_on(
+                    &path,
+                    &name,
+                    arg_str(args, &["original"]).as_deref(),
+                    arg_str(args, &["original_version", "originalVersion"]).as_deref(),
+                )?;
                 crate::app_api::canonicalize_document(&regenerated)
             }
             "save_overseer_file_from_text" => {
@@ -1044,7 +1062,12 @@ impl DocumentRoot {
                 // page stopped using that command: sending the text already in hand is far
                 // cheaper than uploading the document, so every save has come through here,
                 // where nothing was checked. Same question, asked here too.
-                Self::refuse_if_moved_on(&path, &name, arg_str(args, &["original"]).as_deref())?;
+                Self::refuse_if_moved_on(
+                    &path,
+                    &name,
+                    arg_str(args, &["original"]).as_deref(),
+                    arg_str(args, &["original_version", "originalVersion"]).as_deref(),
+                )?;
                 let guarded: Vec<crate::app_api::GuardedRevert> = args
                     .get("guarded")
                     .and_then(|g| serde_json::from_value(g.clone()).ok())
@@ -1056,7 +1079,12 @@ impl DocumentRoot {
             "save_overseer_file" => {
                 let content = arg_str(args, &["content"])
                     .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
-                Self::refuse_if_moved_on(&path, &name, arg_str(args, &["original"]).as_deref())?;
+                Self::refuse_if_moved_on(
+                    &path,
+                    &name,
+                    arg_str(args, &["original"]).as_deref(),
+                    arg_str(args, &["original_version", "originalVersion"]).as_deref(),
+                )?;
                 crate::app_api::canonicalize_document(&content)
             }
             other => {
@@ -1252,13 +1280,22 @@ impl DocumentRoot {
         path: &std::path::Path,
         name: &str,
         was: Option<&str>,
+        // The same said by version, which is all a page holds of a file it last heard of from an
+        // instruction's answer - see `app_api::for_the_page`.
+        version: Option<&str>,
     ) -> std::result::Result<(), RequestError> {
-        let Some(was) = was else { return Ok(()) };
+        if was.is_none() && version.is_none() {
+            return Ok(());
+        }
         // A document being written for the first time has nothing to have moved on from.
         let Ok(on_disk) = std::fs::read_to_string(path) else {
             return Ok(());
         };
-        if crate::app_api::still_says_what_it_did(&on_disk, Some(was)) {
+        let still = match was {
+            Some(was) => crate::app_api::still_says_what_it_did(&on_disk, Some(was)),
+            None => crate::app_api::still_is_version(&on_disk, version),
+        };
+        if still {
             return Ok(());
         }
         Err(RequestError::Rejected(format!(

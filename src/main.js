@@ -63,6 +63,10 @@ export class OverseerApp {
     this.renderer = new OverseerRenderer()
     // Keep the raw original text for comment/whitespace merge on save
     this._originalText = null
+    // The same two texts named by version, when an answer named them rather than sending them -
+    // see `tookTheText` and `alreadyWritten`.
+    this._textVersion = null
+    this._originalVersion = null
     // Track recent user edits to guard against stale backend overwrites during selective refresh
     this._pendingUserEdits = new Map() // path -> { value: OverseerValue|string|number|boolean, ts: ms }
         
@@ -551,6 +555,7 @@ export class OverseerApp {
             const overseerDocument = await invoke('parse_overseer_content', { content, path: filePath })
             // The text a resolve starts from, so the first edit need not upload the document.
             this._currentText = content
+            this._textVersion = null
             if (DEBUG_MODE) this.setStatus(`DEBUG: Document parsed, type: ${typeof overseerDocument}, length: ${overseerDocument?.length || 'unknown'}`)
             
             // Debug: Check if any chart nodes have computed series
@@ -701,11 +706,19 @@ tab Main {
             // of MB per second. Guarded fields are the one thing the text gets wrong: it
             // came from resolving with their UI-only values applied, so the values the
             // document authored travel alongside and are restored before writing.
-            const guarded = typeof this._currentText === 'string'
+            let content = await this.textInHand()
+            const guarded = typeof content === 'string'
                 ? this.collectGuardedReverts(this.currentDocument)
                 : null
-            let content = this._currentText
             let savedFromText = typeof content === 'string'
+            // What the file said when this page last heard - as text, or by version when the
+            // answer that told it only named the text. Sent both ways, because the server reads
+            // its own spelling and the desktop app the other.
+            const baseline = typeof this._originalText === 'string'
+                ? { original: this._originalText }
+                : this._originalVersion
+                    ? { original: null, original_version: this._originalVersion, originalVersion: this._originalVersion }
+                    : { original: null }
             if (!savedFromText) {
                 const _nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
                 try { if (typeof this._testHook_beforeSerialize === 'function') this._testHook_beforeSerialize(_nodesForSerialization) } catch(_) { /* test-only hook */ }
@@ -729,10 +742,11 @@ tab Main {
                     // What the file said when this page loaded it. The backend refuses the
                     // write if the file has moved on since, because the text being sent was
                     // built without whatever moved it - and overwriting is silent.
-                    original: this._originalText ?? null
+                    ...baseline
                 })
                 try {
                     this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                    this._originalVersion = null
                 } catch (_) { /* non-fatal */ }
             } else if (this._originalText != null) {
                 // If we have original raw text, use the merge-save API to preserve comments/whitespace
@@ -744,16 +758,20 @@ tab Main {
                 // After saving, refresh our original baseline from disk to keep merges stable
                 try {
                     this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                    this._originalVersion = null
                 } catch (_) { /* non-fatal */ }
             } else {
                 // Fallback if no baseline is available (e.g., new unsaved file in memory)
-                await invoke('save_overseer_file', { 
-                    original: this._originalText ?? null,
-                    path: this.currentFile, 
-                    content 
+                await invoke('save_overseer_file', {
+                    ...baseline,
+                    path: this.currentFile,
+                    content
                 })
                 // Try to set baseline now
-                try { this._originalText = await invoke('load_overseer_file', { path: this.currentFile }) } catch(_) {}
+                try {
+                    this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                    this._originalVersion = null
+                } catch(_) {}
             }
             
             // Mark document as saved
@@ -1470,16 +1488,25 @@ tab Main {
             // document is ~250 KB, and the backend hands it back with each resolve, so a plain
             // field edit can send that instead. Anything that changes the document outside
             // this path clears the text, and then the document is uploaded once to rebuild it.
-            let content = this._currentText
-            if (typeof content === 'string') {
-                profileAt = profileMark('  reuse document text (nothing uploaded)', profileAt)
-            } else {
-                const nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
-                profileAt = profileMark('  normalize (clone + walk)', profileAt)
-                content = await this.serializeNodes(nodesForSerialization)
-                profileAt = profileMark('  serialize (IPC + backend)', profileAt)
+            //
+            // Worked out only by the ways that send it. A change sent as an instruction sends no
+            // text, and the answer to the last one named the text rather than carrying it, so
+            // working it out first would fetch it - or failing that upload the whole document -
+            // on every edit, for nothing.
+            let content = null
+            const contentNow = async () => {
+                if (typeof content === 'string') return content
+                content = await this.textInHand()
+                if (typeof content === 'string') {
+                    profileAt = profileMark('  reuse document text (nothing uploaded)', profileAt)
+                } else {
+                    const nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
+                    profileAt = profileMark('  normalize (clone + walk)', profileAt)
+                    content = await this.serializeNodes(nodesForSerialization)
+                    profileAt = profileMark('  serialize (IPC + backend)', profileAt)
+                }
+                return content
             }
-            if (DEBUG_MODE) console.log('📤 Serialized content being sent to backend:', content.substring(0, 500))
             // Parse + resolve + evaluate on backend with selective updates
             // Build a map of changed field values (as OverseerValue-shaped objects) to send to backend
             const changedValuesMap = (() => {
@@ -1555,13 +1582,13 @@ tab Main {
                     this._writingByInstruction -= 1
                 }
             } else {
-                update = await invoke('parse_overseer_content_selective_update', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+                update = await invoke('parse_overseer_content_selective_update', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
             }
             if (instruction && update) {
                 this.alreadyWritten(update)
             }
             if (update && Array.isArray(update.changes)) {
-                this._currentText = typeof update.text === 'string' ? update.text : null
+                this.tookTheText(update)
                 profileAt = profileMark(`resolve (${update.changes.length} changes)`, profileAt)
                 if (this._isSupersededReevaluation(reevaluationTicket)) {
                     if (DEBUG_MODE) console.log('⏭️ Dropping superseded selective update', reevaluationTicket)
@@ -1585,13 +1612,14 @@ tab Main {
             let resolved = null
             const answer = (update && Array.isArray(update.nodes))
                 ? { nodes: update.nodes, text: update.text }
-                : await invoke('parse_overseer_content_selective_with_text', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+                : await invoke('parse_overseer_content_selective_with_text', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
             if (answer && Array.isArray(answer.nodes)) {
                 resolved = answer.nodes
-                this._currentText = typeof answer.text === 'string' ? answer.text : null
+                this.tookTheText(answer)
             } else {
-                resolved = await invoke('parse_overseer_content_selective', { content, changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
+                resolved = await invoke('parse_overseer_content_selective', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
                 this._currentText = null
+                this._textVersion = null
             }
             profileAt = profileMark('resolve (backend round trip)', profileAt)
             // Another edit was made while this was in flight, and a newer request already
@@ -2040,6 +2068,7 @@ tab Main {
                 const content = await this.serializeNodes(this.normalizeDocumentForSerialization(this.currentDocument))
                 const resolved = await invoke('parse_overseer_content', { content })
                 this._currentText = content
+                this._textVersion = null
                 if (this._isSupersededReevaluation(reevaluationTicket)) {
                     if (DEBUG_MODE) console.log('⏭️ Dropping superseded full update', reevaluationTicket)
                     return { domOnly: false, success: false, superseded: true }
@@ -2092,9 +2121,50 @@ tab Main {
         if (!update || update.wrote !== true) return
         if (typeof update.file_text === 'string') {
             this._originalText = update.file_text
+            this._originalVersion = null
+        } else if (typeof update.file_version === 'string') {
+            // Named rather than sent - see `tookTheText`. A save says it by version instead.
+            this._originalText = null
+            this._originalVersion = update.file_version
         } else if (typeof update.text === 'string') {
             this._originalText = update.text
+            this._originalVersion = null
+        } else if (typeof update.version === 'string') {
+            this._originalText = null
+            this._originalVersion = update.version
         }
+    }
+
+    /// Take on the text an answer describes the document by: in hand, or named by its version.
+    ///
+    /// An answer to a change sent as an instruction names the text rather than carrying it. The
+    /// text was nearly all of every such answer - 31 KB of the 36 a press on tasks.os came back
+    /// with, compressed - and it is read only when something goes the long way: a write refused
+    /// and worked out from the text instead, or a save. `textInHand` fetches it then.
+    tookTheText(update) {
+        this._currentText = typeof update?.text === 'string' ? update.text : null
+        this._textVersion = typeof update?.version === 'string' && this._currentText === null
+            ? update.version
+            : null
+    }
+
+    /// The text of the document as this page has it, fetched by its version if an answer only
+    /// named it. Null when there is neither, or the backend no longer has that version - and
+    /// then whoever asked builds it from the document, as it did before answers named it.
+    async textInHand() {
+        if (typeof this._currentText === 'string') return this._currentText
+        const version = this._textVersion
+        if (!version || !this.currentFile) return null
+        try {
+            const text = await invoke('load_overseer_text', { path: this.currentFile, version })
+            // Kept only if nothing newer was taken on while this was being fetched.
+            if (typeof text === 'string' && this._textVersion === version) {
+                this._currentText = text
+                this._textVersion = null
+                return text
+            }
+        } catch (_) { /* built from the document instead */ }
+        return null
     }
 
     /// Write what has changed, shortly.
@@ -2161,6 +2231,7 @@ tab Main {
                 // works from that text. Letting it go makes the document the one source again,
                 // at the cost of serializing it once.
                 this._currentText = null
+                this._textVersion = null
                 try { this.renderer.renderDocument(this.currentDocument) } catch (_) { /* best-effort */ }
             }
             const left = outcome && typeof outcome.steps_left === 'number'

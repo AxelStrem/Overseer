@@ -79,8 +79,17 @@ fn press(service: &DocumentRoot, session: &str, button: &str) -> serde_json::Val
         .expect("the press was refused")
 }
 
+/// What the answer shows the caller: its text, or the text its version names when it carries a
+/// described change - see `app_api::for_the_page`.
 fn text_of(answer: &serde_json::Value) -> String {
-    answer.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string()
+    if let Some(text) = answer.get("text").and_then(|t| t.as_str()) {
+        return text.to_string();
+    }
+    answer
+        .get("version")
+        .and_then(|v| v.as_str())
+        .and_then(|version| overseer::app_api::text_of_version("", version))
+        .unwrap_or_default()
 }
 
 #[test]
