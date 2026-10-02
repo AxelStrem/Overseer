@@ -3517,10 +3517,26 @@ unsafe fn recursively_evaluate_node_formulas_selective(
             })
             .collect();
 
-        // Run up to 2 passes for intra-node dependencies
-        for _ in 0..2 {
+        // Once each, in the order a node's formulas read one another: the fallbacks, then the
+        // value, then everything else. A `hidden` or a colour reads the value of the field it is
+        // on more than it reads anything, and a read takes whatever is stored - so each stage is
+        // written before the next is worked out, and what the next one finds is this pass's.
+        //
+        // This was every formula twice: the whole set worked out, written, and worked out again,
+        // so that the second time a `hidden` reading its own field found the new value rather
+        // than the last one. Twice the cost of every pass for the few formulas that read their
+        // own node - on tasks.os, half of what marking a task done spent on formulas.
+        let (value_pair, other_pairs): (Vec<(String, String)>, Vec<(String, String)>) =
+            formula_pairs.into_iter().partition(|(k, _)| k == "value");
+        let mut freeze = false;
+        for stage in 0..3 {
+            let pairs: &[(String, String)] = match stage {
+                1 => &value_pair,
+                2 => &other_pairs,
+                _ => &[],
+            };
             // Worked out while nothing is written - see above.
-            let (computed_params, freeze) = {
+            let (computed_params, asks) = {
                 let node: &OverseerNode = &*node_ptr;
                 let document: &[OverseerNode] = &*document_root;
                 let context = EvaluationContext::new_with_current_and_parent(
@@ -3535,7 +3551,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                 // note on the same guard in the full evaluator: a fallback belongs to a field that
                 // states no value, and computing the others is what kept this document moving.
                 // Only an unset field reads either of these - see `states_a_value`.
-                let unset = !FormulaEvaluator::states_a_value(&node.parameters);
+                let unset = stage == 0 && !FormulaEvaluator::states_a_value(&node.parameters);
                 for (declared, shadow) in [("fallback", "_computed_fallback"), ("default", "_computed_default")] {
                     let Some(source) = node.parameters.get(declared).cloned().filter(|_| unset) else {
                         continue;
@@ -3559,7 +3575,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                     };
                     computed_params.push((shadow.to_string(), worked_out));
                 }
-                for (key, formula_src) in &formula_pairs {
+                for (key, formula_src) in pairs {
                     debug_resolver!(
                         "[RESOLVER] Selectively evaluating formula in {}.{}: {}",
                         node.name,
@@ -3605,8 +3621,11 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                     }
                 }
                 drop(context);
-                (computed_params, asks_to_freeze_here(node, document, current_path))
+                // Asked once everything is worked out.
+                let asks = stage == 2 && asks_to_freeze_here(node, document, current_path);
+                (computed_params, asks)
             };
+            freeze |= asks;
             // Then written, with nothing read from the document meanwhile.
             let node: &mut OverseerNode = &mut *node_ptr;
             for (k, v) in computed_params {
@@ -3621,8 +3640,8 @@ unsafe fn recursively_evaluate_node_formulas_selective(
                 }
                 node.parameters.insert(k, v); // k could be _computed_value or _computed_paramName
             }
-            freeze_if_it_was_asked_for(node, freeze);
         }
+        freeze_if_it_was_asked_for(&mut *node_ptr, freeze);
         if FormulaEvaluator::doubts() != doubts_before {
             DOUBTED.with(|d| d.borrow_mut().insert(current_path_str.clone()));
         }

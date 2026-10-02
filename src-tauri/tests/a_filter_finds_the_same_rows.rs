@@ -332,3 +332,144 @@ fn a_predicate_no_row_can_answer_matches_no_rows() {
     assert_eq!(number(NOTHING_ANYWHERE, "found"), 0.0);
     assert_eq!(number(NOTHING_ANYWHERE, "missing_field"), 0.0);
 }
+
+/// The shape the rules in tasks.os ask the history: one condition the index can answer - a field
+/// held equal to a string - and others it cannot. The index narrows the list to the rows holding
+/// the string and only those are asked the rest; whatever it answers has to be what the walk did.
+const HISTORY: &str = r#"
+tab t (label="T") {
+    div (hidden=true) {
+        div Record (layout="horizontal") {
+            string rule (label="") = ""
+            bool failed (label="") = false
+            int minutes (label="") = 0
+            string kind (label="") = ""
+        }
+        div Rule (layout="horizontal") {
+            string handle (label="") = ""
+            int done_count (label="") =
+                $(/t/History.filter(|h| h/rule == ../handle && h/failed == false).count())
+            int earliest (label="") = $(done_count == 0 ? 0 :
+                /t/History.filter(|h| h/rule == ../handle && h/failed == false).map(|h| h/minutes).min())
+            int other_way_round (label="") =
+                $(/t/History.filter(|h| h/failed == false && h/rule == ../handle).count())
+            int three_conditions (label="") =
+                $(/t/History.filter(|h| h/rule == ../handle && h/failed == false && h/minutes > 15).count())
+            int two_strings (label="") =
+                $(/t/History.filter(|h| h/rule == ../handle && h/kind == "x").count())
+        }
+    }
+
+    list History (entry=<Record>) {
+        - {
+            - rule = "a"
+            - minutes = 10
+            - kind = "x"
+        }
+        - {
+            - rule = "a"
+            - failed = true
+            - minutes = 5
+            - kind = "x"
+        }
+        - {
+            - rule = "b"
+            - minutes = 20
+            - kind = "x"
+        }
+        - {
+            - rule = "a"
+            - minutes = 30
+            - kind = "y"
+        }
+        - {
+            - rule = ""
+            - minutes = 1
+            - kind = "x"
+        }
+    }
+
+    list Rules (entry=<Rule>, key="handle") {
+        - {
+            - handle = "a"
+        }
+        - {
+            - handle = "b"
+        }
+        - {
+            - handle = "c"
+        }
+    }
+}
+"#;
+
+/// A field of the rule whose handle is `handle`, worked out.
+fn of_rule(source: &str, handle: &str, field: &str) -> f64 {
+    let nodes = app_api::load_document(source.to_string()).expect("document did not load");
+    let rules = find(&nodes, "Rules").expect("no Rules");
+    let rule = rules
+        .children
+        .iter()
+        .find(|r| {
+            find(&r.children, "handle").and_then(|h| h.parameters.get("value"))
+                == Some(&OverseerValue::String(handle.to_string()))
+        })
+        .unwrap_or_else(|| panic!("no rule `{handle}`"));
+    match find(&rule.children, field).and_then(|f| f.parameters.get("_computed_value")) {
+        Some(OverseerValue::Integer(i)) => *i as f64,
+        Some(OverseerValue::Float(f)) => *f,
+        other => panic!("`{field}` of `{handle}` is {other:?}"),
+    }
+}
+
+#[test]
+fn several_conditions_find_the_rows_all_of_them_hold() {
+    // `a` has two done and one failed: the failed one is left out, so the index did not answer
+    // for the whole predicate.
+    assert_eq!(of_rule(HISTORY, "a", "done_count"), 2.0);
+    assert_eq!(of_rule(HISTORY, "a", "earliest"), 10.0);
+    assert_eq!(of_rule(HISTORY, "b", "done_count"), 1.0);
+    assert_eq!(of_rule(HISTORY, "b", "earliest"), 20.0);
+    assert_eq!(of_rule(HISTORY, "c", "done_count"), 0.0);
+    assert_eq!(of_rule(HISTORY, "c", "earliest"), 0.0);
+}
+
+#[test]
+fn the_condition_the_index_answers_can_come_anywhere() {
+    assert_eq!(of_rule(HISTORY, "a", "other_way_round"), 2.0);
+    assert_eq!(of_rule(HISTORY, "a", "three_conditions"), 1.0);
+    assert_eq!(of_rule(HISTORY, "b", "three_conditions"), 1.0);
+}
+
+#[test]
+fn what_is_left_after_narrowing_is_not_looked_up_again() {
+    // `h/kind == "x"` is a question the index could answer too - but about the whole list, and by
+    // then the list is the three rows of `a`. Asked anyway, it named rows by where they stand in
+    // the whole list and found them in the short one: three for `a` instead of two.
+    assert_eq!(of_rule(HISTORY, "a", "two_strings"), 2.0);
+    assert_eq!(of_rule(HISTORY, "b", "two_strings"), 1.0);
+}
+
+#[test]
+fn several_conditions_over_a_field_holding_a_number_still_walk() {
+    // One record holds the rule as a number. The walk matches 5 against "5"; an index of strings
+    // would not hold it at all, so it declines and the walk answers.
+    let mixed = HISTORY
+        .replace("            - rule = \"\"\n", "            - rule = 5\n")
+        .replace("            - handle = \"c\"\n", "            - handle = \"5\"\n");
+    assert!(mixed.contains("- rule = 5"), "the record was not changed");
+    assert_eq!(of_rule(&mixed, "5", "done_count"), 1.0);
+    assert_eq!(of_rule(&mixed, "a", "done_count"), 2.0);
+}
+
+#[test]
+fn several_conditions_reach_a_node_through_the_index() {
+    // The other way a filter is answered: as the node a path goes on into.
+    let source = CATALOGUE.replace(
+        "    string wanted (label=\"\") = \"milk\"\n",
+        "    string wanted (label=\"\") = \"milk\"\n    float big_beef (label=\"\") = $(/t/Catalog.filter(|x| x/per_100g > 5 && x/handle == \"beef\")/per_100g)\n    float big_oats (label=\"\") = $(/t/Catalog.filter(|x| x/handle == \"oats\" && x/per_100g > 5)/per_100g)\n",
+    );
+    assert!(source.contains("big_beef"), "the fields were not added");
+    assert_eq!(number(&source, "big_beef"), 26.0);
+    assert_eq!(number(&source, "big_oats"), 13.0);
+}

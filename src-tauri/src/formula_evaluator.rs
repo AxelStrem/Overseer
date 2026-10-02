@@ -3509,6 +3509,25 @@ impl FormulaEvaluator {
                     let lambda = call.args.get(0).ok_or_else(|| {
                         OverseerError::FormulaError("filter() requires 1 argument".to_string())
                     })?;
+                    // Several conditions, one of which the index can answer: the list narrowed to
+                    // what it says, and only the rest asked of those - see
+                    // `narrowed_by_an_indexed_condition`. The index describes the whole list, so
+                    // nothing below may ask it again about what is left.
+                    let mut may_index = position == 0;
+                    let rest;
+                    let lambda = match came_from.filter(|_| may_index).and_then(|base| {
+                        Self::narrowed_by_an_indexed_condition(base, lambda, context, |field| {
+                            Self::index_of_items(&list, field)
+                        })
+                    }) {
+                        Some((at, remaining)) => {
+                            list = at.into_iter().filter_map(|i| list.get(i).cloned()).collect();
+                            may_index = false;
+                            rest = remaining;
+                            &rest
+                        }
+                        None => lambda,
+                    };
                     // Whatever the predicate compares against, worked out once rather than once
                     // per element - see `with_invariant_side_resolved`. Falls back to the
                     // predicate as written whenever there is nothing safe to hoist.
@@ -3522,7 +3541,7 @@ impl FormulaEvaluator {
                     // looked up through `Catalog.filter(|x| x/handle == ../food)`, for every
                     // entry on every pass - a hundred and thirty-six foods walked some two
                     // hundred thousand times to open one document.
-                    if position == 0 {
+                    if may_index {
                         if let (Some(base), Some((field, BinaryOperator::Equal, wanted, _))) =
                             (came_from, &direct)
                         {
@@ -4050,6 +4069,23 @@ impl FormulaEvaluator {
                         "filter" => {
                             // Keep only nodes matching predicate; maintain current_container context
                             let lambda = call.args.get(0)?;
+                            // Narrowed by the index first when it can answer one condition of
+                            // several - as in the chain that produces a value above.
+                            let mut may_index = position == 0;
+                            let rest;
+                            let lambda = match Some(came_from).filter(|_| may_index).and_then(|base| {
+                                Self::narrowed_by_an_indexed_condition(base, lambda, context, |field| {
+                                    Self::index_of_nodes(&nodes, field)
+                                })
+                            }) {
+                                Some((at, remaining)) => {
+                                    nodes = at.into_iter().filter_map(|i| nodes.get(i).copied()).collect();
+                                    may_index = false;
+                                    rest = remaining;
+                                    &rest
+                                }
+                                None => lambda,
+                            };
                             // Whatever the predicate compares against does not change from one
                             // entry to the next, so it is worked out once rather than once per
                             // entry. `..` means the same here as in the per-item context below -
@@ -4065,7 +4101,7 @@ impl FormulaEvaluator {
                             // `Catalog.filter(|x| x/handle == ../food)`, for every entry on every
                             // pass - a hundred and thirty-six foods walked some two hundred
                             // thousand times to open one document.
-                            if position == 0 {
+                            if may_index {
                                 if let Some((field, BinaryOperator::Equal, wanted, _)) = &direct {
                                     if let Some(at) =
                                         Self::positions_holding(came_from, field, wanted, || {
@@ -4343,6 +4379,80 @@ impl FormulaEvaluator {
             }
         }
         Some(index)
+    }
+
+    /// For a predicate of conditions joined by `&&`, one of them a field held equal to a string:
+    /// the entries the index says hold it, and the predicate left to ask of them.
+    ///
+    /// The index answers `x/field == "..."` outright, but only when that is the whole predicate,
+    /// and one that asks a second thing walked the list instead. The rules in tasks.os each ask
+    /// the history `h/rule == ../trigger && h/failed == false` - once to count what was done, once
+    /// more to find when it last was - and walked every record of it to answer either, which was
+    /// most of what marking a task done spent on formulas.
+    ///
+    /// The answer is the walk's. An entry that fails one of the conditions fails them all, so the
+    /// ones the index leaves out are ones the walk would have left out; and `positions_holding`
+    /// answers only when every entry holds a string there, as for the single comparison. `None`
+    /// means walk it.
+    fn narrowed_by_an_indexed_condition(
+        base: usize,
+        lambda: &FormulaExpression,
+        context: &EvaluationContext,
+        build: impl FnOnce(&str) -> Option<EqualityIndex>,
+    ) -> Option<(Vec<usize>, FormulaExpression)> {
+        let FormulaExpression::Lambda { params, body } = lambda else {
+            return None;
+        };
+        if params.len() != 1 {
+            return None;
+        }
+        let mut conditions = Vec::new();
+        Self::conditions_of(body, &mut conditions);
+        // One condition is the single comparison, which the caller already asks the index about.
+        if conditions.len() < 2 {
+            return None;
+        }
+        let alone = |condition: &FormulaExpression| FormulaExpression::Lambda {
+            params: params.clone(),
+            body: Box::new(condition.clone()),
+        };
+        let (indexed, (field, wanted)) = conditions.iter().enumerate().find_map(|(i, condition)| {
+            let alone = alone(condition);
+            let hoisted = Self::with_invariant_side_resolved(&alone, context);
+            match Self::direct_field_comparison(hoisted.as_ref().unwrap_or(&alone)) {
+                Some((field, BinaryOperator::Equal, wanted @ OverseerValue::String(_), _)) => {
+                    Some((i, (field, wanted)))
+                }
+                _ => None,
+            }
+        })?;
+        let at = Self::positions_holding(base, &field, &wanted, || build(&field))?;
+        let rest = conditions
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != indexed)
+            .map(|(_, condition)| (*condition).clone())
+            .reduce(|left, right| FormulaExpression::BinaryOp {
+                left: Box::new(left),
+                operator: BinaryOperator::And,
+                right: Box::new(right),
+            })?;
+        Some((at, alone(&rest)))
+    }
+
+    /// The conditions an `&&` joins, however it is bracketed.
+    fn conditions_of<'e>(expr: &'e FormulaExpression, out: &mut Vec<&'e FormulaExpression>) {
+        match expr {
+            FormulaExpression::BinaryOp {
+                left,
+                operator: BinaryOperator::And,
+                right,
+            } => {
+                Self::conditions_of(left, out);
+                Self::conditions_of(right, out);
+            }
+            other => out.push(other),
+        }
     }
 
     fn field_already_known(node: &OverseerNode, field: &str) -> Option<OverseerValue> {
