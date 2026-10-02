@@ -913,7 +913,10 @@ export class OverseerRenderer {
     // avoided, so it is worth knowing when it happens.
     repaintNodes(nodes, document_) {
         const doc = document_ || (window.app && window.app.currentDocument)
-        if (!doc || !Array.isArray(nodes) || nodes.length === 0) return false
+        // Lists an entry moved in - see `applyDocumentChanges`. An entry's place can be all that
+        // changed about it, and then nothing else here is touched.
+        const resorted = Array.isArray(nodes?.resorted) ? nodes.resorted : []
+        if (!doc || !Array.isArray(nodes) || (nodes.length === 0 && resorted.length === 0)) return false
         // Whatever the document says changed, plus anything the client derives from it that
         // has moved as a result.
         const all = nodes.slice()
@@ -954,6 +957,41 @@ export class OverseerRenderer {
             this.renderDocument(doc)
             return false
         }
+        // Then whatever moved in its list, once everything drawn afresh is in place. A list drawn
+        // again whole above is in order already.
+        for (const list of resorted) {
+            if (!within(list.__overseer_path)) this.putEntriesInOrder(list)
+        }
+        return true
+    }
+
+    /// Put a list's entries on screen back in the order it shows them, by moving them.
+    ///
+    /// An entry whose sort key moves is repainted where it stands, and nothing else here asked
+    /// where it should stand now. So an exercise marked done stayed at the top of a list sorted by
+    /// when each was last done, until the page was reloaded - and seemed to work before only
+    /// because something else in the same answer drew the whole document again. Moved rather
+    /// than drawn: the elements are right, only their order is not.
+    putEntriesInOrder(list) {
+        const path = list && list.__overseer_path
+        if (!Array.isArray(path) || path.length === 0 || list.node_type !== 'list') return false
+        const element = this.drawnElementAt(path, 'overseer-list')
+        if (!element) return false
+        const drawnFor = new Map()
+        for (const el of element.children) {
+            const uid = el.getAttribute('data-uid')
+            if (uid) drawnFor.set(uid, el)
+        }
+        const ordered = this.inDisplayOrder(list)
+            .map((node) => (node && node.__uid && drawnFor.get(node.__uid)) || null)
+            .filter(Boolean)
+        if (ordered.length < 2) return true
+        const now = Array.from(element.children).filter((el) => ordered.includes(el))
+        if (now.every((el, i) => el === ordered[i])) return true
+        // Where the entries end, so anything after them - a line saying how many are left out -
+        // stays after them, and anything before - a table's heading - stays before.
+        const after = now[now.length - 1].nextSibling
+        for (const el of ordered) element.insertBefore(el, after)
         return true
     }
 

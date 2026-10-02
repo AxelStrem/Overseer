@@ -235,3 +235,66 @@ describe('a change the screen does not show', () => {
     expect(renders, 'the whole document was drawn').toBe(0)
   })
 })
+
+// An entry whose place in the order moves, with nothing added or taken out. Its sort key comes
+// as a change to its parameters, and the repaint drew it again where it stood - so an exercise
+// marked done stayed at the top of a list sorted by when each was last done, until a reload. It
+// looked right before only because a new history entry used to redraw the whole page.
+describe('an entry that moves in the order', () => {
+  let app, answer
+
+  beforeEach(async () => {
+    setupDOM()
+    const { invoke } = await import('@tauri-apps/api/core')
+    invoke.mockImplementation(async (cmd) => cmd === 'execute_overseer_event_update'
+      ? { text: 'TEXT-AFTER', changes: answer(), nodes: null }
+      : null)
+    app = new OverseerApp()
+    app.currentDocument = documentOf()
+    app._currentText = 'TEXT-BEFORE'
+    app.renderer.renderDocument(app.currentDocument)
+  })
+
+  const keyed = (position, sort) => ({
+    kind: 'parameters', address: `tasks/Open/[${ENTRIES[position].key}]`, path: [0, 1, position],
+    parameters: { _ui_sort_key: { Integer: sort } },
+  })
+
+  it('goes to its new place when its sort key is all that changed', async () => {
+    const note = noteOnScreen()
+    const [, middling, calm] = buttons()
+    // `urgent` done, and sorted after everything now.
+    answer = () => [keyed(0, 10)]
+    buttons()[0].dispatchEvent(new Event('click', { bubbles: true }))
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(rowsOnScreen()).toEqual(['middling', 'calm', 'urgent'])
+    expect(buttons().slice(0, 2), 'the entries that did not move were drawn again').toEqual([middling, calm])
+    expect(noteOnScreen(), 'what sits beside the list was drawn again').toBe(note)
+  })
+
+  it('goes to its new place when it is drawn again as well', async () => {
+    // The usual case: what moves it - the time it was last done - is on it, and shown.
+    answer = () => [
+      keyed(0, 10),
+      {
+        kind: 'parameters', address: `tasks/Open/[${ENTRIES[0].key}]/title`, path: [0, 1, 0, 1],
+        parameters: { value: { String: 'urgent, done' } },
+      },
+    ]
+    buttons()[0].dispatchEvent(new Event('click', { bubbles: true }))
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(rowsOnScreen()).toEqual(['middling', 'calm', 'urgent, done'])
+  })
+
+  it('leaves a list whose order did not change as it was', async () => {
+    const drawn = buttons()
+    answer = () => [keyed(1, -20)]
+    buttons()[1].dispatchEvent(new Event('click', { bubbles: true }))
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(rowsOnScreen()).toEqual(['urgent', 'middling', 'calm'])
+    expect(buttons()).toEqual(drawn)
+  })
+})

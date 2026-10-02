@@ -307,6 +307,10 @@ export class OverseerApp {
         const note = (node) => { if (node && !touched.includes(node)) touched.push(node) }
         // Nodes whose own parameters changed in a way that shows - see `drawnDifferently`.
         const reparametrised = new Set()
+        // Lists one of whose entries moved in the order they are shown, for the repaint to put
+        // back in order - see `putEntriesInOrder`. Carried on what is returned, since that is what
+        // every caller hands to `repaintNodes`.
+        const resorted = []
 
         for (const change of changes || []) {
             if (change.kind === 'parameters') {
@@ -314,7 +318,13 @@ export class OverseerApp {
                 if (!node) continue
                 this._carryGuardedMarkers(node, change.parameters)
                 const shows = this.drawnDifferently(node.parameters, change.parameters)
+                const moved = JSON.stringify(node.parameters?._ui_sort_key)
+                    !== JSON.stringify(change.parameters?._ui_sort_key)
                 node.parameters = change.parameters
+                if (moved && change.path.length > 1) {
+                    const list = nodeAt(change.path.slice(0, -1))
+                    if (list && !resorted.includes(list)) resorted.push(list)
+                }
                 if (shows) {
                     reparametrised.add(node)
                     note(node)
@@ -370,6 +380,7 @@ export class OverseerApp {
             list.splice(change.path[change.path.length - 1], 1)
             note(change.path.length <= 1 ? null : nodeAt(change.path.slice(0, -1)))
         }
+        touched.resorted = resorted
         return touched
     }
 
