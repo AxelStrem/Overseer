@@ -92,7 +92,7 @@ tab project (label="Project", mutable=true) {
 
             // In bold when there is something under it, so the shape of the plan shows in a list
             // where every row is otherwise one line of the same weight.
-            string title (label="title", font-size=14px, width=28%,
+            string title (label="title", font-size=14px, width=26%,
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
             // Which larger task this is part of, by that task's handle. Empty for a task that
@@ -226,10 +226,22 @@ tab project (label="Project", mutable=true) {
             // remembered. Nothing writes it now, so it cannot be wrong. `max` compares
             // timestamps properly and hands the timestamp back; the count is tested first
             // because the largest of nothing is not a time.
-            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=12%) =
+            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=11%) =
                 $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
                   /project/History.filter(|x| x/parent == ../handle)
                                   .map(|x| x/finished_at).max())
+
+            // Taken off the list without being finished: a task dropped rather than done, or one
+            // added by mistake. Nothing is recorded, which is the whole difference from `finish`,
+            // and Undo in the drawer puts back one taken by a slip. Hidden while anything under it
+            // is still open, as `finish` is, or what was under it would be left naming a parent
+            // that has gone. Last in the row, as far from `finish` as the row allows. Not called
+            // `remove`: a node named for an action is taken for one, and given no column.
+            button drop (icon="cross", margin=0, width=3%, hidden=$(open_kids > 0)) {
+                on click {
+                    remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
+                }
+            }
 
             // Whatever is worth remembering about this one. Hidden until there is something,
             // which is most rows - and its share of the width then goes back to the title.

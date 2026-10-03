@@ -39,6 +39,18 @@ fn store(root: &Path, document: &str) -> PathBuf {
     root.join(".undo").join(format!("{}.{:08x}", readable, hash as u32))
 }
 
+/// Where the history of the document at `path` is kept: beside the file, under the file's own
+/// name - the `root` and `document` every function here takes.
+///
+/// One rule for every writer. The server named a document by its path under the root and kept
+/// its history at the root; a page's press, written through `app_api`, knows only the file and
+/// kept it beside the file. For a document at the root those are one place. For one in a folder -
+/// every project - they were two: a press recorded its step where Undo never looked, and Undo on a
+/// project said there was nothing to take back.
+pub fn beside(path: &Path) -> Option<(PathBuf, String)> {
+    Some((path.parent()?.to_path_buf(), path.file_name()?.to_string_lossy().into_owned()))
+}
+
 /// The snapshots for one document, oldest first.
 fn snapshots(root: &Path, document: &str) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(store(root, document)) else {

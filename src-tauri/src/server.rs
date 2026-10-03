@@ -1315,7 +1315,10 @@ impl DocumentRoot {
     /// otherwise become the newest step, and the history would never move.
     pub fn undo(&self, name: &str) -> std::result::Result<serde_json::Value, RequestError> {
         let path = self.resolve(name)?;
-        let Some(previous) = crate::undo::take(&self.root, name) else {
+        // Beside the file, where every writer keeps it - see `undo::beside`.
+        let (folder, file) = crate::undo::beside(&path)
+            .ok_or_else(|| RequestError::Rejected(format!("'{}' is not a document", name)))?;
+        let Some(previous) = crate::undo::take(&folder, &file) else {
             return Err(RequestError::Rejected(format!(
                 "there is nothing to take back for '{}'",
                 name
@@ -1335,7 +1338,7 @@ impl DocumentRoot {
         }));
         Ok(serde_json::json!({
             "undone": name,
-            "steps_left": crate::undo::depth(&self.root, name),
+            "steps_left": crate::undo::depth(&folder, &file),
         }))
     }
 
@@ -1360,7 +1363,9 @@ impl DocumentRoot {
             if previous == text {
                 return Ok(());
             }
-            crate::undo::remember(&self.root, name, &previous);
+            if let Some((folder, file)) = crate::undo::beside(path) {
+                crate::undo::remember(&folder, &file, &previous);
+            }
         }
         let temporary = path.with_extension("os.writing");
         std::fs::write(&temporary, text.as_bytes())

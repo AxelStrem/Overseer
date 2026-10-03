@@ -1787,11 +1787,10 @@ pub fn for_the_page(mut update: ResolvedUpdate) -> ResolvedUpdate {
 /// Write a document, keeping what it said so the write can be taken back.
 ///
 /// The server has its own version of this, because it has a root directory and a document name.
-/// The desktop app has a path and nothing else, so the undo history sits beside the document -
-/// which is where the server puts it too.
+/// Both keep the history beside the file - see `undo::beside`.
 pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result<()> {
     let at = std::path::Path::new(path);
-    if let (Some(beside), Some(named)) = (at.parent(), at.file_name()) {
+    if let Some((beside, named)) = crate::undo::beside(at) {
         if let Ok(previous) = std::fs::read_to_string(at) {
             // A write that says what the file already says is not a change, and recording a step
             // for it makes an undo that does nothing. That was not rare once every change began
@@ -1801,7 +1800,7 @@ pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result
             if previous == text {
                 return Ok(());
             }
-            crate::undo::remember(beside, &named.to_string_lossy(), &previous);
+            crate::undo::remember(&beside, &named, &previous);
         }
     }
     let temporary = at.with_extension("os.writing");
@@ -1817,11 +1816,10 @@ pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result
 /// swapping between the same two states.
 pub fn undo_document(path: &str) -> Result<usize> {
     let at = std::path::Path::new(path);
-    let (Some(beside), Some(named)) = (at.parent(), at.file_name()) else {
+    let Some((beside, named)) = crate::undo::beside(at) else {
         return Err(OverseerError::ValidationError(format!("'{}' has no directory", path)));
     };
-    let named = named.to_string_lossy().to_string();
-    let Some(previous) = crate::undo::take(beside, &named) else {
+    let Some(previous) = crate::undo::take(&beside, &named) else {
         return Err(OverseerError::ValidationError(format!(
             "there is nothing to take back for '{}'",
             named
@@ -1831,7 +1829,7 @@ pub fn undo_document(path: &str) -> Result<usize> {
     std::fs::write(&temporary, previous.as_bytes())
         .and_then(|_| std::fs::rename(&temporary, at))
         .map_err(|e| OverseerError::IoError(format!("could not write '{}': {}", named, e)))?;
-    Ok(crate::undo::depth(beside, &named))
+    Ok(crate::undo::depth(&beside, &named))
 }
 
 /// What a document's text says at one address, without working the whole thing out.

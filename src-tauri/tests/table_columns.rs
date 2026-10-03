@@ -171,16 +171,17 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
             "note",
             "finish",
             "moved_at",
+            "drop",
             "commentary",
         ],
     );
 
     let columns = columns(&nodes, "Items");
-    // Bar the note button, which says what it is by its icon - as the one beside a task in the
-    // task manager does - and has no room for a word in its column.
+    // Bar the note and drop buttons, which say what they are by their icons - as the note beside
+    // a task in the task manager does - and have no room for a word in their columns.
     let headings: Vec<&str> = columns
         .iter()
-        .filter(|c| !c["span"].as_bool().unwrap_or(false) && c["name"] != "note")
+        .filter(|c| !c["span"].as_bool().unwrap_or(false) && c["name"] != "note" && c["name"] != "drop")
         .map(|c| c["label"].as_str().unwrap_or(""))
         .collect();
     assert!(
