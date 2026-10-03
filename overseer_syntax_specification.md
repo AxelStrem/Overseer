@@ -102,7 +102,18 @@ list Items (entry=string) {
 - `list`: Collection with CRUD operations and two entry types:
   - **Template node entries**: `list Tasks (entry=<../TaskTemplate>)` - structured objects following a template
   - **Vanilla type entries**: `list Names (entry=string)` - simple primitive values
-- `tab`: Tab container for UI organization
+- `tab`: One page of a tab system, anywhere a node can stand - in a div, a list, another tab.
+  The tabs that share a parent are one system: a bar of their labels and one page showing at a
+  time, drawn where the first of them stands. Two systems at one level are two divs. At the top of
+  a document the parent is the document, and the bar is the page-wide one.
+  - The parent's `layout` places the bar: above the pages when vertical, beside them when
+    horizontal. A system of one tab draws no bar.
+  - The header shows the tab's `label`, which may be a formula - a list whose entry template is a
+    tab draws one page per entry, each headed by, say, `label=$(date)`.
+  - A tab's own `hover-text` is what its header says, and is not handed down to what the tab holds.
+  - Which tab is showing belongs to the viewer: kept for the session, never written to the file.
+  - An unnamed tab, like an unnamed div, is no step of any address: putting part of a document on
+    `tab (label="Rules") { ... }` changes nothing a formula, an action or the bot refers to.
 
 #### List Entry Types
 

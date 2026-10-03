@@ -420,6 +420,57 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     border-bottom-color: var(--primary-color);
 }
 
+/* A tab system inside a document: the tabs one parent holds, drawn where the first of them stands.
+   The bar is above the pages, or beside them when the parent lays its children out in a row. A
+   system of one tab draws no bar, as the page-wide one does not. */
+.overseer-tabs {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.overseer-tabs > .tab-bar {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 8px;
+}
+
+.overseer-tabs > .tab-bar:not(:has(.tab-button + .tab-button)) {
+    display: none;
+}
+
+.overseer-tabs > .tab-pages {
+    flex: 1;
+    min-width: 0;
+}
+
+.overseer-tabs.tabs-beside {
+    flex-direction: row;
+    align-items: flex-start;
+}
+
+.overseer-tabs.tabs-beside > .tab-bar {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    border-bottom: none;
+    border-right: 1px solid var(--border-color);
+    margin-bottom: 0;
+    margin-right: 12px;
+}
+
+.overseer-tabs.tabs-beside > .tab-bar > .tab-button {
+    border-radius: 6px 0 0 6px;
+    border-bottom: none;
+    border-right: 2px solid transparent;
+    text-align: left;
+}
+
+.overseer-tabs.tabs-beside > .tab-bar > .tab-button.active {
+    border-right-color: var(--primary-color);
+}
+
 /* Content Area */
 .content-area {
     flex: 1;

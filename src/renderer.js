@@ -960,7 +960,7 @@ export class OverseerRenderer {
         // Then whatever moved in its list, once everything drawn afresh is in place. A list drawn
         // again whole above is in order already.
         for (const list of resorted) {
-            if (!within(list.__overseer_path)) this.putEntriesInOrder(list)
+            if (!within(list.__overseer_path) && !this.putEntriesInOrder(list)) redraw(list.__overseer_path)
         }
         return true
     }
@@ -975,6 +975,7 @@ export class OverseerRenderer {
     putEntriesInOrder(list) {
         const path = list && list.__overseer_path
         if (!Array.isArray(path) || path.length === 0 || list.node_type !== 'list') return false
+        if (this.entriesAreTabs(list)) return false
         const element = this.drawnElementAt(path, 'overseer-list')
         if (!element) return false
         const drawnFor = new Map()
@@ -1041,6 +1042,8 @@ export class OverseerRenderer {
         const path = list.__overseer_path
         if (!Array.isArray(path) || path.length === 0 || change.renamed || change.whole) return false
         if (String(this.getParameterValue(list, 'view') || '') === 'table') return false
+        // Entries that are tabs are drawn as one system, not as rows of the list.
+        if (this.entriesAreTabs(list)) return false
         const element = this.drawnElementAt(path, 'overseer-list')
         if (!element) return false
         // Each entry's element, by the uid it was drawn with - looked up once, since a history
@@ -1172,11 +1175,15 @@ export class OverseerRenderer {
         } catch(_) {}
         // Defensive guards: in headless test environments elements can be null
         this.watchForHoverText(this.contentDisplay)
+        this.watchForHoverText(this.tabContainer)
         if (this.contentDisplay) {
             try { this.contentDisplay.innerHTML = '' } catch(_) {}
         }
         if (this.tabContainer) {
             try { this.tabContainer.innerHTML = '' } catch(_) {}
+            // And what it was showing, which outlives its buttons: left, the first tab of the
+            // next drawing took itself for one not chosen and hid, and the page drew blank.
+            delete this.tabContainer.dataset.showing
         }
 
         // Optional lightweight debug info (avoid dumping full document JSON)
@@ -1284,7 +1291,9 @@ export class OverseerRenderer {
 
             // Guard against null/undefined container (can occur during selective patch attempts when DOM node not found)
             if (!container) { if (DEBUG_MODE) console.warn('renderNode: null container for path', path, 'node', node); return }
-            container.appendChild(element)
+            // A tab goes in its parent's tab system rather than straight into the parent.
+            if (this.isTab(node)) this.placeTab(element, node, container, path)
+            else container.appendChild(element)
             if (DEBUG_MODE) console.log('Appended element to container')
 
             // A div that says `on click` is pressed wherever it is touched - see `makePressable`.
@@ -1832,6 +1841,7 @@ export class OverseerRenderer {
     }
 
     createNodeElement(node) {
+        if (this.isTab(node)) return this.createTabElement(node)
         // Handle both possible node structures
         let nodeType = node.node_type || node.type || node.name || 'div'
 
@@ -2234,66 +2244,223 @@ export class OverseerRenderer {
         return container
     }
 
+    /**
+     * A tab: one page of whatever holds it.
+     *
+     * The tabs that share a parent are one tab system - a bar of their labels and a page each, one
+     * showing at a time - standing where the first of them stands among the parent's children; see
+     * `placeTab`. At the top of a document the parent is the document, and the bar is the page-wide
+     * one above it. Anywhere else the system is drawn in place: in a div, in a list whose entries
+     * are tabs, in another tab.
+     *
+     * Grouped by parent rather than by standing next to each other. Siblings are siblings, and two
+     * of them being adjacent says nothing about belonging together; two tab systems at one level
+     * are two divs, each holding its own.
+     *
+     * Only the page is made here. What the tab holds is drawn into it as into a div, and it is put
+     * in its system when it is put in its parent.
+     */
     createTabElement(node) {
-        // In headless / test environments tabContainer may be null; bail out gracefully
-        if (!this.tabContainer) {
-            if (DEBUG_MODE) console.warn('Skipping tab creation: tabContainer is null')
-            const placeholder = document.createElement('div')
-            placeholder.className = 'tab-content'
-            placeholder.style.display = 'none'
-            return placeholder
+        const page = document.createElement('div')
+        page.className = 'tab-page'
+        // A tab that says how to arrange what it holds is arranged so. One that says nothing is
+        // drawn as a tab always was, so no document that already has tabs moves.
+        const stated = this.getParameterValue(node, 'layout')
+        if (stated) page.classList.add(`layout-${String(stated)}`)
+        this.applyNodeStyles(page, node)
+        return page
+    }
+
+    /// Put a tab's page in its parent's tab system, making the system if this is its first tab.
+    placeTab(page, node, container, path) {
+        // Drawn again on its own - see `repaintTab` - and put back by whoever asked for that.
+        if (this._drawingOneTab === node) {
+            container.appendChild(page)
+            return
         }
-        const tabButton = document.createElement('button')
-        tabButton.className = 'tab-button'
-    // Bug 8: Tabs should use a 'label' parameter instead of exposing node name
-    tabButton.textContent = this.getParameterValue(node, 'label') || node.name || 'Tab'
-        // Which tab this button belongs to, so a repaint can find the one it replaces.
-        tabButton.dataset.tab = node.name || ''
-
-        const tabContent = document.createElement('div')
-        tabContent.className = 'tab-content'
-        tabContent.style.display = 'none'
-
-        // A repaint, rather than a first render.
-        //
-        // This runs again whenever a tab's own parameters change - which an event does every
-        // time it touches a list inside one, because the resolver records the overrides on the
-        // tab. Appending unconditionally then left a second button for the same tab, and the
-        // content returned here starts hidden and is only shown when it is the only tab. So
-        // pressing `bought` swapped the visible page for a hidden one and grew a duplicate
-        // "Shopping" tab beside it: the page went blank and the new tab was empty.
-        //
-        // The existing button is replaced in place instead - same position in the row, and no
-        // stale click handler left pointing at content that has just been swapped out.
-        const name = tabButton.dataset.tab
-        const existing = name
-            ? Array.from(this.tabContainer.children).find(b => b.dataset && b.dataset.tab === name)
-            : null
-        const wasActive = !!(existing && existing.classList.contains('active'))
-        if (existing) {
-            this.tabContainer.replaceChild(tabButton, existing)
-        } else {
-            this.tabContainer.appendChild(tabButton)
+        if (container === this.contentDisplay) {
+            this.placeTopLevelTab(page, node, container)
+            return
         }
-
-        // Tab click handler
-        tabButton.addEventListener('click', () => {
-            // Hide all tab contents and deactivate buttons
-            document.querySelectorAll('.tab-content').forEach(content => { content.style.display = 'none' })
-            document.querySelectorAll('.tab-button').forEach(btn => { btn.classList.remove('active') })
-            // Show this tab's content
-            tabContent.style.display = 'block'
-            tabButton.classList.add('active')
-        })
-
-        // Whichever tab was showing goes on showing; failing that, the first one does.
-        if (wasActive || (!existing && this.tabContainer.children.length === 1)) {
-            tabButton.classList.add('active')
-            tabContent.style.display = 'block'
+        let system = Array.from(container.children).find((c) => c.classList && c.classList.contains('overseer-tabs'))
+        if (!system) {
+            system = document.createElement('div')
+            system.className = 'overseer-tabs'
+            // The parent's layout places the bar - beside the pages when the parent lays its
+            // children out in a row, above them otherwise. That is all `layout` means anywhere,
+            // applied to the system as one of the parent's children.
+            if (container.classList.contains('layout-horizontal')) system.classList.add('tabs-beside')
+            const bar = document.createElement('div')
+            bar.className = 'tab-bar'
+            bar.setAttribute('role', 'tablist')
+            const pages = document.createElement('div')
+            pages.className = 'tab-pages'
+            system.append(bar, pages)
+            system.dataset.tabsOf = container.dataset.path || JSON.stringify((path || []).slice(0, -1))
+            container.appendChild(system)
         }
+        const bar = system.firstElementChild
+        const pages = system.lastElementChild
+        const key = system.dataset.tabsOf
+        const id = this.tabIdAmong(pages.children, node)
+        page.dataset.tabId = id
+        pages.appendChild(page)
+        bar.appendChild(this.tabHeader(node, id, () => this.showTab(bar, pages, key, id)))
+        this.showTabOnArrival(bar, pages, key, id)
+    }
 
-        this.applyNodeStyles(tabContent, node)
-        return tabContent
+    /// The top of a document: the page goes in the document, its header in the bar above it.
+    placeTopLevelTab(page, node, container) {
+        page.classList.add('tab-content')
+        const bar = this.tabContainer
+        // No bar - headless, or a test that leaves it out - and nothing to choose with: shown.
+        if (!bar) {
+            container.appendChild(page)
+            return
+        }
+        const id = this.tabIdAmong(Array.from(container.children).filter((c) => c.classList.contains('tab-content')), node)
+        page.dataset.tabId = id
+        container.appendChild(page)
+        const header = this.tabHeader(node, id, () => this.showTab(bar, container, 'document', id))
+        const existing = Array.from(bar.children).find((b) => b.dataset && b.dataset.tabId === id)
+        if (existing) bar.replaceChild(header, existing)
+        else bar.appendChild(header)
+        this.showTabOnArrival(bar, container, 'document', id)
+    }
+
+    /// What a tab is known by in its system: its name, numbered when another tab there has it -
+    /// two unnamed tabs are both called `tab`.
+    tabIdAmong(pages, node) {
+        const name = node.name || 'tab'
+        const taken = Array.from(pages).filter((p) => p.dataset && p.dataset.tabId !== undefined
+            && (p.dataset.tabId === name || p.dataset.tabId.startsWith(`${name}#`))).length
+        return taken ? `${name}#${taken}` : name
+    }
+
+    /// A tab's header: its label, and what it says on hover - its own, never what it hands down.
+    tabHeader(node, id, choose) {
+        const header = document.createElement('button')
+        header.className = 'tab-button'
+        header.setAttribute('role', 'tab')
+        header.dataset.tab = node.name || ''
+        header.dataset.tabId = id
+        this.labelTabHeader(header, node)
+        header.addEventListener('click', choose)
+        return header
+    }
+
+    labelTabHeader(header, node) {
+        header.textContent = this.getParameterValue(node, 'label') || node.name || 'Tab'
+        // A sentence. `true` would say the label, which the header already shows.
+        const said = this.getParameterValue(node, 'hover-text')
+        const text = (typeof said === 'string' && said !== 'true' && said !== 'false') ? said.trim() : ''
+        if (text) header.dataset.hoverText = text
+        else delete header.dataset.hoverText
+    }
+
+    /// Show one tab of a system and hide the rest, remembering the choice unless told not to.
+    showTab(bar, pages, key, id, remember = true) {
+        for (const page of pages.children) {
+            if (page.dataset && page.dataset.tabId !== undefined) {
+                page.style.display = page.dataset.tabId === id ? '' : 'none'
+            }
+        }
+        for (const header of bar.children) {
+            const on = !!(header.dataset && header.dataset.tabId === id)
+            header.classList.toggle('active', on)
+            header.setAttribute('aria-selected', on ? 'true' : 'false')
+        }
+        bar.dataset.showing = id
+        if (remember) this.rememberTab(key, id)
+    }
+
+    /// As each tab is put in its system: the one chosen this session, as soon as it arrives; until
+    /// then - or if it is gone - the first.
+    showTabOnArrival(bar, pages, key, id) {
+        if (!bar.dataset.showing || id === this.rememberedTab(key)) {
+            this.showTab(bar, pages, key, id, false)
+            return
+        }
+        const page = Array.from(pages.children).find((p) => p.dataset && p.dataset.tabId === id)
+        if (page) page.style.display = 'none'
+    }
+
+    /// Which tab was chosen, for this document and this system, for as long as the browser tab is
+    /// open - as a value marked `guarded` is the viewer's: never written to the file, never
+    /// anyone else's, and still there after a reload.
+    tabMemoryKey(key) {
+        const file = (window.app && window.app.currentFile) || ''
+        return `overseer.tab|${file}|${key}`
+    }
+
+    rememberTab(key, id) {
+        if (!this._tabsChosen) this._tabsChosen = new Map()
+        const at = this.tabMemoryKey(key)
+        this._tabsChosen.set(at, id)
+        try { sessionStorage.setItem(at, id) } catch (_) { /* this page's memory still has it */ }
+    }
+
+    rememberedTab(key) {
+        const at = this.tabMemoryKey(key)
+        if (this._tabsChosen && this._tabsChosen.has(at)) return this._tabsChosen.get(at)
+        try { return sessionStorage.getItem(at) } catch (_) { return null }
+    }
+
+    /// Draw one tab again where it stands: its page swapped for a new one, showing or not as the old
+    /// one was, and its header brought up to date - rather than drawn as the first tab of a new
+    /// system in whatever it was drawn into.
+    ///
+    /// A tab is drawn again on its own whenever its own parameters change, which an event does
+    /// every time it touches a list inside the tab: the resolver records the overrides on it.
+    repaintTab(node, oldPage, path, inherited) {
+        const parent = oldPage.parentElement
+        if (!parent) return false
+        const header = this.headerOfTabPage(oldPage)
+        const wrapper = document.createElement('div')
+        this._drawingOneTab = node
+        try {
+            this.renderNode(node, wrapper, inherited || {}, path)
+        } finally {
+            this._drawingOneTab = null
+        }
+        const fresh = wrapper.firstElementChild
+        if (!fresh) {
+            // Hidden since: the page and its header go.
+            if (header) header.remove()
+            oldPage.remove()
+            return true
+        }
+        fresh.dataset.tabId = oldPage.dataset.tabId
+        if (oldPage.classList.contains('tab-content')) fresh.classList.add('tab-content')
+        fresh.style.display = oldPage.style.display
+        parent.replaceChild(fresh, oldPage)
+        if (header) this.labelTabHeader(header, node)
+        return true
+    }
+
+    /// The header that shows and hides this page.
+    headerOfTabPage(page) {
+        const id = page.dataset && page.dataset.tabId
+        if (id === undefined) return null
+        const bar = page.classList.contains('tab-content')
+            ? this.tabContainer
+            : page.parentElement && page.parentElement.parentElement && page.parentElement.parentElement.firstElementChild
+        if (!bar) return null
+        return Array.from(bar.children).find((b) => b.dataset && b.dataset.tabId === id) || null
+    }
+
+    /// Whether a list's entries are tabs, which draw as one system rather than as rows - so the
+    /// ways of repainting a list entry by entry do not apply to it.
+    entriesAreTabs(list) {
+        return (list.children || []).some((c) => this.isTab(c))
+    }
+
+    /// Whether a node is a tab: written as one, or made from a template that is one - an entry of a
+    /// list takes its template's name for a type, and keeps what it was made from beside it.
+    isTab(node) {
+        if (!node) return false
+        if ((node.node_type || node.type || '').toLowerCase() === 'tab') return true
+        return String(this.getParameterValue(node, '_original_type') || '').toLowerCase() === 'tab'
     }
 
     /// How narrow a column may get before the row holds one fewer.
@@ -7298,6 +7465,13 @@ export class OverseerRenderer {
             const el = this.drawnElementAt(pathArray, expectedClass)
             if (!el || !el.parentElement) return false
             const parent = el.parentElement
+            if (this.isTab(node) && el.classList.contains('tab-page')) {
+                const bg = getComputedStyle(parent).backgroundColor || null
+                const done = this.repaintTab(node, el, pathArray, { backgroundColor: bg })
+                try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
+                try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
+                return done
+            }
             const idx = Array.prototype.indexOf.call(parent.children, el)
 
             // Create a temporary wrapper and render into it so dataset.path is correct
@@ -7696,6 +7870,10 @@ export class OverseerRenderer {
                         // Render directly with provided node to avoid path resolution mismatches
                         const parent = element.parentElement
                         if (!parent) return false
+                        if (this.isTab(newNode) && element.classList.contains('tab-page')) {
+                            const bg = getComputedStyle(parent).backgroundColor || null
+                            return this.repaintTab(newNode, element, pathArray, { backgroundColor: bg })
+                        }
                         const idx = Array.prototype.indexOf.call(parent.children, element)
                         const wrapper = document.createElement('div')
                         const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null

@@ -2206,6 +2206,14 @@ fn resolve_parameter_inheritance(
         // Build inherited parameters map for children (including this node's parameters)
         let mut inherited_params = parent_params.clone();
         for (key, value) in &node.parameters {
+            // A tab's hover text is what its header says about the tab, not something every
+            // field on its page should say about itself. What the tab was handed from above
+            // goes on down as it would through anything else.
+            let a_tab = node.node_type == "tab"
+                || matches!(node.parameters.get("_original_type"), Some(OverseerValue::String(t)) if t == "tab");
+            if a_tab && key == "hover-text" {
+                continue;
+            }
             if inheritable_params.contains(&key.as_str()) {
                 inherited_params.insert(key.clone(), value.clone());
             }
