@@ -17,6 +17,12 @@ tab project (label="Project", mutable=true) {
 
     string name (label="", font-size=22px) = "Untitled project"
 
+    // What the project is, how its items are organised, and what tabs it has - for the person
+    // opening it and for the bot, which reads this before anything else here. A project can have
+    // tabs of its own beside this one - a feature list, notes, a roadmap - and this is where they
+    // are said to exist. Kept up to date by hand, like everything else in a project.
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; finishing one moves it to Finished, from where it reaches the task history. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan."
+
     div (hidden=true) {
 
         // A tag that exists in this project.
