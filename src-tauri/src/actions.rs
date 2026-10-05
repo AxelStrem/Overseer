@@ -428,7 +428,7 @@ pub(crate) fn converted(value: &OverseerValue, to: &str) -> Option<OverseerValue
     // A decimal comma, as a phone keyboard in half of Europe types it.
     let number = || t.replace(',', ".");
     match to {
-        "string" | "text" | "textbox" | "tags" => Some(OverseerValue::String(text.clone())),
+        "string" | "text" | "textbox" | "tags" | "enum" => Some(OverseerValue::String(text.clone())),
         "int" => match value {
             OverseerValue::Integer(n) => Some(OverseerValue::Integer(*n)),
             _ => number()
@@ -3269,8 +3269,8 @@ impl ActionExecutor {
             .and_then(|at| Self::get_node_ref_by_indices(snapshot, &at))
             .ok_or_else(|| OverseerError::ValidationError(format!("Source not found: {}", from_path)))?;
 
-        const HOLDS_A_VALUE: [&str; 10] =
-            ["string", "text", "textbox", "int", "float", "bool", "checkbox", "date", "timestamp", "tags"];
+        const HOLDS_A_VALUE: [&str; 11] =
+            ["string", "text", "textbox", "int", "float", "bool", "checkbox", "date", "timestamp", "tags", "enum"];
         fn is_wrapper(node: &OverseerNode) -> bool {
             node.is_hierarchy_transparent && (node.name.is_empty() || node.name == node.node_type)
         }

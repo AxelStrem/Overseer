@@ -1611,6 +1611,19 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     opacity: 1;
 }
 
+/* An enum: one chip, pressed to pick another, from the same picker a tag is added from. */
+.tag-chip.enum-choice {
+    cursor: pointer;
+}
+
+/* An enum with nothing chosen yet: a place to press, not a value. */
+.tag-chip.tag-placeholder {
+    background-color: transparent;
+    color: var(--text-secondary);
+    border: 1px dashed var(--border-color);
+    margin-right: 0;
+}
+
 /* A filter over a list: text to match and tags to narrow by.
  *
  * Entirely a view. Nothing here is written to the document, which is why it can afford to

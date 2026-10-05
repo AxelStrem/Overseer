@@ -1114,7 +1114,7 @@ impl FileOperations {
                             .count();
                         let only_value_override = has_value
                             && non_internal_non_value_params == 0
-                            && child.children.is_empty();
+                            && Self::has_only_the_templates_body(child);
                         if only_value_override {
                             let val = child.parameters.get("value").unwrap();
                             let differs_from_template =
@@ -1747,7 +1747,7 @@ impl FileOperations {
                         .count();
                     let only_value_override = has_value
                         && non_internal_non_value_params == 0
-                        && child.children.is_empty();
+                        && Self::has_only_the_templates_body(child);
                     // Guard: only treat as an explicit value override if the template value marker was removed.
                     let has_template_value_marker =
                         child.parameters.contains_key("_template_value");
@@ -2163,8 +2163,42 @@ impl FileOperations {
         params
     }
 
+    /// Whether everything under this node came with it from the template, so that writing it as
+    /// a value alone loses nothing.
+    ///
+    /// A value written to a field the template gives a body - `enum stage = "filed" { on change
+    /// {...} }` - is still only a value. The body is the template's to say, and every entry has it
+    /// without stating it. Asking only whether there were children wrote the override out as
+    /// `enum stage = "ready" {}`, a declaration of its own, as soon as a stage was picked on an
+    /// entry that had not stated one.
+    fn has_only_the_templates_body(node: &OverseerNode) -> bool {
+        node.children.iter().all(|c| {
+            (matches!(c.parameters.get("_template_node"), Some(OverseerValue::Boolean(true)))
+                || c.parameters.keys().any(|k| Self::marks_a_template_node(k)))
+                && !matches!(
+                    c.parameters.get("_explicit_child_override"),
+                    Some(OverseerValue::Boolean(true))
+                )
+        })
+    }
+
     fn serialize_inline_simple_field(node: &OverseerNode) -> Option<String> {
+        // See `has_only_the_templates_body`. Only for an override: a node that is no override
+        // and has children is a declaration, whoever supplied them.
         if !node.children.is_empty() {
+            let overridden = matches!(
+                node.parameters.get("_explicit_child_override"),
+                Some(OverseerValue::Boolean(true))
+            );
+            if !overridden || !Self::has_only_the_templates_body(node) {
+                return None;
+            }
+            if let Some(value) = node.parameters.get("value") {
+                if !node.name.is_empty() && node.name != "-" {
+                    let rendered_value = Self::serialize_value_with_node(node, value);
+                    return Some(format!("- {} = {}", node.name, rendered_value));
+                }
+            }
             return None;
         }
 

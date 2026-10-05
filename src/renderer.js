@@ -1872,6 +1872,8 @@ export class OverseerRenderer {
                 return this.createTextElement(node)
             case 'tags':
                 return this.createTagsElement(node)
+            case 'enum':
+                return this.createEnumElement(node)
             case 'filter':
                 return this.createFilterElement(node)
             case 'int':
@@ -2781,7 +2783,7 @@ export class OverseerRenderer {
      */
     makePressable(element, node) {
         const type = (node.node_type || node.type || '').toLowerCase()
-        const drawnAsAField = ['tab', 'list', 'string', 'textbox', 'text', 'tags', 'filter', 'int', 'float',
+        const drawnAsAField = ['tab', 'list', 'string', 'textbox', 'text', 'tags', 'enum', 'filter', 'int', 'float',
             'date', 'timestamp', 'bool', 'button', 'checkbox', 'chart', 'mount'].includes(type)
         if (drawnAsAField) return
         if (!this.declaresEvent(node, 'click')) return
@@ -2902,7 +2904,7 @@ export class OverseerRenderer {
      */
     canBeChangedHere(node, el) {
         const type = (node.node_type || node.type || '').toLowerCase()
-        if (!['string', 'textbox', 'text', 'int', 'float', 'bool', 'checkbox', 'tags'].includes(type)) return false
+        if (!['string', 'textbox', 'text', 'int', 'float', 'bool', 'checkbox', 'tags', 'enum'].includes(type)) return false
         // A textbox's worked-out value is only where it starts; what is typed goes over it.
         if (type !== 'textbox' && this.parameterHasFormula(node, 'value')) return false
         return this.getEffectiveMutableMode(node, el) !== 'false'
@@ -3284,6 +3286,93 @@ export class OverseerRenderer {
         //
         // Not the `margin`/`padding` fault recorded separately: that one is a stated padding
         // failing to reach a wrapped value. This was a missing call.
+        this.applyLayoutStyles(container, node)
+        this.applyFieldDefaultStyles(container, node)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    /**
+     * One value out of a list of them: a task's stage, say.
+     *
+     * A tags field holding exactly one tag, in all but name - the same vocabulary list, the same
+     * chip in the same colour - and drawn by the same means, so a stage and a tag look like the
+     * family they are. What differs is the choosing: pressing the chip offers every other value,
+     * in the order the list gives them, and the one picked replaces it. Held as the plain text of
+     * the value, so a formula compares it with `==` like any string.
+     *
+     * A field can say what happens when it changes, as any field can, with `on change`. That runs
+     * after the new value is in the file, and against the entry it was picked on: the write can
+     * move the entry - a list kept in order of stage puts it somewhere else - so the entry is
+     * found again by its key before the handler is asked for.
+     */
+    createEnumElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field tags-field enum-field'
+
+        const labelText = this.getParameterValue(node, 'label')
+        if (labelText) {
+            const label = document.createElement('label')
+            label.textContent = labelText
+            container.appendChild(label)
+        }
+
+        const chips = document.createElement('span')
+        chips.className = 'tag-chips'
+        container.appendChild(chips)
+
+        const held = () => String(this.getNodeValue(node) ?? '').trim()
+        const editable = () => this.getEffectiveMutableMode(node, container) !== 'false'
+
+        const choose = async (after) => {
+            const before = held()
+            if (after === before) return
+            const path = this.buildNodePath(container)
+            const anchor = this._anchorForPath(path)
+            this.updateNodeValue(node, after)
+            paint()
+            try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
+            try {
+                // With the value - see the note in `createTagsElement`. Waited for, unlike the
+                // other fields, because a handler below may be about to read it from the file.
+                const joined = path.join('/')
+                await window.app.reevaluateDocumentSelective(
+                    [joined], [{ path: joined, oldValue: before, newValue: after }]
+                )
+            } catch (_) {
+                try { await window.app.reevaluateDocumentSelective([]) } catch (_) {}
+            }
+            const now = anchor ? this._pathFromAnchor(anchor) : path
+            if (!now) return
+            try { await this.emitEvent(node, { dataset: { path: JSON.stringify(now) } }, 'change') } catch (_) {}
+        }
+
+        const paint = () => {
+            chips.textContent = ''
+            const vocabulary = this.tagVocabulary(node)
+            const value = held()
+            let chip
+            if (value) {
+                chip = this.tagChip(value, vocabulary.get(value), null)
+                if (!vocabulary.has(value)) chip.title = 'not one of the values this field lists'
+            } else {
+                chip = document.createElement('span')
+                chip.className = 'tag-chip tag-placeholder'
+                chip.textContent = String(this.getParameterValue(node, 'placeholder') || '—')
+            }
+            chips.appendChild(chip)
+            if (!editable()) return
+            const others = [...vocabulary.keys()].filter(v => v !== value)
+            if (others.length === 0) return
+            chip.classList.add('enum-choice')
+            chip.title = chip.title ? `${chip.title} - press to change` : 'press to change'
+            chip.addEventListener('click', (event) => {
+                event.stopPropagation()
+                this.offerTags(chip, others, vocabulary, (picked) => { choose(picked) })
+            })
+        }
+        paint()
+
         this.applyLayoutStyles(container, node)
         this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)

@@ -95,7 +95,7 @@ list Items (entry=string) {
 - `float`: Floating-point numbers
 - `date`: Date values
 - `bool`: Boolean true/false
-- `enum`: Predefined choice from a list
+- `enum`: One value out of a list of them, drawn as a chip and picked from that list - see "Enum"
 
 #### Container Types:
 - `div`: Generic container for grouping and visual placement and styling
@@ -483,6 +483,47 @@ Handed to a formula, a `tags` field reads as a list, so a document can ask what 
 bool is_vegan = $(labels.filter(|t| t == "vegan").count() > 0)
 ```
 
+### Enum
+
+One value out of a list of them: a task's stage, say. The same vocabulary a `tags` field reads -
+a handle, a name, a colour - and the same chip, holding exactly one. Pressing it offers the other
+values in the order the list gives them, and the one picked replaces it. A value the list does not
+hold still shows, marked, as an unlisted tag does; with nothing chosen, a dashed chip is the place
+to press, showing the field's `placeholder` if it has one.
+
+```overseer
+div Stage (layout="horizontal") {
+    string tag = ""
+    string name = ""
+    string colour = "#6b7280"
+}
+list Stages (entry=<Stage>, key="tag") { }
+
+enum stage (vocabulary="/project/Stages") = "filed"
+```
+
+Stored as the plain text of the handle, so a formula compares it as the string it is:
+`Items.filter(|x| x/stage == "ready").count()`.
+
+Like any field it can say what happens when it changes, with `on change`. That runs once the new
+value is in the file, against the entry it was picked on - found again by the list's `key`, since
+the write can move it - so an `if` there can act on the value chosen:
+
+```overseer
+enum stage (vocabulary="/project/Stages") = "filed" {
+    on change {
+        if (cond=$(../stage == "finished")) {
+            append (list="/project/History") {
+                - handle = $(../handle)
+            }
+            remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
+        }
+    }
+}
+```
+
+The value and what its handler does are two writes, and two steps to take back.
+
 ### Filter
 
 A view over a list, and nothing more: it writes nothing and the document never changes. What
@@ -849,7 +890,7 @@ div Tasks {
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
 - **Mounts**: `source`, `lazy`, `mutable`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`
-- **Tags**: `vocabulary` (on a `tags` field, or a `textbox` that picks rather than takes typing)
+- **Tags**: `vocabulary` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 
 ---
 
