@@ -52,6 +52,12 @@ fn a_root(tag: &str) -> std::path::PathBuf {
     root
 }
 
+/// What the cache holds for this folder: the same text elsewhere is another document - see
+/// `a_document_in_two_folders_is_two_documents`.
+fn asked_from<T>(documents: &DocumentRoot, ask: impl FnOnce() -> T) -> T {
+    overseer::docmgr::manager::DocumentManager::with_document(Some(documents.path().to_path_buf()), ask)
+}
+
 fn on_disk(root: &std::path::Path) -> String {
     std::fs::read_to_string(root.join("day.os")).expect("read")
 }
@@ -368,7 +374,7 @@ fn a_refused_change_leaves_the_document_held() {
         );
         assert!(refused.is_err());
         assert!(
-            overseer::document_cache::nodes_for(&on_disk(&root)).is_some(),
+            asked_from(&service, || overseer::document_cache::nodes_for(&on_disk(&root))).is_some(),
             "the refused change let the document go"
         );
         let answer = set(&service, "alice", &["day", "recorded"], 4);

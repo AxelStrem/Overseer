@@ -88,6 +88,12 @@ fn text(sandbox: &Sandbox) -> String {
     std::fs::read_to_string(sandbox.root.join("d.os")).unwrap()
 }
 
+/// What the cache holds for this folder: the same text elsewhere is another document - see
+/// `a_document_in_two_folders_is_two_documents`.
+fn asked_from<T>(documents: &DocumentRoot, ask: impl FnOnce() -> T) -> T {
+    overseer::docmgr::manager::DocumentManager::with_document(Some(documents.path().to_path_buf()), ask)
+}
+
 fn number(node: &OverseerNode) -> Option<f64> {
     match node.parameters.get("_computed_value") {
         Some(OverseerValue::Integer(i)) => Some(*i as f64),
@@ -146,8 +152,14 @@ fn what_the_bot_wrote_is_held_for_the_next_write() {
             .set_at("d.os", &format!("{}/intake/Meal__1/grams", TODAY), OverseerValue::Float(80.0))
             .expect("the write");
         let written = text(&sandbox);
-        assert!(overseer::document_cache::nodes_for(&written).is_some(), "nothing held for the text written");
-        assert!(overseer::document_cache::graph_for(&written).is_some(), "no graph held for the text written");
+        assert!(
+            asked_from(&documents, || overseer::document_cache::nodes_for(&written)).is_some(),
+            "nothing held for the text written"
+        );
+        assert!(
+            asked_from(&documents, || overseer::document_cache::graph_for(&written)).is_some(),
+            "no graph held for the text written"
+        );
     });
 }
 
@@ -215,7 +227,7 @@ fn a_write_refused_before_it_changed_anything_leaves_the_document_held() {
         let fields = [("no_such_field".to_string(), OverseerValue::Float(1.0))].into_iter().collect();
         assert!(documents.append_at("d.os", &format!("{}/intake", TODAY), &fields).is_err());
         assert!(
-            overseer::document_cache::nodes_for(&text(&sandbox)).is_some(),
+            asked_from(&documents, || overseer::document_cache::nodes_for(&text(&sandbox))).is_some(),
             "the refused write let the document go"
         );
         let whole = overseer::resolver::times_worked_out_whole();

@@ -3107,6 +3107,65 @@ impl ActionExecutor {
         Ok(holding.first().copied())
     }
 
+    /// Refuse an entry a keyed list would not be able to tell apart from another.
+    ///
+    /// A list with `key=` is addressed by that field, so an entry arriving with it empty, or with a
+    /// value an entry there holds already, gives the list two entries at one address - and every
+    /// later remove, change or move by that key is then refused by `the_one_holding`. The form in
+    /// the project documents checks before it appends, but only because it was written to; the
+    /// bot, another document's button or a form that forgets did not. So it is checked here, where
+    /// every append, prepend and move into another list arrives. Duplicates already in a file are
+    /// left alone: only a new one is refused.
+    ///
+    /// The field is looked for among the entry's own fields and those of the unnamed divs that lay
+    /// it out, since a template often wraps its fields in a row. A key still a formula is left to
+    /// the resolver: what it comes to is not known yet, and every entry made from that template
+    /// would look the same until it is.
+    fn refuse_a_key_already_held(
+        list: &OverseerNode,
+        entry: &OverseerNode,
+        list_path: &str,
+        doing: &str,
+    ) -> Result<(), OverseerError> {
+        let Some(OverseerValue::String(field)) = list.parameters.get("key") else { return Ok(()) };
+        if field.is_empty() || entry.children.is_empty() {
+            return Ok(());
+        }
+        fn key_of<'a>(entry: &'a OverseerNode, field: &str) -> Option<&'a OverseerValue> {
+            if let Some(found) = entry.children.iter().find(|c| c.name == field) {
+                return found.parameters.get("_computed_value").or_else(|| found.parameters.get("value"));
+            }
+            entry
+                .children
+                .iter()
+                .filter(|c| c.is_hierarchy_transparent && (c.name.is_empty() || c.name == c.node_type))
+                .find_map(|c| key_of(c, field))
+        }
+        let wanted = key_of(entry, field);
+        if matches!(wanted, Some(OverseerValue::Formula(_))) {
+            return Ok(());
+        }
+        let wanted_text = wanted.and_then(as_text).unwrap_or_default();
+        if wanted_text.trim().is_empty() {
+            return Err(OverseerError::ValidationError(format!(
+                "{} is kept by {}, and the entry to {} has none; nothing was changed",
+                list_path, field, doing
+            )));
+        }
+        let wanted = wanted.unwrap();
+        let taken = list.children.iter().filter_map(|it| key_of(it, field)).any(|held| {
+            Self::value_equals_with_key_precision(list, held, wanted)
+                || as_text(held).map_or(false, |t| t == wanted_text)
+        });
+        if taken {
+            return Err(OverseerError::ValidationError(format!(
+                "{} already holds an entry with {} = {}, so the entry to {} would share its address; nothing was changed",
+                list_path, field, wanted_text, doing
+            )));
+        }
+        Ok(())
+    }
+
     fn remove_from_list(
         nodes: &mut Vec<OverseerNode>,
         owner_path: &[String],
@@ -3486,6 +3545,7 @@ impl ActionExecutor {
             };
             Self::apply_list_entry_style(&mut new_item, &style_guide);
             Self::mark_the_entry_as_new(&mut new_item);
+            Self::refuse_a_key_already_held(list_node, &new_item, list_path, verb)?;
             (new_item, style_guide)
         };
 
@@ -4075,6 +4135,9 @@ impl ActionExecutor {
                         "move.to is not a list".to_string(),
                     ));
                 }
+                // Already taken out of the list it came from; a refused press writes nothing, so
+                // that is undone with the rest of it.
+                Self::refuse_a_key_already_held(to_node, &item, to_path, "move")?;
                 let insert_at = at_index.unwrap_or(to_node.children.len());
                 let idx = if insert_at > to_node.children.len() {
                     to_node.children.len()
@@ -4637,7 +4700,7 @@ div Ext {
         div Root {
             div Task { string id = "" string title = "" }
             list Tasks (entry=<Task>, key="id") { }
-            button Add { on click { append(list="/Root/Tasks", template="<Task>") } }
+            button Add { on click { append(list="/Root/Tasks", template="<Task>") { - id = "t1" } } }
         }
         "#;
         let mut nodes = parse_document(input).unwrap().1;
@@ -4941,7 +5004,7 @@ mod tests_clone_from_template {
     fn append_with_overrides_serializes_as_object_not_primitive() {
         let input = r#"
         div T { int i = 10 int ii = $(2*i) }
-list L (entry=<T>, key="id") { }
+list L (entry=<T>, key="i") { }
 button B { on click { append (template="<T>", list="/L") { - i = 20 } } }
 button C { on click { append (template="<T>", list="/L") { - i = 30 } } }
 int x = 50
@@ -4959,7 +5022,7 @@ button D (label="button 3") {
         let s = OverseerFileHandler::serialize_nodes(&nodes).unwrap();
         assert!(s.contains("list L ("));
         assert!(s.contains("entry=<T>"));
-        assert!(s.contains("key=\"id\""));
+        assert!(s.contains("key=\"i\""));
         // Ensure we do not emit primitive entries like "- 20"/"- 30"/"- 50"
         assert!(
             !s.contains("\n    - 20\n"),

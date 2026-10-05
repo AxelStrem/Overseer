@@ -1167,7 +1167,7 @@ impl DocumentRoot {
             }
             *since = std::time::Instant::now();
         }
-        let (outcome, nodes, serialized, report, settled_quickly) = DocumentManager::with_document(dir, || {
+        let (outcome, nodes, serialized, report, settled_quickly) = DocumentManager::with_document(dir.clone(), || {
             // The quick way, taken whenever it can be: the document as it was last worked out for
             // this very text, when what the write is about is in view there. A write then works
             // out what it reaches and no more, as the page's writes do - see
@@ -1269,7 +1269,11 @@ impl DocumentRoot {
         if let Some(whole) = settled_quickly {
             if settled.text == serialized {
                 let now = if wrote { settled.text.as_str() } else { text_before.as_str() };
-                crate::app_api::keep_worked_out(&text_before, now, nodes, whole);
+                // In the document's own folder, which is half of what it is kept under - see
+                // `document_cache::Entry::base`.
+                DocumentManager::with_document(dir, || {
+                    crate::app_api::keep_worked_out(&text_before, now, nodes, whole)
+                });
             }
         }
         phase("edit keep", &mut since);

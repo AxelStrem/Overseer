@@ -155,6 +155,13 @@ struct Entry {
     /// graph applied to a different document would name nodes that do not exist and, worse, fail
     /// to name ones that do.
     text: String,
+    /// The folder it was worked out in, and the other half of what makes it usable. A document's
+    /// mounts are read relative to its own folder, so the same text in two folders is two
+    /// documents: each mounting its own neighbour, and each judged fresh against its own files -
+    /// see `mounts_unchanged`. Keyed on the text alone, the tests that copy one tracker beside a
+    /// catalogue each were handed one another's tracker, worked out from a catalogue without the
+    /// food just added to theirs.
+    base: Option<std::path::PathBuf>,
     nodes: Option<Vec<OverseerNode>>,
     graph: Option<crate::dependencies::Graph>,
     bytes: usize,
@@ -219,11 +226,19 @@ fn with<R>(work: impl FnOnce(&mut Vec<Entry>) -> R) -> R {
     work(&mut store)
 }
 
-/// Where the entry for this text is - and nowhere, once a file its mounts were read from has
-/// changed: then what it holds is let go, tree and graph, and whoever asked works the document out
-/// from the files as though it had never been held.
+/// The folder whoever is asking is working in - see `Entry::base`.
+fn here() -> Option<std::path::PathBuf> {
+    crate::docmgr::manager::DocumentManager::base_dir()
+}
+
+/// Where the entry for this text, worked out in this folder, is - and nowhere, once a file its
+/// mounts were read from has changed: then what it holds is let go, tree and graph, and whoever
+/// asked works the document out from the files as though it had never been held.
 fn at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
-    let found = store.iter().position(|entry| entry.text == text)?;
+    let base = here();
+    let found = store
+        .iter()
+        .position(|entry| entry.text == text && entry.base == base)?;
     if !store[found].mounts_unchanged() {
         store.remove(found);
         return None;
@@ -335,6 +350,7 @@ fn put(text: &str, work: impl FnOnce(&mut Entry)) {
             None => {
                 store.push(Entry {
                     text: text.to_string(),
+                    base: here(),
                     nodes: None,
                     graph: None,
                     bytes: 0,
@@ -402,7 +418,8 @@ pub fn take_graph(text: &str) -> Option<crate::dependencies::Graph> {
 
 /// The document has been written out afresh; what is held still describes it, under its new text.
 ///
-/// The old text is named because there may now be several entries and only one of them moved.
+/// The old text is named because there may now be several entries and only one of them moved -
+/// and only the one in the caller's folder, since the same text elsewhere was not written.
 pub fn rekey(was: &str, now_text: &str) {
     with(|store| {
         // Whatever was already held for the new text is superseded by what is being moved onto it.

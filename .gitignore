@@ -58,3 +58,6 @@ Thumbs.db
 test_output.txt
 src-tauri/log.txt
 src-tauri/debug_regenerated_weight.os
+AUTOTASK.md
+scripts/agent/
+run-agent-loop.ps1
