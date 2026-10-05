@@ -1,6 +1,6 @@
 //! A project item moves through stages, and finishing is one of them.
 //!
-//! Every project has the same stages - filed, asked, answered, ready, testing, later - and
+//! Every project has the same stages - filed, discuss, asked, ready, testing, later - and
 //! `finished`, which is not a place an item stays: picking it records the item in History and
 //! takes it off the list, which is what a finish button used to do. Checked against the template
 //! every project is a copy of.
@@ -148,5 +148,5 @@ fn every_project_offers_the_same_stages_in_order() {
             _ => None,
         })
         .collect();
-    assert_eq!(tags, ["filed", "asked", "answered", "ready", "testing", "later", "finished"]);
+    assert_eq!(tags, ["filed", "discuss", "asked", "ready", "testing", "later", "finished"]);
 }
