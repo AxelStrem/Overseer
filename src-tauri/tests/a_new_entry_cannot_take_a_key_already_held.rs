@@ -216,12 +216,12 @@ fn a_move_into_a_list_that_holds_the_key_is_refused() {
     refused("move_taken");
 }
 
-// Only that it is let through: a move between two lists does not reach the file at all yet, which
-// is older than this check and filed as its own item (`movewrite`).
 #[test]
 fn a_move_with_a_key_the_list_lacks_is_not_refused() {
-    let (outcome, _) = press("move_free");
+    let (outcome, after) = press("move_free");
     assert!(outcome.is_ok(), "{:?}", outcome.err());
+    let rows = &after[after.find("list Rows").unwrap()..after.find("list Loose").unwrap()];
+    assert!(rows.contains("- id = \"free\""), "the entry was not written:\n{}", after);
 }
 
 #[test]

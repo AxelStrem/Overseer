@@ -4092,6 +4092,11 @@ impl ActionExecutor {
                     insert_at
                 };
                 list_node.children.insert(idx, item);
+                // As in `remove_from_list`: every entry still matches the text it was read
+                // from, so unless the list says it no longer does, the serializer replays it
+                // in its old order.
+                list_node.source_fingerprint = None;
+                Self::mark_field_explicit_override(nodes, &from_indices);
             }
         } else {
             // Different lists: remove from source, push/insert into dest
@@ -4145,6 +4150,14 @@ impl ActionExecutor {
                     insert_at
                 };
                 to_node.children.insert(idx, item);
+                // Neither list matches its text any more - see the reorder above. The one
+                // the entry left would otherwise be written back with it still inside.
+                to_node.source_fingerprint = None;
+                if let Some(from_node) = Self::get_node_mut_by_indices(nodes, &from_indices) {
+                    from_node.source_fingerprint = None;
+                }
+                Self::mark_field_explicit_override(nodes, &from_indices);
+                Self::mark_field_explicit_override(nodes, &to_indices);
             }
         }
         Ok(())
@@ -4225,6 +4238,9 @@ impl ActionExecutor {
         }
 
         list_node.children = entries.into_iter().map(|(_k, item, _i)| item).collect();
+        // The same entries in a new order still each match their text - see `move_in_list`.
+        list_node.source_fingerprint = None;
+        Self::mark_field_explicit_override(nodes, &indices);
         Ok(())
     }
 
