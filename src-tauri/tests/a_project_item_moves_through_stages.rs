@@ -2,8 +2,9 @@
 //!
 //! Every project has the same stages - filed, discuss, asked, ready, testing, later - and
 //! `finished`, which is not a place an item stays: picking it records the item in History and
-//! takes it off the list, which is what a finish button used to do. Checked against the template
-//! every project is a copy of.
+//! takes it off the list, which is what a finish button used to do. `cancelled` closes it the
+//! same way, with the record's status saying so, and a cancelled part counts towards nothing.
+//! Checked against the template every project is a copy of.
 //!
 //! The page sends the value and the field's `on change` as one change. As two, taking back the
 //! second left the first standing, and a task picked as finished came back on the list saying
@@ -135,6 +136,79 @@ fn any_other_stage_is_written_where_the_template_has_it() {
     });
 }
 
+/// What a field of the document reads once it is worked out, by its address.
+fn value_at(file: &str, address: &str) -> OverseerValue {
+    let nodes = app_api::load_document(on_disk(file)).expect("open");
+    let node = overseer::addressing::find(&nodes, address).unwrap_or_else(|| panic!("nothing at {}", address));
+    node.parameters
+        .get("_computed_value")
+        .or_else(|| node.parameters.get("value"))
+        .cloned()
+        .unwrap_or_else(|| panic!("no value at {}", address))
+}
+
+fn number_at(file: &str, address: &str) -> f64 {
+    match value_at(file, address) {
+        OverseerValue::Integer(i) => i as f64,
+        OverseerValue::Float(f) => f,
+        other => panic!("{} reads {:?}", address, other),
+    }
+}
+
+#[test]
+fn picking_cancelled_closes_the_item_marked_cancelled() {
+    serialised(|| {
+        let (_root, file) = a_project("cancel");
+        assert!(pick(&file, "brace", "cancelled").wrote, "cancelling wrote nothing");
+
+        let text = on_disk(&file);
+        assert!(!handles_in(&text, "Items").contains(&"brace".to_string()), "still open:\n{}", text);
+        assert!(handles_in(&text, "History").contains(&"brace".to_string()), "not recorded:\n{}", text);
+        let record = entry_lines(&text, "brace");
+        assert!(record.contains(&"- status = \"cancelled\"".to_string()), "not marked cancelled: {:?}", record);
+        assert!(!record.iter().any(|l| l.starts_with("- stage = ")), "the record kept a stage: {:?}", record);
+    });
+}
+
+#[test]
+fn a_record_that_does_not_say_reads_finished() {
+    // Everything closed before cancelled existed has no status, and it was all finished.
+    serialised(|| {
+        let (_root, file) = a_project("old");
+        assert_eq!(value_at(&file, "project/History/[escape]/status"), OverseerValue::String("finished".into()));
+        pick(&file, "brace", "finished");
+        assert_eq!(value_at(&file, "project/History/[brace]/status"), OverseerValue::String("finished".into()));
+    });
+}
+
+#[test]
+fn a_cancelled_part_counts_as_neither_work_done_nor_work_left() {
+    // parser holds brace, open, and roundtrip, finished. Cancelling brace leaves roundtrip the
+    // whole of it: one part, all done, and no points won that were not won before.
+    serialised(|| {
+        let (_root, file) = a_project("rollup");
+        let won = number_at(&file, "project/points_won");
+        assert_eq!(number_at(&file, "project/Items/[parser]/kids"), 2.0);
+        pick(&file, "brace", "cancelled");
+        assert_eq!(number_at(&file, "project/Items/[parser]/kids"), 1.0);
+        assert_eq!(number_at(&file, "project/Items/[parser]/open_kids"), 0.0);
+        assert_eq!(number_at(&file, "project/Items/[parser]/done"), 100.0);
+        assert_eq!(number_at(&file, "project/points_won"), won, "cancelled work counted as won");
+    });
+}
+
+#[test]
+fn a_task_with_children_open_is_not_cancelled() {
+    serialised(|| {
+        let (_root, file) = a_project("cancelparent");
+        let open = handles_in(&on_disk(&file), "Items");
+        pick(&file, "editor", "cancelled");
+        let text = on_disk(&file);
+        assert_eq!(handles_in(&text, "Items"), open, "cancelled with children open:\n{}", text);
+        assert!(!handles_in(&text, "History").contains(&"editor".to_string()));
+    });
+}
+
 #[test]
 fn every_project_offers_the_same_stages_in_order() {
     let nodes = app_api::load_document(TEMPLATE.to_string()).expect("open");
@@ -148,5 +222,5 @@ fn every_project_offers_the_same_stages_in_order() {
             _ => None,
         })
         .collect();
-    assert_eq!(tags, ["filed", "discuss", "asked", "ready", "testing", "later", "finished"]);
+    assert_eq!(tags, ["filed", "discuss", "asked", "ready", "testing", "later", "finished", "cancelled"]);
 }
