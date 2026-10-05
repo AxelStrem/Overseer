@@ -1,5 +1,6 @@
 // Stages, for an agent working through the items below. Unless told otherwise, take ready items
 // first, then discuss, and filed only when neither is left; within a stage, use your judgement.
+// Items tagged priority go before the rest of their stage.
 // Skip any item whose after list names an item that is still open.
 //
 //   ready     Everything is decided: implement it, then move it to testing - or to asked, if
@@ -280,6 +281,11 @@ tab project (label="Project", mutable=true) {
             - tag = "docs"
             - name = "docs"
             - colour = "#7057ff"
+        }
+        - {
+            - tag = "priority"
+            - name = "first"
+            - colour = "#e11d48"
         }
     }
 
