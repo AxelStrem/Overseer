@@ -12,12 +12,17 @@
 //   asked, testing, later
 //             Waiting on a person: leave them.
 //
+// Whenever you move an item to ready, set its complexity - how much thinking building it takes,
+// given the plan in its note, where points say how much work: trivial (straightforward or
+// boilerplate, however much of it), low, medium, or high (a good understanding of several parts
+// of the project and real analysis).
+//
 // Whenever you move an item, add what you did or found to the end of its note. Finishing,
 // cancelling or dropping an item is for a person.
 
 tab project (label="Project", mutable=true) {
     string name (label="", font-size=22px) = "Untitled project"
-    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; discuss means the owner wants an opinion on it before it is built, and whoever gives one moves it on to asked or ready; asked that a question on it is waiting on the owner; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; discuss means the owner wants an opinion on it before it is built, and whoever gives one moves it on to asked or ready; asked that a question on it is waiting on the owner; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
 
     div (hidden=true) {
         div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
@@ -69,6 +74,34 @@ tab project (label="Project", mutable=true) {
             }
         }
 
+        list Complexities (entry=<Label>, key="tag") {
+            - {
+                - tag = "unassigned"
+                - name = "unassigned"
+                - colour = "#6b7280"
+            }
+            - {
+                - tag = "trivial"
+                - name = "trivial"
+                - colour = "#15803d"
+            }
+            - {
+                - tag = "low"
+                - name = "low"
+                - colour = "#0f766e"
+            }
+            - {
+                - tag = "medium"
+                - name = "medium"
+                - colour = "#b45309"
+            }
+            - {
+                - tag = "high"
+                - name = "high"
+                - colour = "#b91c1c"
+            }
+        }
+
         list Statuses (entry=<Label>, key="tag") {
             - {
                 - tag = "finished"
@@ -88,7 +121,7 @@ tab project (label="Project", mutable=true) {
                   font-color=$(waiting > 0 ? "#6b7280" : "inherit")) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=8%) = ""
-            string title (label="title", font-size=14px, width=23%,
+            string title (label="title", font-size=14px, width=19%,
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
             enum stage (label="stage", vocabulary="/project/Stages", width=9%,
@@ -105,6 +138,7 @@ tab project (label="Project", mutable=true) {
                             - after = $(../after)
                             - labels = $(../labels)
                             - points = $(../points)
+                            - complexity = $(../complexity)
                             - commentary = $(../commentary)
                         }
                         remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
@@ -121,6 +155,7 @@ tab project (label="Project", mutable=true) {
                                          .map(|x| x/done * x/weight).sum()
                            + finished_weight * 100) / weight)
             int points (label="pts", format="trim", width=6%) = 1
+            enum complexity (label="think", vocabulary="/project/Complexities", width=7%) = "unassigned"
 
             button note (icon="note", margin=0, width=3%,
                          font-color=$(../commentary == "" ? "#6b7280" : "inherit")) {
@@ -129,7 +164,7 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
-            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=10%) =
+            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=7%) =
                 $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
                   /project/History.filter(|x| x/parent == ../handle)
                                   .map(|x| x/finished_at).max())
@@ -172,6 +207,7 @@ tab project (label="Project", mutable=true) {
                 tags after (hidden=true) = ""
                 tags labels (label="", vocabulary="/project/Labels", width=24%) = ""
                 int points (label="", format="trim", width=6%) = 0
+                enum complexity (label="", vocabulary="/project/Complexities", width=7%) = "unassigned"
 
                 button note (icon="note", margin=0, width=3%,
                              font-color=$(../commentary == "" ? "#6b7280" : "inherit")) {

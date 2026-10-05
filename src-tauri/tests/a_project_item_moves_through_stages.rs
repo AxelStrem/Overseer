@@ -4,6 +4,7 @@
 //! `finished`, which is not a place an item stays: picking it records the item in History and
 //! takes it off the list, which is what a finish button used to do. `cancelled` closes it the
 //! same way, with the record's status saying so, and a cancelled part counts towards nothing.
+//! How hard an item is to think through - its complexity - goes with it onto the record.
 //! Checked against the template every project is a copy of.
 //!
 //! The page sends the value and the field's `on change` as one change. As two, taking back the
@@ -232,4 +233,55 @@ fn every_project_offers_the_same_stages_in_order() {
         })
         .collect();
     assert_eq!(tags, ["filed", "discuss", "asked", "ready", "testing", "later", "finished", "cancelled"]);
+}
+
+/// Set a field of an open item, as the page does when a chip is picked.
+fn set(file: &str, handle: &str, field: &str, value: &str) {
+    let nodes = app_api::load_document(on_disk(file)).expect("open");
+    let path = overseer::addressing::name_path(&nodes, &format!("project/Items/[{}]/{}", handle, field))
+        .unwrap_or_else(|| panic!("no {} on {}", field, handle));
+    let write = app_api::ValueWrite { node_path: path.clone(), value: OverseerValue::String(value.into()) };
+    app_api::run_event_at(file, "p.os", path, "change".into(), "s", Vec::new(), vec![write])
+        .expect("the change was refused");
+}
+
+#[test]
+fn an_item_not_yet_judged_reads_unassigned() {
+    serialised(|| {
+        let (_root, file) = a_project("unjudged");
+        assert_eq!(value_at(&file, "project/Items/[brace]/complexity"), OverseerValue::String("unassigned".into()));
+        assert_eq!(value_at(&file, "project/History/[escape]/complexity"), OverseerValue::String("unassigned".into()));
+    });
+}
+
+#[test]
+fn an_items_complexity_is_written_after_its_points_and_kept_on_the_record() {
+    serialised(|| {
+        let (_root, file) = a_project("complexity");
+        set(&file, "brace", "complexity", "medium");
+        let lines = entry_lines(&on_disk(&file), "brace");
+        let points = lines.iter().position(|l| l.starts_with("- points = ")).expect("points");
+        assert_eq!(lines.get(points + 1).map(String::as_str), Some("- complexity = \"medium\""), "{:?}", lines);
+
+        pick(&file, "brace", "finished");
+        let record = entry_lines(&on_disk(&file), "brace");
+        assert!(record.contains(&"- complexity = \"medium\"".to_string()), "the record lost it: {:?}", record);
+        assert_eq!(value_at(&file, "project/History/[brace]/complexity"), OverseerValue::String("medium".into()));
+    });
+}
+
+#[test]
+fn every_project_has_the_same_complexity_scale() {
+    let nodes = app_api::load_document(TEMPLATE.to_string()).expect("open");
+    let scale = overseer::addressing::find(&nodes, "project/Complexities").expect("a Complexities list");
+    let tags: Vec<String> = scale
+        .children
+        .iter()
+        .filter_map(|e| e.children.iter().find(|c| c.name == "tag"))
+        .filter_map(|c| match c.parameters.get("value") {
+            Some(OverseerValue::String(s)) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tags, ["unassigned", "trivial", "low", "medium", "high"]);
 }
