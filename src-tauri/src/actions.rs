@@ -4198,14 +4198,13 @@ impl ActionExecutor {
             cur = &cur.children[*idx];
         }
 
-        // Take children to reorder
-        let children_snapshot = cur.children.clone();
-        let taken = std::mem::take(&mut list_node.children);
-        let mut entries: Vec<(OverseerValue, OverseerNode, usize)> =
-            Vec::with_capacity(taken.len());
-
-        for (i, item) in taken.into_iter().enumerate() {
-            // Build context with x bound to snapshot item
+        // Every key is worked out before the children are taken, so a refused sort leaves the
+        // list as it was. A key that fails is refused rather than sorted as empty: a field left
+        // out of an entry reads as its template's default, so a failure means the expression is
+        // not a path in the language or the list holds entries of different shapes - a mistake
+        // in the document that would otherwise answer ok and sort nothing.
+        let mut keys: Vec<OverseerValue> = Vec::with_capacity(cur.children.len());
+        for (i, child) in cur.children.iter().enumerate() {
             let base_ctx = EvaluationContext {
                 current_node: cur,
                 parent_node: None,
@@ -4213,13 +4212,23 @@ impl ActionExecutor {
                 node_path: owner_path.to_vec(),
                 var_bindings: std::collections::HashMap::new(),
             };
-            let ctx = base_ctx.with_var("x", BoundValue::Node(&children_snapshot[i]));
-            let key = match FormulaEvaluator::evaluate_formula(by_expr, &ctx) {
-                Ok(v) => v,
-                Err(_) => OverseerValue::String(String::new()),
-            };
-            entries.push((key, item, i));
+            let ctx = base_ctx.with_var("x", BoundValue::Node(child));
+            let key = FormulaEvaluator::evaluate_formula(by_expr, &ctx).map_err(|e| {
+                OverseerError::ValidationError(format!(
+                    "sort.by could not be worked out for entry {}: {}",
+                    i, e
+                ))
+            })?;
+            keys.push(key);
         }
+
+        let taken = std::mem::take(&mut list_node.children);
+        let mut entries: Vec<(OverseerValue, OverseerNode, usize)> = keys
+            .into_iter()
+            .zip(taken)
+            .enumerate()
+            .map(|(i, (key, item))| (key, item, i))
+            .collect();
 
         // Choose comparator
         let cmp = |a: &OverseerValue, b: &OverseerValue| Self::compare_overseer_values(a, b);

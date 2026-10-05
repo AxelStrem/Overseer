@@ -52,12 +52,25 @@ const DOCUMENT: &str = r#"tab t (label="T", mutable=true) {
             sort (list="/t/Rows", by=$(x/qty), order="desc")
         }
     }
+
+    button misspelt (label="s") {
+        on click {
+            sort (list="/t/Rows", by=$(x.qty), order="desc")
+        }
+    }
 }
 "#;
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn press(button: &str) -> String {
+    let (outcome, after) = try_press(button);
+    outcome.unwrap();
+    after
+}
+
+/// Presses a button and gives back what it answered, with the file as it is afterwards.
+fn try_press(button: &str) -> (Result<(), String>, String) {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = std::env::temp_dir().join(format!("overseer_move_writes_{}_{}", button, std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -65,13 +78,13 @@ fn press(button: &str) -> String {
     std::fs::write(root.join("d.os"), DOCUMENT).unwrap();
     app_api::forget_baseline();
     let service = DocumentRoot::new(&root).unwrap();
-    service.run_event("d.os", &format!("t/{}", button), "click").unwrap();
+    let outcome = service.run_event("d.os", &format!("t/{}", button), "click").map(|_| ()).map_err(|e| e.to_string());
     let after = std::fs::read_to_string(root.join("d.os")).unwrap();
     // What was written reads back as itself: the change is not one a later save would undo or
     // reformat.
     let nodes = DocumentManager::with_document(Some(root.clone()), || app_api::load_document(after.clone())).unwrap();
     assert_eq!(OverseerFileHandler::serialize_nodes(&nodes).unwrap(), after, "a second save of {} changed the file", button);
-    after
+    (outcome, after)
 }
 
 /// The ids in a list, in the order the file holds them.
@@ -103,4 +116,14 @@ fn a_move_within_a_list_reorders_it() {
 fn a_sort_reorders_the_list() {
     let after = press("sorted");
     assert_eq!(ids(&after, "Rows"), ["b", "a"], "{}", after);
+}
+
+#[test]
+fn a_sort_whose_key_cannot_be_worked_out_is_refused_and_leaves_the_file_alone() {
+    // x.qty is not a path in the language - x/qty is - so it fails on every entry. It used to
+    // sort every entry as an empty key, answer ok and leave the list as it was.
+    let (outcome, after) = try_press("misspelt");
+    let refusal = outcome.expect_err("a sort by x.qty answered ok");
+    assert!(refusal.contains("sort.by could not be worked out for entry 0"), "{}", refusal);
+    assert_eq!(after, DOCUMENT);
 }
