@@ -91,12 +91,15 @@ fn node_at<'a>(nodes: &'a [OverseerNode], path: &[usize]) -> &'a OverseerNode {
     path[1..].iter().fold(&nodes[path[0]], |node, i| &node.children[*i])
 }
 
-/// By name, the way the page names what it presses: the entry's, then down to the button.
+/// By name, the way the page names what it presses: the entry's, then down to the button. An
+/// unnamed tab - the project's Open and Closed - is no step of an address, so it is left out.
 fn press(file: &str, nodes: &[OverseerNode], entry: &[usize], button: &str) -> app_api::ResolvedUpdate {
     let mut names = Vec::new();
     let mut level = nodes;
     for i in entry {
-        names.push(level[*i].name.clone());
+        if !level[*i].is_hierarchy_transparent {
+            names.push(level[*i].name.clone());
+        }
         level = &level[*i].children;
     }
     fn down(level: &[OverseerNode], button: &str, names: &mut Vec<String>) -> bool {
@@ -118,7 +121,9 @@ fn pick(file: &str, nodes: &[OverseerNode], entry: &[usize], stage: &str) -> app
     let mut names = Vec::new();
     let mut level = nodes;
     for i in entry {
-        names.push(level[*i].name.clone());
+        if !level[*i].is_hierarchy_transparent {
+            names.push(level[*i].name.clone());
+        }
         level = &level[*i].children;
     }
     names.push("stage".to_string());

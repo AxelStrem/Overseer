@@ -45,23 +45,32 @@ fn on_disk(file: &str) -> String {
     std::fs::read_to_string(file).unwrap()
 }
 
-/// The handles in a list, in the order the file has them.
+/// The handles in a list, in the order the file has them. Found at whatever depth the template
+/// puts the list - Items and History each sit in a tab of their own - and ended by the brace at
+/// the list's own indent.
 fn handles_in(text: &str, list: &str) -> Vec<String> {
-    let start = text.find(&format!("\n    list {} (", list)).expect(list);
-    let body = &text[start + 1..];
-    let end = body.find("\n    }").unwrap_or(body.len());
+    let start = text.find(&format!("list {} (", list)).expect(list);
+    let line = text[..start].rfind('\n').map_or(0, |n| n + 1);
+    let close = format!("\n{}}}", &text[line..start]);
+    let body = &text[start..];
+    let end = body.find(&close).unwrap_or(body.len());
     body[..end]
         .lines()
         .filter_map(|l| l.trim().strip_prefix("- handle = \"").map(|h| h.trim_end_matches('"').to_string()))
         .collect()
 }
 
-/// The lines of one entry, by its handle.
+/// The lines of one entry, by its handle: an entry's fields hold no braces, so the first line
+/// that is only one closes it.
 fn entry_lines(text: &str, handle: &str) -> Vec<String> {
     let at = text.find(&format!("- handle = \"{}\"", handle)).expect(handle);
     let open = text[..at].rfind("- {").expect("the entry's opening");
-    let close = at + text[at..].find("\n        }").expect("the entry's end");
-    text[open + 3..close].lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
+    text[open + 3..]
+        .lines()
+        .map(|l| l.trim().to_string())
+        .take_while(|l| l != "}")
+        .filter(|l| !l.is_empty())
+        .collect()
 }
 
 /// Pick a stage for an open item, as the page does.
