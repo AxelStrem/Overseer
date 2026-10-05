@@ -3133,19 +3133,32 @@ export class OverseerRenderer {
 
     /** The vocabulary of a field the entries of a list hold, from the first entry that has it. */
     fieldVocabularyIn(list, name) {
+        for (const entry of (list && list.children) || []) {
+            const field = this.entryField(entry, name)
+            if (field && this.getParameterValue(field, 'vocabulary')) return this.tagVocabulary(field)
+        }
+        return new Map()
+    }
+
+    /**
+     * The field of an entry with this name, searched all the way down but never into a handler
+     * or a button. An `on change` that copies the entry elsewhere holds lines named after its
+     * fields - `- labels = $(../labels)` - and a field placed before `labels` would otherwise
+     * answer with that formula instead of the field.
+     */
+    entryField(entry, name) {
         const seek = (node) => {
             for (const child of (node && node.children) || []) {
-                if (child && child.name === name) return child
+                if (!child) continue
+                const type = String(child.node_type || child.type || '').toLowerCase()
+                if (type === 'on' || type === 'button') continue
+                if (child.name === name) return child
                 const found = seek(child)
                 if (found) return found
             }
             return null
         }
-        for (const entry of (list && list.children) || []) {
-            const field = seek(entry)
-            if (field && this.getParameterValue(field, 'vocabulary')) return this.tagVocabulary(field)
-        }
-        return new Map()
+        return seek(entry)
     }
 
     /** What a filter is currently set to, remembered across repaints. */
@@ -3218,15 +3231,7 @@ export class OverseerRenderer {
         // every document written so far - so looking only at direct children found nothing and
         // quietly filtered everything away.
         const fieldText = (name) => {
-            const seek = (node) => {
-                for (const child of node.children || []) {
-                    if (child && child.name === name) return child
-                    const found = seek(child)
-                    if (found) return found
-                }
-                return null
-            }
-            const child = seek(entry)
+            const child = this.entryField(entry, name)
             if (!child) return ''
             const value = this.getParameterValue(child, 'value')
             return value === null || value === undefined ? '' : String(value)
