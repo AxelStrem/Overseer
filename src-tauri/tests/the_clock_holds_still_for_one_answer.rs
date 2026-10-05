@@ -96,7 +96,7 @@ fn a_press_and_what_it_works_out_agree_about_when() {
         app_api::forget_dependencies();
         let nodes = app_api::load_document(DOCUMENT.to_string()).expect("open");
         let button = overseer::addressing::name_path(&nodes, "t/stamp").unwrap();
-        let answer = app_api::run_event_at(&file.to_string_lossy(), "c.os", button, "click".into(), "s", Vec::new())
+        let answer = app_api::run_event_at(&file.to_string_lossy(), "c.os", button, "click".into(), "s", Vec::new(), Vec::new())
             .expect("the press");
         // Taken on the way the page takes it - the answer, not a later open, which reads the
         // clock at its own moment.

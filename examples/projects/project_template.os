@@ -21,7 +21,7 @@ tab project (label="Project", mutable=true) {
     // opening it and for the bot, which reads this before anything else here. A project can have
     // tabs of its own beside this one - a feature list, notes, a roadmap - and this is where they
     // are said to exist. Kept up to date by hand, like everything else in a project.
-    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; finishing one moves it to Finished, from where it reaches the task history. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan."
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day. **Stages:** an item starts filed; asked means a question on it is waiting on the owner, answered that the owner has answered and it waits on whoever asked; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Finished, from where it reaches the task history. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan."
 
     div (hidden=true) {
 
@@ -36,6 +36,56 @@ tab project (label="Project", mutable=true) {
             string tag (label="", width=25%) = ""
             string name (label="", width=45%) = ""
             string colour (label="", width=30%) = "#6b7280"
+        }
+
+        // Where an item stands - the same in every project, where the tags are each project's
+        // own. Not edited from the page: the template's own machinery knows a stage by name,
+        // which it never does a tag.
+        //
+        //   filed     where an item starts
+        //   asked     a question on it is waiting on the owner
+        //   answered  the owner has answered, and it waits on whoever asked
+        //   ready     nothing is left to decide, so it can be picked up
+        //   testing   done, and waiting to be confirmed
+        //   later     decided against for now: a judgement that what there is will do, not a
+        //             note that nobody has got round to it
+        //   finished  not a place an item stays - see `stage` on Item
+        list Stages (entry=<Label>, key="tag") {
+            - {
+                - tag = "filed"
+                - name = "filed"
+                - colour = "#6b7280"
+            }
+            - {
+                - tag = "asked"
+                - name = "asked"
+                - colour = "#b45309"
+            }
+            - {
+                - tag = "answered"
+                - name = "answered"
+                - colour = "#0f766e"
+            }
+            - {
+                - tag = "ready"
+                - name = "ready"
+                - colour = "#1d4ed8"
+            }
+            - {
+                - tag = "testing"
+                - name = "testing"
+                - colour = "#7c3aed"
+            }
+            - {
+                - tag = "later"
+                - name = "later"
+                - colour = "#475569"
+            }
+            - {
+                - tag = "finished"
+                - name = "finished"
+                - colour = "#15803d"
+            }
         }
 
         // Something to do, or something wrong - at any size.
@@ -101,6 +151,38 @@ tab project (label="Project", mutable=true) {
             string title (label="title", font-size=14px, width=26%,
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
+            // Where this one stands - see Stages above. Picked from its chip, as a tag is.
+            //
+            // `finished` is not a place an item stays. Picking it records the item in History
+            // and takes it off the list, which is what the finish button did before it: nothing
+            // is edited into place, so History is a record of what happened rather than of what
+            // the list looks like now. One change with the picking, so one Undo puts it back.
+            //
+            // Not offered while a task has children still open, as the button was hidden for
+            // one: a child still on the list has to be finished before its parent can be, or the
+            // parent would leave it naming something no longer there. A task whose children are
+            // all finished is offered it, and sits open until it is picked - the useful state,
+            // since more can then be put under it instead of closing it. The handler asks the
+            // same, for anything that sets the stage some other way.
+            enum stage (label="stage", vocabulary="/project/Stages", width=9%,
+                        withhold=$(open_kids > 0 ? "finished" : "")) = "filed" {
+                on change {
+                    if (cond=$(../stage == "finished" && ../open_kids == 0)) {
+                        append (list="/project/History") {
+                            - finished_at = $(now())
+                            - added = $(../added)
+                            - handle = $(../handle)
+                            - title = $(../title)
+                            - parent = $(../parent)
+                            - labels = $(../labels)
+                            - points = $(../points)
+                            - commentary = $(../commentary)
+                        }
+                        remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
+                    }
+                }
+            }
+
             // Which larger task this is part of, by that task's handle. Empty for a task that
             // stands on its own, which is most of them.
             //
@@ -145,7 +227,7 @@ tab project (label="Project", mutable=true) {
             // What finishing this is worth.
             //
             // On a leaf, the work itself. On a task with children, a bonus on top of everything
-            // already earned beneath it, paid when `finish` is pressed - which is what makes
+            // already earned beneath it, paid when it is finished - which is what makes
             // closing a goal worth doing rather than a formality.
             //
             // One rather than nought by default: a task all of whose children are worth nothing
@@ -164,41 +246,6 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
-            // Finished. The same two actions as the task manager's done button, and for the
-            // same reason: nothing is edited into place, so History is a record of what
-            // happened rather than of what the list looks like now.
-            //
-            // One button for both kinds of task, because there is only one thing to do: record
-            // it as finished and take its points. What differs is when it is offered - hidden
-            // while a task still has children *open*, rather than while it has children at all.
-            //
-            // So a leaf always offers it; a task with work outstanding beneath it does not; and
-            // a task whose children are all finished does, and then sits there unfinished until
-            // it is pressed. That last state is the useful one: everything under a goal is done
-            // and the goal is still open, so more can be put under it instead of closing it.
-            //
-            // `open_kids` rather than "done reads 100" on purpose. A child still on the list has
-            // to be finished before its parent can be, or the parent would leave it naming
-            // something no longer there and nothing would say so. Hidden keeps that out of the
-            // way rather than making it impossible: anything addressing the button directly can
-            // still press it.
-            button finish (label="finish", margin=0, width=9%,
-                           hidden=$(open_kids > 0)) {
-                on click {
-                    append (list="/project/History") {
-                        - finished_at = $(now())
-                        - added = $(../added)
-                        - handle = $(../handle)
-                        - title = $(../title)
-                        - parent = $(../parent)
-                        - labels = $(../labels)
-                        - points = $(../points)
-                        - commentary = $(../commentary)
-                    }
-                    remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
-                }
-            }
-
             // How many tasks name this one, in either list. Nought means a leaf, which is
             // what decides whether a percentage is shown at all. History is counted too, so a
             // task does not turn back into a leaf when the last of its children is finished.
@@ -206,7 +253,7 @@ tab project (label="Project", mutable=true) {
                 $(/project/Items.filter(|x| x/parent == ../handle).count()
                   + /project/History.filter(|x| x/parent == ../handle).count())
 
-            // Of those, the ones still open. What `finish` waits for.
+            // Of those, the ones still open. What finishing waits for.
             int open_kids (hidden=true) =
                 $(/project/Items.filter(|x| x/parent == ../handle).count())
 
@@ -238,10 +285,10 @@ tab project (label="Project", mutable=true) {
                                   .map(|x| x/finished_at).max())
 
             // Taken off the list without being finished: a task dropped rather than done, or one
-            // added by mistake. Nothing is recorded, which is the whole difference from `finish`,
+            // added by mistake. Nothing is recorded, which is the whole difference from finishing,
             // and Undo in the drawer puts back one taken by a slip. Hidden while anything under it
-            // is still open, as `finish` is, or what was under it would be left naming a parent
-            // that has gone. Last in the row, as far from `finish` as the row allows. Not called
+            // is still open, as finishing is, or what was under it would be left naming a parent
+            // that has gone. Last in the row, as far from the stage as the row allows. Not called
             // `remove`: a node named for an action is taken for one, and given no column.
             button drop (icon="cross", margin=0, width=3%, hidden=$(open_kids > 0)) {
                 on click {
@@ -303,7 +350,7 @@ tab project (label="Project", mutable=true) {
     // it finds exactly the goals whose work is all done and which are waiting to be closed.
     div (layout="horizontal", margin=0, spacing=10, alignment="center") {
 
-        filter (target="/project/Items", text="title, commentary, handle", tags="labels",
+        filter (target="/project/Items", text="title, commentary, handle", enum="stage", tags="labels",
                 status="done", vocabulary="/project/Labels", label="find", width=100%) { }
     }
 
@@ -344,7 +391,7 @@ tab project (label="Project", mutable=true) {
     // finished children still counted from the History below.
     //
     // `editor` reads 50% and `parser` 75%, neither of them typed anywhere. `docs` is the one to
-    // look at: both things under it are finished, so it reads 100%, offers `finish` and waits.
+    // look at: both things under it are finished, so it reads 100%, is offered finished and waits.
     // Its own two points are not paid until that is pressed - and until it is, more work can go
     // under it.
     list Items (entry=<Item>, key="handle", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", hover-text=true, sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
@@ -384,8 +431,9 @@ tab project (label="Project", mutable=true) {
             - added = "2026-09-02T10:30:00+04:00"
             - handle = "undo"
             - title = "Undo survives a repaint"
+            - stage = "later"
             - parent = "editor"
-            - labels = "bug, later"
+            - labels = "bug"
             - points = 5
         }
         - {
@@ -399,7 +447,8 @@ tab project (label="Project", mutable=true) {
             - added = "2026-09-04T16:00:00+04:00"
             - handle = "favicon"
             - title = "Pick a favicon"
-            - labels = "ui, later"
+            - stage = "later"
+            - labels = "ui"
             - points = 1
             - commentary = "stands on its own; nothing is part of it and it is part of nothing"
         }
@@ -441,11 +490,6 @@ tab project (label="Project", mutable=true) {
             - name = "docs"
             - colour = "#7057ff"
         }
-        - {
-            - tag = "later"
-            - name = "later"
-            - colour = "#fbca04"
-        }
     }
 
     // A new tag, without editing the document.
@@ -475,7 +519,7 @@ tab project (label="Project", mutable=true) {
     // Kept rather than deleted, because this is where a task's progress comes from: what has
     // been finished under it is counted at full weight, or a task would fall back towards nought
     // as its children were completed. `roundtrip` is three quarters of `parser`; `gfilter` and
-    // `gparent` are all of `docs`, which is why `docs` offers its `finish`.
+    // `gparent` are all of `docs`, which is why `docs` can be finished.
     list History (entry=<Finished>, layout="vertical", spacing=1, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) {
         - {
             - finished_at = "2026-09-05T17:20:00+04:00"

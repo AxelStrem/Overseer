@@ -104,7 +104,7 @@ fn dropping_a_task_takes_it_off_the_list_and_records_nothing() {
         assert!(handles(&nodes, "Items").contains(&"brace".to_string()));
 
         let button = overseer::addressing::name_path(&nodes, "project/Items/[brace]/drop").expect("the button");
-        let answer = app_api::run_event_at(&file, "p.os", button, "click".into(), "s", Vec::new()).expect("the press");
+        let answer = app_api::run_event_at(&file, "p.os", button, "click".into(), "s", Vec::new(), Vec::new()).expect("the press");
         assert!(answer.wrote, "dropping wrote nothing");
 
         let now = app_api::load_document(std::fs::read_to_string(&file).unwrap()).expect("reopen");

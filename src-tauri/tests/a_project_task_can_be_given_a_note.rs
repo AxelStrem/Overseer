@@ -41,10 +41,11 @@ fn opened(tag: &str) -> (String, Vec<OverseerNode>) {
     (file.to_string_lossy().to_string(), nodes)
 }
 
-/// A field of an entry, wherever in it the template puts it - but not inside a button, whose
-/// actions name the same fields: `finish` sets a `commentary` of its own on the way out.
+/// A field of an entry, wherever in it the template puts it - but not inside a button or a
+/// handler, whose actions name the same fields: finishing sets a `commentary` of its own on the
+/// way out.
 fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
-    nodes.iter().filter(|n| n.node_type != "button").find_map(|n| {
+    nodes.iter().filter(|n| n.node_type != "button" && n.node_type != "on").find_map(|n| {
         if n.name == name {
             Some(n)
         } else {
@@ -109,7 +110,21 @@ fn press(file: &str, nodes: &[OverseerNode], entry: &[usize], button: &str) -> a
         false
     }
     assert!(down(level, button, &mut names), "no `{}` button in the entry", button);
-    app_api::run_event_at(file, "p.os", names, "click".into(), "s", Vec::new()).expect("the press was refused")
+    app_api::run_event_at(file, "p.os", names, "click".into(), "s", Vec::new(), Vec::new()).expect("the press was refused")
+}
+
+/// Pick a stage, as the page does: the value and the field's `on change` as one change.
+fn pick(file: &str, nodes: &[OverseerNode], entry: &[usize], stage: &str) -> app_api::ResolvedUpdate {
+    let mut names = Vec::new();
+    let mut level = nodes;
+    for i in entry {
+        names.push(level[*i].name.clone());
+        level = &level[*i].children;
+    }
+    names.push("stage".to_string());
+    let value = app_api::ValueWrite { node_path: names.clone(), value: OverseerValue::String(stage.into()) };
+    app_api::run_event_at(file, "p.os", names, "change".into(), "s", Vec::new(), vec![value])
+        .expect("the pick was refused")
 }
 
 #[test]
@@ -151,7 +166,7 @@ fn finishing_a_task_carries_its_commentary_into_the_history() {
         let said = text(find(&node_at(&nodes, &entry).children, "commentary").unwrap());
         assert!(!said.is_empty(), "the sample task has nothing to carry");
 
-        assert!(press(&file, &nodes, &entry, "finish").wrote, "finishing wrote nothing");
+        assert!(pick(&file, &nodes, &entry, "finished").wrote, "finishing wrote nothing");
         let written = std::fs::read_to_string(&file).unwrap();
         let now = app_api::load_document(written).expect("the file reopens");
         let finished = node_at(&now, &entry_of(&now, "History", "brace"));

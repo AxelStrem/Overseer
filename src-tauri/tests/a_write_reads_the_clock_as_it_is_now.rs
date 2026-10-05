@@ -122,7 +122,7 @@ fn the_page_opening_a_task_in_the_morning_works_from_the_morning() {
 
         let morning = at_local(9, 29, 7, 4);
         FormulaEvaluator::set_time_override(Some(morning));
-        let answer = overseer::app_api::run_event_at(&file, "d.os", button, "click".into(), "s", Vec::new())
+        let answer = overseer::app_api::run_event_at(&file, "d.os", button, "click".into(), "s", Vec::new(), Vec::new())
             .expect("the press");
         assert_eq!(given(&root), due_in_minutes(morning));
         // And the page is told what moved with the clock, not only what the press changed.

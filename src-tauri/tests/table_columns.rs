@@ -1,7 +1,7 @@
 //! The columns a table draws, worked out from the entry template.
 //!
 //! A row only shows the fields it currently has, and which those are differs from row to row: a
-//! task with children shows a percentage, a leaf shows a finish button. So no row knows the whole
+//! task with children shows a percentage, a leaf does not. So no row knows the whole
 //! set, and a list with nothing in it has no rows to ask at all - which is when a heading is
 //! worth most. The template knows, and the resolver reads it there.
 //!
@@ -164,12 +164,12 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
         vec![
             "handle",
             "title",
+            "stage",
             "parent",
             "labels",
             "done",
             "points",
             "note",
-            "finish",
             "moved_at",
             "drop",
             "commentary",

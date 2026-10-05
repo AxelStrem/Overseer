@@ -102,7 +102,7 @@ fn moved(tag: &str) -> (String, Vec<OverseerNode>) {
         "the late task is not coloured to begin with, so this shows nothing"
     );
     let button = overseer::addressing::name_path(&nodes, "t/Open/[a]/done").expect("the button");
-    app_api::run_event_at(&path, "d.os", button, "click".into(), "s", Vec::new()).expect("the press");
+    app_api::run_event_at(&path, "d.os", button, "click".into(), "s", Vec::new(), Vec::new()).expect("the press");
     let written = std::fs::read_to_string(&file).unwrap();
     // The document as the server holds it after the press, which is what the page is shown - not
     // worked out again from the file, which never held the colour.

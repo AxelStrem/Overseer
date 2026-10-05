@@ -1652,6 +1652,13 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     flex-wrap: wrap;
 }
 
+/* The stages, kept apart from the tags beside them: two different questions, asked differently -
+ * any of the stages picked, all of the tags. */
+.filter-tags.filter-enum {
+    padding-right: 8px;
+    border-right: 1px solid var(--border-color);
+}
+
 /* Faint until chosen, so the row reads as "what could I narrow by" rather than as a set of
  * tags already applied. */
 .filter-tag {

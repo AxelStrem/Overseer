@@ -223,6 +223,33 @@ fn choosing_finished_does_what_the_field_says() {
 }
 
 #[test]
+fn a_value_sent_with_its_handler_is_one_step() {
+    // How the page sends it when there is a file: the value travels with the `on change`, and
+    // the two are written as one change - so one Undo takes back the pick and what it did.
+    serialised(|| {
+        let root = a_root("together");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        let path = names(&service, "project/Items/[beta]/stage");
+        service
+            .command_for(
+                "alice",
+                Some("p.os"),
+                "run_overseer_event",
+                &json!({
+                    "node_path": path,
+                    "event_name": "change",
+                    "writing": [{ "node_path": path, "value": { "String": "finished" } }],
+                }),
+            )
+            .expect("the change was refused");
+        let text = on_disk(&root);
+        assert_eq!(handles_in(&text, "Items"), vec!["alpha"], "still open:\n{}", text);
+        assert_eq!(handles_in(&text, "History"), vec!["beta"], "not recorded:\n{}", text);
+        assert_eq!(overseer::undo::depth(&root, "p.os"), 1, "more than one step to take back");
+    });
+}
+
+#[test]
 fn choosing_anything_else_leaves_the_entry_where_it_is() {
     serialised(|| {
         let root = a_root("ready");

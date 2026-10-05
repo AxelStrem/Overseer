@@ -151,7 +151,7 @@ fn write(path: &str, page: &mut Vec<OverseerNode>, address: &str, value: Oversee
 
 fn press(path: &str, page: &mut Vec<OverseerNode>, address: &str) {
     let button = name_path(page, address);
-    take(page, app_api::run_event_at(path, "d.os", button, "click".into(), "s", Vec::new()).expect("the press"));
+    take(page, app_api::run_event_at(path, "d.os", button, "click".into(), "s", Vec::new(), Vec::new()).expect("the press"));
 }
 
 /// Every worked-out value and every name, by address - and what is in view, but nothing under an

@@ -803,7 +803,7 @@ impl ActionExecutor {
     /// Followed through the graph when the caller holds the document its graph was recorded
     /// against and will settle the rest itself - see `app_api::settle_so_far`. Worked out whole
     /// otherwise, which is what always happened here.
-    fn settle_for_what_comes_next(nodes: &mut Vec<OverseerNode>) {
+    pub(crate) fn settle_for_what_comes_next(nodes: &mut Vec<OverseerNode>) {
         if caller_will_settle_it() && crate::app_api::settle_so_far(nodes) {
             return;
         }

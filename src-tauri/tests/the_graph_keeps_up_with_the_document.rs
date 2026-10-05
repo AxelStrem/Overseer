@@ -131,7 +131,7 @@ fn a_meal_added_by_a_press_and_then_corrected() {
     serialised(|| {
         let (path, mut page) = opened("press");
         let button = overseer::addressing::name_path(&page, "t/add").expect("the button");
-        let pressed = app_api::run_event_at(&path, "d.os", button, "click".into(), "s", Vec::new())
+        let pressed = app_api::run_event_at(&path, "d.os", button, "click".into(), "s", Vec::new(), Vec::new())
             .expect("the press");
         take(&mut page, pressed);
         assert_eq!(number(&page, "t/total"), Some(450.0));

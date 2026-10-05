@@ -21,6 +21,7 @@ function setupDOM() {
 }
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+import { invoke } from '@tauri-apps/api/core'
 import { OverseerApp } from '../src/main.js'
 
 const base = (name, node_type) => ({
@@ -163,6 +164,38 @@ describe('an enum field', () => {
     await vi.waitFor(() => expect(events).toHaveLength(1))
 
     expect(events[0]).toEqual(['change', ['project', 'Items', 'Item__1', 'stage']])
+  })
+
+  it('sends the value with its handler, as one instruction, when there is a file', async () => {
+    // Two writes were two steps to take back, and taking back the second left the first: a task
+    // picked as finished came back on the list still saying finished.
+    const doc = docWith('filed')
+    doc[0].children[1].children = [Object.assign(base('change', 'on'), { children: [base('set', 'set')] })]
+    render(doc)
+    app.currentFile = 'p.os'
+    const sent = []
+    invoke.mockImplementation(async (cmd, args) => { sent.push([cmd, args]); return null })
+    app.reevaluateDocumentSelective = vi.fn(async () => {})
+    press(chips()[0])
+    press(Array.from(document.querySelectorAll('.tag-picker .tag-option'))
+      .find(o => o.textContent.trim() === 'testing'))
+    await vi.waitFor(() => expect(sent.some(([cmd]) => cmd === 'run_overseer_event')).toBe(true))
+
+    const [, args] = sent.find(([cmd]) => cmd === 'run_overseer_event')
+    expect(args.event_name).toBe('change')
+    expect(args.node_path).toEqual(['project', 'stage'])
+    expect(args.writing).toEqual([{ node_path: ['project', 'stage'], value: { String: 'testing' } }])
+    expect(app.reevaluateDocumentSelective, 'the value went separately as well').not.toHaveBeenCalled()
+    expect(sent.some(([cmd]) => cmd === 'write_overseer_values')).toBe(false)
+    invoke.mockReset()
+  })
+
+  it('holds back the values it is told to', () => {
+    const doc = docWith('filed')
+    doc[0].children[1].parameters.withhold = { String: 'testing' }
+    render(doc)
+    press(chips()[0])
+    expect(offered()).toEqual(['ready to go'])
   })
 
   it('offers nothing to choose when the document is not mutable', () => {

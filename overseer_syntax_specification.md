@@ -505,9 +505,9 @@ enum stage (vocabulary="/project/Stages") = "filed"
 Stored as the plain text of the handle, so a formula compares it as the string it is:
 `Items.filter(|x| x/stage == "ready").count()`.
 
-Like any field it can say what happens when it changes, with `on change`. That runs once the new
-value is in the file, against the entry it was picked on - found again by the list's `key`, since
-the write can move it - so an `if` there can act on the value chosen:
+Like any field it can say what happens when it changes, with `on change`. The value is sent with
+the handler and the two are written as one change, so the handler reads the value just chosen and
+one Undo takes back both - so an `if` there can act on it:
 
 ```overseer
 enum stage (vocabulary="/project/Stages") = "filed" {
@@ -522,7 +522,10 @@ enum stage (vocabulary="/project/Stages") = "filed" {
 }
 ```
 
-The value and what its handler does are two writes, and two steps to take back.
+`withhold` names values not to offer just now, separated by commas - usually a formula, as in
+`withhold=$(open_kids > 0 ? "finished" : "")`, which keeps a task with work still open under it
+from being finished. It changes only what the picker offers: a value held back can still be
+written some other way, so a handler that must not act on it says so in its own `if`.
 
 ### Filter
 
@@ -531,7 +534,7 @@ is typed is matched against the fields named in `text` — the fields, not what 
 because what is on screen is formatted and sometimes hidden.
 
 ```overseer
-filter (target="/project/Items", text="title, commentary", tags="labels",
+filter (target="/project/Items", text="title, commentary", enum="stage", tags="labels",
         status="done", vocabulary="/project/Labels", label="find") { }
 ```
 
@@ -542,6 +545,7 @@ filter (target="/project/Items", text="title, commentary", tags="labels",
 | `tags` | the field holding labels, so labels can be picked to narrow by |
 | `vocabulary` | where those labels are listed |
 | `status` | a field to offer as a third narrowing, by value |
+| `enum` | an `enum` field, its values offered as chips from its own vocabulary; picking two finds either |
 
 ### 3. Layout and Styling
 
@@ -889,7 +893,8 @@ div Tasks {
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
 - **Mounts**: `source`, `lazy`, `mutable`
-- **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`
+- **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`
+- **Enums**: `vocabulary`, `withhold`, `placeholder`
 - **Tags**: `vocabulary` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 
 ---

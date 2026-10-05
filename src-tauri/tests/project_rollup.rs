@@ -10,8 +10,8 @@
 //!   docs    = nothing open, 3 points finished              -> 300 / 3  = 100%
 //!
 //! And the second thing, which is the whole point of the design: `docs` reads 100% and is still
-//! open. Its `finish` is offered and until it is pressed its own points are unpaid, so more work
-//! can be put under a goal whose current children are all done.
+//! open. `finished` is offered as its stage, and until it is picked its own points are unpaid, so
+//! more work can be put under a goal whose current children are all done.
 
 use overseer::parser;
 use overseer::resolver;
@@ -151,16 +151,25 @@ fn an_open_leaf_reads_nothing() {
     }
 }
 
+/// Whether the stage picker holds `finished` back from this entry.
+fn finishing_withheld(entry: &OverseerNode) -> bool {
+    let node = child(entry, "stage").unwrap_or_else(|| panic!("no `stage` on {}", entry.name));
+    match param(node, "withhold") {
+        Some(OverseerValue::String(s)) => s.split(',').any(|v| v.trim() == "finished"),
+        _ => false,
+    }
+}
+
 #[test]
-fn finish_waits_for_the_children_and_not_for_the_percentage() {
+fn finishing_waits_for_the_children_and_not_for_the_percentage() {
     let nodes = resolved(TEMPLATE);
 
-    // Outstanding work beneath them, so pressing finish would orphan it.
+    // Outstanding work beneath them, so finishing would orphan it.
     for handle in ["editor", "parser"] {
         let entry = by_handle(&nodes, handle);
         assert!(
-            hidden(entry, "finish"),
-            "`{}` offers finish with {} children still open",
+            finishing_withheld(entry),
+            "`{}` is offered finished with {} children still open",
             handle,
             number(entry, "open_kids"),
         );
@@ -170,15 +179,15 @@ fn finish_waits_for_the_children_and_not_for_the_percentage() {
     let docs = by_handle(&nodes, "docs");
     assert_eq!(number(docs, "open_kids"), 0.0);
     assert!(
-        !hidden(docs, "finish"),
-        "`docs` has nothing open beneath it and does not offer finish, so its points can never \
+        !finishing_withheld(docs),
+        "`docs` has nothing open beneath it and is not offered finished, so its points can never \
          be claimed",
     );
 
-    // And a leaf always offers it, having nothing to wait for.
+    // And a leaf always is, having nothing to wait for.
     for handle in ["brace", "rows", "undo", "favicon"] {
         let entry = by_handle(&nodes, handle);
-        assert!(!hidden(entry, "finish"), "leaf `{}` cannot be finished", handle);
+        assert!(!finishing_withheld(entry), "leaf `{}` cannot be finished", handle);
     }
 }
 

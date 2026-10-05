@@ -1665,6 +1665,12 @@ pub fn write_values_at(
 /// `typed` is what the page's textboxes hold as the press is made. It is put on them for the
 /// length of the press and taken off again before anything is worked out or written - see
 /// `actions::hold_typed_text` - and the answer names the ones a copy used, for the page to empty.
+///
+/// `writing` is values to write first, as part of the same change: a field's `on change`, sent
+/// with the value that changed it. Written separately, the two were two steps to take back, and
+/// taking back one of them left the other - a task picked as finished and moved to the history
+/// came back on the list still saying finished. Settled before the handler runs, so what it reads
+/// is worked out from the value just written.
 pub fn run_event_at(
     path: &str,
     document: &str,
@@ -1672,9 +1678,20 @@ pub fn run_event_at(
     event_name: String,
     session: &str,
     typed: Vec<ValueWrite>,
+    writing: Vec<ValueWrite>,
 ) -> Result<ResolvedUpdate> {
     let emptied = std::cell::RefCell::new(Vec::new());
     let mut update = change_document(path, document, session, |nodes| {
+        if !writing.is_empty() {
+            for write in writing {
+                crate::actions::ActionExecutor::assign_value(
+                    nodes,
+                    &format!("/{}", write.node_path.join("/")),
+                    write.value,
+                )?;
+            }
+            crate::actions::ActionExecutor::settle_for_what_comes_next(nodes);
+        }
         let typed: Vec<(Vec<String>, OverseerValue)> =
             typed.into_iter().map(|t| (t.node_path, t.value)).collect();
         let held = crate::actions::hold_typed_text(nodes, &typed);

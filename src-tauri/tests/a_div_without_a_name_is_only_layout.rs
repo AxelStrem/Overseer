@@ -167,7 +167,7 @@ fn a_button_in_a_row_writes_beside_it() {
     serialised(|| {
         let (path, nodes) = opened("press");
         let button = overseer::addressing::name_path(&nodes, "t/Box/Add").expect("the button");
-        let answer = app_api::run_event_at(&path, "d.os", button, "click".into(), "s", Vec::new())
+        let answer = app_api::run_event_at(&path, "d.os", button, "click".into(), "s", Vec::new(), Vec::new())
             .expect("the press was refused");
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("int count = 1"), "the press did not count: {}", text);

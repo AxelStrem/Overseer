@@ -511,6 +511,11 @@ impl DocumentRoot {
                     Some(v) if !v.is_null() => from_value(args, "typed")?,
                     _ => Vec::new(),
                 };
+                // Values to write before the handler runs, in the same change. Absent is none.
+                let writing: Vec<app_api::ValueWrite> = match args.get("writing") {
+                    Some(v) if !v.is_null() => from_value(args, "writing")?,
+                    _ => Vec::new(),
+                };
                 as_json(
                     app_api::for_the_page(app_api::run_event_at(
                         at.to_string_lossy().as_ref(),
@@ -519,6 +524,7 @@ impl DocumentRoot {
                         event,
                         session,
                         typed,
+                        writing,
                     )
                     .map_err(|e| RequestError::Failed(format!("could not run the event: {:?}", e)))?),
                 )

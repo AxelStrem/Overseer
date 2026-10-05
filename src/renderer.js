@@ -2994,6 +2994,8 @@ export class OverseerRenderer {
      *                progress, finished. Derived rather than stored, because "in progress" is
      *                not a state anything writes down - it is what a percentage between the
      *                two ends means.
+     *   enum       - a field holding one of a list, a stage say, its values offered as chips;
+     *                any of those picked
      */
     createFilterElement(node) {
         const container = document.createElement('div')
@@ -3005,6 +3007,7 @@ export class OverseerRenderer {
             .split(',').map(s => s.trim()).filter(Boolean)
         const tagField = this.getParameterValue(node, 'tags')
         const statusField = this.getParameterValue(node, 'status')
+        const enumField = this.getParameterValue(node, 'enum')
         if (target.length === 0) {
             // Nothing to filter is worth saying out loud rather than rendering an inert box.
             container.textContent = 'filter: no target list named'
@@ -3016,7 +3019,7 @@ export class OverseerRenderer {
         // replaced - which happens on every repaint of the list it filters. A filter that
         // silently cleared itself whenever something changed nearby would be worse than none.
         const key = target.join('/')
-        const state = this.filterState(key, { target, textFields, tagField, statusField })
+        const state = this.filterState(key, { target, textFields, tagField, statusField, enumField })
 
         if (textFields.length > 0) {
             const box = document.createElement('input')
@@ -3030,6 +3033,30 @@ export class OverseerRenderer {
                 this.applyFilters()
             })
             container.appendChild(box)
+        }
+
+        if (enumField) {
+            // The values of a field holding one of a list - a stage - to narrow by. Picking two
+            // widens rather than narrows, unlike tags: an entry holds one value, so asking for
+            // the ones that are both would find nothing. Their list is the field's own, read
+            // from the entries, so the filter does not have to be told it a second time.
+            const list = this.findNodeByPath(window.app.currentDocument, target)
+            const vocabulary = this.fieldVocabularyIn(list, String(enumField))
+            const chips = document.createElement('span')
+            chips.className = 'filter-tags filter-enum'
+            for (const [value, known] of vocabulary) {
+                const chip = this.tagChip(value, known, null)
+                chip.classList.add('filter-tag')
+                if (state.enums.has(value)) chip.classList.add('filter-tag-on')
+                chip.addEventListener('click', () => {
+                    if (state.enums.has(value)) state.enums.delete(value)
+                    else state.enums.add(value)
+                    chip.classList.toggle('filter-tag-on', state.enums.has(value))
+                    this.applyFilters()
+                })
+                chips.appendChild(chip)
+            }
+            container.appendChild(chips)
         }
 
         if (tagField) {
@@ -3085,6 +3112,23 @@ export class OverseerRenderer {
         return container
     }
 
+    /** The vocabulary of a field the entries of a list hold, from the first entry that has it. */
+    fieldVocabularyIn(list, name) {
+        const seek = (node) => {
+            for (const child of (node && node.children) || []) {
+                if (child && child.name === name) return child
+                const found = seek(child)
+                if (found) return found
+            }
+            return null
+        }
+        for (const entry of (list && list.children) || []) {
+            const field = seek(entry)
+            if (field && this.getParameterValue(field, 'vocabulary')) return this.tagVocabulary(field)
+        }
+        return new Map()
+    }
+
     /** What a filter is currently set to, remembered across repaints. */
     filterState(key, about) {
         if (!this._filters) this._filters = new Map()
@@ -3094,7 +3138,7 @@ export class OverseerRenderer {
             Object.assign(held, about)
             return held
         }
-        const fresh = Object.assign({ text: '', tags: new Set(), status: new Set() }, about)
+        const fresh = Object.assign({ text: '', tags: new Set(), status: new Set(), enums: new Set() }, about)
         this._filters.set(key, fresh)
         return fresh
     }
@@ -3142,6 +3186,7 @@ export class OverseerRenderer {
             for (const label of document.querySelectorAll(`[data-filter-count='${key}']`)) {
                 const total = list.children.length
                 const narrowed = wanted !== '' || state.tags.size > 0 || state.status.size > 0
+                    || state.enums.size > 0
                 label.textContent = narrowed ? `${showing} of ${total}` : `${total}`
             }
         }
@@ -3182,6 +3227,11 @@ export class OverseerRenderer {
                 : figure >= 100 ? 'done'
                 : 'some'
             if (!state.status.has(which)) return false
+        }
+
+        if (state.enums.size > 0) {
+            if (!state.enumField) return false
+            if (!state.enums.has(fieldText(state.enumField).trim())) return false
         }
 
         if (state.tags.size > 0) {
@@ -3301,10 +3351,11 @@ export class OverseerRenderer {
      * in the order the list gives them, and the one picked replaces it. Held as the plain text of
      * the value, so a formula compares it with `==` like any string.
      *
-     * A field can say what happens when it changes, as any field can, with `on change`. That runs
-     * after the new value is in the file, and against the entry it was picked on: the write can
-     * move the entry - a list kept in order of stage puts it somewhere else - so the entry is
-     * found again by its key before the handler is asked for.
+     * A field can say what happens when it changes, as any field can, with `on change`. With a
+     * file to write to, the value travels with the handler and the two are written as one change.
+     * Without one, the value is worked in first and the handler asked for after, against the entry
+     * it was picked on: the write can move the entry - a list kept in order of stage puts it
+     * somewhere else - so the entry is found again by its key.
      */
     createEnumElement(node) {
         const container = document.createElement('div')
@@ -3331,6 +3382,15 @@ export class OverseerRenderer {
             const anchor = this._anchorForPath(path)
             this.updateNodeValue(node, after)
             paint()
+            if (this.declaresEvent(node, 'change') && window.app.currentFile) {
+                // The value and what its handler does, as one change and one step to take back.
+                // As two, taking back the second left the first: a task picked as finished came
+                // back on the list still saying finished.
+                try {
+                    await this.emitEvent(node, { dataset: { path: JSON.stringify(path) } }, 'change', { String: after })
+                } catch (_) {}
+                return
+            }
             try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
             try {
                 // With the value - see the note in `createTagsElement`. Waited for, unlike the
@@ -3362,7 +3422,11 @@ export class OverseerRenderer {
             }
             chips.appendChild(chip)
             if (!editable()) return
-            const others = [...vocabulary.keys()].filter(v => v !== value)
+            // Values not to offer just now, usually worked out: a task cannot be finished while
+            // anything under it is still open, and the picker is where that is said.
+            const withheld = new Set(String(this.getParameterValue(node, 'withhold') ?? '')
+                .split(',').map(s => s.trim()).filter(Boolean))
+            const others = [...vocabulary.keys()].filter(v => v !== value && !withheld.has(v))
             if (others.length === 0) return
             chip.classList.add('enum-choice')
             chip.title = chip.title ? `${chip.title} - press to change` : 'press to change'
@@ -6793,8 +6857,12 @@ export class OverseerRenderer {
      * addressed against may have been renumbered. So the target is re-found by its key, and
      * an event whose target has genuinely gone is dropped rather than sent to whatever now
      * occupies that name.
+     *
+     * `withValue`, when given, is a value for the node the event is on, written as part of the
+     * same change - a field's new value sent with its `on change`, so the two are one step to
+     * take back. Only where there is a file to write to: the caller checks.
      */
-    async emitEvent(node, element, eventName) {
+    async emitEvent(node, element, eventName, withValue) {
         if (!window.app || !window.app.currentDocument) return
         const path = (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
@@ -6802,15 +6870,15 @@ export class OverseerRenderer {
 
         const busy = this._eventInFlight
         if (!busy) {
-            return this._runEventExclusively(node, element, eventName, path, null)
+            return this._runEventExclusively(node, element, eventName, path, null, null, withValue)
         }
         // Held behind something already in flight, so the document is about to change under
         // this path. Remember what it points at now, while that is still true.
         const anchor = this._anchorForPath(path)
-        return this._runEventExclusively(node, element, eventName, path, anchor, busy)
+        return this._runEventExclusively(node, element, eventName, path, anchor, busy, withValue)
     }
 
-    async _runEventExclusively(node, element, eventName, path, anchor, busy) {
+    async _runEventExclusively(node, element, eventName, path, anchor, busy, withValue) {
         let release
         this._eventInFlight = new Promise((resolve) => { release = resolve })
         try {
@@ -6825,14 +6893,14 @@ export class OverseerRenderer {
                     path = fresh
                 }
             }
-            return await this._emitEventNow(node, element, eventName, path)
+            return await this._emitEventNow(node, element, eventName, path, withValue)
         } finally {
             this._eventInFlight = null
             release()
         }
     }
 
-    async _emitEventNow(node, element, eventName, pathOverride) {
+    async _emitEventNow(node, element, eventName, pathOverride, withValue) {
         if (!window.app || !window.app.currentDocument) return
         let path = Array.isArray(pathOverride) ? pathOverride
             : (element && element.dataset && element.dataset.path)
@@ -6995,7 +7063,9 @@ export class OverseerRenderer {
                     nodePath: path,
                     event_name: eventName,
                     eventName,
-                    typed: this.typedText()
+                    typed: this.typedText(),
+                    // By the path as it is now, which a queued event has just found again.
+                    ...(withValue !== undefined ? { writing: [{ node_path: path, value: withValue }] } : {})
                 }
                 : null
             if (asAnInstruction || knownText !== null) {
@@ -7065,7 +7135,10 @@ export class OverseerRenderer {
             // The long way, from the text: fetched now if the last answer only named it, since a
             // press that goes as an instruction never needs it and fetching it first would cost
             // every press what only a refused one needs.
+            // Not with a value to write: the text was made before the value was, and the handler
+            // would read what it replaced. The document the page holds has it.
             const theLongWay = (updated === undefined || updated === null) && !materializedForThisEvent
+                && withValue === undefined
                 ? (knownText ?? await window.app.textInHand())
                 : null
             if (theLongWay !== null && (updated === undefined || updated === null)) {

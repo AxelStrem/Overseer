@@ -194,9 +194,18 @@ async fn run_overseer_event(
     node_path: Vec<String>,
     event_name: String,
     typed: Option<Vec<app_api::ValueWrite>>,
+    writing: Option<Vec<app_api::ValueWrite>>,
 ) -> Result<app_api::ResolvedUpdate> {
-    app_api::run_event_at(&path, &path, node_path, event_name, THE_WINDOW, typed.unwrap_or_default())
-        .map(app_api::for_the_page)
+    app_api::run_event_at(
+        &path,
+        &path,
+        node_path,
+        event_name,
+        THE_WINDOW,
+        typed.unwrap_or_default(),
+        writing.unwrap_or_default(),
+    )
+    .map(app_api::for_the_page)
 }
 
 #[command]

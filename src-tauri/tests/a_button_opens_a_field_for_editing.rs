@@ -95,7 +95,7 @@ fn opened(tag: &str) -> (String, Vec<OverseerNode>) {
 
 fn press(path: &str, nodes: &[OverseerNode], button: &str) -> overseer::Result<app_api::ResolvedUpdate> {
     let node_path = overseer::addressing::name_path(nodes, button).expect("the button");
-    app_api::run_event_at(path, "d.os", node_path, "click".into(), "s", Vec::new())
+    app_api::run_event_at(path, "d.os", node_path, "click".into(), "s", Vec::new(), Vec::new())
 }
 
 fn node_at<'a>(nodes: &'a [OverseerNode], path: &[usize]) -> &'a OverseerNode {
