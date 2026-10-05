@@ -1,12 +1,13 @@
 // Stages, for an agent working through the items below. Unless told otherwise, take ready items
 // first, then discuss, and filed only when neither is left; within a stage, use your judgement.
+// Skip any item whose after list names an item that is still open.
 //
 //   ready     Everything is decided: implement it, then move it to testing - or to asked, if
 //             something came up that needs a decision.
 //   discuss   Your opinion is wanted, usually on a question in the note. Move it to ready only if
 //             nothing is left to decide; otherwise to asked.
-//   filed     Nothing done yet. Move it to ready or to asked; leave it filed while it waits on
-//             another item.
+//   filed     Nothing done yet. Move it to ready or to asked - or, if it has to wait for another
+//             item first, add that one to its after list and leave it filed.
 //   asked, testing, later
 //             Waiting on a person: leave them.
 //
@@ -15,7 +16,7 @@
 
 tab project (label="Project", mutable=true) {
     string name (label="", font-size=22px) = "Untitled project"
-    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day. **Stages:** an item starts filed; discuss means the owner wants an opinion on it before it is built, and whoever gives one moves it on to asked or ready; asked that a question on it is waiting on the owner; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Finished, from where it reaches the task history. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan."
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; discuss means the owner wants an opinion on it before it is built, and whoever gives one moves it on to asked or ready; asked that a question on it is waiting on the owner; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Finished, from where it reaches the task history. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan."
 
     div (hidden=true) {
         div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
@@ -64,10 +65,11 @@ tab project (label="Project", mutable=true) {
 
         div Item (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center",
                   background-color=$(done >= 75 ? "#14321f" :
-                                    (done >= 25 ? "#1c2a3a" : "inherit"))) {
+                                    (done >= 25 ? "#1c2a3a" : "inherit")),
+                  font-color=$(waiting > 0 ? "#6b7280" : "inherit")) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=8%) = ""
-            string title (label="title", font-size=14px, width=26%,
+            string title (label="title", font-size=14px, width=23%,
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
             enum stage (label="stage", vocabulary="/project/Stages", width=9%,
@@ -80,6 +82,7 @@ tab project (label="Project", mutable=true) {
                             - handle = $(../handle)
                             - title = $(../title)
                             - parent = $(../parent)
+                            - after = $(../after)
                             - labels = $(../labels)
                             - points = $(../points)
                             - commentary = $(../commentary)
@@ -90,7 +93,8 @@ tab project (label="Project", mutable=true) {
             }
 
             string parent (label="of", font-size=11px, width=7%) = ""
-            tags labels (label="tags", vocabulary="/project/Labels", width=18%) = ""
+            tags after (label="after", vocabulary="/project/Items, /project/History", width=9%) = ""
+            tags labels (label="tags", vocabulary="/project/Labels", width=15%) = ""
             int done (label="done", format="trim", precision=0, suffix="%", width=7%,
                       hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
                           (/project/Items.filter(|x| x/parent == ../handle)
@@ -105,7 +109,7 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
-            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=11%) =
+            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=10%) =
                 $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
                   /project/History.filter(|x| x/parent == ../handle)
                                   .map(|x| x/finished_at).max())
@@ -129,6 +133,10 @@ tab project (label="Project", mutable=true) {
             float weight (hidden=true) = $(../kids == 0 ? ../points :
                 /project/Items.filter(|x| x/parent == ../handle).map(|x| x/weight).sum()
                 + ../finished_weight)
+            int waiting (hidden=true) =
+                $(../after.filter(|h| /project/Items.filter(|x| x/handle == h).count() > 0).count())
+            string colour (hidden=true) =
+                $(/project/Stages.filter(|s| s/tag == ../stage).map(|s| s/colour).first())
         }
 
         div Finished (layout="vertical", margin=0, spacing=2) {
@@ -139,6 +147,7 @@ tab project (label="Project", mutable=true) {
                 string title (width=40%) = ""
                 string handle (hidden=true) = ""
                 string parent (hidden=true) = ""
+                tags after (hidden=true) = ""
                 tags labels (label="", vocabulary="/project/Labels", width=24%) = ""
                 int points (label="", format="trim", width=6%) = 0
 
@@ -150,6 +159,8 @@ tab project (label="Project", mutable=true) {
                 }
             }
             string commentary (label="", font-size=11px, font-color="#9ca3af", hidden=true) = ""
+            string colour (hidden=true) =
+                $(/project/Stages.filter(|s| s/tag == "finished").map(|s| s/colour).first())
         }
     }
 
@@ -157,14 +168,16 @@ tab project (label="Project", mutable=true) {
 
     div (layout="horizontal", margin=0, spacing=10, alignment="center") {
         filter (target="/project/Items", text="title, commentary, handle", enum="stage", tags="labels",
-                status="done", vocabulary="/project/Labels", label="find", width=100%) { }
+                status="done", hide="waiting", vocabulary="/project/Labels", label="find", width=100%) { }
     }
 
     div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
-        textbox handle (label="", placeholder="id", width=11%) = ""
-        textbox title (label="", placeholder="what needs doing", width=38%) = ""
-        textbox parent (label="", placeholder="under", width=11%) = ""
-        textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=16%) = ""
+        textbox handle (label="", placeholder="id", width=10%) = ""
+        textbox title (label="", placeholder="what needs doing", width=31%) = ""
+        textbox parent (label="", placeholder="under", width=10%) = ""
+        textbox after (label="", placeholder="after", vocabulary="/project/Items, /project/History",
+                       width=12%) = ""
+        textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=15%) = ""
         textbox points (label="", placeholder="pts", width=7%) = ""
         button add (label="+ task", margin=0, width=12%) {
             on click {
@@ -207,6 +220,7 @@ tab project (label="Project", mutable=true) {
             - handle = "rows"
             - title = "Tighten the row layout"
             - parent = "editor"
+            - after = "escape"
             - labels = "ui"
             - points = 4
         }
@@ -231,6 +245,7 @@ tab project (label="Project", mutable=true) {
             - handle = "favicon"
             - title = "Pick a favicon"
             - stage = "later"
+            - after = "rows"
             - labels = "ui"
             - points = 1
             - commentary = "stands on its own; nothing is part of it and it is part of nothing"
@@ -283,7 +298,7 @@ tab project (label="Project", mutable=true) {
 
     text history_header (markdown=true) = "## Finished"
 
-    list History (entry=<Finished>, layout="vertical", spacing=1, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) {
+    list History (entry=<Finished>, key="handle", layout="vertical", spacing=1, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) {
         - {
             - finished_at = "2026-09-05T17:20:00+04:00"
             - added = "2026-09-01T09:20:00+04:00"

@@ -2996,6 +2996,7 @@ export class OverseerRenderer {
      *                two ends means.
      *   enum       - a field holding one of a list, a stage say, its values offered as chips;
      *                any of those picked
+     *   hide       - a field to offer one box for: leave out the entries where it is above nought
      */
     createFilterElement(node) {
         const container = document.createElement('div')
@@ -3008,6 +3009,7 @@ export class OverseerRenderer {
         const tagField = this.getParameterValue(node, 'tags')
         const statusField = this.getParameterValue(node, 'status')
         const enumField = this.getParameterValue(node, 'enum')
+        const hideField = this.getParameterValue(node, 'hide')
         if (target.length === 0) {
             // Nothing to filter is worth saying out loud rather than rendering an inert box.
             container.textContent = 'filter: no target list named'
@@ -3019,7 +3021,7 @@ export class OverseerRenderer {
         // replaced - which happens on every repaint of the list it filters. A filter that
         // silently cleared itself whenever something changed nearby would be worse than none.
         const key = target.join('/')
-        const state = this.filterState(key, { target, textFields, tagField, statusField, enumField })
+        const state = this.filterState(key, { target, textFields, tagField, statusField, enumField, hideField })
 
         if (textFields.length > 0) {
             const box = document.createElement('input')
@@ -3101,6 +3103,23 @@ export class OverseerRenderer {
             container.appendChild(boxes)
         }
 
+        if (hideField) {
+            // One box: leave out the entries for which this field is above nought - the tasks
+            // still waiting on another, say. Named after the field, which says what it hides.
+            const holder = document.createElement('label')
+            holder.className = 'filter-status-option filter-hide'
+            const box = document.createElement('input')
+            box.type = 'checkbox'
+            box.checked = state.hiding
+            box.addEventListener('change', () => {
+                state.hiding = box.checked
+                this.applyFilters()
+            })
+            holder.appendChild(box)
+            holder.appendChild(document.createTextNode(`hide ${hideField}`))
+            container.appendChild(holder)
+        }
+
         const count = document.createElement('span')
         count.className = 'filter-count'
         count.dataset.filterCount = key
@@ -3138,7 +3157,7 @@ export class OverseerRenderer {
             Object.assign(held, about)
             return held
         }
-        const fresh = Object.assign({ text: '', tags: new Set(), status: new Set(), enums: new Set() }, about)
+        const fresh = Object.assign({ text: '', tags: new Set(), status: new Set(), enums: new Set(), hiding: false }, about)
         this._filters.set(key, fresh)
         return fresh
     }
@@ -3186,7 +3205,7 @@ export class OverseerRenderer {
             for (const label of document.querySelectorAll(`[data-filter-count='${key}']`)) {
                 const total = list.children.length
                 const narrowed = wanted !== '' || state.tags.size > 0 || state.status.size > 0
-                    || state.enums.size > 0
+                    || state.enums.size > 0 || state.hiding
                 label.textContent = narrowed ? `${showing} of ${total}` : `${total}`
             }
         }
@@ -3227,6 +3246,11 @@ export class OverseerRenderer {
                 : figure >= 100 ? 'done'
                 : 'some'
             if (!state.status.has(which)) return false
+        }
+
+        if (state.hiding && state.hideField) {
+            const held = fieldText(state.hideField).trim()
+            if (held === 'true' || Number(held) > 0) return false
         }
 
         if (state.enums.size > 0) {
@@ -3322,7 +3346,14 @@ export class OverseerRenderer {
             add.title = 'add a tag'
             add.addEventListener('click', (event) => {
                 event.stopPropagation()
-                const spare = [...vocabulary.keys()].filter(tag => !held().includes(tag))
+                // Nor the entry this field is part of: a task does not wait on itself.
+                const here = JSON.stringify(this.buildNodePath(container))
+                const itself = (tag) => {
+                    const at = vocabulary.get(tag).at
+                    return Array.isArray(at) && here.startsWith(JSON.stringify(at).slice(0, -1) + ',')
+                }
+                const spare = [...vocabulary.keys()]
+                    .filter(tag => !held().includes(tag) && vocabulary.get(tag).offered !== false && !itself(tag))
                 this.offerTags(add, spare, vocabulary, (tag) => { write([...held(), tag]); paint() })
             })
             chips.appendChild(add)
@@ -3426,7 +3457,8 @@ export class OverseerRenderer {
             // anything under it is still open, and the picker is where that is said.
             const withheld = new Set(String(this.getParameterValue(node, 'withhold') ?? '')
                 .split(',').map(s => s.trim()).filter(Boolean))
-            const others = [...vocabulary.keys()].filter(v => v !== value && !withheld.has(v))
+            const others = [...vocabulary.keys()]
+                .filter(v => v !== value && !withheld.has(v) && vocabulary.get(v).offered !== false)
             if (others.length === 0) return
             chip.classList.add('enum-choice')
             chip.title = chip.title ? `${chip.title} - press to change` : 'press to change'
@@ -3449,27 +3481,54 @@ export class OverseerRenderer {
      * Read from the list named by `vocabulary`, whose entries are ordinary document data. Empty
      * when the field names no list, or names one that is not there - a field without a
      * vocabulary is still perfectly usable, it simply has no colours to draw with.
+     *
+     * An entry is known by its list's `key`, `tag` when the list names none: a tag list is keyed
+     * by tag, and a list of tasks by handle - which is how a task can say which others it waits
+     * on, drawn in each one's colour. Its `title`, where it has one, is what its chip says on
+     * hover. Several lists can be named, separated by commas: the first is what the picker
+     * offers, and the rest only name and colour what is already held - the finished tasks, say,
+     * which a task may still list but nobody would pick.
      */
     tagVocabulary(node) {
         const found = new Map()
         const where = this.getParameterValue(node, 'vocabulary')
         if (!where) return found
-        try {
-            const segments = String(where).split('/').filter(Boolean)
-            const list = this.findNodeByPath(window.app.currentDocument, segments)
-            for (const entry of (list && list.children) || []) {
-                const field = (name) => {
-                    const child = (entry.children || []).find(c => c && c.name === name)
-                    return child ? this.getParameterValue(child, 'value') : null
+        const lists = String(where).split(',').map(s => s.trim()).filter(Boolean)
+        lists.forEach((path, at) => {
+            try {
+                const segments = path.split('/').filter(Boolean)
+                const list = this.findNodeByPath(window.app.currentDocument, segments)
+                const key = String((list && this.getParameterValue(list, 'key')) || 'tag')
+                for (const entry of (list && list.children) || []) {
+                    // A field of the entry, or of a layout div within it that names nothing.
+                    const seek = (holder, name) => {
+                        for (const child of (holder && holder.children) || []) {
+                            if (child && child.name === name) return child
+                        }
+                        for (const child of (holder && holder.children) || []) {
+                            if (child && child.is_hierarchy_transparent && (child.node_type || child.type) === 'div') {
+                                const inside = seek(child, name)
+                                if (inside) return inside
+                            }
+                        }
+                        return null
+                    }
+                    const field = (name) => {
+                        const child = seek(entry, name)
+                        return child ? this.getParameterValue(child, 'value') : null
+                    }
+                    const tag = field(key)
+                    if (tag === null || tag === undefined || tag === '' || found.has(String(tag))) continue
+                    found.set(String(tag), {
+                        name: field('name') || String(tag),
+                        colour: field('colour') || field('color') || null,
+                        hover: field('title') || null,
+                        offered: at === 0,
+                        at: [...segments, entry.name],
+                    })
                 }
-                const tag = field('tag')
-                if (tag === null || tag === undefined || tag === '') continue
-                found.set(String(tag), {
-                    name: field('name') || String(tag),
-                    colour: field('colour') || field('color') || null,
-                })
-            }
-        } catch (_) { /* a field with no readable vocabulary just has no colours */ }
+            } catch (_) { /* a field with no readable vocabulary just has no colours */ }
+        })
         return found
     }
 
@@ -3483,11 +3542,12 @@ export class OverseerRenderer {
             chip.style.backgroundColor = known.colour
             chip.style.color = this.readableOn(known.colour)
         }
+        if (known && known.hover) chip.title = String(known.hover)
         if (!known) {
             // A tag the vocabulary does not list. Shown rather than hidden: it is in the
             // document, and dropping it from the display would misreport what the field holds.
             chip.classList.add('tag-unknown')
-            chip.title = 'not in this document\u2019s tag list'
+            chip.title = 'not in the list this field picks from'
         }
         if (remove) {
             const cross = document.createElement('button')

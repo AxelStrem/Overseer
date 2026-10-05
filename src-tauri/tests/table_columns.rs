@@ -166,6 +166,7 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
             "title",
             "stage",
             "parent",
+            "after",
             "labels",
             "done",
             "points",

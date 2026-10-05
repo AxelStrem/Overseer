@@ -477,6 +477,16 @@ list Labels (entry=<Label>, key="tag") { }
 tags labels (vocabulary="/project/Labels", width=24%) = "perf, correctness"
 ```
 
+An entry of the vocabulary is known by its list's `key` - `tag` when the list names none - so a
+list of tasks keyed by `handle` serves as well as a tag list. Its `title`, where it has one, is
+what its chip says on hover. Several lists can be named, separated by commas: the picker offers
+the first, never the entry the field is part of, and the rest only name and colour what is
+already held. A task naming the tasks it waits on, open or finished, each in its own colour:
+
+```overseer
+tags after (vocabulary="/project/Items, /project/History") = "parser, escape"
+```
+
 Handed to a formula, a `tags` field reads as a list, so a document can ask what it holds:
 
 ```overseer
@@ -546,6 +556,7 @@ filter (target="/project/Items", text="title, commentary", enum="stage", tags="l
 | `vocabulary` | where those labels are listed |
 | `status` | a field to offer as a third narrowing, by value |
 | `enum` | an `enum` field, its values offered as chips from its own vocabulary; picking two finds either |
+| `hide` | a field to offer one box for, which leaves out the entries where it is above nought |
 
 ### 3. Layout and Styling
 
@@ -893,7 +904,7 @@ div Tasks {
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
 - **Mounts**: `source`, `lazy`, `mutable`
-- **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`
+- **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`
 - **Tags**: `vocabulary` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 
