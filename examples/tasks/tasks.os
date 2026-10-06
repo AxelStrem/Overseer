@@ -155,7 +155,7 @@ tab tasks (label="Tasks", mutable=true) {
         div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
             string tag (hidden=true) = ""
             string name (label="", width=40%) = ""
-            string colour (label="", width=30%) = "#6b7280"
+            string colour (label="", kind="color", width=30%) = "#6b7280"
         }
 
         // Something done. Difficulty travels with it: the history is what any statistic about

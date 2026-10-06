@@ -1172,6 +1172,55 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     color: var(--text-secondary);
 }
 
+/* A colour textbox is the picker's own button, a box of the colour, rather than a line of text. */
+.textbox-input[type="color"] {
+    width: 48px;
+    padding: 2px;
+    cursor: pointer;
+}
+
+/* The colour a string holds, beside its code. The picker lies over it, invisible, so a tap on the
+   square opens it - see colourSwatch. */
+.colour-value {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.colour-value > .field-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.colour-swatch {
+    position: relative;
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    margin-right: 6px;
+    vertical-align: middle;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.colour-swatch.colour-unset {
+    border-style: dashed;
+}
+
+.colour-picker {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
 .field-editor {
     width: 100%;
     padding: 6px 8px;

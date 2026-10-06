@@ -30,7 +30,7 @@ tab shopping (label="Shopping", mutable=true) {
             // What colour this shop's chip takes wherever it is shown. Read from here by any
             // `tags` field pointed at this list, so a shop is recoloured in one place and the
             // change reaches every item that is sold there.
-            string colour (label="", width=20%) = "#6b7280"
+            string colour (label="", kind="color", width=20%) = "#6b7280"
 
             // Selecting a shop is what filters the list below.
             button show (label="show", margin=0, width=20%) {

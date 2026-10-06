@@ -28,7 +28,7 @@ tab food_catalog (label="Food Catalog", mutable=true) {
         div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
             string tag (label="", width=25%) = ""
             string name (label="", width=45%) = ""
-            string colour (label="", width=30%) = "#6b7280"
+            string colour (label="", kind="color", width=30%) = "#6b7280"
         }
 
         div Food (layout="vertical", margin=0) {

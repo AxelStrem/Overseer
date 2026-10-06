@@ -349,6 +349,17 @@ string is edited with a double one, and `placeholder` says what goes in it while
 Given a `vocabulary`, it picks tags from that list instead of being typed into - the same chips
 and picker as a `tags` field - and what is picked is held the same way as anything typed.
 
+A string or a textbox saying `kind="color"` holds a colour, written `#rrggbb` - the `colour` of
+every tag list's entries. The string is drawn with a square of its colour before the code, and a
+tap on the square opens the browser's own colour picker; what is picked is written exactly as a
+typed code would be, so `mutable` and `on change` hold as they do for typing, and the code can
+still be edited with a double tap. A value that is not a colour code draws an empty square. The
+textbox becomes the picker itself, and holds what is picked like anything typed.
+
+```overseer
+string colour (label="", kind="color", width=30%) = "#6b7280"
+```
+
 What is typed belongs to whoever is typing, and is never written to the file - the way
 `mutable="guarded"` works. The file says what the box starts with, through the usual means, a
 value or a formula, and that is all it ever says. A press sends the text along, so actions can
@@ -899,7 +910,7 @@ div Tasks {
 - **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
-- **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`
+- **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`)
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`

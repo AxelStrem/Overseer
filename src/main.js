@@ -985,9 +985,13 @@ tab Main {
                 return false // Non-string values might be referenced by formulas
             }
             
-            // Check if this looks like a header/label field (starts with # or contains "header" in path)
-            const isHeaderField = change.path.toLowerCase().includes('header') || 
-                                 (typeof change.newValue === 'string' && change.newValue.startsWith('#'))
+            // Check if this looks like a header/label field (contains "header" in path).
+            //
+            // A value starting with `#` used to count too, as a markdown heading. It never was
+            // one reliably - a colour code is the commonest such value - and an update handled
+            // here reaches no backend, so the save after it sent text that had never seen the
+            // edit: a colour typed or picked showed on the page and was gone from the file.
+            const isHeaderField = change.path.toLowerCase().includes('header')
             
             if (!isHeaderField) {
                 return false // Non-header string fields might still be referenced by formulas

@@ -3631,15 +3631,87 @@ export class OverseerRenderer {
             if (mode === 'guarded') { try { value.setAttribute('data-guarded-edit','1') } catch(_) {} }
             this.makeFieldEditable(value, node)
         })
-        
-        container.appendChild(value)
-        
+
+        if (this.holdsAColour(node)) {
+            // One row, the square before the code: a field stacks what it holds.
+            const row = document.createElement('span')
+            row.className = 'colour-value'
+            row.appendChild(this.colourSwatch(node, value))
+            row.appendChild(value)
+            container.appendChild(row)
+        } else {
+            container.appendChild(value)
+        }
+
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
     this.applyLayoutStyles(container, node)
     // Apply default field styling if no explicit parameters are set
     this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
+    }
+
+    /// A string or a textbox saying `kind=color`: what it holds is a colour, written `#rrggbb`.
+    holdsAColour(node) {
+        return String(this.getParameterValue(node, 'kind') ?? '').trim().toLowerCase() === 'color'
+    }
+
+    /// The colour a code names, as the browser's picker spells it, or null for anything else.
+    /// The picker reads and writes only `#rrggbb`; a short `#rgb` is the same colour spelled out.
+    colourCode(text) {
+        const s = String(text ?? '').trim().toLowerCase()
+        if (/^#[0-9a-f]{6}$/.test(s)) return s
+        if (/^#[0-9a-f]{3}$/.test(s)) return '#' + [...s.slice(1)].map(c => c + c).join('')
+        return null
+    }
+
+    /**
+     * The colour a string holds, shown as one beside its code, and picked rather than typed.
+     *
+     * The swatch is the browser's own colour input, made invisible and laid over a filled square,
+     * so a tap opens the native picker on the desktop and on a phone alike. What is picked is
+     * written exactly as a typed code is - the field's editor is opened, given the value and
+     * finished - so mutability, a guarded edit and `on change` all hold without a second path.
+     * The code beside it is still there to read, and still edited with a double tap.
+     */
+    colourSwatch(node, value) {
+        const swatch = document.createElement('span')
+        swatch.className = 'colour-swatch'
+        const paint = (text) => {
+            const code = this.colourCode(text)
+            swatch.style.backgroundColor = code || ''
+            // A value that is not a colour is drawn as an empty square, not guessed at.
+            swatch.classList.toggle('colour-unset', !code)
+            swatch.title = code ? code : 'not a colour code'
+        }
+        paint(value.textContent)
+
+        const picker = document.createElement('input')
+        picker.type = 'color'
+        picker.className = 'colour-picker'
+        picker.value = this.colourCode(value.textContent) || '#000000'
+        const unchangeable = () => this.getEffectiveMutableMode(node, value) === 'false'
+            || this.passesItsTapsOn(value, node)
+        picker.addEventListener('click', (event) => {
+            // Mutability is read on the tap, not when drawn: until it is in the page the swatch
+            // has no surroundings to inherit it from.
+            event.stopPropagation()
+            if (unchangeable()) event.preventDefault()
+        })
+        picker.addEventListener('change', () => {
+            if (unchangeable()) return
+            const picked = picker.value
+            if (picked === this.colourCode(value.textContent)) return
+            if (this.getEffectiveMutableMode(node, value) === 'guarded') {
+                try { value.setAttribute('data-guarded-edit', '1') } catch (_) {}
+            }
+            paint(picked)
+            const editor = this.makeFieldEditable(value, node)
+            editor.input.value = picked
+            editor.finish()
+        })
+        swatch.appendChild(picker)
+        return swatch
     }
 
     /**
@@ -3669,7 +3741,8 @@ export class OverseerRenderer {
         }
 
         const input = document.createElement('input')
-        input.type = 'text'
+        // A colour is picked with the browser's own picker, and held like anything typed.
+        input.type = this.holdsAColour(node) ? 'color' : 'text'
         input.className = 'textbox-input'
         const placeholder = this.getParameterValue(node, 'placeholder')
         if (placeholder) input.placeholder = String(placeholder)
@@ -3693,7 +3766,9 @@ export class OverseerRenderer {
         }
 
         if (this.getEffectiveMutableMode(node, container) === 'false') {
+            // A colour input ignores readOnly and opens its picker regardless.
             input.readOnly = true
+            if (input.type === 'color') input.disabled = true
         } else {
             input.addEventListener('input', () => { this._typed.set(key, input.value) })
         }
@@ -6514,6 +6589,9 @@ export class OverseerRenderer {
                 }
             }
         })
+        // For a value set by other means than typing - a colour picked - which then travels the
+        // same way a typed one does: the editor is given the value and finished at once.
+        return { input, finish: finishEditing }
     }
 
     // Resolve a node by a canonical field path, tolerating instance suffixes ("__N") and ordinal segments ("#k"),
