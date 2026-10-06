@@ -2926,11 +2926,18 @@ impl ActionExecutor {
         Self::value_equals(a, b)
     }
 
-    fn get_field_value<'a>(item: &'a OverseerNode, field: &'a str) -> Option<&'a OverseerValue> {
+    /// An entry's field, by name, for finding an entry by its key. Looked for among the entry's
+    /// own fields and those of the unnamed divs that lay it out, as addresses and
+    /// `refuse_a_key_already_held` do: a project's closed record keeps its handle in such a row,
+    /// and a `remove` by that handle found nothing and quietly left the record where it was.
+    fn get_field_value<'a>(item: &'a OverseerNode, field: &str) -> Option<&'a OverseerValue> {
+        if let Some(found) = item.children.iter().find(|c| c.name == field) {
+            return found.parameters.get("value");
+        }
         item.children
             .iter()
-            .find(|c| c.name == field)
-            .and_then(|c| c.parameters.get("value"))
+            .filter(|c| c.is_hierarchy_transparent && (c.name.is_empty() || c.name == c.node_type))
+            .find_map(|c| Self::get_field_value(c, field))
     }
 
     /// Make sure the list has an entry with this key, and leave it alone if it already does.

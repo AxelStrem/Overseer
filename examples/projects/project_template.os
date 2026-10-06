@@ -205,7 +205,7 @@ tab project (label="Project", mutable=true) {
                 string handle (hidden=true) = ""
                 string parent (hidden=true) = ""
                 tags after (hidden=true) = ""
-                tags labels (label="", vocabulary="/project/Labels", width=24%) = ""
+                tags labels (label="", vocabulary="/project/Labels", width=21%) = ""
                 int points (label="", format="trim", width=6%) = 0
                 enum complexity (label="", vocabulary="/project/Complexities", width=7%) = "unassigned"
 
@@ -213,6 +213,28 @@ tab project (label="Project", mutable=true) {
                              font-color=$(../commentary == "" ? "#6b7280" : "inherit")) {
                     on click {
                         start_editing (path="../commentary")
+                    }
+                }
+
+                // Back on the open list at filed, with what the record kept. Hidden while the
+                // parent is closed too, so a closed item never has an open part: reopen the
+                // parent first. The task history keeps the record of the earlier finish.
+                button reopen (icon="arrow-up", margin=0, width=3%,
+                               hidden=$(/project/History.filter(|x| x/handle == ../parent).count() > 0)) {
+                    on click {
+                        if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() == 0)) {
+                            append (list="/project/Items") {
+                                - added = $(../added)
+                                - handle = $(../handle)
+                                - title = $(../title)
+                                - parent = $(../parent)
+                                - after = $(../after)
+                                - labels = $(../labels)
+                                - points = $(../points)
+                                - commentary = $(../commentary)
+                            }
+                            remove (from="/project/History", keyField="handle", keyValue=$(../handle))
+                        }
                     }
                 }
             }
