@@ -94,11 +94,16 @@ describe('a colour string', () => {
     expect(field('Label', 'colour').querySelector('input.field-editor'), 'the editor stayed open').toBeNull()
   })
 
-  it('reaches the backend, though its code starts as a markdown heading would', () => {
+  it('reaches the backend, though its code starts as a markdown heading would', async () => {
     // An edit kept to the page as a heading was never written: the save after it sent text
     // that had not seen it, so every colour picked was gone on the next load.
     render()
-    expect(app.canHandleAsDOMOnlyUpdate([{ path: 'p/Label/colour', newValue: '#1d4ed8' }])).toBe(false)
+    delete app.reevaluateDocumentSelective
+    await pick(picker('Label', 'colour'), '#1d4ed8')
+    expect(invoke).toHaveBeenCalledWith('write_overseer_values', {
+      path: 'p.os',
+      values: [{ node_path: ['p', 'Label', 'colour'], value: { String: '#1d4ed8' } }],
+    })
   })
 
   it('cannot be picked where nothing may change', async () => {

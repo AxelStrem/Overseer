@@ -54,7 +54,7 @@ Overseer has evolved significantly from the initial vision and now includes:
 🔄 **RECENT MAJOR ACHIEVEMENTS:**
 - **Performance Revolution**: Eliminated full document re-evaluation cycles
 - **Chart Integration**: Complete Chart.js integration with intelligent refresh control
-- **Selective Updates**: Multi-tier update system (DOM-only, selective backend, cascade detection)
+- **Selective Updates**: Multi-tier update system (selective backend, cascade detection)
 - **Dependency Tracking**: Sophisticated regex-based formula parsing and dependency graphs
 - **User Experience**: Responsive field updates without flicker or performance degradation
 

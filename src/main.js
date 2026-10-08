@@ -970,38 +970,6 @@ tab Main {
     }
 
     /**
-     * Check if field changes can be handled as DOM-only updates without backend processing
-     */
-    canHandleAsDOMOnlyUpdate(fieldChanges) {
-        for (const change of fieldChanges) {
-            // Check if the new value contains any formulas (starts with $)
-            if (typeof change.newValue === 'string' && change.newValue.includes('$')) {
-                return false // Contains formulas, needs backend processing
-            }
-            
-            // For numeric values, we need to check if other fields might depend on this field
-            // For now, be conservative: only handle simple string fields that are clearly labels/headers
-            if (typeof change.newValue !== 'string') {
-                return false // Non-string values might be referenced by formulas
-            }
-            
-            // Check if this looks like a header/label field (contains "header" in path).
-            //
-            // A value starting with `#` used to count too, as a markdown heading. It never was
-            // one reliably - a colour code is the commonest such value - and an update handled
-            // here reaches no backend, so the save after it sent text that had never seen the
-            // edit: a colour typed or picked showed on the page and was gone from the file.
-            const isHeaderField = change.path.toLowerCase().includes('header')
-            
-            if (!isHeaderField) {
-                return false // Non-header string fields might still be referenced by formulas
-            }
-        }
-        
-        return true // All changes are simple header/label strings
-    }
-
-    /**
      * Detect if there are cascade changes by comparing old and new documents
      */
     detectCascadeChanges(oldDocument, newDocument, userChangedFields) {
@@ -1414,79 +1382,6 @@ tab Main {
                 }
             } catch(_) {}
 
-            // Check if we can handle this as a pure DOM-only update (no backend needed)
-            let canHandleDOMOnly = this.canHandleAsDOMOnlyUpdate(fieldChanges)
-            // Guard: if any aggregate formulas (sum/map pipelines) could be affected indirectly by this edit
-            // (e.g. edit to a list item primitive feeding another item's computed field feeding an aggregate),
-            // force backend selective path. We detect:
-            // 1) Any formula referencing changed field names directly (handled later, but we short‑circuit here)
-            // 2) Any aggregate formula referencing the list identifier for which a descendant field changed
-            try {
-                if (canHandleDOMOnly) {
-                    const aggPattern = /(\.sum\s*\(|\.sum\s*$|\.map\s*\(|\.reduce\s*\(|\.count\s*\()/i
-                    const changedPaths = Array.isArray(changedFieldPaths) ? changedFieldPaths : []
-                    // Pre-extract list names from changed paths (second segment after root, or any segment preceding a template instance)
-                    const changedListNames = new Set()
-                    for (const p of changedPaths) {
-                        if (!p) continue
-                        const segs = p.split('/')
-                        for (let i=0;i<segs.length;i++) {
-                            const seg = segs[i]
-                            if (!seg) continue
-                            // Heuristic: treat any segment whose next segment appears to be a template instance or item as a list name
-                            if (i < segs.length - 1 && /__\d+$/.test(segs[i+1])) changedListNames.add(seg)
-                        }
-                        // Also if path explicitly contains a known list node (named 'L') include it
-                        if (segs.includes('L')) changedListNames.add('L')
-                    }
-                    if (changedListNames.size > 0) {
-                        const visit = (n) => {
-                            if (!n || typeof n !== 'object') return
-                            const p = n.parameters || {}
-                            const val = p.value
-                            const check = (vv) => {
-                                if (!vv || typeof vv !== 'object' || !vv.Formula) return false
-                                const s = String(vv.Formula)
-                                if (!aggPattern.test(s)) return false
-                                for (const ln of changedListNames) {
-                                    // look for list reference token like 'L.' or ' L ' or '(L.' inside formula
-                                    const rx = new RegExp(`(^|[^A-Za-z0-9_])${ln}[^A-Za-z0-9_]`)
-                                    if (rx.test(s)) return true
-                                }
-                                return false
-                            }
-                            if (check(val)) { canHandleDOMOnly = false; return }
-                            if (Array.isArray(n.children) && canHandleDOMOnly) {
-                                for (const c of n.children) { if (!canHandleDOMOnly) break; visit(c) }
-                            }
-                        }
-                        if (Array.isArray(this.currentDocument)) {
-                            for (const r of this.currentDocument) { if (!canHandleDOMOnly) break; visit(r) }
-                        } else { visit(this.currentDocument) }
-                    }
-                }
-            } catch(_) { /* non-fatal heuristic */ }
-            
-            if (canHandleDOMOnly) {
-                if (DEBUG_MODE) console.log('🚀 Handling as DOM-only update (no backend call needed)')
-                // Just do the DOM update directly without any backend processing
-                if (changedFieldPaths.length > 0) {
-                    if (DEBUG_MODE) console.log('🎯 Attempting DOM-only update for specific fields')
-                    
-                    // Use the current document as both old and new for DOM updates
-                    const selectiveUpdateSuccessful = this.renderer.updateSelectiveFields(
-                        this.currentDocument, this.currentDocument, changedFieldPaths, fieldChanges
-                    )
-                    
-                    if (selectiveUpdateSuccessful) {
-                        if (DEBUG_MODE) console.log('✅ DOM-only update completed successfully (charts completely untouched)')
-                        return { domOnly: true, success: true }
-                    } else {
-                        if (DEBUG_MODE) console.log('⚠️ DOM-only update failed, falling back to backend processing')
-                    }
-                }
-            }
-            
             // Store the old document state before backend processing
             const profileStart = (typeof performance !== 'undefined' ? performance.now() : Date.now())
             let profileAt = profileStart
