@@ -505,6 +505,30 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     padding: 0;
 }
 
+/* The header a foldable div is pressed by. It spans the div, so in a row it sits above the rest. */
+.overseer-div.foldable.layout-horizontal {
+    flex-wrap: wrap;
+}
+
+.overseer-div.foldable.layout-horizontal > .overseer-fold-header {
+    flex: 0 0 100%;
+}
+
+.overseer-fold-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+}
+
+.overseer-fold-header .fold-chevron {
+    width: 1em;
+    text-align: center;
+    opacity: 0.7;
+}
+
 /* If inline style disables border, also suppress default shadow for a truly flat look */
 .overseer-div[style*="border: none"] {
     border: none !important;

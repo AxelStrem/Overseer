@@ -143,6 +143,18 @@ pub struct Changed {
     /// address rather than child indices, because a later action in the same press may add or
     /// remove entries, and the indices are only worked out once the document has settled.
     pub start_editing: Option<String>,
+    /// Divs the press asked to have folded, unfolded or toggled, by address and in order - see
+    /// `fold`. A fold is a view, never a fact, so like opening a field it is the page's to do.
+    pub folds: Vec<(String, FoldHow)>,
+}
+
+/// What a fold action asks of the div it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FoldHow {
+    Fold,
+    Unfold,
+    Toggle,
 }
 
 /// An entry made in a list or taken out of one, named the way the dependency graph names them.
@@ -481,6 +493,15 @@ fn note_start_editing(address: String) {
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
             changed.start_editing = Some(address);
+        }
+    });
+}
+
+/// A div to fold, unfold or toggle once the press is answered, after any asked for before it.
+fn note_fold(address: String, how: FoldHow) {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.folds.push((address, how));
         }
     });
 }
@@ -824,7 +845,7 @@ impl ActionExecutor {
         );
         // Everything but these may change the document. An `if` says so through whatever it
         // lets run, and opening a field changes nothing until somebody types.
-        if !matches!(action.node_type.as_str(), "if" | "start_editing") {
+        if !matches!(action.node_type.as_str(), "if" | "start_editing" | "fold" | "unfold" | "toggle_fold") {
             note_acted();
         }
         match action.node_type.as_str() {
@@ -845,6 +866,35 @@ impl ActionExecutor {
                     OverseerError::ValidationError(format!("{} names nothing that can be shown", target))
                 })?;
                 note_start_editing(address);
+                Ok(())
+            }
+            // Folds a div away, brings it back, or turns it over - see `foldable`.
+            //
+            // Found the way `start_editing` finds its field, and for the same reason left to the
+            // page: what is folded is how somebody is looking at the document, not something the
+            // document says, so nothing is written and nothing is worked out again. Only a div
+            // that says it can fold is a target; anything else is refused, so a mistyped path
+            // says so rather than doing nothing.
+            "fold" | "unfold" | "toggle_fold" => {
+                let target = Self::require_string(&action.parameters, "path")?;
+                let (segments, _param, anchored) = Self::split_path_and_param(&target);
+                let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
+                    .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+                let foldable = Self::node_by_indices(nodes, &indices).is_some_and(|node| {
+                    node.node_type == "div" && node.parameters.get("foldable").is_some_and(Self::to_bool)
+                });
+                if !foldable {
+                    return Err(OverseerError::ValidationError(format!("{} is not a div that can fold", target)));
+                }
+                let address = crate::delta::address_at(nodes, &indices).ok_or_else(|| {
+                    OverseerError::ValidationError(format!("{} names nothing that can be shown", target))
+                })?;
+                let how = match action.node_type.as_str() {
+                    "fold" => FoldHow::Fold,
+                    "unfold" => FoldHow::Unfold,
+                    _ => FoldHow::Toggle,
+                };
+                note_fold(address, how);
                 Ok(())
             }
             "if" => {

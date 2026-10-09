@@ -638,6 +638,17 @@ pub struct ResolvedUpdate {
     /// The field a press asked to have opened for editing - see `actions::start_editing`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_editing: Option<FieldToEdit>,
+    /// The divs a press asked to have folded, unfolded or toggled, in order - see `actions::fold`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folds: Vec<FoldToDo>,
+}
+
+/// A div to fold, unfold or toggle, named the way a field to open is - see `FieldToEdit`.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub struct FoldToDo {
+    pub address: String,
+    pub path: Vec<usize>,
+    pub how: crate::actions::FoldHow,
 }
 
 /// A field to open for editing, named twice.
@@ -713,6 +724,7 @@ fn finish_update_with(
                 file_text: None,
                 emptied: Vec::new(),
                 start_editing: None,
+                folds: Vec::new(),
             })
         }
         None => {
@@ -729,6 +741,7 @@ fn finish_update_with(
                 file_text: None,
                 emptied: Vec::new(),
                 start_editing: None,
+                folds: Vec::new(),
             })
         }
     }
@@ -799,6 +812,7 @@ pub fn execute_event_update(
         .map(|changed| changed.view_state.iter().map(|(a, _)| a.clone()).collect())
         .unwrap_or_default();
 
+    let folds_asked = report.as_ref().map(|changed| changed.folds.clone()).unwrap_or_default();
     let quick = report
         .filter(|changed| !changed.structural && !changed.fields.is_empty())
         .and_then(|changed| {
@@ -854,12 +868,17 @@ pub fn execute_event_update(
             (text, nodes, Some(fresh))
         }
     };
+    let to_fold = folds_to_do(
+        Some(&crate::actions::Changed { folds: folds_asked, ..Default::default() }),
+        &nodes,
+    );
     let phase = std::time::Instant::now();
     let done = finish_update_with(&was, text, nodes, baseline).map(|mut update| {
         if let Some(fresh) = worked_out_whole {
             replace_graph(&update.text, fresh);
         }
         update.view_state = viewers;
+        update.folds = to_fold;
         update
     });
     if resolver::profile_enabled() {
@@ -1033,6 +1052,7 @@ fn change_document(
     if ran_nothing && held_for_the_viewer.is_empty() && baseline.copy.is_some() {
         return Ok(ResolvedUpdate {
             start_editing: field_to_edit(report.as_ref(), &nodes),
+            folds: folds_to_do(report.as_ref(), &nodes),
             text: as_it_stood,
             version: String::new(),
             file_version: None,
@@ -1071,6 +1091,7 @@ fn change_document(
     // without - and it is told so, because it holds the baseline a later save is checked
     // against and has no other way to learn that this write moved the file.
     let to_edit = field_to_edit(report.as_ref(), &nodes);
+    let to_fold = folds_to_do(report.as_ref(), &nodes);
     let mut update = finish_update_with(&as_it_stood, serialized, nodes, baseline.used())?;
     if let Some(fresh) = worked_out_whole {
         replace_graph(&update.text, fresh);
@@ -1083,6 +1104,7 @@ fn change_document(
     phase("answer");
     update.wrote = wrote;
     update.start_editing = to_edit;
+    update.folds = to_fold;
     if wrote && settled.text != update.text {
         update.file_text = Some(settled.text);
     }
@@ -1120,6 +1142,20 @@ impl Drop for Baseline {
 fn field_to_edit(report: Option<&crate::actions::Changed>, nodes: &[OverseerNode]) -> Option<FieldToEdit> {
     let address = report?.start_editing.clone()?;
     crate::delta::indices_of(nodes, &address).map(|path| FieldToEdit { address, path })
+}
+
+/// The folds a press asked for, found the same way - and in the same order, since a fold and an
+/// unfold of one div in one press mean whichever came last.
+fn folds_to_do(report: Option<&crate::actions::Changed>, nodes: &[OverseerNode]) -> Vec<FoldToDo> {
+    let Some(report) = report else { return Vec::new() };
+    report
+        .folds
+        .iter()
+        .filter_map(|(address, how)| {
+            crate::delta::indices_of(nodes, address)
+                .map(|path| FoldToDo { address: address.clone(), path, how: *how })
+        })
+        .collect()
 }
 
 /// What a change to a worked-out document reaches, worked out - and only that, where it can be.
