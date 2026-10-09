@@ -393,6 +393,19 @@ template does not have are ignored.
 The textboxes a copy read are emptied afterwards - back to what they start with - and a textbox
 anywhere else keeps what was typed into it.
 
+A textbox can start from a formula, and then it offers what the formula works out until something
+is typed over it - and offers it again, worked out anew, once a copy has emptied it. The project
+documents' id box offers a short code for the next item this way:
+
+```overseer
+textbox handle (placeholder="id") = $(fresh_key(/project/Items, /project/History))
+```
+
+`fresh_key(list, ...)` gives four letters and digits that no entry of the keyed lists it is given
+holds as its key, leaving out `0`, `o`, `1` and `l`, which read as one another. It is made from
+the keys already used rather than at random: it stays the same while the lists do, rather than
+changing each time the document is worked out, and moves on once an entry is added.
+
 #### A whole entry as the thing you press
 
 A div can carry `on click` as well as a button can, and then the whole of it is pressed wherever
@@ -454,6 +467,61 @@ The path is found by the same rules as any other action's, and a field that is n
 the press. It changes nothing by itself - the field is written when something is typed into it -
 so a press that only opens a field is answered without working the document out again. After
 other actions in the same block, the field opens once they have run.
+
+#### Folding a div away
+
+A div that says `foldable=true` can be folded away and brought back. With a label, the label is
+drawn as a header with a chevron, and pressing it anywhere folds the div or unfolds it: folded,
+the header stays and everything under it goes. Without a label there is nothing to press, so the
+div folds away whole and only an action brings it back. Either way what is folded is simply not
+drawn, and what is around it closes up.
+
+```overseer
+div Task (layout="vertical") {
+    string title = ""
+    div Notes (foldable=true, folded=true, label="Notes") {
+        list Comments (entry=<Comment>) { }
+    }
+}
+```
+
+`folded` says where it starts, open unless it is said. A fold is how somebody is looking at the
+document, not something the document says: the page keeps it, for that tab, through a redraw
+and a reload, and the file, the bot and anyone else looking never see it. It is kept by where
+the div is, and inside a list with a `key` by the entry's key, so it stays with its item when the
+list is sorted or filtered.
+
+`fold`, `unfold` and `toggle_fold` do the same from any action block, with `path` found as any
+other action's is. A target that is not a foldable div refuses the press. Like `start_editing`
+they change nothing in the document, so a press that only folds is answered without working it
+out again.
+
+```overseer
+button notes (label="notes") {
+    on click {
+        toggle_fold (path="../Notes")
+    }
+}
+```
+
+`folded` can be a formula, and that is how one press folds many divs. A fold made by hand holds
+only while the document goes on saying what it said when the fold was made; once `folded` reads
+otherwise, the div follows the document again. So a guarded flag, turned over by a button, folds
+or opens every div that reads it, and each can still be opened by hand afterwards:
+
+```overseer
+bool fold_all (mutable="guarded") = false
+
+button all (label="fold all") {
+    on click {
+        set (path="/project/fold_all") = $(/project/fold_all ? false : true)
+    }
+}
+
+div Notes (foldable=true, folded=$(/project/fold_all), label="Notes") { ... }
+```
+
+`hidden=true` wins over any fold.
 
 
 
@@ -555,7 +623,7 @@ is typed is matched against the fields named in `text` — the fields, not what 
 because what is on screen is formatted and sometimes hidden.
 
 ```overseer
-filter (target="/project/Items", text="title, commentary", enum="stage", tags="labels",
+filter (target="/project/Items", text="title, commentary", enum="stage", tags="labels, flags",
         status="done", vocabulary="/project/Labels", label="find") { }
 ```
 
@@ -563,8 +631,8 @@ filter (target="/project/Items", text="title, commentary", enum="stage", tags="l
 | --- | --- |
 | `target` | the list it narrows |
 | `text` | which fields the typed text is matched against |
-| `tags` | the field holding labels, so labels can be picked to narrow by |
-| `vocabulary` | where those labels are listed |
+| `tags` | the fields holding labels, comma-separated: each gets a row of chips to narrow by, and picking two - in one row or across them - finds the entries holding both |
+| `vocabulary` | where the first field's labels are listed; the others are drawn from their own fields' vocabularies |
 | `status` | a field to offer as a third narrowing, by value |
 | `enum` | an `enum` field, its values offered as chips from its own vocabulary; picking two finds either |
 | `hide` | a field to offer one box for, which leaves out the entries where it is above nought |
@@ -910,7 +978,7 @@ div Tasks {
 - **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
-- **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`)
+- **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`)
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`

@@ -804,7 +804,7 @@ export class OverseerRenderer {
         // Action nodes are not visual; keep this list in sync with backend
         const actionNames = [
             'set','inc','dec','toggle','clear','clear_list','ensure_in_list','ensure','remove','append','move','sort','set_now','set_now_ts','activate','deactivate',
-            'start_editing'
+            'start_editing','fold','unfold','toggle_fold'
         ]
         return actionNames.includes(n)
     }
@@ -1254,6 +1254,11 @@ export class OverseerRenderer {
             }
         } catch (_) { /* no-op */ }
 
+        // A div folded away with no header to bring it back by is not drawn at all - see `isFolded`.
+        try {
+            if (this.isFoldable(node) && !this.foldHeaderLabel(node) && this.isFolded(node, path)) return
+        } catch (_) { /* drawn open */ }
+
         // Ensure node has a stable uid (for list items and any node we need to target precisely)
         try {
             if (!node.__uid) {
@@ -1298,6 +1303,9 @@ export class OverseerRenderer {
 
             // A div that says `on click` is pressed wherever it is touched - see `makePressable`.
             try { this.makePressable(element, node) } catch (_) { /* it still shows, unpressable */ }
+
+            // Before the children, so it is the first thing in the div - see `drawFoldHeader`.
+            try { this.drawFoldHeader(element, node, path) } catch (_) { /* it still shows, unfoldable */ }
 
             // Apply background-color with correct precedence:
             // 1) Own computed background-color when present
@@ -1809,7 +1817,9 @@ export class OverseerRenderer {
                                 })
                                 .map(x => x.ch)
                         }
-                        const filteredChildren = children.filter(ch => this.shouldRenderChild(node, ch))
+                        // A folded div draws its header and nothing under it.
+                        const foldedAway = this.isFoldable(node) && this.isFolded(node, path)
+                        const filteredChildren = foldedAway ? [] : children.filter(ch => this.shouldRenderChild(node, ch))
                         if (DEBUG_MODE) console.log('Rendering', filteredChildren.length, 'children for node:', node)
                         for (const child of filteredChildren) {
                             const seg = (child.name || child.node_type || child.type || 'child')
@@ -2988,8 +2998,9 @@ export class OverseerRenderer {
      * What it needs from the document:
      *   target     - the list to filter
      *   text       - which of an entry's fields the typed text is matched against
-     *   tags       - which field holds an entry's tags, if it has any
-     *   vocabulary - the tag list, for drawing the chips to narrow by
+     *   tags       - which fields hold an entry's tags, comma-separated: a row of chips each
+     *   vocabulary - the tag list of the first of them, for drawing its chips; the others are
+     *                drawn from their own fields' vocabularies
      *   status     - a nought-to-a-hundred field, offered as three boxes: not started, in
      *                progress, finished. Derived rather than stored, because "in progress" is
      *                not a state anything writes down - it is what a percentage between the
@@ -3006,7 +3017,8 @@ export class OverseerRenderer {
             .split('/').filter(Boolean)
         const textFields = String(this.getParameterValue(node, 'text') || '')
             .split(',').map(s => s.trim()).filter(Boolean)
-        const tagField = this.getParameterValue(node, 'tags')
+        const tagFields = String(this.getParameterValue(node, 'tags') || '')
+            .split(',').map(s => s.trim()).filter(Boolean)
         const statusField = this.getParameterValue(node, 'status')
         const enumField = this.getParameterValue(node, 'enum')
         const hideField = this.getParameterValue(node, 'hide')
@@ -3021,7 +3033,7 @@ export class OverseerRenderer {
         // replaced - which happens on every repaint of the list it filters. A filter that
         // silently cleared itself whenever something changed nearby would be worse than none.
         const key = target.join('/')
-        const state = this.filterState(key, { target, textFields, tagField, statusField, enumField, hideField })
+        const state = this.filterState(key, { target, textFields, tagFields, statusField, enumField, hideField })
 
         if (textFields.length > 0) {
             const box = document.createElement('input')
@@ -3061,24 +3073,35 @@ export class OverseerRenderer {
             container.appendChild(chips)
         }
 
-        if (tagField) {
-            const vocabulary = this.tagVocabulary(node)
+        // A row of chips for each field holding tags. The first takes its chips from the filter's
+        // own vocabulary when it names one, as a single field always has; the others from their
+        // fields' own - a project's workflow flags are a list of their own beside its tags, and a
+        // flag picked here asks about the flags field, never about a tag that happens to share
+        // its name.
+        const list = tagFields.length > 0 ? this.findNodeByPath(window.app.currentDocument, target) : null
+        tagFields.forEach((field, i) => {
+            const vocabulary = i === 0 && this.getParameterValue(node, 'vocabulary')
+                ? this.tagVocabulary(node)
+                : this.fieldVocabularyIn(list, field)
+            if (!state.tags.has(field)) state.tags.set(field, new Set())
+            const picked = state.tags.get(field)
             const chips = document.createElement('span')
             chips.className = 'filter-tags'
+            chips.dataset.filterField = field
             for (const [tag, known] of vocabulary) {
                 const chip = this.tagChip(tag, known, null)
                 chip.classList.add('filter-tag')
-                if (state.tags.has(tag)) chip.classList.add('filter-tag-on')
+                if (picked.has(tag)) chip.classList.add('filter-tag-on')
                 chip.addEventListener('click', () => {
-                    if (state.tags.has(tag)) state.tags.delete(tag)
-                    else state.tags.add(tag)
-                    chip.classList.toggle('filter-tag-on', state.tags.has(tag))
+                    if (picked.has(tag)) picked.delete(tag)
+                    else picked.add(tag)
+                    chip.classList.toggle('filter-tag-on', picked.has(tag))
                     this.applyFilters()
                 })
                 chips.appendChild(chip)
             }
             container.appendChild(chips)
-        }
+        })
 
         if (statusField) {
             const boxes = document.createElement('span')
@@ -3170,7 +3193,8 @@ export class OverseerRenderer {
             Object.assign(held, about)
             return held
         }
-        const fresh = Object.assign({ text: '', tags: new Set(), status: new Set(), enums: new Set(), hiding: false }, about)
+        // tags: what is picked in each field that holds tags, by the field's name.
+        const fresh = Object.assign({ text: '', tags: new Map(), status: new Set(), enums: new Set(), hiding: false }, about)
         this._filters.set(key, fresh)
         return fresh
     }
@@ -3217,7 +3241,7 @@ export class OverseerRenderer {
 
             for (const label of document.querySelectorAll(`[data-filter-count='${key}']`)) {
                 const total = list.children.length
-                const narrowed = wanted !== '' || state.tags.size > 0 || state.status.size > 0
+                const narrowed = wanted !== '' || this.tagsPicked(state) || state.status.size > 0
                     || state.enums.size > 0 || state.hiding
                 label.textContent = narrowed ? `${showing} of ${total}` : `${total}`
             }
@@ -3263,17 +3287,29 @@ export class OverseerRenderer {
             if (!state.enums.has(fieldText(state.enumField).trim())) return false
         }
 
-        if (state.tags.size > 0) {
-            if (!state.tagField) return false
-            // Narrowing, not widening: picking a second tag asks for the things that are both,
-            // which is what adding a condition to a filter is usually taken to mean.
-            const held = new Set(fieldText(state.tagField).split(',').map(s => s.trim()))
-            for (const tag of state.tags) {
+        // Narrowing, not widening: picking a second tag asks for the things that are both, which
+        // is what adding a condition to a filter is usually taken to mean - within a field and
+        // across them. Only the fields the filter names now are asked: one it named before the
+        // document was reloaded may be gone, and asking it would hide everything.
+        for (const field of state.tagFields || []) {
+            const picked = state.tags.get(field)
+            if (!picked || picked.size === 0) continue
+            const held = new Set(fieldText(field).split(',').map(s => s.trim()))
+            for (const tag of picked) {
                 if (!held.has(tag)) return false
             }
         }
 
         return true
+    }
+
+    /** Whether any tag is picked, in any of a filter's fields. */
+    tagsPicked(state) {
+        for (const field of state.tagFields || []) {
+            const picked = state.tags.get(field)
+            if (picked && picked.size > 0) return true
+        }
+        return false
     }
 
     /// `own`, when given, is where the value lives instead of the document: `read()` answers the
@@ -6077,6 +6113,174 @@ export class OverseerRenderer {
         return true
     }
 
+    /// Whether a div says it can be folded away - `foldable=true`.
+    isFoldable(node) {
+        if (!node || String(node.node_type || node.type || '').toLowerCase() !== 'div') return false
+        const said = this.getParameterValue(node, 'foldable')
+        return said === true || String(said).toLowerCase() === 'true'
+    }
+
+    /// The header a foldable div is pressed by: its label, or nothing when it has none.
+    foldHeaderLabel(node) {
+        const label = this.getParameterValue(node, 'label')
+        return (label === null || label === undefined) ? '' : String(label)
+    }
+
+    /// What a fold is kept under: where the div is, with an entry of a keyed list named by its key.
+    ///
+    /// Not the rendered path alone, which names an entry by its place - sort the list, or filter
+    /// it, and a fold would stay where it was and land on another item. A list without a key has
+    /// nothing better than the place, so there a fold stays with the place.
+    foldKeyFor(path) {
+        const doc = window.app && window.app.currentDocument
+        if (!Array.isArray(path) || !Array.isArray(doc)) return JSON.stringify(path || [])
+        const segments = []
+        let parent = null
+        for (let i = 0; i < path.length; i++) {
+            const node = this.findNodeByPath(doc, path.slice(0, i + 1))
+            let segment = path[i]
+            const keyField = parent && String(parent.node_type || parent.type || '').toLowerCase() === 'list'
+                ? this.getParameterValue(parent, 'key') : null
+            if (node && keyField) {
+                const field = (node.children || []).find((c) => c?.name === keyField)
+                const held = field ? this.getNodeValue(field) : null
+                if (held !== null && held !== undefined && String(held) !== '') segment = `[${held}]`
+            }
+            segments.push(segment)
+            parent = node
+        }
+        return segments.join('/')
+    }
+
+    /// The folds of the document open in this tab, from where they were kept across a reload.
+    ///
+    /// Per tab, in sessionStorage: a fold is how somebody is looking, so another tab, another
+    /// person and the file itself never see it. Each is kept with what the document said when it
+    /// was made - see `isFolded`.
+    foldsHere() {
+        const file = (window.app && window.app.currentFile) || ''
+        if (!this._folds || this._foldsFile !== file) {
+            this._foldsFile = file
+            this._folds = new Map()
+            try {
+                const kept = JSON.parse(sessionStorage.getItem(`overseer.folds:${file}`) || '[]')
+                if (Array.isArray(kept)) for (const [key, state] of kept) this._folds.set(key, state)
+            } catch (_) { /* nothing kept */ }
+        }
+        return this._folds
+    }
+
+    keepFolds() {
+        try {
+            sessionStorage.setItem(`overseer.folds:${this._foldsFile || ''}`, JSON.stringify([...this.foldsHere()]))
+        } catch (_) { /* not kept past this page */ }
+    }
+
+    /// What the document says about a div's fold - `folded`, a value or a formula.
+    foldedAsSaid(node) {
+        const said = this.getParameterValue(node, 'folded')
+        return said === true || String(said).toLowerCase() === 'true'
+    }
+
+    /// Whether a foldable div is folded now.
+    ///
+    /// The document says where it starts, and a press or a fold action moves it from there. What
+    /// was moved holds only while the document goes on saying what it said when it was moved:
+    /// once `folded` reads otherwise - a formula over a guarded flag, say, which a "fold all"
+    /// button turns over - the page lets go and the div follows the document. That is how one
+    /// press folds every div that reads the flag, and each can still be opened by hand after.
+    isFolded(node, path) {
+        const said = this.foldedAsSaid(node)
+        const folds = this.foldsHere()
+        const key = this.foldKeyFor(path)
+        const state = folds.get(key)
+        if (!state) return said
+        if (state.said === said) return !!state.folded
+        folds.delete(key)
+        this.keepFolds()
+        return said
+    }
+
+    /// Fold a div, or bring it back, and draw what that changes.
+    setFolded(node, path, folded) {
+        const said = this.foldedAsSaid(node)
+        const folds = this.foldsHere()
+        const key = this.foldKeyFor(path)
+        // Back to what the document says is the document's again.
+        if (folded === said) folds.delete(key)
+        else folds.set(key, { folded, said })
+        this.keepFolds()
+        const doc = window.app && window.app.currentDocument
+        // Drawn again from the div, or from the nearest drawn ancestor when it was folded away.
+        for (let i = path.length; i > 0; i--) {
+            if (this.rerenderSubtree(doc, path.slice(0, i))) return
+        }
+        this.renderDocument(doc)
+    }
+
+    /// The header of a foldable div with a label: pressed anywhere, it folds the div or unfolds it.
+    drawFoldHeader(element, node, path) {
+        if (!this.isFoldable(node)) return
+        const label = this.foldHeaderLabel(node)
+        if (!label) return
+        const folded = this.isFolded(node, path)
+        element.classList.add('foldable')
+        element.classList.toggle('folded', folded)
+        const header = document.createElement('div')
+        header.className = 'overseer-fold-header'
+        header.setAttribute('role', 'button')
+        header.setAttribute('tabindex', '0')
+        header.setAttribute('aria-expanded', folded ? 'false' : 'true')
+        const chevron = document.createElement('span')
+        chevron.className = 'fold-chevron'
+        chevron.setAttribute('aria-hidden', 'true')
+        chevron.textContent = folded ? '▸' : '▾'
+        const text = document.createElement('span')
+        text.className = 'fold-label'
+        text.textContent = label
+        header.appendChild(chevron)
+        header.appendChild(text)
+        const press = (e) => {
+            // The header's alone: a pressable div around it does not see it.
+            e.stopPropagation()
+            e.preventDefault()
+            this.setFolded(node, path, !this.isFolded(node, path))
+        }
+        header.addEventListener('click', press)
+        header.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') press(e)
+        })
+        element.appendChild(header)
+    }
+
+    /// The folds a press asked for - `fold`, `unfold`, `toggle_fold` - in the order it asked.
+    ///
+    /// Found by the child indices the answer names, in the document the answer has just been
+    /// applied to, the way `openFieldForEditing` finds its field.
+    applyFolds(folds) {
+        if (!Array.isArray(folds) || folds.length === 0) return
+        const doc = window.app && window.app.currentDocument
+        if (!Array.isArray(doc)) return
+        for (const fold of folds) {
+            if (!fold || !Array.isArray(fold.path) || fold.path.length === 0) continue
+            let level = doc
+            let parent = null
+            let node = null
+            let path = []
+            for (const index of fold.path) {
+                node = level && level[index]
+                if (!node) break
+                path = parent ? this.childPathFor(parent, node, path) : [node.name || node.node_type || node.type || `root_${index}`]
+                parent = node
+                level = Array.isArray(node.children) ? node.children : []
+            }
+            if (!node || !this.isFoldable(node)) continue
+            const now = this.isFolded(node, path)
+            const wanted = fold.how === 'fold' ? true : fold.how === 'unfold' ? false : !now
+            if (wanted !== now) this.setFolded(node, path, wanted)
+        }
+    }
+
     /// Whether a field has been opened for editing and is drawn although it is hidden.
     isOpenForEditing(node) {
         return !!(node && this._openForEditing && this._openForEditing.has(node))
@@ -7070,6 +7274,7 @@ export class OverseerRenderer {
             if (made && made.ran) {
                 this.emptyTextboxes(Array.isArray(made.answer?.emptied) ? made.answer.emptied : [])
                 this.openFieldForEditing(made.answer?.start_editing)
+                this.applyFolds(made.answer?.folds)
                 return
             }
         }
@@ -7249,6 +7454,7 @@ export class OverseerRenderer {
                     toOpen = update.start_editing || null
                 }
                 if (update && Array.isArray(update.changes)) {
+                    const toFold = Array.isArray(update.folds) ? update.folds : []
                     window.app.tookTheText(update)
                     const touched = window.app.applyDocumentChanges(window.app.currentDocument, update.changes)
                     try {
@@ -7268,6 +7474,7 @@ export class OverseerRenderer {
                     // Nothing about them changed in the document, so the repaint above left them.
                     this.emptyTextboxes(emptied)
                     this.openFieldForEditing(toOpen)
+                    this.applyFolds(toFold)
                     return
                 }
                 if (update && Array.isArray(update.nodes)) {

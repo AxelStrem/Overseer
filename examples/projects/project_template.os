@@ -1,16 +1,28 @@
-// Stages, for an agent working through the items below. Unless told otherwise, take ready items
-// first, then discuss, and filed only when neither is left; within a stage, use your judgement.
-// Items tagged priority go before the rest of their stage.
-// Skip any item whose after list names an item that is still open.
+// Stages, for an agent working through the items below. Unless told otherwise, take 'ready' items
+// first, then 'planning', and 'filed' only when neither is left; within a stage, items flagged
+// first go before the rest, and past that, use your judgement. Skip any item flagged manual or
+// asked, and any whose after list names an item that is still open.
 //
-//   ready     Everything is decided: implement it, then move it to testing - or to asked, if
-//             something came up that needs a decision.
-//   discuss   Your opinion is wanted, usually on a question in the note. Move it to ready only if
-//             nothing is left to decide; otherwise to asked.
-//   filed     Nothing done yet. Move it to ready or to asked - or, if it has to wait for another
-//             item first, add that one to its after list and leave it filed.
-//   asked, testing, later
+//   ready     Everything is decided: implement it, then move it to testing.
+//   planning  Its plan is being worked out: finish it, and move it to ready once nothing is left
+//             to decide.
+//   filed     Nothing done yet. Move it to ready with its plan if nothing is left to decide - or,
+//             if it has to wait for another item first, add that one to its after list.
+//   testing, later
 //             Waiting on a person: leave them.
+//
+// Flags, the same in every project, beside its own tags:
+//
+//   manual    For a person to work: leave it.
+//   auto      Filed by an agent of its own accord. File what you find along the way, flagged auto.
+//   first     Goes before the rest of its stage.
+//   asked     A question in its note waits on a person, who takes the flag off once it is answered.
+//   discuss   Only your thoughts are wanted: give them in the note, move it at most to planning,
+//             and flag it asked. Never move it to ready.
+//
+// Whenever something needs a person's decision, at whatever stage, add the question to the note,
+// move the item to planning and flag it asked. Agents set no flag but auto and asked, and take
+// none off.
 //
 // Whenever you move an item to ready, set its complexity - how much thinking building it takes,
 // given the plan in its note, where points say how much work: trivial (straightforward or
@@ -22,7 +34,7 @@
 
 tab project (label="Project", mutable=true) {
     string name (label="", font-size=22px) = "Untitled project"
-    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; discuss means the owner wants an opinion on it before it is built, and whoever gives one moves it on to asked or ready; asked that a question on it is waiting on the owner; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone; auto one an agent filed of its own accord; first one to take before the rest of its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
 
     div (hidden=true) {
         div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
@@ -38,14 +50,9 @@ tab project (label="Project", mutable=true) {
                 - colour = "#6b7280"
             }
             - {
-                - tag = "discuss"
-                - name = "discuss"
+                - tag = "planning"
+                - name = "planning"
                 - colour = "#0f766e"
-            }
-            - {
-                - tag = "asked"
-                - name = "asked"
-                - colour = "#b45309"
             }
             - {
                 - tag = "ready"
@@ -115,13 +122,41 @@ tab project (label="Project", mutable=true) {
             }
         }
 
+        list Flags (entry=<Label>, key="tag") {
+            - {
+                - tag = "manual"
+                - name = "manual"
+                - colour = "#78716c"
+            }
+            - {
+                - tag = "auto"
+                - name = "auto"
+                - colour = "#6b7280"
+            }
+            - {
+                - tag = "first"
+                - name = "first"
+                - colour = "#e11d48"
+            }
+            - {
+                - tag = "asked"
+                - name = "asked"
+                - colour = "#b45309"
+            }
+            - {
+                - tag = "discuss"
+                - name = "discuss"
+                - colour = "#0369a1"
+            }
+        }
+
         div Item (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center",
                   background-color=$(done >= 75 ? "#14321f" :
                                     (done >= 25 ? "#1c2a3a" : "inherit")),
                   font-color=$(waiting > 0 ? "#6b7280" : "inherit")) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=8%) = ""
-            string title (label="title", font-size=14px, width=19%,
+            string title (label="title", font-size=14px, width=17%,
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
             enum stage (label="stage", vocabulary="/project/Stages", width=9%,
@@ -137,6 +172,7 @@ tab project (label="Project", mutable=true) {
                             - parent = $(../parent)
                             - after = $(../after)
                             - labels = $(../labels)
+                            - flags = $(../flags)
                             - points = $(../points)
                             - complexity = $(../complexity)
                             - commentary = $(../commentary)
@@ -147,14 +183,15 @@ tab project (label="Project", mutable=true) {
             }
 
             string parent (label="of", font-size=11px, width=7%) = ""
-            tags after (label="after", vocabulary="/project/Items, /project/History", width=9%) = ""
-            tags labels (label="tags", vocabulary="/project/Labels", width=15%) = ""
-            int done (label="done", format="trim", precision=0, suffix="%", width=7%,
+            tags after (label="after", vocabulary="/project/Items, /project/History", width=8%) = ""
+            tags labels (label="tags", vocabulary="/project/Labels", width=11%) = ""
+            tags flags (label="flags", vocabulary="/project/Flags", width=9%) = ""
+            int done (label="done", format="trim", precision=0, suffix="%", width=6%,
                       hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
                           (/project/Items.filter(|x| x/parent == ../handle)
                                          .map(|x| x/done * x/weight).sum()
                            + finished_weight * 100) / weight)
-            int points (label="pts", format="trim", width=6%) = 1
+            int points (label="pts", format="trim", width=5%) = 1
             enum complexity (label="think", vocabulary="/project/Complexities", width=7%) = "unassigned"
 
             button note (icon="note", margin=0, width=3%,
@@ -206,6 +243,7 @@ tab project (label="Project", mutable=true) {
                 string parent (hidden=true) = ""
                 tags after (hidden=true) = ""
                 tags labels (label="", vocabulary="/project/Labels", width=21%) = ""
+                tags flags (hidden=true) = ""
                 int points (label="", format="trim", width=6%) = 0
                 enum complexity (label="", vocabulary="/project/Complexities", width=7%) = "unassigned"
 
@@ -230,6 +268,7 @@ tab project (label="Project", mutable=true) {
                                 - parent = $(../parent)
                                 - after = $(../after)
                                 - labels = $(../labels)
+                                - flags = $(../flags)
                                 - points = $(../points)
                                 - commentary = $(../commentary)
                             }
@@ -250,17 +289,18 @@ tab project (label="Project", mutable=true) {
     // were, to the formulas here, the bot and the sweep alike.
     tab (label="Open", hover-text="What is still to do") {
         div (layout="horizontal", margin=0, spacing=10, alignment="center") {
-            filter (target="/project/Items", text="title, commentary, handle", enum="stage", tags="labels",
+            filter (target="/project/Items", text="title, commentary, handle", enum="stage", tags="labels, flags",
                     status="done", hide="waiting", vocabulary="/project/Labels", label="find", width=100%) { }
         }
 
         div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
-            textbox handle (label="", placeholder="id", width=10%) = ""
-            textbox title (label="", placeholder="what needs doing", width=31%) = ""
+            textbox handle (label="", placeholder="id", width=10%) = $(fresh_key(/project/Items, /project/History))
+            textbox title (label="", placeholder="what needs doing", width=26%) = ""
             textbox parent (label="", placeholder="under", width=10%) = ""
             textbox after (label="", placeholder="after", vocabulary="/project/Items, /project/History",
                            width=12%) = ""
-            textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=15%) = ""
+            textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=12%) = ""
+            textbox flags (label="", placeholder="flags", vocabulary="/project/Flags", width=10%) = ""
             textbox points (label="", placeholder="pts", width=7%) = ""
             button add (label="+ task", margin=0, width=12%) {
                 on click {
@@ -364,11 +404,6 @@ tab project (label="Project", mutable=true) {
                 - tag = "docs"
                 - name = "docs"
                 - colour = "#7057ff"
-            }
-            - {
-                - tag = "priority"
-                - name = "first"
-                - colour = "#e11d48"
             }
         }
 

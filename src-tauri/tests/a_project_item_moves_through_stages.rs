@@ -1,6 +1,6 @@
 //! A project item moves through stages, and finishing is one of them.
 //!
-//! Every project has the same stages - filed, discuss, asked, ready, testing, later - and
+//! Every project has the same stages - filed, planning, ready, testing, later - and
 //! `finished`, which is not a place an item stays: picking it records the item in History and
 //! takes it off the list, which is what a finish button used to do. `cancelled` closes it the
 //! same way, with the record's status saying so, and a cancelled part counts towards nothing.
@@ -232,7 +232,7 @@ fn every_project_offers_the_same_stages_in_order() {
             _ => None,
         })
         .collect();
-    assert_eq!(tags, ["filed", "discuss", "asked", "ready", "testing", "later", "finished", "cancelled"]);
+    assert_eq!(tags, ["filed", "planning", "ready", "testing", "later", "finished", "cancelled"]);
 }
 
 /// Set a field of an open item, as the page does when a chip is picked.
