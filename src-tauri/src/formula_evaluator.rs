@@ -2376,6 +2376,47 @@ impl FormulaEvaluator {
                 let now = Self::now_utc().to_rfc3339();
                 Ok(OverseerValue::Timestamp(now))
             }
+            // fresh_key(list, ...): a short code that no entry of the given keyed lists holds as
+            // its key - what an add form offers as the id of the next entry.
+            //
+            // Made from the keys already used rather than at random: a formula is resolved again
+            // and again, and a random code would change under the cursor on every pass. Derived
+            // like this it stays put while the lists do, and moves on once an add changes them.
+            "fresh_key" => {
+                if args.is_empty() {
+                    return Err(OverseerError::FormulaError(
+                        "fresh_key(list, ...) takes at least one keyed list".to_string(),
+                    ));
+                }
+                let mut used: Vec<String> = Vec::new();
+                for arg in args {
+                    let list = Self::eval_expr_to_node(arg, context).ok_or_else(|| {
+                        OverseerError::FormulaError(
+                            "fresh_key: each argument must be a list".to_string(),
+                        )
+                    })?;
+                    let Some(OverseerValue::String(key_field)) = list.parameters.get("key") else {
+                        return Err(OverseerError::FormulaError(
+                            "fresh_key: each list must declare a key".to_string(),
+                        ));
+                    };
+                    for entry in list.get_accessible_children() {
+                        let key = entry
+                            .get_accessible_children()
+                            .into_iter()
+                            .find(|c| &c.name == key_field)
+                            .and_then(Self::value_of_node);
+                        if let Some(key) = key {
+                            used.push(Self::value_to_string(&key));
+                        }
+                    }
+                }
+                used.sort();
+                used.dedup();
+                Self::fresh_code(&used).map(OverseerValue::String).ok_or_else(|| {
+                    OverseerError::FormulaError("fresh_key: no free code left".to_string())
+                })
+            }
             // days_since(ts): returns whole days between now() and the given timestamp/date/string
             "days_since" => {
                 if args.len() != 1 {
@@ -2708,6 +2749,36 @@ impl FormulaEvaluator {
             OverseerValue::Formula(s) => s.clone(),
             OverseerValue::Template(s) => s.clone(),
         }
+    }
+
+    /// Four letters and digits that none of `used` (sorted) is, picked by a hash of them.
+    ///
+    /// FNV-1a written out rather than the standard hasher, whose output Rust does not promise to
+    /// keep between versions - an upgrade would otherwise change every suggestion on the page.
+    /// The alphabet leaves out 0, o, 1 and l, which read as one another.
+    fn fresh_code(used: &[String]) -> Option<String> {
+        const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+        fn fnv(hash: u64, bytes: &[u8]) -> u64 {
+            bytes.iter().fold(hash, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
+        }
+        let mut seed = 0xcbf29ce484222325u64;
+        for key in used {
+            seed = fnv(seed, key.as_bytes());
+            seed = fnv(seed, b"\n");
+        }
+        for attempt in 0u32..10_000 {
+            let mut h = fnv(seed, &attempt.to_le_bytes());
+            h ^= h >> 32;
+            let mut code = String::with_capacity(4);
+            for _ in 0..4 {
+                code.push(ALPHABET[(h % ALPHABET.len() as u64) as usize] as char);
+                h /= ALPHABET.len() as u64;
+            }
+            if used.binary_search(&code).is_err() {
+                return Some(code);
+            }
+        }
+        None
     }
 }
 
