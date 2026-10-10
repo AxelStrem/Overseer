@@ -2067,6 +2067,7 @@ impl ActionExecutor {
         let marker = format!("_template_{}", key);
         if !same {
             node.parameters.remove(&marker);
+            node.parameters.remove(&format!("_inherited_{}", key));
         }
         // If overriding the 'value' of a template-derived child, mark explicit override for serializer
         if key == "value" {
@@ -2572,6 +2573,7 @@ impl ActionExecutor {
     /// mostly are. Kept in one place now so the next action added cannot quietly omit it.
     fn record_an_override(node: &mut OverseerNode, key: &str) {
         node.parameters.remove(&format!("_template_{}", key));
+        node.parameters.remove(&format!("_inherited_{}", key));
         if key != "value" {
             return;
         }
@@ -2718,6 +2720,7 @@ impl ActionExecutor {
         // back as the text it was read from, so clearing a field changes nothing on disk.
         node.source_fingerprint = None;
         node.parameters.remove(&format!("_template_{}", key));
+        node.parameters.remove(&format!("_inherited_{}", key));
         // A cleared value has nothing to carry, so the viewer is given null to hold instead.
         let named = if key == "value" { address } else { format!("{}/{}", address, key) };
         note_write(viewers, named, OverseerValue::Null);

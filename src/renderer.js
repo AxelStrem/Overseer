@@ -1401,8 +1401,11 @@ export class OverseerRenderer {
                             const asColour = this.convertColorValue(raw)
                             return typeof asColour === 'string' ? asColour : null
                         }
+                        // `_inherited_`, not `_template_`: a list entry's template leaves the
+                        // latter on every parameter it states, the button's own colours among
+                        // them, so it cannot tell a colour handed down from one asked for.
                         const handedDown = !!(node && node.parameters
-                            && node.parameters['_template_background-color'] !== undefined)
+                            && node.parameters['_inherited_background-color'] !== undefined)
                         const ownColour = handedDown ? null : stated('background-color')
                         const base = ownColour || this.shiftedBy(effectiveBg, 0.2)
                         const hover = stated('hover-color') || this.shiftedBy(base, 0.12)
@@ -1414,7 +1417,7 @@ export class OverseerRenderer {
                             // document has not said - the same rule the colour itself follows.
                             const saidTheText = !!(node && node.parameters
                                 && node.parameters['font-color'] !== undefined
-                                && node.parameters['_template_font-color'] === undefined)
+                                && node.parameters['_inherited_font-color'] === undefined)
                             if (!saidTheText) {
                                 element.style.color = this.wantsDarkText(base) ? '#1a1a1a' : '#ffffff'
                             }

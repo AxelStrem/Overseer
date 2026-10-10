@@ -2199,6 +2199,12 @@ fn resolve_parameter_inheritance(
                     // Mark as template-derived so serializer will not persist inherited styling
                     node.parameters
                         .insert(format!("_template_{}", param_name), parent_value.clone());
+                    // And as handed down, which `_template_` cannot say: a list entry's template
+                    // leaves that same marker on every parameter it states, so a button in an
+                    // entry that names its own font colour looked exactly like one that was
+                    // given its row's - and the page painted over the colour it had asked for.
+                    node.parameters
+                        .insert(format!("_inherited_{}", param_name), OverseerValue::Boolean(true));
                 }
             }
         }

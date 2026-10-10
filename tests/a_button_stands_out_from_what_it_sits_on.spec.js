@@ -34,6 +34,7 @@ const aDocumentWhere = (buttonParams = {}, containerColour = '#204080', handedDo
   if (handedDown) {
     params['background-color'] = { String: containerColour }
     params['_template_background-color'] = { Boolean: true }
+    params['_inherited_background-color'] = { Boolean: true }
   }
   return [
     node('root', 'tab', { label: { String: 'T' } }, [
@@ -108,6 +109,25 @@ describe('a button stands out from what it sits on', () => {
   it('leaves the text colour alone when the document states one', () => {
     const button = drawn(aDocumentWhere({ 'font-color': { String: '#123456' } }))
     expect(button.style.color).not.toBe('rgb(255, 255, 255)')
+  })
+
+  it('keeps the text colour a list entry\'s template states for it', () => {
+    // An entry's template marks every parameter it states `_template_`, the button's own
+    // colour among them; only `_inherited_` says the colour was handed down. The talk button
+    // on a coloured tracker row was drawn white over its grey.
+    const button = drawn(aDocumentWhere({
+      'font-color': { String: '#6b7280' },
+      '_template_font-color': { String: '#6b7280' },
+    }))
+    expect(button.style.color).toBe('rgb(107, 114, 128)')
+  })
+
+  it('keeps the background a list entry\'s template states for it', () => {
+    const doc = aDocumentWhere({
+      'background-color': { String: '#c0392b' },
+      '_template_background-color': { String: '#c0392b' },
+    }, '#204080', false)
+    expect(drawn(doc).style.getPropertyValue('--overseer-button-bg')).toBe('#c0392b')
   })
 
   it('leaves a button on nothing to the stylesheet', () => {
