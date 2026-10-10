@@ -529,7 +529,7 @@ bool fold_all (mutable="guarded") = false
 
 button all (label="fold all") {
     on click {
-        set (path="/project/fold_all") = $(/project/fold_all ? false : true)
+        toggle (path="/project/fold_all")
     }
 }
 

@@ -308,6 +308,24 @@ fn note_view_state(address: String, value: OverseerValue) {
     });
 }
 
+/// One value written, at this address, reported as the document's or as the viewer's.
+///
+/// Every action that writes a single field goes through here, so none can forget to ask: `set`
+/// used to be the only one that did, and a `toggle` on a guarded fold flag wrote the viewer's
+/// fold into the file.
+fn note_write(viewers: bool, address: String, value: OverseerValue) {
+    if viewers {
+        note_view_state(address, value);
+    } else {
+        note_field(address);
+    }
+}
+
+/// Whether the node at these indices, or anything above it, is `mutable="guarded"`.
+fn is_the_viewers(nodes: &[OverseerNode], indices: &[usize]) -> bool {
+    crate::mutability::along(nodes, indices).is_guarded()
+}
+
 /// The same, for a caller that will work the document out once the event is done.
 ///
 /// Saying so is what lets the event skip the resolve at its end. Say it only if you resolve
@@ -2019,7 +2037,7 @@ impl ActionExecutor {
         // out in the report instead, and the caller decides where a viewer's state lives - which
         // is nowhere near the file. Doing this here rather than at the caller is what keeps the
         // document untouched: there is nothing to undo afterwards, and nothing to serialize.
-        let viewers = crate::mutability::along(nodes, &indices).is_guarded();
+        let viewers = is_the_viewers(nodes, &indices);
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
@@ -2028,15 +2046,11 @@ impl ActionExecutor {
         let same = node.parameters.get(&key).map_or(false, |v| v == &value);
         if !same {
             let named = if key == "value" { address } else { format!("{}/{}", address, key) };
-            if viewers {
-                // Written, because whoever asked for this is looking at the result and the day
-                // has to move. Named as the viewer's, because it must not reach the file: the
-                // caller takes it back out before writing, and keeps it against the session.
-                note_view_state(named, value.clone());
-            } else {
-                // Only when it moved. A set that writes what was already there reaches nothing.
-                note_field(named);
-            }
+            // Only when it moved: a set that writes what was already there reaches nothing. A
+            // guarded value is still written, because whoever asked for this is looking at the
+            // result and the day has to move; it is named as the viewer's, and the caller takes
+            // it back out before writing and keeps it against the session.
+            note_write(viewers, named, value.clone());
         }
         node.parameters.insert(key.clone(), value.clone());
         if !same {
@@ -2507,6 +2521,7 @@ impl ActionExecutor {
             }
         };
         let address = Self::build_disambiguated_path(nodes, &indices).join("/");
+        let viewers = is_the_viewers(nodes, &indices);
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
@@ -2532,7 +2547,7 @@ impl ActionExecutor {
                 ))
             }
         };
-        node.parameters.insert(key.clone(), new_val);
+        node.parameters.insert(key.clone(), new_val.clone());
         // The serializer replays a node from its source text while the fingerprint it was
         // parsed with still matches, and that fingerprint says nothing about what was just
         // written here. Without this the increment lands in memory, the document is written
@@ -2540,7 +2555,8 @@ impl ActionExecutor {
         // nothing. `set`, `toggle` and `clear` have always done this; `inc` never did.
         node.source_fingerprint = None;
         Self::record_an_override(node, &key);
-        note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
+        let named = if key == "value" { address } else { format!("{}/{}", address, key) };
+        note_write(viewers, named, new_val);
         Ok(())
     }
 
@@ -2591,6 +2607,7 @@ impl ActionExecutor {
         };
         Self::invalidate_source_fingerprints(nodes, &indices);
         let address = Self::build_disambiguated_path(nodes, &indices).join("/");
+        let viewers = is_the_viewers(nodes, &indices);
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
@@ -2608,9 +2625,10 @@ impl ActionExecutor {
                 ))
             }
         };
-    node.parameters.insert(key.clone(), new_val);
-    node.source_fingerprint = None;
-        note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
+        node.parameters.insert(key.clone(), new_val.clone());
+        node.source_fingerprint = None;
+        let named = if key == "value" { address } else { format!("{}/{}", address, key) };
+        note_write(viewers, named, new_val);
         // Mark explicit override if this is a template-derived child and we're toggling its value
         if key == "value" {
             node.parameters.insert(
@@ -2690,6 +2708,7 @@ impl ActionExecutor {
             }
         };
         let address = Self::build_disambiguated_path(nodes, &indices).join("/");
+        let viewers = is_the_viewers(nodes, &indices);
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("Target not found: {}", target))
         })?;
@@ -2699,7 +2718,9 @@ impl ActionExecutor {
         // back as the text it was read from, so clearing a field changes nothing on disk.
         node.source_fingerprint = None;
         node.parameters.remove(&format!("_template_{}", key));
-        note_field(if key == "value" { address } else { format!("{}/{}", address, key) });
+        // A cleared value has nothing to carry, so the viewer is given null to hold instead.
+        let named = if key == "value" { address } else { format!("{}/{}", address, key) };
+        note_write(viewers, named, OverseerValue::Null);
         Ok(())
     }
 
