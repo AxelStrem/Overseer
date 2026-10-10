@@ -1047,6 +1047,15 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     background-clip: padding-box;
 }
 
+/* Why a press was refused, beside what was pressed. */
+.overseer-refusal {
+    align-self: center;
+    margin: 2px 8px;
+    color: var(--error-color);
+    font-size: 13px;
+    line-height: 1.3;
+}
+
 /* Icon-only buttons */
 .overseer-button.icon-button {
     padding: 6px; /* keep internal breathing room */

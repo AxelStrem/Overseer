@@ -863,7 +863,7 @@ impl ActionExecutor {
         );
         // Everything but these may change the document. An `if` says so through whatever it
         // lets run, and opening a field changes nothing until somebody types.
-        if !matches!(action.node_type.as_str(), "if" | "start_editing" | "fold" | "unfold" | "toggle_fold") {
+        if !matches!(action.node_type.as_str(), "if" | "refuse" | "start_editing" | "fold" | "unfold" | "toggle_fold") {
             note_acted();
         }
         match action.node_type.as_str() {
@@ -914,6 +914,18 @@ impl ActionExecutor {
                 };
                 note_fold(address, how);
                 Ok(())
+            }
+            // Says no to the press, with a sentence for whoever pressed: `refuse = "this id is
+            // taken, say another"`, usually inside an `if`. Nothing the press did is written, the
+            // actions before it included, since a press that fails is refused whole; the page
+            // shows the sentence beside what was pressed, and the bot is told it.
+            "refuse" => {
+                let said = match action.parameters.get("value") {
+                    Some(v) => Self::value_to_string(&Self::evaluate_in_context(v, owner_path, nodes)?),
+                    None => String::new(),
+                };
+                let said = if said.trim().is_empty() { "refused".to_string() } else { said };
+                Err(OverseerError::Refused(said))
             }
             "if" => {
                 // if(cond=...) { <actions...> }

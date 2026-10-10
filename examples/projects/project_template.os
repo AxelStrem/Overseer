@@ -342,10 +342,14 @@ tab project (label="Project", mutable=true) {
             textbox points (label="", placeholder="pts", width=7%) = ""
             button add (label="+ task", margin=0, width=12%) {
                 on click {
-                    if (cond=$(../handle != "" && /project/Items.filter(|x| x/handle == ../handle).count() == 0 && /project/History.filter(|x| x/handle == ../handle).count() == 0)) {
-                        append (list="/project/Items", from="..") {
-                            - added = $(now())
-                        }
+                    if (cond=$(../handle == "")) {
+                        refuse = "say an id"
+                    }
+                    if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() > 0 || /project/History.filter(|x| x/handle == ../handle).count() > 0)) {
+                        refuse = "this id is taken, say another"
+                    }
+                    append (list="/project/Items", from="..") {
+                        - added = $(now())
                     }
                 }
             }
@@ -467,9 +471,13 @@ tab project (label="Project", mutable=true) {
             textbox colour (label="", placeholder="#rrggbb", width=22%) = ""
             button add (label="+ tag", margin=0, width=12%) {
                 on click {
-                    if (cond=$(../tag != "" && /project/Labels.filter(|x| x/tag == ../tag).count() == 0)) {
-                        append (list="/project/Labels", from="..")
+                    if (cond=$(../tag == "")) {
+                        refuse = "say a tag"
                     }
+                    if (cond=$(/project/Labels.filter(|x| x/tag == ../tag).count() > 0)) {
+                        refuse = "this tag is there already"
+                    }
+                    append (list="/project/Labels", from="..")
                 }
             }
         }

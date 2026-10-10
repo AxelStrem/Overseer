@@ -51,7 +51,10 @@
         })
         const body = await response.json().catch(() => null)
         if (!response.ok) {
-            throw new Error((body && body.error) || `${cmd} failed (${response.status})`)
+            const error = new Error((body && body.error) || `${cmd} failed (${response.status})`)
+            // A press the document refused, with its sentence for whoever pressed.
+            if (body && typeof body.refused === 'string') error.refused = body.refused
+            throw error
         }
         return body === null ? null : body.result
     }

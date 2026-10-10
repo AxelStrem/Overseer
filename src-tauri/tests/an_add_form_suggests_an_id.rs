@@ -183,3 +183,40 @@ fn a_code_either_list_holds_is_passed_over() {
         assert_eq!(worked_out(&nodes, "project/offered"), "5i9z");
     });
 }
+
+/// What a press of a form's button is refused with, if anything, and whether the file moved.
+fn refused_with(form: &str, typed: &[(&str, &str)]) -> (Option<String>, bool) {
+    let file = a_file(&format!("refused_{}", form), TEMPLATE);
+    let nodes = opened(std::fs::read_to_string(&file).unwrap());
+    let button = overseer::addressing::name_path(&nodes, &format!("project/{}/add", form)).expect("the add button");
+    let typed = typed
+        .iter()
+        .map(|(field, text)| app_api::ValueWrite {
+            node_path: overseer::addressing::name_path(&nodes, &format!("project/{}/{}", form, field)).expect(field),
+            value: OverseerValue::String(text.to_string()),
+        })
+        .collect();
+    let said = match app_api::run_event_at(&file, "p.os", button, "click".into(), "s", typed, Vec::new()) {
+        Err(OverseerError::Refused(said)) => Some(said),
+        Err(other) => panic!("the press failed: {:?}", other),
+        Ok(_) => None,
+    };
+    (said, std::fs::read_to_string(&file).unwrap() != TEMPLATE)
+}
+
+#[test]
+fn an_add_says_why_it_is_refused() {
+    serialised(|| {
+        assert_eq!(refused_with("NewTask", &[("handle", "")]), (Some("say an id".into()), false));
+        assert_eq!(
+            refused_with("NewTask", &[("handle", "editor")]),
+            (Some("this id is taken, say another".into()), false)
+        );
+        assert_eq!(refused_with("NewTag", &[("tag", "")]), (Some("say a tag".into()), false));
+        assert_eq!(
+            refused_with("NewTag", &[("tag", "bug")]),
+            (Some("this tag is there already".into()), false)
+        );
+        assert_eq!(refused_with("NewTag", &[("tag", "fresh")]), (None, true));
+    });
+}

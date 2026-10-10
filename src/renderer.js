@@ -11,6 +11,16 @@ const DEBUG_MODE = (() => {
 import { Marked } from 'marked';
 import { invoke } from '@tauri-apps/api/core'
 
+// The sentence a press the document refused gave - see `refuse` - or null for anything else that
+// went wrong. The desktop app hands the error over as serde writes it, `{ Refused: "..." }`, and
+// the browser's bridge puts the server's `refused` on the Error it throws.
+function refusalIn(e) {
+    if (!e || typeof e !== 'object') return null
+    if (typeof e.Refused === 'string') return e.Refused
+    if (typeof e.refused === 'string') return e.refused
+    return null
+}
+
 /**
  * Markdown, and never markup of its own.
  *
@@ -3867,7 +3877,7 @@ export class OverseerRenderer {
                     const now = this._typed.get(key)
                     return now !== undefined ? now : (starting === null || starting === undefined ? '' : String(starting))
                 },
-                write: (text) => { this._typed.set(key, text) },
+                write: (text) => { this._typed.set(key, text); this.sayRefused(null, null) },
             })
         }
 
@@ -3876,7 +3886,7 @@ export class OverseerRenderer {
             input.readOnly = true
             if (input.type === 'color') input.disabled = true
         } else {
-            input.addEventListener('input', () => { this._typed.set(key, input.value) })
+            input.addEventListener('input', () => { this._typed.set(key, input.value); this.sayRefused(null, null) })
         }
         container.appendChild(input)
 
@@ -3907,6 +3917,19 @@ export class OverseerRenderer {
             this._typed.delete(JSON.stringify(path))
             try { this.rerenderSubtree(window.app.currentDocument, path) } catch (_) { /* repainted with the rest */ }
         }
+    }
+
+    /// Show the sentence a refused press gave beside what was pressed, or with no sentence take
+    /// away the one shown. Only one at a time: another press, or anything typed, means the person
+    /// has moved on from it.
+    sayRefused(element, sentence) {
+        for (const shown of document.querySelectorAll('.overseer-refusal')) shown.remove()
+        if (typeof sentence !== 'string' || !element || !element.isConnected) return
+        const note = document.createElement('div')
+        note.className = 'overseer-refusal'
+        note.setAttribute('role', 'alert')
+        note.textContent = sentence
+        element.insertAdjacentElement('afterend', note)
     }
 
     createTextElement(node) {
@@ -7370,6 +7393,8 @@ export class OverseerRenderer {
             if (DEBUG_MODE) console.debug('[Overseer] no handler for', eventName, '- skipping round trip')
             return
         }
+        // Whatever an earlier press was told no with is old news once something is pressed.
+        this.sayRefused(null, null)
         // Guard: ensure nodes is an array (backend expects Vec<OverseerNode> root or serialized map)
         let nodesArg = window.app.currentDocument
         if (nodesArg && !Array.isArray(nodesArg)) {
@@ -7497,6 +7522,9 @@ export class OverseerRenderer {
                     window.app._writingByInstruction = (window.app._writingByInstruction || 0) + 1
                     try {
                         update = await invoke('run_overseer_event', asAnInstruction).catch((e) => {
+                            // Said no to by the document: nothing was written, and taking the
+                            // long way would only ask it again.
+                            if (refusalIn(e) !== null) throw e
                             if (DEBUG_MODE) console.warn('[Overseer] the press was refused', e)
                             return null
                         })
@@ -7569,6 +7597,7 @@ export class OverseerRenderer {
                     event_name: eventName,
                     eventName
                 }).catch((e) => {
+                    if (refusalIn(e) !== null) throw e
                     if (DEBUG_MODE) console.warn('[Overseer] text-driven event failed; sending the document', e)
                     return null
                 })
@@ -7588,6 +7617,13 @@ export class OverseerRenderer {
                 })
             }
         } catch(err) {
+            // A press the document refused is its answer, not a failure: the person is told why,
+            // beside what they pressed, and the boxes keep what was typed to be put right.
+            const said = refusalIn(err)
+            if (said !== null) {
+                this.sayRefused(element, said)
+                return
+            }
             // Attach additional context for debugging invalid args issues
             try { console.warn('[Overseer] execute_overseer_event failed', err, { eventName, path, nodesType: typeof nodesArg, sampleNode: nodesArg && nodesArg[0] && nodesArg[0].name }) } catch(_) {}
             throw err

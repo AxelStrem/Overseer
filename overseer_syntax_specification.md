@@ -342,6 +342,27 @@ Notes:
 - Nested content of `if { ... }` must be actions; field assignments inside action blocks follow the usual `- field = value` rules when used within `append`/`prepend` object initializers.
 - This conditional is available only within action contexts (e.g., inside `on click {}` or `on timeout {}` blocks).
 
+#### Saying no to a press
+
+`refuse` stops a press and says why. Nothing the press did is written - the actions before it
+included - and the sentence is what whoever pressed is told: the page shows it beside the button
+until something is typed or pressed, and the bot is answered with it. Boxes keep what was typed, so
+it can be put right. The sentence can be a formula.
+
+```overseer
+button add (label="+ task") {
+    on click {
+        if (cond=$(../handle == "")) {
+            refuse = "say an id"
+        }
+        if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() > 0)) {
+            refuse = "this id is taken, say another"
+        }
+        append (list="/project/Items", from="..")
+    }
+}
+```
+
 #### A form that fills an entry
 
 A `textbox` is a field drawn as a box to type into. It takes the cursor with one tap, where a

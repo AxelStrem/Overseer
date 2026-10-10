@@ -23,14 +23,28 @@ pub enum RequestError {
     Rejected(String),
     NotFound(String),
     Failed(String),
+    /// A press the document said no to, with the sentence it gave - see `refuse`.
+    Refused(String),
 }
 
 impl std::fmt::Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestError::Rejected(m) | RequestError::NotFound(m) | RequestError::Failed(m) => {
-                write!(f, "{}", m)
-            }
+            RequestError::Rejected(m)
+            | RequestError::NotFound(m)
+            | RequestError::Failed(m)
+            | RequestError::Refused(m) => write!(f, "{}", m),
+        }
+    }
+}
+
+impl RequestError {
+    /// What running an event failed with, for whoever asked: a refusal the document wrote is
+    /// passed on as its sentence, anything else is a failure described by `doing`.
+    fn from_event(doing: &str, error: OverseerError) -> RequestError {
+        match error {
+            OverseerError::Refused(said) => RequestError::Refused(said),
+            other => RequestError::Failed(format!("{}: {:?}", doing, other)),
         }
     }
 }
@@ -207,7 +221,7 @@ impl DocumentRoot {
                 }
             }
             ActionExecutor::execute_event(nodes, &path, event).map_err(|e| {
-                RequestError::Failed(format!("could not run '{}' on '{}': {:?}", event, address, e))
+                RequestError::from_event(&format!("could not run '{}' on '{}'", event, address), e)
             })
         }, |nodes| {
             // Whether the thing pressed is still there, asked of the thing pressed. It used to be
@@ -419,7 +433,7 @@ impl DocumentRoot {
                 // since the app has its own set of commands and never comes through this one.
                 let _ = session;
                 as_json(app_api::execute_event_update(content, path, event).map_err(|e| {
-                    RequestError::Failed(format!("could not run the event: {:?}", e))
+                    RequestError::from_event("could not run the event", e)
                 })?)
             }
             // The four that send an instruction rather than a document. The page names what to
@@ -526,7 +540,7 @@ impl DocumentRoot {
                         typed,
                         writing,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not run the event: {:?}", e)))?),
+                    .map_err(|e| RequestError::from_event("could not run the event", e))?),
                 )
             }
             "serialize_overseer_nodes" | "serialize_overseer_nodes_raw" => {
@@ -544,7 +558,7 @@ impl DocumentRoot {
                 let event = arg_str(args, &["event_name", "eventName"])
                     .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
                 as_json(app_api::execute_event_on_text(content, path, event).map_err(|e| {
-                    RequestError::Failed(format!("could not run the event: {:?}", e))
+                    RequestError::from_event("could not run the event", e)
                 })?)
             }
             "execute_overseer_event" => {
@@ -553,7 +567,7 @@ impl DocumentRoot {
                 let event = arg_str(args, &["event_name", "eventName"])
                     .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
                 app_api::execute_event(&mut nodes, &path, &event).map_err(|e| {
-                    RequestError::Failed(format!("could not run the event: {:?}", e))
+                    RequestError::from_event("could not run the event", e)
                 })?;
                 as_json(nodes)
             }

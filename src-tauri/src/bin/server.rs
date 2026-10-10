@@ -330,13 +330,20 @@ struct Which {
 }
 
 /// Report what went wrong without describing the filesystem to whoever asked.
+///
+/// A press the document refused says so in `refused` as well as `error`, so a caller can tell
+/// the document's own sentence, meant for whoever pressed, from something that went wrong.
 fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match error {
         RequestError::Rejected(_) => StatusCode::BAD_REQUEST,
         RequestError::NotFound(_) => StatusCode::NOT_FOUND,
         RequestError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        RequestError::Refused(_) => StatusCode::UNPROCESSABLE_ENTITY,
     };
-    (status, Json(json!({ "error": error.to_string() })))
+    match error {
+        RequestError::Refused(said) => (status, Json(json!({ "error": said, "refused": said }))),
+        other => (status, Json(json!({ "error": other.to_string() }))),
+    }
 }
 
 async fn list(State(service): State<Service>) -> impl IntoResponse {

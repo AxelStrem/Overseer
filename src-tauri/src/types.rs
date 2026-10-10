@@ -771,4 +771,9 @@ pub enum OverseerError {
 
     #[error("Runtime error: {0}")]
     RuntimeError(String),
+
+    /// A press the document itself said no to, in the document's own words - see `refuse`.
+    /// Said as it is, with nothing before it, since it is meant for whoever pressed.
+    #[error("{0}")]
+    Refused(String),
 }
