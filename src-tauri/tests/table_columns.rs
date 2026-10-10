@@ -172,19 +172,21 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
             "done",
             "points",
             "complexity",
-            "note",
+            "talk",
+            "work",
             "moved_at",
             "drop",
-            "commentary",
+            "Talk",
+            "Agents",
         ],
     );
 
     let columns = columns(&nodes, "Items");
-    // Bar the note and drop buttons, which say what they are by their icons - as the note beside
-    // a task in the task manager does - and have no room for a word in their columns.
+    // Bar the talk, work and drop buttons, which say what they are by their icons - as the note
+    // beside a task in the task manager does - and have no room for a word in their columns.
     let headings: Vec<&str> = columns
         .iter()
-        .filter(|c| !c["span"].as_bool().unwrap_or(false) && c["name"] != "note" && c["name"] != "drop")
+        .filter(|c| !c["span"].as_bool().unwrap_or(false) && !["talk", "work", "drop"].contains(&c["name"].as_str().unwrap_or("")))
         .map(|c| c["label"].as_str().unwrap_or(""))
         .collect();
     assert!(
@@ -193,9 +195,9 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
         headings,
     );
 
-    // The note breaks the table on purpose, which is what it was already doing by accident - the
-    // widths came to more than a hundred, so the last cell wrapped.
-    let commentary = columns.last().expect("no columns");
-    assert_eq!(commentary["name"], "commentary");
-    assert_eq!(commentary["span"], true);
+    // The conversation and the agents' work break the table on purpose: each is a line of its own
+    // under the row, folded away until its button opens it.
+    for folded in &columns[columns.len() - 2..] {
+        assert_eq!(folded["span"], true, "{} is a cell of the row", folded["name"]);
+    }
 }

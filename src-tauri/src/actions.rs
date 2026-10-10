@@ -3934,6 +3934,35 @@ impl ActionExecutor {
                 }
             }
         }
+        Self::mark_named_divs_up_to_the_entry(nodes, indices);
+    }
+
+    /// A list entry is written as what it overrides, and a named div inside it that it does not
+    /// override is left out whole - with whatever was just changed inside it. A comment appended
+    /// to `Items/[x]/Talk/Comments` changed the list in memory and reached the file nowhere,
+    /// answering that nothing was written. So the named divs between a changed node and the entry
+    /// holding it are marked as overridden too, the way a block written by hand reads, and the
+    /// entry is written `div Talk { list Comments { ... } }`, holding only what changed. A div
+    /// without a name is no step of any address and is written through, so it is left alone.
+    fn mark_named_divs_up_to_the_entry(nodes: &mut Vec<OverseerNode>, indices: &[usize]) {
+        // The entry: the nearest ancestor whose parent is a list.
+        let Some(entry_depth) = (2..=indices.len()).rev().find(|&depth| {
+            Self::get_node_ref_by_indices(nodes, &indices[..depth - 1]).is_some_and(|parent| parent.node_type == "list")
+        }) else {
+            return;
+        };
+        for depth in entry_depth + 1..indices.len() {
+            let at = &indices[..depth];
+            let unmarked_named_div = Self::get_node_ref_by_indices(nodes, at).is_some_and(|node| {
+                node.node_type == "div"
+                    && !node.name.is_empty()
+                    && !crate::addressing::is_wrapper(node)
+                    && !matches!(node.parameters.get("_explicit_child_override"), Some(OverseerValue::Boolean(true)))
+            });
+            if unmarked_named_div {
+                Self::mark_field_explicit_override(nodes, at);
+            }
+        }
     }
 
     // Evaluate formulas in value/params against owner_path context and apply into target

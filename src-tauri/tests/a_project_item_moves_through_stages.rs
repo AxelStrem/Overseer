@@ -95,7 +95,7 @@ fn picking_finished_records_the_item_and_takes_it_off_the_list() {
         assert!(!handles_in(&text, "Items").contains(&"brace".to_string()), "still open:\n{}", text);
         assert!(handles_in(&text, "History").contains(&"brace".to_string()), "not recorded:\n{}", text);
         let record = entry_lines(&text, "brace");
-        for field in ["- finished_at = ", "- title = ", "- parent = ", "- points = ", "- commentary = "] {
+        for field in ["- finished_at = ", "- title = ", "- parent = ", "- points = ", "div Talk {", "- body = "] {
             assert!(record.iter().any(|l| l.starts_with(field)), "the record has no {}: {:?}", field, record);
         }
         assert!(!record.iter().any(|l| l.starts_with("- stage = ")), "the record kept a stage: {:?}", record);

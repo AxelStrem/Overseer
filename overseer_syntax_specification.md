@@ -638,14 +638,14 @@ is typed is matched against the fields named in `text` — the fields, not what 
 because what is on screen is formatted and sometimes hidden.
 
 ```overseer
-filter (target="/project/Items", text="title, commentary", enum="stage", tags="labels, flags",
+filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, flags",
         status="done", vocabulary="/project/Labels", label="find") { }
 ```
 
 | parameter | |
 | --- | --- |
 | `target` | the list it narrows |
-| `text` | which fields the typed text is matched against |
+| `text` | which fields the typed text is matched against; a name that is a list or a div searches every field under it, so naming a list of comments finds an entry by anything said in them |
 | `tags` | the fields holding labels, comma-separated: each gets a row of chips to narrow by, and picking two - in one row or across them - finds the entries holding both |
 | `vocabulary` | where the first field's labels are listed; the others are drawn from their own fields' vocabularies |
 | `status` | a field to offer as a third narrowing, by value |
@@ -784,6 +784,11 @@ text MarkdownContent (markdown=true) = "# Heading
 
 text PlainContent = "This is plain text without markdown formatting"
 ```
+
+Markdown is the only markup a text field has. HTML written in one is shown as the text it is, never
+drawn - a field may hold what an agent quoted from a page, and the page holds the server's token. A
+link or an image goes only to an `http`, `https` or `mailto` address or to a path on the document's
+own server; one to anything else is drawn as its words.
 
 ##### Inline Color Syntax (Markdown Extension)
 You can apply color to an inline span of markdown text without assigning a `font-color` parameter to the whole `text` node using the custom angle bracket form:

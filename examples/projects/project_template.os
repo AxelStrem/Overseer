@@ -150,13 +150,37 @@ tab project (label="Project", mutable=true) {
             }
         }
 
+        div Comment (layout="vertical", margin=0, spacing=0) {
+            div (layout="horizontal", margin=0, spacing=8, alignment="center") {
+                timestamp at (format="datetime", precision="minutes", font-size=11px, font-color="#9ca3af", margin=0) =
+                    "2026-01-01T00:00:00Z"
+                string author (font-size=11px, font-weight="bold", margin=0) = ""
+            }
+            text body (markdown=true, font-size=12px, margin=0) = ""
+        }
+
+        div Run (layout="horizontal", margin=0, spacing=6, alignment="center") {
+            timestamp at (label="when", format="datetime", precision="minutes", width=14%) = "2026-01-01T00:00:00Z"
+            string kind (label="kind", width=8%) = ""
+            string model (label="model", width=12%) = ""
+            string moved (label="moved", width=14%) = ""
+            int points (label="pts", format="trim", width=5%) = 1
+            float cost (label="$", precision=2, width=7%) = 0.0
+            int read (label="read k", format="trim", width=8%) = 0
+            int written (label="written k", format="trim", width=8%) = 0
+            int output (label="output k", format="trim", width=7%) = 0
+            int turns (label="turns", format="trim", width=5%) = 0
+            float minutes (label="min", precision=1, width=5%) = 0.0
+            int lines (label="lines", format="trim", width=6%) = 0
+        }
+
         div Item (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center",
                   background-color=$(done >= 75 ? "#14321f" :
                                     (done >= 25 ? "#1c2a3a" : "inherit")),
                   font-color=$(waiting > 0 ? "#6b7280" : "inherit")) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=8%) = ""
-            string title (label="title", font-size=14px, width=17%,
+            string title (label="title", font-size=14px, width=16%,
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
             enum stage (label="stage", vocabulary="/project/Stages", width=9%,
@@ -173,8 +197,8 @@ tab project (label="Project", mutable=true) {
             }
 
             string parent (label="of", font-size=11px, width=7%) = ""
-            tags after (label="after", vocabulary="/project/Items, /project/History", width=8%) = ""
-            tags labels (label="tags", vocabulary="/project/Labels", width=11%) = ""
+            tags after (label="after", vocabulary="/project/Items, /project/History", width=7%) = ""
+            tags labels (label="tags", vocabulary="/project/Labels", width=10%) = ""
             tags flags (label="flags", vocabulary="/project/Flags", width=9%) = ""
             int done (label="done", format="trim", precision=0, suffix="%", width=6%,
                       hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
@@ -184,10 +208,15 @@ tab project (label="Project", mutable=true) {
             int points (label="pts", format="trim", width=5%) = 1
             enum complexity (label="think", vocabulary="/project/Complexities", width=7%) = "unassigned"
 
-            button note (icon="note", margin=0, width=3%,
-                         font-color=$(../commentary == "" ? "#6b7280" : "inherit")) {
+            button talk (icon="note", margin=0, width=3%,
+                         font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
                 on click {
-                    start_editing (path="../commentary")
+                    toggle_fold (path="../Talk")
+                }
+            }
+            button work (icon="burger", margin=0, width=3%, hidden=$(../Agents/Work.count() == 0)) {
+                on click {
+                    toggle_fold (path="../Agents")
                 }
             }
 
@@ -202,8 +231,25 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
-            string commentary (label="", font-size=11px, span="row",
-                               hidden=$(commentary == "")) = ""
+            div Talk (foldable=true, folded=true, span="row", layout="vertical", margin=0, spacing=4) {
+                list Comments (entry=<Comment>, layout="vertical", spacing=4, border-style=none) { }
+                div NewComment (layout="horizontal", margin=0, spacing=6, alignment="center") {
+                    textbox body (label="", placeholder="a comment - markdown is fine", width=80%, margin=0) = ""
+                    button add (label="+ comment", margin=0, width=18%) {
+                        on click {
+                            if (cond=$(../body != "")) {
+                                append (list="../../Comments", from="..") {
+                                    - at = $(now())
+                                    - author = "owner"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            div Agents (foldable=true, folded=true, span="row", layout="vertical", margin=0) {
+                list Work (entry=<Run>, view="table", header=true, lines="vertical", spacing=1) { }
+            }
 
             int kids (hidden=true) =
                 $(/project/Items.filter(|x| x/parent == ../handle).count()
@@ -232,15 +278,20 @@ tab project (label="Project", mutable=true) {
                 string handle (hidden=true) = ""
                 string parent (hidden=true) = ""
                 tags after (hidden=true) = ""
-                tags labels (label="", vocabulary="/project/Labels", width=21%) = ""
+                tags labels (label="", vocabulary="/project/Labels", width=18%) = ""
                 tags flags (hidden=true) = ""
                 int points (label="", format="trim", width=6%) = 0
                 enum complexity (label="", vocabulary="/project/Complexities", width=7%) = "unassigned"
 
-                button note (icon="note", margin=0, width=3%,
-                             font-color=$(../commentary == "" ? "#6b7280" : "inherit")) {
+                button talk (icon="note", margin=0, width=3%,
+                             font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
                     on click {
-                        start_editing (path="../commentary")
+                        toggle_fold (path="../Talk")
+                    }
+                }
+                button work (icon="burger", margin=0, width=3%, hidden=$(../Agents/Work.count() == 0)) {
+                    on click {
+                        toggle_fold (path="../Agents")
                     }
                 }
 
@@ -259,7 +310,12 @@ tab project (label="Project", mutable=true) {
                     }
                 }
             }
-            string commentary (label="", font-size=11px, font-color="#9ca3af", hidden=true) = ""
+            div Talk (foldable=true, folded=true, layout="vertical", margin=0) {
+                list Comments (entry=<Comment>, layout="vertical", spacing=4, border-style=none) { }
+            }
+            div Agents (foldable=true, folded=true, layout="vertical", margin=0) {
+                list Work (entry=<Run>, view="table", header=true, lines="vertical", spacing=1) { }
+            }
             string colour (hidden=true) =
                 $(/project/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())
         }
@@ -271,7 +327,7 @@ tab project (label="Project", mutable=true) {
     // were, to the formulas here, the bot and the sweep alike.
     tab (label="Open", hover-text="What is still to do") {
         div (layout="horizontal", margin=0, spacing=10, alignment="center") {
-            filter (target="/project/Items", text="title, commentary, handle", enum="stage", tags="labels, flags",
+            filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, flags",
                     status="done", hide="waiting", vocabulary="/project/Labels", label="find", width=100%) { }
         }
 
@@ -318,7 +374,15 @@ tab project (label="Project", mutable=true) {
                 - parent = "parser"
                 - labels = "bug"
                 - points = 2
-                - commentary = "only when the value comes first; a body on its own is fine"
+                div Talk {
+                    list Comments {
+                        - {
+                            - at = "2026-09-01T09:10:00+04:00"
+                            - author = "owner"
+                            - body = "only when the value comes first; a body on its own is fine"
+                        }
+                    }
+                }
             }
             - {
                 - added = "2026-09-02T10:00:00+04:00"
@@ -353,7 +417,15 @@ tab project (label="Project", mutable=true) {
                 - after = "rows"
                 - labels = "ui"
                 - points = 1
-                - commentary = "stands on its own; nothing is part of it and it is part of nothing"
+                div Talk {
+                    list Comments {
+                        - {
+                            - at = "2026-09-04T16:00:00+04:00"
+                            - author = "owner"
+                            - body = "stands on its own; nothing is part of it and it is part of nothing"
+                        }
+                    }
+                }
             }
         }
 
@@ -431,6 +503,51 @@ tab project (label="Project", mutable=true) {
                 - parent = "parser"
                 - labels = "bug, docs"
                 - points = 6
+                div Talk {
+                    list Comments {
+                        - {
+                            - at = "2026-09-01T09:15:00+04:00"
+                            - author = "owner"
+                            - body = "every document under examples/, read and written back byte for byte"
+                        }
+                        - {
+                            - at = "2026-09-09T11:00:00+04:00"
+                            - author = "claude-opus (medium)"
+                            - body = "Built: a test per document. Two failed at first - **trailing blank lines** were dropped - and pass now."
+                        }
+                    }
+                }
+                div Agents {
+                    list Work {
+                        - {
+                            - at = "2026-09-08T18:00:00+04:00"
+                            - kind = "triage"
+                            - model = "claude-opus (medium)"
+                            - moved = "filed > ready"
+                            - points = 5
+                            - cost = 0.42
+                            - read = 310
+                            - written = 48
+                            - output = 9
+                            - turns = 14
+                            - minutes = 3.5
+                        }
+                        - {
+                            - at = "2026-09-09T11:00:00+04:00"
+                            - kind = "build"
+                            - model = "claude-opus (medium)"
+                            - moved = "ready > testing"
+                            - points = 6
+                            - cost = 1.87
+                            - read = 1420
+                            - written = 96
+                            - output = 31
+                            - turns = 52
+                            - minutes = 14.2
+                            - lines = 164
+                        }
+                    }
+                }
             }
             - {
                 - finished_at = "2026-09-10T15:10:00+04:00"

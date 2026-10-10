@@ -57,6 +57,44 @@ fn text_at(file: &str, address: &str) -> String {
     }
 }
 
+/// The text of the field with this name somewhere under a node.
+fn field_text(node: &OverseerNode, name: &str) -> Option<String> {
+    for child in &node.children {
+        if child.name == name {
+            return match child.parameters.get("_computed_value").or_else(|| child.parameters.get("value")) {
+                Some(OverseerValue::String(s)) | Some(OverseerValue::Timestamp(s)) => Some(s.clone()),
+                Some(OverseerValue::Integer(i)) => Some(i.to_string()),
+                Some(OverseerValue::Float(f)) => Some(f.to_string()),
+                other => Some(format!("{:?}", other)),
+            };
+        }
+        if child.node_type != "on" && child.node_type != "button" {
+            if let Some(found) = field_text(child, name) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// What each entry of a list under an item holds, by the fields asked for, in order.
+fn entries(file: &str, list: &str, fields: &[&str]) -> Vec<Vec<String>> {
+    let nodes = opened(file);
+    let Some(list) = overseer::addressing::find(&nodes, list) else { return Vec::new() };
+    list.children
+        .iter()
+        .map(|entry| fields.iter().map(|f| field_text(entry, f).unwrap_or_default()).collect())
+        .collect()
+}
+
+fn said_on(file: &str, item: &str) -> Vec<Vec<String>> {
+    entries(file, &format!("{}/Talk/Comments", item), &["at", "author", "body"])
+}
+
+fn work_on(file: &str, item: &str) -> Vec<Vec<String>> {
+    entries(file, &format!("{}/Agents/Work", item), &["at", "kind", "model", "moved", "cost", "minutes", "lines"])
+}
+
 fn is_there(file: &str, address: &str) -> bool {
     overseer::addressing::find(&opened(file), address).is_some()
 }
@@ -93,8 +131,12 @@ fn a_finished_record_comes_back_at_filed_with_what_it_kept() {
     serialised(|| {
         let file = a_project("finished");
         // roundtrip is finished, under parser, which is open.
-        let kept = ["added", "title", "parent", "labels", "points", "commentary"]
+        let kept = ["added", "title", "parent", "labels", "points"]
             .map(|f| (f, text_at(&file, &format!("project/History/[roundtrip]/{}", f))));
+        let said = said_on(&file, "project/History/[roundtrip]");
+        let work = work_on(&file, "project/History/[roundtrip]");
+        assert_eq!(said.len(), 2, "the record's conversation: {:?}", said);
+        assert_eq!(work.len(), 2, "the record's work: {:?}", work);
         assert!(press(&file, "project/History/[roundtrip]/reopen").wrote, "reopening wrote nothing");
 
         assert!(!is_there(&file, "project/History/[roundtrip]"), "the record is still in History");
@@ -102,6 +144,8 @@ fn a_finished_record_comes_back_at_filed_with_what_it_kept() {
         for (field, was) in kept {
             assert_eq!(text_at(&file, &format!("project/Items/[roundtrip]/{}", field)), was, "{} changed", field);
         }
+        assert_eq!(said_on(&file, "project/Items/[roundtrip]"), said, "the conversation changed");
+        assert_eq!(work_on(&file, "project/Items/[roundtrip]"), work, "the agents' work changed");
         assert_eq!(text_at(&file, "project/Items/[roundtrip]/stage"), "filed");
         assert_eq!(text_at(&file, "project/Items/[roundtrip]/complexity"), "unassigned");
     });
@@ -147,6 +191,7 @@ fn a_cancelled_record_reopens_the_same_way() {
         assert!(!is_there(&file, "project/History/[brace]"));
         assert_eq!(text_at(&file, "project/Items/[brace]/stage"), "filed");
         assert_eq!(text_at(&file, "project/Items/[brace]/parent"), "parser");
-        assert!(text_at(&file, "project/Items/[brace]/commentary").starts_with("only when"), "the note was lost");
+        let said = said_on(&file, "project/Items/[brace]");
+        assert!(said.len() == 1 && said[0][2].starts_with("only when"), "the conversation was lost: {:?}", said);
     });
 }

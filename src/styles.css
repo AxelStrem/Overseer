@@ -1548,6 +1548,16 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     margin-bottom: 16px;
 }
 
+/* Paragraphs part from each other, not from the box they are in: the field's own padding is that
+   room, and a one-line comment otherwise stood in a box three lines tall. */
+.markdown-enabled > p:first-child {
+    margin-top: 0;
+}
+
+.markdown-enabled > p:last-child {
+    margin-bottom: 0;
+}
+
 .markdown-enabled code {
     background: var(--field-bg-color);
     padding: 2px 4px;

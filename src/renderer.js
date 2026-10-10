@@ -8,8 +8,44 @@ const DEBUG_MODE = (() => {
 })();
 
 // Import marked for markdown rendering
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import { invoke } from '@tauri-apps/api/core'
+
+/**
+ * Markdown, and never markup of its own.
+ *
+ * marked passes raw HTML through as it stands, and a text field is written by whoever can write the
+ * document - a project item's comments by agents among them, quoting code and pages as they go. An
+ * `<img src=x onerror=...>` in one would run in the page, which holds the server's token. So raw
+ * HTML is shown as the text it is, but for the span the colour syntax becomes, and a link or an
+ * image goes only somewhere a page may send someone: the web, mail, or this document's own server.
+ */
+const escapeHtml = (s) => String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const COLOR_VALUE = '(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}|[a-zA-Z]+|rgba?\\([0-9.,\\s+%-]*\\)|hsla?\\([0-9.,\\s+%-]*\\))'
+const INLINE_COLOR = new RegExp(`^<span class="md-inline-color" style="color:${COLOR_VALUE}">$|^</span>$`)
+// A scheme the page may follow, or none at all - a path on this server. Read with the whitespace and
+// control characters a browser drops from a URL taken out, so `java\tscript:` is seen for what it is.
+const safeUrl = (href) => {
+    const bare = String(href ?? '').replace(/[\u0000- ]/g, '')
+    return /^(https?:|mailto:)/i.test(bare) || !/^[^/?#]*:/.test(bare)
+}
+const markdown = new Marked({
+    renderer: {
+        html(html, block) {
+            if (!block && INLINE_COLOR.test(html.trim())) return html
+            return block ? `<p>${escapeHtml(html)}</p>` : escapeHtml(html)
+        },
+        link(href, title, text) {
+            if (!safeUrl(href)) return text
+            return `<a href="${escapeHtml(href)}"${title ? ` title="${escapeHtml(title)}"` : ''}>${text}</a>`
+        },
+        image(href, title, text) {
+            if (!safeUrl(href)) return escapeHtml(text)
+            return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ''}>`
+        },
+    },
+})
 
 // Import Chart.js for chart visualization
 import {
@@ -3184,6 +3220,20 @@ export class OverseerRenderer {
         return seek(entry)
     }
 
+    /** What a field holds, or what every field under a list or a group holds - handlers and buttons left out, as `entryField` leaves them. */
+    valuesWithin(node) {
+        const value = this.getParameterValue(node, 'value')
+        if (value !== null && value !== undefined) return [String(value)]
+        const found = []
+        for (const child of node.children || []) {
+            if (!child) continue
+            const type = String(child.node_type || child.type || '').toLowerCase()
+            if (type === 'on' || type === 'button') continue
+            found.push(...this.valuesWithin(child))
+        }
+        return found
+    }
+
     /** What a filter is currently set to, remembered across repaints. */
     filterState(key, about) {
         if (!this._filters) this._filters = new Map()
@@ -3261,8 +3311,16 @@ export class OverseerRenderer {
             return value === null || value === undefined ? '' : String(value)
         }
 
+        // A name that is a list or a group rather than a field searches every field under it: a
+        // list has no value of its own, and the conversation on a project item is a list of
+        // comments that `find` should read all of.
+        const searchText = (name) => {
+            const child = this.entryField(entry, name)
+            return child ? this.valuesWithin(child).join(' ') : ''
+        }
+
         if (wanted !== '') {
-            const haystack = state.textFields.map(fieldText).join(' ').toLowerCase()
+            const haystack = state.textFields.map(searchText).join(' ').toLowerCase()
             if (!haystack.includes(wanted)) return false
         }
 
@@ -7781,11 +7839,11 @@ export class OverseerRenderer {
             }
             const preprocessed = preprocessColorTags(text)
             // Use marked library for proper markdown rendering on preprocessed text
-            return marked.parse(preprocessed);
+            return markdown.parse(preprocessed);
         } catch (error) {
             console.warn('Markdown parsing error:', error);
-            // Fallback to basic markdown rendering
-            return text
+            // Fallback to basic markdown rendering, of the text escaped first for the same reason.
+            return escapeHtml(text)
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
                 .replace(/\n/g, '<br>');
