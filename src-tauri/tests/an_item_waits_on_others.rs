@@ -76,7 +76,7 @@ fn an_item_takes_its_stages_colour() {
         let nodes = opened(TEMPLATE.to_string());
         let colour = |list: &str, handle: &str| read(&nodes, list, handle, "colour");
         assert_eq!(colour("Items", "rows"), Some(OverseerValue::String("#6b7280".into())), "filed, by default");
-        assert_eq!(colour("Items", "undo"), Some(OverseerValue::String("#475569".into())), "later");
+        assert_eq!(colour("Items", "undo"), Some(OverseerValue::String("#eab308".into())), "later");
         assert_eq!(colour("History", "escape"), Some(OverseerValue::String("#15803d".into())), "finished");
     });
 }
