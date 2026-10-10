@@ -191,6 +191,58 @@ body.drawer-folded #main {
     }
 }
 
+/* A folder: a heading that folds the documents under it away, with how many it holds shown
+ * while they are hidden. */
+.drawer-folder-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 6px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.drawer-folder-head:hover {
+    background: var(--background-color);
+    color: var(--text-color);
+}
+
+.drawer-folder-mark {
+    width: 10px;
+    font-size: 11px;
+}
+
+.drawer-folder-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.drawer-folder-count {
+    font-weight: 400;
+    font-size: 12px;
+    display: none;
+}
+
+.drawer-folder.folded .drawer-folder-count {
+    display: inline;
+}
+
+.drawer-folder-places {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 12px;
+}
+
 .drawer-empty {
     color: var(--text-secondary);
     font-size: 13px;

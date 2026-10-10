@@ -154,6 +154,50 @@ describe('the drawer', () => {
     expect(notice.classList.contains('shown')).toBe(true)
   })
 
+  it('lists documents with no folder first, then each folder with its own, in the order of the menu', async () => {
+    places = [
+      { path: 'a.os', name: 'A', folder: 'Projects' },
+      { path: TASKS, name: 'Chores', folder: '' },
+      { path: 'b.os', name: 'B', folder: 'Health' },
+      { path: 'c.os', name: 'C', folder: 'Projects' },
+      { path: 'd.os', name: 'D' },
+    ]
+    await withADrawer()
+    const top = Array.from(document.getElementById('drawer-places').children)
+    expect(top.map((li) => li.classList.contains('drawer-folder')
+      ? li.querySelector('.drawer-folder-name').textContent
+      : li.querySelector('.drawer-place-open').textContent)).toEqual(['Chores', 'D', 'Projects', 'Health'])
+    expect(shown().map((s) => s.name)).toEqual(['Chores', 'D', 'A', 'C', 'B'])
+  })
+
+  it('folds a folder away, and remembers it for the next page', async () => {
+    places = [{ path: TASKS, name: 'Chores' }, { path: 'a.os', name: 'A', folder: 'Projects' }]
+    await withADrawer()
+    const folder = () => document.querySelector('.drawer-folder')
+    folder().querySelector('.drawer-folder-head').click()
+    expect(folder().classList.contains('folded')).toBe(true)
+    expect(folder().querySelector('.drawer-folder-places').hidden).toBe(true)
+    expect(folder().querySelector('.drawer-folder-head').getAttribute('aria-expanded')).toBe('false')
+    expect(JSON.parse(localStorage.getItem('overseer.drawer.folders'))).toEqual(['Projects'])
+    setupDOM()
+    await withADrawer()
+    expect(folder().querySelector('.drawer-folder-places').hidden).toBe(true)
+    folder().querySelector('.drawer-folder-head').click()
+    expect(folder().querySelector('.drawer-folder-places').hidden).toBe(false)
+    expect(JSON.parse(localStorage.getItem('overseer.drawer.folders'))).toEqual([])
+  })
+
+  it('keeps open the folder that holds the open document', async () => {
+    places = [{ path: 'a.os', name: 'A' }, { path: TASKS, name: 'Chores', folder: 'Home' }]
+    localStorage.setItem('overseer.drawer.folders', JSON.stringify(['Home']))
+    await withADrawer()
+    const folder = document.querySelector('.drawer-folder')
+    expect(folder.querySelector('.drawer-folder-places').hidden).toBe(false)
+    folder.querySelector('.drawer-folder-head').click()
+    expect(document.querySelector('.drawer-folder-places').hidden).toBe(false)
+    expect(shown()).toEqual([{ name: 'A', current: false }, { name: 'Chores', current: true }])
+  })
+
   it('marks another document when that one is opened', async () => {
     const { app } = await withADrawer()
     app.currentFile = PROJECT

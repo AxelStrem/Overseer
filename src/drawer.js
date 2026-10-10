@@ -120,29 +120,50 @@ export class Drawer {
             empty.textContent = 'Nothing kept here yet.'
             list.appendChild(empty)
         }
+        // Documents with no folder first, then the folders in the order their first documents come
+        // in the menu, each holding its documents in the menu's order.
+        const folders = new Map()
         for (const place of this.places) {
-            const item = document.createElement('li')
-            item.className = 'drawer-place'
-            const open = document.createElement('button')
-            open.className = 'drawer-place-open'
-            open.textContent = this.nameOf(place)
-            open.title = place.path
-            if (place.path === here) {
-                item.classList.add('current')
-                open.setAttribute('aria-current', 'page')
+            const folder = String(place.folder || '').trim()
+            if (!folder) {
+                list.appendChild(this.placeItem(place, here))
+                continue
             }
-            open.addEventListener('click', () => this.open(place.path))
-            const drop = document.createElement('button')
-            drop.className = 'drawer-place-drop'
-            drop.textContent = '×'
-            drop.title = 'Take off this list'
-            drop.setAttribute('aria-label', `Take ${this.nameOf(place)} off this list`)
-            drop.addEventListener('click', (event) => {
-                event.stopPropagation()
-                this.drop(place.path)
+            if (!folders.has(folder)) folders.set(folder, [])
+            folders.get(folder).push(place)
+        }
+        const folded = this.foldedFolders()
+        for (const [folder, held] of folders) {
+            const holdsHere = held.some((p) => p.path === here)
+            const shut = folded.includes(folder) && !holdsHere
+            const item = document.createElement('li')
+            item.className = 'drawer-folder'
+            item.classList.toggle('folded', shut)
+            const head = document.createElement('button')
+            head.className = 'drawer-folder-head'
+            head.setAttribute('aria-expanded', String(!shut))
+            const mark = document.createElement('span')
+            mark.className = 'drawer-folder-mark'
+            mark.textContent = shut ? '▸' : '▾'
+            const title = document.createElement('span')
+            title.className = 'drawer-folder-name'
+            title.textContent = folder
+            const count = document.createElement('span')
+            count.className = 'drawer-folder-count'
+            count.textContent = String(held.length)
+            head.append(mark, title, count)
+            // The folder holding the open document stays open, or the mark that says which one is
+            // open would be hidden.
+            head.addEventListener('click', () => {
+                if (holdsHere) return
+                this.foldFolder(folder, !shut)
+                this.paint()
             })
-            item.appendChild(open)
-            item.appendChild(drop)
+            const inner = document.createElement('ul')
+            inner.className = 'drawer-folder-places'
+            inner.hidden = shut
+            for (const place of held) inner.appendChild(this.placeItem(place, here))
+            item.append(head, inner)
             list.appendChild(item)
         }
         // Offered only for a document that is open and not already here.
@@ -151,6 +172,49 @@ export class Drawer {
             const kept = this.places.some((p) => p.path === here)
             keep.hidden = !here || kept
         }
+    }
+
+    /// One document in the list: its name to open it by, and a button to take it off.
+    placeItem(place, here) {
+        const item = document.createElement('li')
+        item.className = 'drawer-place'
+        const open = document.createElement('button')
+        open.className = 'drawer-place-open'
+        open.textContent = this.nameOf(place)
+        open.title = place.path
+        if (place.path === here) {
+            item.classList.add('current')
+            open.setAttribute('aria-current', 'page')
+        }
+        open.addEventListener('click', () => this.open(place.path))
+        const drop = document.createElement('button')
+        drop.className = 'drawer-place-drop'
+        drop.textContent = '×'
+        drop.title = 'Take off this list'
+        drop.setAttribute('aria-label', `Take ${this.nameOf(place)} off this list`)
+        drop.addEventListener('click', (event) => {
+            event.stopPropagation()
+            this.drop(place.path)
+        })
+        item.appendChild(open)
+        item.appendChild(drop)
+        return item
+    }
+
+    /// The folders folded away, remembered per viewer like the drawer's own fold.
+    foldedFolders() {
+        try {
+            const said = JSON.parse(localStorage.getItem('overseer.drawer.folders') || '[]')
+            return Array.isArray(said) ? said.map(String) : []
+        } catch (_) {
+            return []
+        }
+    }
+
+    foldFolder(folder, folded) {
+        const rest = this.foldedFolders().filter((f) => f !== folder)
+        if (folded) rest.push(folder)
+        try { localStorage.setItem('overseer.drawer.folders', JSON.stringify(rest)) } catch (_) { /* not kept */ }
     }
 
     /// The open document is now another one.

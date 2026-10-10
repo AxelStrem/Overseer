@@ -26,15 +26,17 @@ const EMPTY: &str = r#"// The documents kept to hand, in the order the drawer li
 // -
 // Added from the drawer, which offers to keep whatever document is open, and taken off it the
 // same way. Renamed and reordered here: `name` is what the drawer calls a document, and the order
-// below is the order it shows them in. `path` is where the document is - a file on this computer
-// for the desktop app, a document's name under the server's folder for the browser.
+// below is the order it shows them in. `folder` gathers documents under one heading in the drawer;
+// those with none come first. `path` is where the document is - a file on this computer for the
+// desktop app, a document's name under the server's folder for the browser.
 
 tab menu (label="Documents", mutable=true) {
 
     div (hidden=true) {
         div Place (layout="horizontal", margin=0, spacing=6, alignment="center") {
-            string name (label="", width=35%) = ""
-            string path (label="", font-size=12px, width=65%) = ""
+            string name (label="", width=30%) = ""
+            string folder (label="", width=20%) = ""
+            string path (label="", font-size=12px, width=50%) = ""
         }
     }
 
@@ -48,6 +50,10 @@ tab menu (label="Documents", mutable=true) {
 pub struct Place {
     pub path: String,
     pub name: String,
+    /// The heading the drawer lists it under; none for the top of the list. A list made before
+    /// there were folders has no such field, and every document in it is at the top.
+    #[serde(default)]
+    pub folder: String,
 }
 
 /// The list's file, made the first time it is asked for.
@@ -91,7 +97,7 @@ fn entries(nodes: &[OverseerNode]) -> Vec<(String, Place)> {
                     .map(|c| text_of(c.parameters.get("_computed_value").or(c.parameters.get("value"))))
                     .unwrap_or_default()
             };
-            (entry.name.clone(), Place { path: field("path"), name: field("name") })
+            (entry.name.clone(), Place { path: field("path"), name: field("name"), folder: field("folder") })
         })
         .filter(|(_, place)| !place.path.is_empty())
         .collect()

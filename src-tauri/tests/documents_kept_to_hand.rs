@@ -106,10 +106,10 @@ fn the_server_keeps_its_own_list_in_its_own_folder() {
         ask("menu_keep", json!({ "place": "tasks.os", "name": "Tasks" }));
         let kept = ask("menu_keep", json!({ "place": "projects/overseer.os" }));
         assert_eq!(kept, json!([
-            { "path": "tasks.os", "name": "Tasks" },
-            { "path": "projects/overseer.os", "name": "" },
+            { "path": "tasks.os", "name": "Tasks", "folder": "" },
+            { "path": "projects/overseer.os", "name": "", "folder": "" },
         ]));
-        assert_eq!(ask("menu_drop", json!({ "place": "tasks.os" })), json!([{ "path": "projects/overseer.os", "name": "" }]));
+        assert_eq!(ask("menu_drop", json!({ "place": "tasks.os" })), json!([{ "path": "projects/overseer.os", "name": "", "folder": "" }]));
         assert_eq!(ask("menu_location", json!({})), json!(menu::FILE));
         assert!(root.join(menu::FILE).exists());
         assert!(service.list().contains(&menu::FILE.to_string()), "the list is a document like any other");
@@ -125,5 +125,70 @@ fn the_last_one_is_taken_off_too() {
         menu::keep(&file, "tasks.os", "Tasks").unwrap();
         assert_eq!(menu::drop(&file, "tasks.os").unwrap(), vec![]);
         assert!(!std::fs::read_to_string(&file).unwrap().contains("tasks.os"));
+    });
+}
+
+const WITH_FOLDERS: &str = r#"tab menu (label="Documents", mutable=true) {
+
+    div (hidden=true) {
+        div Place (layout="horizontal", margin=0, spacing=6, alignment="center") {
+            string name (label="", width=30%) = ""
+            string folder (label="", width=20%) = ""
+            string path (label="", font-size=12px, width=50%) = ""
+        }
+    }
+
+    list Places (entry=<Place>, key="path", layout="vertical", spacing=1) {
+        - {
+            - name = "Tasks"
+            - path = "tasks.os"
+        }
+        - {
+            - folder = "Projects"
+            - path = "projects/overseer.os"
+        }
+    }
+}
+"#;
+
+#[test]
+fn a_document_is_listed_under_the_folder_its_entry_names() {
+    serialised(|| {
+        let file = a_folder("folders").join(menu::FILE);
+        std::fs::write(&file, WITH_FOLDERS).unwrap();
+        let places = menu::places(&file).unwrap();
+        assert_eq!(paths(&places), vec!["tasks.os", "projects/overseer.os"]);
+        assert_eq!(places[0].folder, "", "a document with no folder is at the top of the list");
+        assert_eq!(places[1].folder, "Projects");
+    });
+}
+
+#[test]
+fn a_document_kept_from_the_drawer_is_in_no_folder_and_the_rest_are_left_as_they_were() {
+    serialised(|| {
+        let file = a_folder("folders_keep").join(menu::FILE);
+        std::fs::write(&file, WITH_FOLDERS).unwrap();
+        let places = menu::keep(&file, "diary.os", "Diary").unwrap();
+        assert_eq!(places[2].path, "diary.os");
+        assert_eq!(places[2].folder, "");
+        let written = std::fs::read_to_string(&file).unwrap();
+        let (before, _) = WITH_FOLDERS.split_at(WITH_FOLDERS.rfind("    }\n}").unwrap());
+        assert!(written.starts_with(before), "{}", written);
+    });
+}
+
+#[test]
+fn a_list_made_before_there_were_folders_has_every_document_at_the_top() {
+    serialised(|| {
+        let file = a_folder("folders_old").join(menu::FILE);
+        let old = WITH_FOLDERS
+            .replace("            string folder (label=\"\", width=20%) = \"\"\n", "")
+            .replace("            - folder = \"Projects\"\n", "");
+        std::fs::write(&file, &old).unwrap();
+        let places = menu::places(&file).unwrap();
+        assert_eq!(paths(&places), vec!["tasks.os", "projects/overseer.os"]);
+        assert!(places.iter().all(|p| p.folder.is_empty()));
+        let kept = menu::keep(&file, "diary.os", "").unwrap();
+        assert_eq!(paths(&kept), vec!["tasks.os", "projects/overseer.os", "diary.os"]);
     });
 }
