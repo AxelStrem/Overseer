@@ -50,6 +50,7 @@ fn value_at(file: &str, address: &str) -> Option<OverseerValue> {
 fn text_at(file: &str, address: &str) -> String {
     match value_at(file, address) {
         Some(OverseerValue::String(s)) => s,
+        Some(OverseerValue::Timestamp(s)) => s,
         Some(OverseerValue::Integer(i)) => i.to_string(),
         Some(OverseerValue::Float(f)) => f.to_string(),
         other => panic!("{} reads {:?}", address, other),
@@ -92,7 +93,7 @@ fn a_finished_record_comes_back_at_filed_with_what_it_kept() {
     serialised(|| {
         let file = a_project("finished");
         // roundtrip is finished, under parser, which is open.
-        let kept = ["added", "title", "parent", "labels", "points"]
+        let kept = ["added", "title", "parent", "labels", "points", "commentary"]
             .map(|f| (f, text_at(&file, &format!("project/History/[roundtrip]/{}", f))));
         assert!(press(&file, "project/History/[roundtrip]/reopen").wrote, "reopening wrote nothing");
 

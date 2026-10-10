@@ -388,7 +388,22 @@ matched by name - and by the names of the divs they sit in, with unnamed wrapper
 sides - and each value is converted to the type the template gives that field: text to a number, a
 date or a flag, `3,5` as well as `3.5`. A value that cannot be converted, or an empty one, is left
 out, so the template's default stands. A field the block names itself is the block's. Fields the
-template does not have are ignored.
+template does not have are ignored, and so is a field the template works out by a formula: it keeps
+its formula. A field the source works out is copied as what it works out to.
+
+The source can be a list entry as well as a form, and its lists come along too. A list is matched
+by name the way a field is, and each of its entries becomes an entry of the new entry's list of the
+same name - made from that list's own template and filled by name in the same way, so a list nested
+deeper still comes along as well, in order. This is how a project item closes and reopens: each
+handler is one copy between the open list and the closed one, so a field or a list added to both
+templates later goes both ways without being named in either.
+
+```overseer
+append (list="/project/History", from="..") {
+    - finished_at = $(now())
+    - status = $(../stage)
+}
+```
 
 The textboxes a copy read are emptied afterwards - back to what they start with - and a textbox
 anywhere else keeps what was typed into it.

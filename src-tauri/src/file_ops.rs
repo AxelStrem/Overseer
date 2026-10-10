@@ -263,7 +263,19 @@ impl FileOperations {
             }
         }
 
-        let rest = leading[prefix_bytes..].replace("\r\n", "\n");
+        let mut rest = leading[prefix_bytes..].replace("\r\n", "\n");
+        // A node made from a template carries the template's trivia, and the indent at its end
+        // is how deep the template sits, not the node. A list in an entry happened to agree with
+        // its template one level down; a list in an entry of that list was written at the
+        // template's depth. Left off, the line is indented the way any node without text of its
+        // own is - by how deep it actually is.
+        let made_from_a_template = node.source_snapshot.as_ref().is_some_and(|snap| {
+            matches!(snap.origin, SnapshotOrigin::Synthetic(SyntheticSnapshotKind::TemplateClone))
+        });
+        if made_from_a_template {
+            let kept = rest.trim_end_matches([' ', '\t']).len();
+            rest.truncate(kept);
+        }
 
         for _ in 0..allowed_prefix {
             output.push('\n');

@@ -163,19 +163,9 @@ tab project (label="Project", mutable=true) {
                         withhold=$(open_kids > 0 ? "finished, cancelled" : "")) = "filed" {
                 on change {
                     if (cond=$((../stage == "finished" || ../stage == "cancelled") && ../open_kids == 0)) {
-                        append (list="/project/History") {
+                        append (list="/project/History", from="..") {
                             - finished_at = $(now())
-                            - added = $(../added)
-                            - handle = $(../handle)
-                            - title = $(../title)
                             - status = $(../stage)
-                            - parent = $(../parent)
-                            - after = $(../after)
-                            - labels = $(../labels)
-                            - flags = $(../flags)
-                            - points = $(../points)
-                            - complexity = $(../complexity)
-                            - commentary = $(../commentary)
                         }
                         remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
                     }
@@ -261,16 +251,8 @@ tab project (label="Project", mutable=true) {
                                hidden=$(/project/History.filter(|x| x/handle == ../parent).count() > 0)) {
                     on click {
                         if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() == 0)) {
-                            append (list="/project/Items") {
-                                - added = $(../added)
-                                - handle = $(../handle)
-                                - title = $(../title)
-                                - parent = $(../parent)
-                                - after = $(../after)
-                                - labels = $(../labels)
-                                - flags = $(../flags)
-                                - points = $(../points)
-                                - commentary = $(../commentary)
+                            append (list="/project/Items", from="..") {
+                                - complexity = "unassigned"
                             }
                             remove (from="/project/History", keyField="handle", keyValue=$(../handle))
                         }

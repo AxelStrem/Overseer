@@ -3351,26 +3351,18 @@ impl ActionExecutor {
         Self::set_value(nodes, &[], &[], target, value)
     }
 
-    /// The overrides a copy from `from` makes, for an entry made from this template.
+    /// The node a copy from `from` reads, found from the action's own place.
     ///
     /// `append (list=..., from="..")` fills the new entry from another node - a div of textboxes,
     /// in the case it was made for, so a form can add a list entry in one press without the
-    /// action naming each field. The entry is still made from the list's template; the source only
-    /// supplies values. A field is matched by its name, and by the names of the divs it sits in,
-    /// with unnamed wrappers ignored on both sides, since those arrange rather than mean anything.
-    /// The template's type is kept where the two differ and the value converted to it where it can
-    /// be - text into a number, a date, a flag - and left out where it cannot, or where there is
-    /// nothing in it, so the template's default stands. A field the action's own block names is
-    /// the block's: `- added = $(now())` beside a copy says what the form does not.
-    ///
-    /// The textboxes read here are noted, so the page can empty them once the press is done.
-    fn overrides_copied_from(
+    /// action naming each field, and a list entry, so a project item closes and reopens without
+    /// its handlers naming each field it carries. A copy is taken, since the document is written
+    /// to while the source's lists are still being copied out of it.
+    fn source_of_a_copy(
         snapshot: &Vec<OverseerNode>,
         owner_path: &[String],
         from: &OverseerValue,
-        template: &OverseerNode,
-        block: &[OverseerNode],
-    ) -> Result<Vec<OverseerNode>, OverseerError> {
+    ) -> Result<OverseerNode, OverseerError> {
         let from_path = match Self::evaluate_in_context(from, owner_path, snapshot)? {
             OverseerValue::String(s) => s,
             other => {
@@ -3381,52 +3373,82 @@ impl ActionExecutor {
             }
         };
         let (segments, _param, anchored) = Self::split_path_and_param(&from_path);
-        let source = Self::resolve_target_indices(snapshot, owner_path, anchored, &segments)
+        Self::resolve_target_indices(snapshot, owner_path, anchored, &segments)
             .and_then(|at| Self::get_node_ref_by_indices(snapshot, &at))
-            .ok_or_else(|| OverseerError::ValidationError(format!("Source not found: {}", from_path)))?;
+            .cloned()
+            .ok_or_else(|| OverseerError::ValidationError(format!("Source not found: {}", from_path)))
+    }
 
+    /// What a copy from `source` puts into an entry made from this template: the overrides for its
+    /// fields, and the lists whose entries are to follow it in.
+    ///
+    /// The entry is still made from the list's template; the source only supplies values. A field
+    /// is matched by its name, and by the names of the divs it sits in, with unnamed wrappers
+    /// ignored on both sides, since those arrange rather than mean anything. The template's type
+    /// is kept where the two differ and the value converted to it where it can be - text into a
+    /// number, a date, a flag - and left out where it cannot, or where there is nothing in it, so
+    /// the template's default stands. A field the action's own block names is the block's:
+    /// `- added = $(now())` beside a copy says what the form does not.
+    ///
+    /// A field the template works out by formula is never filled: a project item and its record
+    /// each keep a colour of their own, and a copy by name would write one over the other's
+    /// formula. A field the source works out is copied as what it works out to, like any value -
+    /// a form's id box offers its key that way. A list is matched the way a field is, and comes
+    /// back with the source's list, for its entries to be copied one by one once the entry is in
+    /// place, each made from the target list's own template.
+    ///
+    /// The textboxes read here are noted, so the page can empty them once the press is done.
+    fn copied_into(
+        source: &OverseerNode,
+        template: &OverseerNode,
+        block: &[OverseerNode],
+    ) -> (Vec<OverseerNode>, Vec<(String, OverseerNode)>) {
         const HOLDS_A_VALUE: [&str; 11] =
             ["string", "text", "textbox", "int", "float", "bool", "checkbox", "date", "timestamp", "tags", "enum"];
         fn is_wrapper(node: &OverseerNode) -> bool {
             node.is_hierarchy_transparent && (node.name.is_empty() || node.name == node.node_type)
         }
-        /// Every field under a node, by the names that lead to it.
-        fn fields<'a>(node: &'a OverseerNode, trail: &mut Vec<String>, out: &mut Vec<(String, &'a OverseerNode)>) {
+        type Found<'a> = Vec<(String, &'a OverseerNode)>;
+        /// Every field and every list under a node, by the names that lead to it.
+        fn fields<'a>(node: &'a OverseerNode, trail: &mut Vec<String>, out: &mut Found<'a>, lists: &mut Found<'a>) {
             for child in &node.children {
-                if HOLDS_A_VALUE.contains(&child.node_type.as_str()) {
+                if HOLDS_A_VALUE.contains(&child.node_type.as_str()) || child.node_type == "list" {
                     if !child.name.is_empty() {
                         trail.push(child.name.clone());
-                        out.push((trail.join("/"), child));
+                        let found = if child.node_type == "list" { &mut *lists } else { &mut *out };
+                        found.push((trail.join("/"), child));
                         trail.pop();
                     }
-                } else if child.node_type == "list" || child.node_type == "on" || child.node_type == "button" {
-                    // What a form holds besides its fields: the button that sends it, and lists,
-                    // which are not a value to copy.
+                } else if child.node_type == "on" || child.node_type == "button" {
+                    // What a form holds besides its fields: the button that sends it.
                 } else if is_wrapper(child) {
-                    fields(child, trail, out);
+                    fields(child, trail, out, lists);
                 } else if !child.name.is_empty() {
                     trail.push(child.name.clone());
-                    fields(child, trail, out);
+                    fields(child, trail, out, lists);
                     trail.pop();
                 }
             }
         }
-        let mut wanted = Vec::new();
-        fields(template, &mut Vec::new(), &mut wanted);
-        let mut offered = Vec::new();
-        fields(source, &mut Vec::new(), &mut offered);
+        let (mut wanted, mut wanted_lists) = (Vec::new(), Vec::new());
+        fields(template, &mut Vec::new(), &mut wanted, &mut wanted_lists);
+        let (mut offered, mut offered_lists) = (Vec::new(), Vec::new());
+        fields(source, &mut Vec::new(), &mut offered, &mut offered_lists);
 
         let said_by_the_block: Vec<&str> = block.iter().map(|o| o.name.as_str()).collect();
+        let said = |path: &str| said_by_the_block.contains(&path.split('/').next().unwrap_or(""));
         let mut values = std::collections::HashMap::new();
         for (path, field) in offered {
             if let Some(OverseerValue::String(key)) = field.parameters.get(TYPED_FROM) {
                 note_emptied(key);
             }
-            let first = path.split('/').next().unwrap_or("");
-            if said_by_the_block.contains(&first) {
+            if said(&path) {
                 continue;
             }
             let Some((_, into)) = wanted.iter().find(|(p, _)| *p == path) else { continue };
+            if matches!(into.parameters.get("value"), Some(OverseerValue::Formula(_))) {
+                continue;
+            }
             let value = field
                 .parameters
                 .get("_computed_value")
@@ -3435,7 +3457,63 @@ impl ActionExecutor {
                 values.insert(path, v);
             }
         }
-        Ok(crate::app_api::entry_overrides(&values))
+        let lists = offered_lists
+            .into_iter()
+            .filter(|(path, list)| {
+                !list.children.is_empty() && !said(path) && wanted_lists.iter().any(|(p, _)| p == path)
+            })
+            .map(|(path, list)| (path, list.clone()))
+            .collect();
+        (crate::app_api::entry_overrides(&values), lists)
+    }
+
+    /// Whether a line of an action's block gives a field exactly the value its template does.
+    fn restates_the_template(
+        line: &OverseerNode,
+        template: &OverseerNode,
+        owner_path: &[String],
+        snapshot: &Vec<OverseerNode>,
+    ) -> Result<bool, OverseerError> {
+        let Some(value) = line.parameters.get("value") else { return Ok(false) };
+        if !line.children.is_empty() || line.parameters.keys().any(|k| k != "value" && !k.starts_with('_')) {
+            return Ok(false);
+        }
+        fn field<'a>(node: &'a OverseerNode, name: &str) -> Option<&'a OverseerNode> {
+            node.children.iter().find(|c| c.name == name).or_else(|| {
+                node.children
+                    .iter()
+                    .filter(|c| crate::addressing::is_wrapper(c))
+                    .find_map(|c| field(c, name))
+            })
+        }
+        let Some(default) = field(template, &line.name).and_then(|f| f.parameters.get("value")) else {
+            return Ok(false);
+        };
+        if matches!(default, OverseerValue::Formula(_)) {
+            return Ok(false);
+        }
+        Ok(Self::value_equals(&Self::evaluate_in_context(value, owner_path, snapshot)?, default))
+    }
+
+    /// Where a list a copy fills sits in the entry just made, by the path `copied_into` gave it,
+    /// with unnamed wrappers looked through.
+    fn list_in_entry(nodes: &Vec<OverseerNode>, entry: &[usize], path: &str) -> Option<Vec<usize>> {
+        let mut at = entry.to_vec();
+        for name in path.split('/') {
+            loop {
+                let node = Self::get_node_ref_by_indices(nodes, &at)?;
+                if let Some(i) = node.children.iter().position(|c| c.name == name) {
+                    at.push(i);
+                    break;
+                }
+                let i = node
+                    .children
+                    .iter()
+                    .position(|c| crate::addressing::is_wrapper(c) && Self::holds_named(c, name))?;
+                at.push(i);
+            }
+        }
+        Some(at)
     }
 
     fn append_to_list(
@@ -3491,15 +3569,41 @@ impl ActionExecutor {
         from: Option<&OverseerValue>,
         goes: WhereItGoes,
     ) -> Result<(), OverseerError> {
-        let verb = match goes {
-            WhereItGoes::First => "prepend",
-            WhereItGoes::Last => "append",
-        };
         let (segments, _explicit_param, anchored) = Self::split_path_and_param(list_path);
         let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
             .ok_or_else(|| {
                 OverseerError::ValidationError(format!("List not found: {}", list_path))
             })?;
+        let source = match from {
+            Some(from) => Some(Self::source_of_a_copy(nodes, owner_path, from)?),
+            None => None,
+        };
+        Self::put_entry_at(nodes, owner_path, indices, list_path, template_name, value_opt, overrides, source.as_ref(), goes)
+    }
+
+    /// Put an entry into the list at `indices`, filled from `source` when there is one.
+    ///
+    /// A copy's lists follow the entry in once it is in place, each of their entries put into the
+    /// new entry's list of the same name the same way - made from that list's template and filled
+    /// by name - so a list nested deeper still comes along too, and every one is said in the file
+    /// as an entry appended to it would be.
+    #[allow(clippy::too_many_arguments)]
+    fn put_entry_at(
+        nodes: &mut Vec<OverseerNode>,
+        owner_path: &[String],
+        indices: Vec<usize>,
+        list_path: &str,
+        template_name: Option<&str>,
+        value_opt: Option<OverseerValue>,
+        overrides: &Vec<OverseerNode>,
+        source: Option<&OverseerNode>,
+        goes: WhereItGoes,
+    ) -> Result<(), OverseerError> {
+        let verb = match goes {
+            WhereItGoes::First => "prepend",
+            WhereItGoes::Last => "append",
+        };
+        let mut lists_to_copy = Vec::new();
         // As the graph names the list - see `Shape`.
         let list_address = Self::build_disambiguated_path(nodes, &indices).join("/");
 
@@ -3552,11 +3656,23 @@ impl ActionExecutor {
                     }
                     new_item.name = format!("{}__{}", template_def.name, ordinal);
                     // Apply evaluated overrides from action block, after whatever a copy supplies
-                    let mut all = match from {
-                        Some(from) => Self::overrides_copied_from(document, owner_path, from, template_def, overrides)?,
+                    let mut all = match source {
+                        Some(source) => {
+                            let (copied, lists) = Self::copied_into(source, template_def, overrides);
+                            lists_to_copy = lists;
+                            copied
+                        }
                         None => Vec::new(),
                     };
-                    all.extend(overrides.iter().cloned());
+                    for line in overrides {
+                        // Beside a copy, a line of the block that gives the template's own value
+                        // is there to keep the source's out - a reopened item comes back unrated -
+                        // and the entry says nothing about the field, as one never rated would.
+                        if source.is_some() && Self::restates_the_template(line, template_def, owner_path, document)? {
+                            continue;
+                        }
+                        all.push(line.clone());
+                    }
                     Self::apply_overrides_evaluated(&mut new_item, &all, owner_path, document)?;
                     new_item
                 }
@@ -3610,10 +3726,16 @@ impl ActionExecutor {
         let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
             OverseerError::ValidationError(format!("List not found: {}", list_path))
         })?;
-        match goes {
-            WhereItGoes::First => list_node.children.insert(0, new_item),
-            WhereItGoes::Last => list_node.children.push(new_item),
-        }
+        let at = match goes {
+            WhereItGoes::First => {
+                list_node.children.insert(0, new_item);
+                0
+            }
+            WhereItGoes::Last => {
+                list_node.children.push(new_item);
+                list_node.children.len() - 1
+            }
+        };
         Self::harmonize_list_entry_spacing(list_node, &style_guide);
         // Mark this list field as explicitly overridden so mutations persist on template instances
         Self::mark_field_explicit_override(nodes, &indices);
@@ -3621,6 +3743,22 @@ impl ActionExecutor {
         // values: the graph was asked about a document whose entries had moved, and the survivors
         // kept names their text no longer gives them.
         note_shape(Shape::Added { list: list_address, entry: made });
+
+        let mut entry = indices;
+        entry.push(at);
+        for (path, list) in lists_to_copy {
+            let Some(into) = Self::list_in_entry(nodes, &entry, &path) else { continue };
+            let into_path = format!("{}/{}", list_path, path);
+            for copied in &list.children {
+                // A list of plain values copies the values; one of entries copies each entry.
+                let (value, from) = if copied.children.is_empty() && copied.parameters.contains_key("value") {
+                    (copied.parameters.get("value").cloned(), None)
+                } else {
+                    (None, Some(copied))
+                };
+                Self::put_entry_at(nodes, owner_path, into.clone(), &into_path, None, value, &Vec::new(), from, WhereItGoes::Last)?;
+            }
+        }
         Ok(())
     }
 
