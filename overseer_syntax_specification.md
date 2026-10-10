@@ -197,7 +197,9 @@ float Average = $(../Tasks/Data.average(Priority))
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
 - Comparison: `>`, `<`, `>=`, `<=`, `==`, `!=`
 - Conditional: `condition ? value_if_true : value_if_false`
-- String concatenation: `+`
+- String concatenation: `+` joins two values when either is text that does not read as a number
+  (`"the id " + 7` is `"the id 7"`, and an empty field joins as nothing); otherwise it adds them
+  (`"5" + "3"` is `8`)
 
 ### 5. Path References
 

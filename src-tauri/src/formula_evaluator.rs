@@ -2203,6 +2203,24 @@ impl FormulaEvaluator {
             return Ok(res);
         }
 
+        // `+` joins text. The test is whether a side cannot be read as a number, not whether it
+        // is a string: values often reach a formula as strings that hold numbers, and "5" + "3"
+        // has always been 8. A side that is nothing joins as nothing, since a field not yet
+        // filled in is ordinary; nothing added to a number stays the error it was.
+        if matches!(operator, BinaryOperator::Add) {
+            let is_text = |v: &OverseerValue| match v {
+                OverseerValue::String(s) | OverseerValue::Date(s) | OverseerValue::Timestamp(s) => {
+                    s.parse::<f64>().is_err()
+                }
+                _ => false,
+            };
+            if is_text(left) || is_text(right) {
+                return Ok(OverseerValue::String(
+                    Self::value_to_string(left) + &Self::value_to_string(right),
+                ));
+            }
+        }
+
         // For arithmetic, convert both to numbers
         let left_num = Self::value_to_number(left)?;
         let right_num = Self::value_to_number(right)?;
