@@ -224,6 +224,21 @@ impl FileOperations {
             return false;
         }
 
+        // The block before this node can leave behind an indent, a line begun and not yet written
+        // on, or the whole gap up to this node. Trivia that starts a line of its own makes that
+        // indent a line holding nothing but spaces, which the next parse keeps; and trivia
+        // holding only whitespace is that gap, written a second time. Each save added to it.
+        if trivia.starts_with(['\n', '\r']) {
+            if trivia.trim().is_empty() {
+                Self::drop_trailing_whitespace_line(output);
+            } else {
+                let kept = output.trim_end_matches([' ', '\t']).len();
+                if kept < output.len() && output[..kept].ends_with('\n') {
+                    output.truncate(kept);
+                }
+            }
+        }
+
         let mut allowed_blank_lines = node.leading_blank_lines as usize;
         let trivia_is_whitespace = trivia.trim().is_empty();
         if in_list_body {
@@ -251,8 +266,6 @@ impl FileOperations {
         } else {
             allowed_blank_lines + 1
         };
-        let allowed_prefix = desired_total_newlines.saturating_sub(existing_run);
-
         let mut prefix_bytes = 0;
         for ch in leading.chars() {
             match ch {
@@ -276,6 +289,17 @@ impl FileOperations {
             let kept = rest.trim_end_matches([' ', '\t']).len();
             rest.truncate(kept);
         }
+
+        // Whitespace trivia keeps the lines it holds past its first newline, and those are blank
+        // lines already counted among the node's. Padding the full count in front of them as well
+        // wrote each of them twice, and the next parse counted them all again.
+        let held_in_rest = if trivia_is_whitespace {
+            rest.matches('\n').count()
+        } else {
+            0
+        };
+        let allowed_prefix =
+            desired_total_newlines.saturating_sub(existing_run + held_in_rest);
 
         for _ in 0..allowed_prefix {
             output.push('\n');
