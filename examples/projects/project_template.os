@@ -1,6 +1,6 @@
-// Stages, for an agent working through the items below. Unless told otherwise, take 'ready' items
-// first, then 'planning', and 'filed' only when neither is left; within a stage, items flagged
-// first go before the rest, and past that, use your judgement. Skip any item flagged manual or
+// Stages, for an agent working through the items below. Unless told otherwise, take items flagged
+// first before anything else, whatever their stage; then 'ready' items, then 'planning', and
+// 'filed' only when neither is left; past that, use your judgement. Skip any item flagged manual or
 // asked, and any whose after list names an item that is still open.
 //
 //   ready     Everything is decided: implement it, then move it to testing.
@@ -15,7 +15,7 @@
 //
 //   manual    For a person to work: leave it.
 //   auto      Filed by an agent of its own accord. File what you find along the way, flagged auto.
-//   first     Goes before the rest of its stage.
+//   first     Goes before everything else, whatever its stage.
 //   asked     A question in its note waits on a person, who takes the flag off once it is answered.
 //   discuss   Only your thoughts are wanted: give them in the note, move it at most to planning,
 //             and flag it asked. Never move it to ready.
@@ -34,7 +34,7 @@
 
 tab project (label="Project", mutable=true) {
     string name (label="", font-size=22px) = "Untitled project"
-    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone; auto one an agent filed of its own accord; first one to take before the rest of its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
 
     div (hidden=true) {
         div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
