@@ -3,6 +3,7 @@ pub mod addressing;
 pub mod app_api;
 pub mod dependencies;
 pub mod document_cache;
+pub mod document_disk;
 pub mod delta;
 pub mod docmgr;
 pub mod file_ops;

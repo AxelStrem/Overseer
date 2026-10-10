@@ -296,6 +296,17 @@ impl Graph {
         graph
     }
 
+    /// The graph as it is stored: what each value read, and nothing else, since the other
+    /// direction is cheaper to work out again than to store and read back.
+    pub fn into_reads(self) -> HashMap<String, HashSet<String>> {
+        self.reads
+    }
+
+    /// A graph stored with `into_reads`, as it was.
+    pub fn from_stored(reads: HashMap<String, HashSet<String>>) -> Self {
+        Self::from_reads(reads)
+    }
+
     fn index(&mut self) {
         let mut read_by: HashMap<String, HashSet<String>> = HashMap::new();
         for (target, sources) in &self.reads {

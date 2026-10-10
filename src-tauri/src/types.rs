@@ -440,13 +440,13 @@ impl OverseerNode {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct SourceSlice {
     pub span: (usize, usize),
     pub text: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct NodeHeaderSnapshot {
     pub template: Option<SourceSlice>,
     pub type_token: Option<SourceSlice>,
@@ -456,19 +456,19 @@ pub struct NodeHeaderSnapshot {
     pub trailing: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct NodeChildEnvelopeSnapshot {
     pub open: Option<SourceSlice>,
     pub close: Option<SourceSlice>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct NodeBodySnapshot {
     pub value: Option<SourceSlice>,
     pub child_envelope: NodeChildEnvelopeSnapshot,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SnapshotOrigin {
     Parsed,
     Synthetic(SyntheticSnapshotKind),
@@ -480,7 +480,7 @@ impl Default for SnapshotOrigin {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SyntheticSnapshotKind {
     TemplateClone,
     RuntimeConstructed,
@@ -520,6 +520,12 @@ impl SharedText {
         self.source
             .as_ref()
             .map(|source| (std::sync::Arc::as_ptr(source) as *const u8 as usize, source.len()))
+    }
+
+    /// The shared copy itself and where in it this view lies - for storing the copy once however
+    /// many views there are of it.
+    pub fn parts(&self) -> Option<(&std::sync::Arc<str>, usize, usize)> {
+        self.source.as_ref().map(|source| (source, self.start, self.end))
     }
 }
 

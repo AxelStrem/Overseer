@@ -287,6 +287,42 @@ impl SourceRegistry {
         CURRENT_SCOPE.with(|s| s.borrow_mut().clear());
     }
 
+    /// The parse an id was issued by, and its number within that parse.
+    pub fn split_id(id: &str) -> Option<(u64, u64)> {
+        parse_id(id)
+    }
+
+    pub fn join_id(scope: u64, node: u64) -> String {
+        format_id(scope, node)
+    }
+
+    /// Give back a parse's snapshots that were stored away, under a scope of their own, and say
+    /// which scope that is.
+    ///
+    /// A fresh one every time, never the number the snapshots were stored under: after a restart
+    /// that number has been issued again to whatever was parsed first, and even within one process
+    /// the scope it named may since have been reused for other text. The nodes coming back with
+    /// them are renumbered to match - see `document_disk`.
+    pub fn restore(trailing: String, snapshots: Vec<(u64, std::sync::Arc<NodeSourceSnapshot>)>) -> u64 {
+        let id = SCOPE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let node_counter = snapshots.iter().map(|(node, _)| *node).max().unwrap_or(0);
+        if let Ok(mut scopes) = SCOPES.write() {
+            scopes.insert(
+                id,
+                ScopeData {
+                    snapshots: snapshots.into_iter().collect(),
+                    trailing,
+                    node_counter,
+                },
+            );
+        }
+        if let Ok(mut order) = SCOPE_ORDER.write() {
+            order.push_back(id);
+        }
+        Self::evict_old_scopes();
+        id
+    }
+
     pub fn append_document_trailing(chunk: &str) {
         if chunk.is_empty() {
             return;

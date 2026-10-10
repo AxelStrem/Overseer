@@ -48,6 +48,7 @@ time anything writes to it.
 | `addressing.rs` | stable addresses, so a thing read can be written afterwards |
 | `dependencies.rs` | what each computed value was worked out from |
 | `document_cache.rs` | what has already been worked out, kept while it is worth keeping |
+| `document_disk.rs` | what the cache lets go of, kept on disk until it is asked for again |
 | `delta.rs` | what changed between two resolves, so the UI redraws two nodes not the document |
 | `file_ops.rs` | reading, writing, and the serializer |
 | `source_registry.rs` | where each node came from in the text |
@@ -67,6 +68,11 @@ knowing about because each has a cost:
 - **A document cache**, byte-budgeted and least-recently-used, holding text, nodes and graph
   together. `OVERSEER_CACHE_MB` overrides the budget. A document resolved with part of a list
   out of view is never cached, because a write needs the whole thing.
+  What it lets go of for want of room is written to a folder (`OVERSEER_DISK_CACHE`, by default
+  one under the system's temporary folder; empty turns it off) and read back for about a third
+  of what working it out again costs. A file holds the text, the folder and the build it was worked out by,
+  and is used only when all three match and the files its mounts read have not changed.
+  `OVERSEER_DISK_CACHE_MB` bounds the folder, 512 by default.
 - **Windowed lists.** `window=3` on a list resolves three entries instead of forty-three, and
   the window is applied before templates are instantiated rather than after, so the work is
   never done.

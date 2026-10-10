@@ -21,6 +21,9 @@
 //! gigabyte to never wait eight seconds again, and a container billed by the gigabyte-hour cannot.
 //! At the server's default the four smaller documents fit and the food tracker does not, which is
 //! most of the benefit for a bounded cost.
+//!
+//! What is let go for want of room is not lost: it is written to disk and read back from there
+//! when next asked for, which costs about a third of working it out again - see `document_disk`.
 
 use crate::types::OverseerNode;
 
@@ -207,7 +210,14 @@ fn now() -> u64 {
 /// what is left fits.
 fn trim(store: &mut Vec<Entry>) {
     let budget = budget_bytes();
-    store.retain(|entry| entry.bytes <= budget);
+    let mut at = 0;
+    while at < store.len() {
+        if store[at].bytes > budget {
+            let_go(store.remove(at));
+        } else {
+            at += 1;
+        }
+    }
     while store.iter().map(|e| e.bytes).sum::<usize>() > budget {
         let Some(stalest) = store
             .iter()
@@ -217,7 +227,28 @@ fn trim(store: &mut Vec<Entry>) {
         else {
             break;
         };
-        store.remove(stalest);
+        let_go(store.remove(stalest));
+    }
+}
+
+/// What leaves memory for want of room goes to disk, where it can be read back for less than it
+/// would take to work out again - see `document_disk`.
+///
+/// Only a document with its graph: a document is only handed back as it stood when there is a
+/// graph to say what in it reads the clock, and a graph without its document answers nothing. One
+/// of the two goes missing only for a moment, while an edit replaces it.
+fn let_go(entry: Entry) {
+    if let (Some(nodes), Some(graph)) = (entry.nodes, entry.graph) {
+        crate::document_disk::store(
+            entry.text,
+            entry.base,
+            crate::document_disk::Held {
+                nodes,
+                graph,
+                mounts: entry.mounts,
+                clock_minute: entry.clock_minute,
+            },
+        );
     }
 }
 
@@ -246,6 +277,38 @@ fn at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
     Some(found)
 }
 
+/// The same, and failing that the entry written to disk when it last left memory, brought back.
+///
+/// For whoever wants what was worked out, not for whoever is about to put something in its place.
+/// Not trimmed on arrival, though it may not fit: the caller is about to take from it, and the next
+/// thing put will make room.
+fn found(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
+    if let Some(found) = at(store, text) {
+        return Some(found);
+    }
+    if budget_bytes() == 0 {
+        return None;
+    }
+    let base = here();
+    let held = crate::document_disk::take(text, &base)?;
+    let mut entry = Entry {
+        text: text.to_string(),
+        base,
+        nodes: Some(held.nodes),
+        graph: Some(held.graph),
+        bytes: 0,
+        used: now(),
+        mounts: held.mounts,
+        clock_minute: held.clock_minute,
+    };
+    if !entry.mounts_unchanged() {
+        return None;
+    }
+    entry.measure();
+    store.push(entry);
+    Some(store.len() - 1)
+}
+
 /// The graph held for this text, lent to `look` rather than copied out.
 ///
 /// Every edit, every press and every reopen that refreshes what reads the clock asks the graph one
@@ -254,7 +317,7 @@ fn at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
 /// held for as long as the question takes and no longer.
 pub fn with_graph<R>(text: &str, look: impl FnOnce(&crate::dependencies::Graph) -> R) -> Option<R> {
     with(|store| {
-        let found = at(store, text)?;
+        let found = found(store, text)?;
         store[found].used = now();
         store[found].graph.as_ref().map(look)
     })
@@ -276,7 +339,7 @@ pub fn add_to_graph(text: &str, newer: crate::dependencies::Graph) {
 /// The document this text produced, as it last stood, without taking it.
 pub fn nodes_for(text: &str) -> Option<Vec<OverseerNode>> {
     with(|store| {
-        let found = at(store, text)?;
+        let found = found(store, text)?;
         store[found].used = now();
         store[found].nodes.clone()
     })
@@ -290,7 +353,7 @@ pub fn nodes_for(text: &str) -> Option<Vec<OverseerNode>> {
 /// message, three tasks marked done, the sweep opening a morning's tasks. The first brings the
 /// document up to the minute and the rest find it there.
 pub fn clock_caught_up(text: &str, minute: i64) -> bool {
-    with(|store| at(store, text).is_some_and(|found| store[found].clock_minute == Some(minute)))
+    with(|store| found(store, text).is_some_and(|found| store[found].clock_minute == Some(minute)))
 }
 
 /// Say that what reads the clock in the document held for this text was worked out in this minute.
@@ -313,7 +376,7 @@ pub fn clock_worked_out_in(text: &str, minute: i64) {
 /// decides whether to take it at all.
 pub fn with_nodes<R>(text: &str, look: impl FnOnce(&[OverseerNode]) -> R) -> Option<R> {
     with(|store| {
-        let found = at(store, text)?;
+        let found = found(store, text)?;
         store[found].nodes.as_deref().map(look)
     })
 }
@@ -324,7 +387,7 @@ pub fn with_nodes<R>(text: &str, look: impl FnOnce(&[OverseerNode]) -> R) -> Opt
 /// diff it feeds.
 pub fn take_nodes(text: &str) -> Option<Vec<OverseerNode>> {
     with(|store| {
-        let found = at(store, text)?;
+        let found = found(store, text)?;
         store[found].used = now();
         let taken = store[found].nodes.take();
         if taken.is_some() {
@@ -337,7 +400,7 @@ pub fn take_nodes(text: &str) -> Option<Vec<OverseerNode>> {
 /// What this text's values were worked out from.
 pub fn graph_for(text: &str) -> Option<crate::dependencies::Graph> {
     with(|store| {
-        let found = at(store, text)?;
+        let found = found(store, text)?;
         store[found].used = now();
         store[found].graph.clone()
     })
