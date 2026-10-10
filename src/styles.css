@@ -1531,6 +1531,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* Markdown content styling */
 .markdown-enabled {
     line-height: 1.6;
+    /* Not pre-wrap like other text: the newlines between the block tags marked writes would each
+       draw a blank line. A line break the author wrote comes out as a <br>. */
+    white-space: normal;
 }
 
 .markdown-enabled h1,
@@ -1545,7 +1548,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .markdown-enabled p {
-    margin-bottom: 16px;
+    margin-top: 0;
+    margin-bottom: 0.4em;
 }
 
 /* Paragraphs part from each other, not from the box they are in: the field's own padding is that
@@ -1583,11 +1587,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .markdown-enabled ul,
 .markdown-enabled ol {
     padding-left: 24px;
-    margin-bottom: 16px;
+    margin-top: 0;
+    margin-bottom: 0.4em;
 }
 
 .markdown-enabled li {
-    margin-bottom: 8px;
+    margin-bottom: 2px;
 }
 
 /* Tags, as chips rather than as the line they are stored on.
@@ -1736,8 +1741,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 /* The stages, kept apart from the tags beside them: two different questions, asked differently -
- * any of the stages picked, all of the tags. */
-.filter-tags.filter-enum {
+ * any of the stages picked, all of the tags. The tag rows and the boxes are kept apart the same
+ * way; the renderer marks every group that something else follows. */
+.filter-tags.filter-sep {
     padding-right: 8px;
     border-right: 1px solid var(--border-color);
 }

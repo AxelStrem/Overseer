@@ -67,7 +67,7 @@ tab project (label="Project", mutable=true) {
             - {
                 - tag = "later"
                 - name = "later"
-                - colour = "#475569"
+                - colour = "#eab308"
             }
             - {
                 - tag = "finished"

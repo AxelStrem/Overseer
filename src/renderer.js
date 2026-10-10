@@ -30,7 +30,10 @@ const safeUrl = (href) => {
     const bare = String(href ?? '').replace(/[\u0000- ]/g, '')
     return /^(https?:|mailto:)/i.test(bare) || !/^[^/?#]*:/.test(bare)
 }
+// A single line break inside a paragraph is a <br>, not a newline the page keeps with pre-wrap: pre-wrap
+// also kept the newlines marked puts between block tags, each a blank line of its own.
 const markdown = new Marked({
+    breaks: true,
     renderer: {
         html(html, block) {
             if (!block && INLINE_COLOR.test(html.trim())) return html
@@ -3180,6 +3183,12 @@ export class OverseerRenderer {
             holder.appendChild(box)
             holder.appendChild(document.createTextNode(`hide ${hideField}`))
             container.appendChild(holder)
+        }
+
+        // A rule after every row of chips that something else follows: stages, project tags,
+        // workflow tags and the boxes are different questions. The count is not one of them.
+        for (const group of container.querySelectorAll(':scope > .filter-tags')) {
+            if (group.nextElementSibling) group.classList.add('filter-sep')
         }
 
         const count = document.createElement('span')
