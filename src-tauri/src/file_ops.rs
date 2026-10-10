@@ -319,19 +319,30 @@ impl FileOperations {
     /// Leaves come out as `- name = value`. A container that stands for itself comes out as a
     /// block naming it, holding the same again - the form an entry already uses for a nested
     /// list. Transparent wrappers are looked straight through, because an address does not name
-    /// them and the entry writes their contents as its own.
+    /// them and the entry writes their contents as its own. A list something was written into
+    /// comes out whole, at `level`, the depth `indent` stands for.
     fn write_overrides_inside(
         node: &OverseerNode,
         output: &mut String,
         indent: &str,
+        level: usize,
         unit: &str,
-    ) -> bool {
+    ) -> Result<bool> {
         let mut wrote = false;
         for child in &node.children {
             if crate::addressing::is_wrapper(child) {
-                if Self::write_overrides_inside(child, output, indent, unit) {
+                if Self::write_overrides_inside(child, output, indent, level, unit)? {
                     wrote = true;
                 }
+                continue;
+            }
+            if Self::is_a_written_list(child) {
+                // Written after a line of its own, as it will stand: into an empty buffer, the
+                // spacing rules take it for the top of a file and give it blank lines of its own.
+                let mut list = String::from("\n");
+                Self::serialize_node_context(child, &mut list, level, false, unit, None, false)?;
+                output.push_str(&list[1..]);
+                wrote = true;
                 continue;
             }
             if child.children.is_empty() {
@@ -356,14 +367,32 @@ impl FileOperations {
             }
             let mut inside = String::new();
             let deeper = format!("{}{}", indent, unit);
-            if Self::write_overrides_inside(child, &mut inside, &deeper, unit) {
+            if Self::write_overrides_inside(child, &mut inside, &deeper, level + 1, unit)? {
                 output.push_str(&format!("{}{} {} {{\n", indent, child.node_type, child.name));
                 output.push_str(&inside);
                 output.push_str(&format!("{}}}\n", indent));
                 wrote = true;
             }
         }
-        wrote
+        Ok(wrote)
+    }
+
+    /// A list an entry has written into: it holds records of the entry's own, which no template
+    /// supplies, so it is written whole wherever it sits.
+    fn is_a_written_list(node: &OverseerNode) -> bool {
+        node.node_type == "list"
+            && matches!(
+                node.parameters.get("_explicit_child_override"),
+                Some(OverseerValue::Boolean(true))
+            )
+    }
+
+    /// Whether a wrapper holds such a list, looking through the wrappers inside it.
+    fn wrapper_holds_a_written_list(node: &OverseerNode) -> bool {
+        node.children.iter().any(|c| {
+            Self::is_a_written_list(c)
+                || (crate::addressing::is_wrapper(c) && Self::wrapper_holds_a_written_list(c))
+        })
     }
 
     fn drop_trailing_whitespace_line(buffer: &mut String) {
@@ -971,9 +1000,14 @@ impl FileOperations {
 
                     // Special-case: if this child is a transparent wrapper and any of its descendants
                     // were explicitly overridden, emit those descendant overrides concisely here and skip the wrapper.
+                    //
+                    // Values only, though: a list in the wrapper that the entry wrote into is no
+                    // `- name = value`, and hoisting the values beside it would skip it. Such a
+                    // wrapper is left to the branch below, which writes both.
                     if suppress_template_children
                         && is_template_child
                         && child.is_hierarchy_transparent
+                        && !Self::wrapper_holds_a_written_list(child)
                     {
                         // Collect descendant value-only overrides that should be emitted concisely.
                         // Criteria:
@@ -1080,18 +1114,19 @@ impl FileOperations {
                             // A wrapper stands for nothing and is not named, so what is inside it
                             // is written as the entry's own - which is what its address says too.
                             let names_itself = !crate::addressing::is_wrapper(child);
-                            let body_indent = if names_itself {
-                                format!("{}{}", child_indent, fallback_indent_unit)
+                            let (body_indent, body_level) = if names_itself {
+                                (format!("{}{}", child_indent, fallback_indent_unit), indent_level + 2)
                             } else {
-                                child_indent.clone()
+                                (child_indent.clone(), indent_level + 1)
                             };
                             let mut inside = String::new();
                             if Self::write_overrides_inside(
                                 child,
                                 &mut inside,
                                 &body_indent,
+                                body_level,
                                 fallback_indent_unit,
-                            ) {
+                            )? {
                                 Self::drop_trailing_whitespace_line(output);
                                 if !output.ends_with('\n') {
                                     output.push('\n');
@@ -1669,6 +1704,31 @@ impl FileOperations {
                         Some(OverseerValue::Template(entry_type)) if entry_type == &child.node_type
                     );
 
+                // A wrapper holding a list written into is written through, list and values both:
+                // hoisting the values below would also take the list's own records for values of
+                // this node, and leave the list out.
+                if suppress_template_children
+                    && is_template_child
+                    && crate::addressing::is_wrapper(child)
+                    && Self::wrapper_holds_a_written_list(child)
+                {
+                    let mut inside = String::new();
+                    if Self::write_overrides_inside(
+                        child,
+                        &mut inside,
+                        &child_indent,
+                        indent_level + 1,
+                        fallback_indent_unit,
+                    )? {
+                        Self::drop_trailing_whitespace_line(output);
+                        trim_trailing_whitespace(output);
+                        if !output.ends_with('\n') {
+                            output.push('\n');
+                        }
+                        output.push_str(&inside);
+                    }
+                    continue;
+                }
                 // Special-case: if child is a transparent wrapper and any of its descendants were explicitly overridden,
                 // emit those descendant overrides concisely here and skip the wrapper itself.
                 if suppress_template_children && is_template_child && child.is_hierarchy_transparent
