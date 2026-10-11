@@ -321,6 +321,24 @@ checkbox completed "Mark Complete" {
 
 ```
 
+#### Icons
+
+A button can show an icon, alone or in front of its label: `icon` names one from the library
+that comes with Overseer. An icon is drawn in the colour of the text around it.
+
+```overseer
+button add (icon="plus", label="Add") { }
+button note (icon="note") { }
+```
+
+Names are lower case, words joined by `-`. The library holds Overseer's own icons - `cross`,
+`check`, `arrow-up`, `arrow-down`, `arrow-left`, `arrow-right`, `ellipsis-h`, `ellipsis-v`,
+`burger`, `note` - then every icon of [Lucide](https://lucide.dev/icons) and of
+[Tabler](https://tabler.io/icons) under their own names, Tabler's filled ones with `-filled`
+added (`heart-filled`). Where two have the same name, the first in that order is the one drawn. A
+name the library does not have leaves an empty space the size of an icon. An icon-only button
+says its name on hover.
+
 #### Conditional actions inside action blocks
 
 You can conditionally execute actions inside any `on ... {}` block using an `if` action node. The condition is provided via the `cond` parameter (usually a formula) and, when truthy, the nested actions will run. When falsy, the nested actions are skipped.

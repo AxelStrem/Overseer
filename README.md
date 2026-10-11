@@ -85,3 +85,11 @@ reformats itself on the first button press is a diff nobody can review.
 - [technical_architecture.md](technical_architecture.md) — how a document becomes a screen
 - [DEVELOPMENT.md](DEVELOPMENT.md) — toolchain, debug builds, WebView2
 - [product_description.md](product_description.md) — what this is for, written before it existed
+
+## Icons
+
+The icon library is gathered at build time (`src/icons/library.mjs`, run from `vite.config.js`)
+into `dist/icons/`, one SVG per name. It holds Overseer's own icons in `src/icons/` (their shapes
+adapted from Lucide's), and the icons of [Lucide](https://lucide.dev) (ISC licence, copyright Lucide
+Contributors) and [Tabler Icons](https://tabler.io/icons) (MIT licence, copyright Paweł Kuna).
+Their licence texts are copied into `dist/icons/LICENSES/` with them.

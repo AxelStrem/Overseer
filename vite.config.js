@@ -1,7 +1,35 @@
 import { defineConfig } from 'vite'
+import fs from 'node:fs'
+import path from 'node:path'
+import { resolveIcon, writeIconLibrary } from './src/icons/library.mjs'
+
+// The icon library goes out beside the bundle as one file per icon, so the page fetches only
+// the icons it draws. The dev server answers the same addresses straight from the sources.
+function iconLibrary() {
+  let outDir = 'dist'
+  return {
+    name: 'overseer-icons',
+    configResolved(config) {
+      outDir = path.resolve(config.root, config.build.outDir)
+    },
+    configureServer(server) {
+      server.middlewares.use('/icons/', (req, res, next) => {
+        const match = /^[/]([^/?#]+)[.]svg(?:[?#].*)?$/.exec(req.url || '')
+        const file = match && resolveIcon(match[1])
+        if (!file) return next()
+        res.setHeader('Content-Type', 'image/svg+xml')
+        res.end(fs.readFileSync(file))
+      })
+    },
+    closeBundle() {
+      writeIconLibrary(outDir)
+    },
+  }
+}
 
 export default defineConfig({
   // Vite options tailored for Tauri development
+  plugins: [iconLibrary()],
   clearScreen: false,
   // Tauri expects a fixed port, fail if that port is not available
   server: {

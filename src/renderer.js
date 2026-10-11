@@ -2273,10 +2273,7 @@ export class OverseerRenderer {
         const icon = (this.getParameterValue(node, 'icon') || '').toString().trim().toLowerCase()
         if (icon) {
             btn.classList.add('icon-button')
-            const span = document.createElement('span')
-            span.className = `icon glyph-${icon}`
-            span.setAttribute('aria-hidden', 'true')
-            btn.appendChild(span)
+            btn.appendChild(this.createIconElement(icon))
             const title = this.getParameterValue(node, 'label') || icon
             if (title) btn.title = String(title)
         } else {
@@ -3001,10 +2998,7 @@ export class OverseerRenderer {
                 btnEl.className = 'overseer-button'
                 if (icon) {
                     btnEl.classList.add('icon-button')
-                    const span = document.createElement('span')
-                    span.className = `icon glyph-${icon}`
-                    span.setAttribute('aria-hidden', 'true')
-                    btnEl.appendChild(span)
+                    btnEl.appendChild(this.createIconElement(icon))
                 } else {
                     const labelSpan = document.createElement('span')
                     labelSpan.className = 'overseer-button-label'
@@ -4272,6 +4266,24 @@ export class OverseerRenderer {
         return container
     }
 
+    /**
+     * An icon from the library the build ships in `/icons`, drawn in the colour of the text
+     * around it (see `.icon` in styles.css). Only a plain name is looked up; anything else - a
+     * path, a quote that would end the address - draws an empty slot, as a name the library
+     * does not have does.
+     */
+    createIconElement(name) {
+        const span = document.createElement('span')
+        span.className = 'icon'
+        span.setAttribute('aria-hidden', 'true')
+        const key = String(name ?? '').trim().toLowerCase()
+        if (/^[a-z0-9]+(-[a-z0-9]+)*$/.test(key)) {
+            span.dataset.icon = key
+            span.style.setProperty('--icon', `url("/icons/${key}.svg")`)
+        }
+        return span
+    }
+
     createButtonElement(node) {
         const button = document.createElement('button')
         button.className = 'overseer-button'
@@ -4281,19 +4293,14 @@ export class OverseerRenderer {
         if (icon && (!labelText || String(labelText).trim() === '')) {
             // Icon-only button
             button.classList.add('icon-button')
-            const span = document.createElement('span')
-            span.className = `icon glyph-${icon}`
-            span.setAttribute('aria-hidden', 'true')
-            button.appendChild(span)
+            button.appendChild(this.createIconElement(icon))
             // Set tooltip from node name or icon name for accessibility
             const title = node.name || icon
             if (title) button.title = String(title)
         } else {
             // Label (and optional leading icon)
             if (icon) {
-                const span = document.createElement('span')
-                span.className = `icon glyph-${icon}`
-                span.setAttribute('aria-hidden', 'true')
+                const span = this.createIconElement(icon)
                 // small spacing between icon and text
                 span.style.marginRight = '6px'
                 button.appendChild(span)
