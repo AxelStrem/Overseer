@@ -5123,17 +5123,23 @@ export class OverseerRenderer {
             element.style.height = this.convertCssSizeValue(params.height)
         }
         
-        // Explicit overflow control parameters
-        if (params['overflow-x']) {
-            element.style.overflowX = params['overflow-x']
-        }
-        if (params['overflow-y']) {
-            element.style.overflowY = params['overflow-y']
-        }
-        if (params.overflow) {
-            element.style.overflow = params.overflow
-        }
-        
+        // Explicit overflow control parameters. They arrive wrapped - `auto` as {"CssSize":"Auto"},
+        // `hidden` as {"String":"hidden"} - and were once assigned as they came, which the browser
+        // ignores, so no container could ever scroll.
+        const overflow = this.overflowValue(node, 'overflow')
+        const overflowX = this.overflowValue(node, 'overflow-x')
+        const overflowY = this.overflowValue(node, 'overflow-y')
+        if (overflow) element.style.overflow = overflow
+        if (overflowX) element.style.overflowX = overflowX
+        if (overflowY) element.style.overflowY = overflowY
+        // A container that keeps its contents within its own height takes the height its parent
+        // gives it rather than making that space bigger: in a row, the row's stated height or
+        // else its neighbours' (see `.scrolls` in styles.css).
+        const clipsDown = (overflowY || overflow || 'visible') !== 'visible'
+        element.classList.toggle('scrolls', clipsDown)
+        element.classList.toggle('scrolls-free-width', clipsDown && !params.width)
+        element.classList.toggle('states-height', !!params.height)
+
     // Border style parameter (prefer computed value)
     {
         let borderDisabled = false
@@ -5618,11 +5624,14 @@ export class OverseerRenderer {
 
     convertCssSizeValue(sizeParam) {
         // Handle different CSS size value types from the Rust backend
+        // A unit variant comes as its bare name, "Auto" or "FitContent", wrapped or not.
+        const unitVariants = { Auto: 'auto', FitContent: 'fit-content' }
         if (typeof sizeParam === 'string') {
-            return sizeParam // Legacy string sizes
+            return unitVariants[sizeParam] || sizeParam // Legacy string sizes
         }
-        
+
         if (typeof sizeParam === 'object' && sizeParam !== null) {
+            if (typeof sizeParam.CssSize === 'string') return unitVariants[sizeParam.CssSize] || sizeParam.CssSize
             // Wrapped enum variant: { CssSize: { ... } }
             if (sizeParam.CssSize) {
                 const size = sizeParam.CssSize
@@ -5647,6 +5656,15 @@ export class OverseerRenderer {
         }
         
         return sizeParam // Fallback
+    }
+
+    /** A stated overflow as the CSS keyword it names, or nothing for anything else. */
+    overflowValue(node, name) {
+        let v = this.getParameterValue(node, name)
+        if (v && typeof v === 'object') v = v.CssSize !== undefined ? v.CssSize : v.String
+        if (typeof v !== 'string') return null
+        v = v.trim().toLowerCase()
+        return /^(visible|hidden|clip|scroll|auto)$/.test(v) ? v : null
     }
 
     convertBorderStyleValue(borderParam) {

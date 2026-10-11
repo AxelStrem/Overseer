@@ -727,6 +727,24 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     min-width: 0;
 }
 
+/* A container that scrolls takes the height its row gives it rather than adding its own: stretched
+   to the row, with `contain: size` so its contents count for nothing in the row's height. The row
+   is then as tall as it states, or else as its other children. Alone in a row that states no
+   height it would be given nothing, so it is left to grow as before. With no width of its own,
+   contained to nothing, it takes what the row has left. */
+.layout-horizontal.states-height > .scrolls,
+.layout-horizontal > .scrolls:not(:only-child),
+.layout-flow.states-height > .scrolls,
+.layout-flow > .scrolls:not(:only-child) {
+    align-self: stretch;
+    contain: size;
+}
+
+.layout-horizontal > .scrolls.scrolls-free-width,
+.layout-flow > .scrolls.scrolls-free-width {
+    flex: 1 1 0;
+}
+
 /* A figure and its unit are one thing to read. Left to wrap, "55 g" becomes two lines with the
    unit orphaned under the number. */
 .number-field .field-value {

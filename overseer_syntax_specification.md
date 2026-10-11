@@ -745,6 +745,9 @@ div FitContent (width=fit-content, height=fit-content) { // Content-based sizing
 // Overflow control
 div ScrollableBox (width=200px, height=100px, overflow=auto) {
 div ClampedBox (overflow-x=hidden, overflow-y=scroll) {
+div (layout=horizontal) {                           // A container that scrolls takes the height
+    list Exercises (width=50%, overflow-y=auto) {   // its row gives it: here the chart's, not
+    chart Trend (height=800px, width=40%) {         // the list's own
 
 // Border styling
 div BorderedBox (border-style=solid 2px black) {    // Solid borders
