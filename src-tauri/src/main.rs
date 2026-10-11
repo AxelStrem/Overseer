@@ -25,19 +25,24 @@ fn menu_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf> {
     Ok(folder.join(overseer::menu::FILE))
 }
 
+/// The desktop's entries are files on this computer, read where they are.
+fn labelled(places: Vec<overseer::menu::Place>) -> Vec<overseer::menu::Place> {
+    overseer::menu::labelled(places, |path| Some(std::path::PathBuf::from(path)))
+}
+
 #[command]
 async fn menu_places(app: tauri::AppHandle) -> Result<Vec<overseer::menu::Place>> {
-    overseer::menu::places(&menu_file(&app)?)
+    Ok(labelled(overseer::menu::places(&menu_file(&app)?)?))
 }
 
 #[command]
 async fn menu_keep(app: tauri::AppHandle, place: String, name: Option<String>) -> Result<Vec<overseer::menu::Place>> {
-    overseer::menu::keep(&menu_file(&app)?, &place, &name.unwrap_or_default())
+    Ok(labelled(overseer::menu::keep(&menu_file(&app)?, &place, &name.unwrap_or_default())?))
 }
 
 #[command]
 async fn menu_drop(app: tauri::AppHandle, place: String) -> Result<Vec<overseer::menu::Place>> {
-    overseer::menu::drop(&menu_file(&app)?, &place)
+    Ok(labelled(overseer::menu::drop(&menu_file(&app)?, &place)?))
 }
 
 #[command]

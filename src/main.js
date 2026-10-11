@@ -2171,6 +2171,19 @@ tab Main {
         } catch (_) { /* non-fatal */ }
     }
 
+    /// The window's title, and a browser tab's: the open document by the name the drawer calls it,
+    /// or by its file's name when nothing calls it anything. The path stays in the drawer.
+    showDocumentName() {
+        if (!this.currentFile) {
+            document.title = 'Overseer'
+            return
+        }
+        let name = ''
+        try { name = this.drawer ? this.drawer.nameOfCurrent() : '' } catch (_) { /* the file's name, then */ }
+        if (!name) name = String(this.currentFile).split(/[\\/]/).pop()
+        document.title = `${name} - Overseer`
+    }
+
     updateTitle() {
         const filePathElement = document.getElementById('file-path')
         
@@ -2182,9 +2195,8 @@ tab Main {
             // is always about to go away teaches you to ignore marks.
             const modifiedMarker = ''
             
-            // Update window title
-            document.title = `${fileName}${modifiedMarker} - Overseer`
-            
+            this.showDocumentName()
+
             // Update file path display in toolbar
             filePathElement.textContent = `${this.currentFile}${modifiedMarker}`
             filePathElement.style.display = 'block'

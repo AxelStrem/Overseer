@@ -612,18 +612,20 @@ impl DocumentRoot {
             "menu_places" | "menu_keep" | "menu_drop" | "menu_location" => {
                 let file = self.root.join(crate::menu::FILE);
                 let failed = |e: OverseerError| RequestError::Failed(format!("the menu: {:?}", e));
+                // Each named as this server names documents, and only those under its folder read.
+                let labelled = |places| crate::menu::labelled(places, |path| self.resolve(path).ok());
                 match cmd {
-                    "menu_places" => as_json(crate::menu::places(&file).map_err(failed)?),
+                    "menu_places" => as_json(labelled(crate::menu::places(&file).map_err(failed)?)),
                     "menu_keep" => {
                         let place = arg_str(args, &["place"])
                             .ok_or_else(|| RequestError::Rejected("'place' is required".into()))?;
                         let name = arg_str(args, &["name"]).unwrap_or_default();
-                        as_json(crate::menu::keep(&file, &place, &name).map_err(failed)?)
+                        as_json(labelled(crate::menu::keep(&file, &place, &name).map_err(failed)?))
                     }
                     "menu_drop" => {
                         let place = arg_str(args, &["place"])
                             .ok_or_else(|| RequestError::Rejected("'place' is required".into()))?;
-                        as_json(crate::menu::drop(&file, &place).map_err(failed)?)
+                        as_json(labelled(crate::menu::drop(&file, &place).map_err(failed)?))
                     }
                     _ => as_json(crate::menu::FILE),
                 }

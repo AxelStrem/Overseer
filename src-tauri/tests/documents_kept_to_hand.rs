@@ -106,10 +106,10 @@ fn the_server_keeps_its_own_list_in_its_own_folder() {
         ask("menu_keep", json!({ "place": "tasks.os", "name": "Tasks" }));
         let kept = ask("menu_keep", json!({ "place": "projects/overseer.os" }));
         assert_eq!(kept, json!([
-            { "path": "tasks.os", "name": "Tasks", "folder": "" },
-            { "path": "projects/overseer.os", "name": "", "folder": "" },
+            { "path": "tasks.os", "name": "Tasks", "folder": "", "label": "" },
+            { "path": "projects/overseer.os", "name": "", "folder": "", "label": "" },
         ]));
-        assert_eq!(ask("menu_drop", json!({ "place": "tasks.os" })), json!([{ "path": "projects/overseer.os", "name": "", "folder": "" }]));
+        assert_eq!(ask("menu_drop", json!({ "place": "tasks.os" })), json!([{ "path": "projects/overseer.os", "name": "", "folder": "", "label": "" }]));
         assert_eq!(ask("menu_location", json!({})), json!(menu::FILE));
         assert!(root.join(menu::FILE).exists());
         assert!(service.list().contains(&menu::FILE.to_string()), "the list is a document like any other");
@@ -190,5 +190,49 @@ fn a_list_made_before_there_were_folders_has_every_document_at_the_top() {
         assert!(places.iter().all(|p| p.folder.is_empty()));
         let kept = menu::keep(&file, "diary.os", "").unwrap();
         assert_eq!(paths(&kept), vec!["tasks.os", "projects/overseer.os", "diary.os"]);
+    });
+}
+
+#[test]
+fn a_document_is_called_by_the_label_of_the_tab_it_is_wrapped_in_as_it_says_now() {
+    // Read from the document each time the list is asked for, so renaming the tab renames it in
+    // the drawer; a document not wrapped in a tab, or not there at all, has no label to give.
+    serialised(|| {
+        let root = a_folder("labels");
+        std::fs::write(root.join("tasks.os"), "// tasks\n\ntab tasks (label=\"Chores {daily}\", mutable=true) {\n    string a = \"b\"\n}\n").unwrap();
+        std::fs::write(root.join("loose.os"), "div loose (label=\"Not a tab\") {\n}\n").unwrap();
+        std::fs::write(root.join("bare.os"), "tab bare {\n}\n").unwrap();
+        let file = root.join(menu::FILE);
+        for name in ["tasks.os", "loose.os", "bare.os", "gone.os"] {
+            menu::keep(&file, &root.join(name).to_string_lossy(), "").unwrap();
+        }
+        let read = || menu::labelled(menu::places(&file).unwrap(), |path| Some(std::path::PathBuf::from(path)));
+        let labels: Vec<String> = read().into_iter().map(|p| p.label).collect();
+        assert_eq!(labels, vec!["Chores {daily}", "", "", ""]);
+        std::fs::write(root.join("tasks.os"), "tab tasks (label=\"Tasks\") {\n}\n").unwrap();
+        assert_eq!(read()[0].label, "Tasks");
+        assert!(read().iter().all(|p| p.name.is_empty()), "keeping one gives it no name of its own");
+    });
+}
+
+#[test]
+fn the_server_says_what_each_document_it_keeps_calls_itself() {
+    serialised(|| {
+        let root = a_folder("server_labels");
+        std::fs::create_dir_all(root.join("projects")).unwrap();
+        std::fs::write(root.join("tracker.os"), "tab tracker (label=\"Calories\") {\n}\n").unwrap();
+        std::fs::write(root.join("projects").join("overseer.os"), "tab project (label=\"Overseer\") {\n}\n").unwrap();
+        let service = DocumentRoot::new(&root).expect("root");
+        let ask = |cmd: &str, args: serde_json::Value| {
+            service.command_for("alice", Some("tracker.os"), cmd, &args).expect(cmd)
+        };
+        ask("menu_keep", json!({ "place": "tracker.os" }));
+        ask("menu_keep", json!({ "place": "projects/overseer.os", "name": "Mine" }));
+        ask("menu_keep", json!({ "place": "../outside.os" }));
+        assert_eq!(ask("menu_places", json!({})), json!([
+            { "path": "tracker.os", "name": "", "folder": "", "label": "Calories" },
+            { "path": "projects/overseer.os", "name": "Mine", "folder": "", "label": "Overseer" },
+            { "path": "../outside.os", "name": "", "folder": "", "label": "" },
+        ]));
     });
 }

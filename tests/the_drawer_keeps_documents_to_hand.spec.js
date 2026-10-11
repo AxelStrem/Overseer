@@ -95,9 +95,31 @@ describe('the drawer', () => {
     const { drawer } = await withADrawer()
     expect(document.getElementById('drawer-keep').hidden).toBe(false)
     await drawer.keep()
-    expect(calls('menu_keep').slice(-1)[0][1]).toEqual({ place: TASKS, name: 'Tasks' })
+    expect(calls('menu_keep').slice(-1)[0][1]).toEqual({ place: TASKS })
     expect(document.getElementById('drawer-keep').hidden).toBe(true)
     expect(shown().map((s) => s.name)).toEqual(['overseer', 'Tasks'])
+  })
+
+  it('calls one with no name by its tab label, the open one as it says now, and the window too', async () => {
+    places = [{ path: TASKS, name: '', label: 'Old tasks' }, { path: PROJECT, name: '', label: 'Overseer' }]
+    const { app, drawer } = await withADrawer()
+    expect(shown().map((s) => s.name)).toEqual(['Tasks', 'Overseer'])
+    expect(document.title).toBe('Tasks - Overseer')
+    app.currentDocument[0].parameters.label = { String: 'Chores' }
+    drawer.paint()
+    app.showDocumentName()
+    expect(shown().map((s) => s.name)).toEqual(['Chores', 'Overseer'])
+    expect(document.title).toBe('Chores - Overseer')
+  })
+
+  it('lets the name the list gives win, and falls back to the file for a document with no tab', async () => {
+    places = [{ path: TASKS, name: 'Mine', label: 'Tasks' }]
+    const { app, drawer } = await withADrawer()
+    expect(document.title).toBe('Mine - Overseer')
+    places = []
+    app.currentDocument = [{ name: 'loose', node_type: 'div', parameters: { label: { String: 'Loose' } }, children: [] }]
+    await drawer.refresh()
+    expect(document.title).toBe('tasks.os - Overseer')
   })
 
   it('takes one off the list', async () => {
@@ -201,6 +223,7 @@ describe('the drawer', () => {
   it('marks another document when that one is opened', async () => {
     const { app } = await withADrawer()
     app.currentFile = PROJECT
+    app.currentDocument = []
     app.updateTitle()
     expect(shown()).toEqual([{ name: 'Chores', current: false }, { name: 'overseer', current: true }])
   })

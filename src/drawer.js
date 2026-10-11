@@ -87,23 +87,40 @@ export class Drawer {
             this.places = []
         }
         this.paint()
+        this.named()
     }
 
-    /// What the drawer calls a document: the name it was kept under, or its file's name.
+    /// What the drawer calls a document: the name the list gives it; or the label of the tab it is
+    /// wrapped in, as the open one says it now and as the host read the rest when the list was
+    /// asked for; or its file's name.
     nameOf(place) {
         if (place.name) return place.name
+        const label = (place.path === this.current() && this.labelOfCurrent()) || place.label
+        if (label) return String(label)
         const file = String(place.path).split(/[\\/]/).pop() || String(place.path)
         return file.replace(/\.os$/, '')
     }
 
-    /// What to call the open document when it is kept: its first tab's label, which is what it
-    /// calls itself, or nothing, which leaves it to the file's name.
-    nameForCurrent() {
+    /// What the open document is called - as the drawer calls it when it is kept, and otherwise
+    /// the label of the tab it is wrapped in. Nothing when neither says, which leaves it to the
+    /// file's name.
+    nameOfCurrent() {
+        const here = this.current()
+        if (!here) return ''
+        const kept = this.places.find((p) => p.path === here)
+        if (kept) return this.nameOf(kept)
+        return this.labelOfCurrent()
+    }
+
+    /// The label of the tab the open document is wrapped in: its first node, when that is a tab.
+    /// Wrapping a document in a tab is a habit rather than a rule, so there may be none.
+    labelOfCurrent() {
         try {
             const doc = this.app.currentDocument
-            const tab = (Array.isArray(doc) ? doc : []).find((n) => (n.node_type || n.type) === 'tab')
-            const label = tab && this.app.renderer.getParameterValue(tab, 'label')
-            return label ? String(label) : ''
+            const first = Array.isArray(doc) ? doc[0] : null
+            if (!first || (first.node_type || first.type) !== 'tab') return ''
+            const label = this.app.renderer.getParameterValue(first, 'label')
+            return label ? String(label).trim() : ''
         } catch (_) {
             return ''
         }
@@ -217,6 +234,11 @@ export class Drawer {
         try { localStorage.setItem('overseer.drawer.folders', JSON.stringify(rest)) } catch (_) { /* not kept */ }
     }
 
+    /// What the open document is called may have changed with the list: the window says it too.
+    named() {
+        try { this.app && this.app.showDocumentName && this.app.showDocumentName() } catch (_) { /* only a title */ }
+    }
+
     /// The open document is now another one.
     documentChanged() {
         this.paint()
@@ -226,11 +248,13 @@ export class Drawer {
         const here = this.current()
         if (!here) return
         try {
-            this.places = await invoke('menu_keep', { place: here, name: this.nameForCurrent() })
+            // With no name of its own, so that it goes on being called whatever it calls itself.
+            this.places = await invoke('menu_keep', { place: here })
         } catch (e) {
             console.warn('[Overseer] the document could not be kept', e)
         }
         this.paint()
+        this.named()
     }
 
     async drop(path) {
@@ -240,6 +264,7 @@ export class Drawer {
             console.warn('[Overseer] the document could not be taken off the list', e)
         }
         this.paint()
+        this.named()
     }
 
     async open(path) {

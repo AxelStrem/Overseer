@@ -25,8 +25,9 @@ pub const FILE: &str = "menu.os";
 const EMPTY: &str = r#"// The documents kept to hand, in the order the drawer lists them.
 // -
 // Added from the drawer, which offers to keep whatever document is open, and taken off it the
-// same way. Renamed and reordered here: `name` is what the drawer calls a document, and the order
-// below is the order it shows them in. `folder` gathers documents under one heading in the drawer;
+// same way. Renamed and reordered here: the drawer calls a document by its `name` when it has one,
+// by the label of the tab it is wrapped in when it has none, and by its file's name otherwise; the
+// order below is the order it shows them in. `folder` gathers documents under one heading in the drawer;
 // those with none come first. `path` is where the document is - a file on this computer for the
 // desktop app, a document's name under the server's folder for the browser.
 
@@ -54,6 +55,11 @@ pub struct Place {
     /// there were folders has no such field, and every document in it is at the top.
     #[serde(default)]
     pub folder: String,
+    /// The label of the tab the document is wrapped in, read from the document each time the list
+    /// is asked for, so that renaming the tab renames it in the drawer too. Empty when it has no
+    /// such tab or cannot be read - see `labelled`.
+    #[serde(default)]
+    pub label: String,
 }
 
 /// The list's file, made the first time it is asked for.
@@ -97,7 +103,7 @@ fn entries(nodes: &[OverseerNode]) -> Vec<(String, Place)> {
                     .map(|c| text_of(c.parameters.get("_computed_value").or(c.parameters.get("value"))))
                     .unwrap_or_default()
             };
-            (entry.name.clone(), Place { path: field("path"), name: field("name"), folder: field("folder") })
+            (entry.name.clone(), Place { path: field("path"), name: field("name"), folder: field("folder"), label: String::new() })
         })
         .filter(|(_, place)| !place.path.is_empty())
         .collect()
@@ -150,4 +156,68 @@ pub fn drop(file: &Path, path: &str) -> Result<Vec<Place>> {
         )?;
     }
     places(file)
+}
+
+/// The list with each document's label read from the document itself.
+///
+/// `locate` says which file an entry names - the entry itself on the desktop, a document under its
+/// folder on the server - or nothing, for one that cannot be read there. Only the document's first
+/// lines are read, so opening the drawer does not read every document it lists in full.
+pub fn labelled(places: Vec<Place>, locate: impl Fn(&str) -> Option<std::path::PathBuf>) -> Vec<Place> {
+    places
+        .into_iter()
+        .map(|mut place| {
+            place.label = locate(&place.path).and_then(|file| label_in(&file)).unwrap_or_default();
+            place
+        })
+        .collect()
+}
+
+/// The label of the tab a document is wrapped in, when its first node is a tab with one.
+///
+/// Wrapping a whole document in a tab is a habit rather than a rule, but where it is followed the
+/// tab's label is what the document calls itself - and what it is shown as when documents are put
+/// together, each in its own tab.
+fn label_in(file: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(std::fs::File::open(file).ok()?);
+    let mut head = String::new();
+    for line in reader.lines().take(200) {
+        let line = line.ok()?;
+        let trimmed = line.trim_start();
+        if head.is_empty() {
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
+            }
+            if !(trimmed.starts_with("tab ") || trimmed.starts_with("tab(")) {
+                return None;
+            }
+        }
+        head.push_str(&line);
+        head.push('\n');
+        if let Some(open) = opening_brace(&head) {
+            // The tab's header and nothing of what it holds: parsed as an empty tab.
+            let header = format!("{}}}\n", &head[..=open]);
+            let (_, nodes) = crate::parser::parse_document(&header).ok()?;
+            let label = text_of(nodes.first()?.parameters.get("label"));
+            return (!label.trim().is_empty()).then(|| label.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Where the first `{` outside a quoted string is.
+fn opening_brace(text: &str) -> Option<usize> {
+    let mut quoted = false;
+    let mut escaped = false;
+    for (at, c) in text.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            '{' if !quoted => return Some(at),
+            _ => {}
+        }
+    }
+    None
 }
