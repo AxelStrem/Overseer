@@ -198,6 +198,20 @@ describe('an enum field', () => {
     expect(offered()).toEqual(['ready to go'])
   })
 
+  it('is drawn as a box, unlike the pills of a tags field', () => {
+    render(docWith('ready'))
+    expect(document.querySelector('.enum-field .tag-chips').classList.contains('chip-box')).toBe(true)
+  })
+
+  it('is drawn as a pill when it asks to be', () => {
+    const doc = docWith('ready')
+    doc[0].children[1].parameters.shape = { String: 'pill' }
+    render(doc)
+    const row = document.querySelector('.enum-field .tag-chips')
+    expect(row.classList.contains('chip-pill')).toBe(true)
+    expect(row.classList.contains('chip-box')).toBe(false)
+  })
+
   it('offers nothing to choose when the document is not mutable', () => {
     render(docWith('ready', { mutable: false }))
     press(chips()[0])

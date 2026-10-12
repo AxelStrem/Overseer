@@ -643,6 +643,14 @@ already held. A task naming the tasks it waits on, open or finished, each in its
 tags after (vocabulary="/project/Items, /project/History") = "parser, escape"
 ```
 
+`shape` says how its chips are drawn: `pill`, rounded at the ends, which tags are unless told
+otherwise, or `box`, a rectangle with softened corners, which an `enum` is. A filter's row of
+chips takes the shape of the field it narrows by.
+
+```overseer
+tags labels (vocabulary="/project/Labels", shape="box") = "perf"
+```
+
 Handed to a formula, a `tags` field reads as a list, so a document can ask what it holds:
 
 ```overseer
@@ -655,7 +663,9 @@ One value out of a list of them: a task's stage, say. The same vocabulary a `tag
 a handle, a name, a colour - and the same chip, holding exactly one. Pressing it offers the other
 values in the order the list gives them, and the one picked replaces it. A value the list does not
 hold still shows, marked, as an unlisted tag does; with nothing chosen, a dashed chip is the place
-to press, showing the field's `placeholder` if it has one.
+to press, showing the field's `placeholder` if it has one. Its chip is a box rather than a
+tag's pill, so the one value of a list reads apart from a set of labels beside it; `shape="pill"`
+draws it as a tag.
 
 ```overseer
 div Stage (layout="horizontal") {
@@ -1070,8 +1080,8 @@ div Tasks {
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
 - **Mounts**: `source`, `lazy`, `mutable`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
-- **Enums**: `vocabulary`, `withhold`, `placeholder`
-- **Tags**: `vocabulary` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
+- **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`
+- **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 
 ---
 

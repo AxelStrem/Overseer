@@ -116,6 +116,11 @@ describe('a filter with stages', () => {
     expect(stageChips()[2].style.backgroundColor).toBe('rgb(29, 78, 216)')
   })
 
+  it('draws the stages in the shape their field takes, and the tags in theirs', () => {
+    expect(document.querySelector('.filter-enum').classList.contains('chip-box')).toBe(true)
+    expect(document.querySelector('.filter-tags:not(.filter-enum)').classList.contains('chip-pill')).toBe(true)
+  })
+
   it('narrows to a stage', () => {
     press('ready')
     expect(visible()).toEqual(['Parser drops a brace', 'Tighten the rows'])

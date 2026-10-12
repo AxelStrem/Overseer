@@ -3127,7 +3127,7 @@ export class OverseerRenderer {
             const list = this.findNodeByPath(window.app.currentDocument, target)
             const vocabulary = this.fieldVocabularyIn(list, String(enumField))
             const chips = document.createElement('span')
-            chips.className = 'filter-tags filter-enum'
+            chips.className = `filter-tags filter-enum chip-${this.chipShape(this.fieldIn(list, String(enumField)), 'enum')}`
             for (const [value, known] of vocabulary) {
                 const chip = this.tagChip(value, known, null)
                 chip.classList.add('filter-tag')
@@ -3156,7 +3156,7 @@ export class OverseerRenderer {
             if (!state.tags.has(field)) state.tags.set(field, new Set())
             const picked = state.tags.get(field)
             const chips = document.createElement('span')
-            chips.className = 'filter-tags'
+            chips.className = `filter-tags chip-${this.chipShape(this.fieldIn(list, field), 'tags')}`
             chips.dataset.filterField = field
             for (const [tag, known] of vocabulary) {
                 const chip = this.tagChip(tag, known, null)
@@ -3228,6 +3228,15 @@ export class OverseerRenderer {
         // Applied after this returns, when the list it filters is on the page too.
         setTimeout(() => this.applyFilters(), 0)
         return container
+    }
+
+    /** A field the entries of a list hold, from the first entry that has it. */
+    fieldIn(list, name) {
+        for (const entry of (list && list.children) || []) {
+            const field = this.entryField(entry, name)
+            if (field) return field
+        }
+        return null
     }
 
     /** The vocabulary of a field the entries of a list hold, from the first entry that has it. */
@@ -3426,7 +3435,7 @@ export class OverseerRenderer {
         }
 
         const chips = document.createElement('span')
-        chips.className = 'tag-chips'
+        chips.className = `tag-chips chip-${this.chipShape(node)}`
         container.appendChild(chips)
 
         const held = () => String((own ? own.read() : this.getNodeValue(node)) || '')
@@ -3539,7 +3548,7 @@ export class OverseerRenderer {
         }
 
         const chips = document.createElement('span')
-        chips.className = 'tag-chips'
+        chips.className = `tag-chips chip-${this.chipShape(node)}`
         container.appendChild(chips)
 
         const held = () => String(this.getNodeValue(node) ?? '').trim()
@@ -3669,6 +3678,20 @@ export class OverseerRenderer {
             } catch (_) { /* a field with no readable vocabulary just has no colours */ }
         })
         return found
+    }
+
+    /**
+     * How a field's chips are drawn: `pill`, rounded at the ends, or `box`, a rectangle with
+     * its corners only softened. Asked for with `shape`; without it an enum is a box and tags
+     * are pills, so a field holding one of a list and a field holding a set of labels can be
+     * told apart at a glance wherever they sit side by side. `kind` stands in for the field's
+     * type when there is no field to read it from - a filter over a list with no entries yet.
+     */
+    chipShape(node, kind = null) {
+        const asked = String((node && this.getParameterValue(node, 'shape')) || '').trim().toLowerCase()
+        if (asked === 'pill' || asked === 'box') return asked
+        const type = String((node && (node.node_type || node.type)) || kind || '').toLowerCase()
+        return type === 'enum' ? 'box' : 'pill'
     }
 
     /** One chip. `remove` absent means the field cannot be edited, so it is not offered. */

@@ -93,6 +93,21 @@ describe('a tags field', () => {
     expect(chips()[1].classList.contains('tag-unknown')).toBe(true)
   })
 
+  it('draws its chips as pills', () => {
+    render('bug, ui')
+    expect(document.querySelector('.tags-field .tag-chips').classList.contains('chip-pill')).toBe(true)
+  })
+
+  it('draws them as boxes when it asks to be', () => {
+    const doc = docWith('bug, ui')
+    doc[0].children[1].parameters.shape = { String: 'box' }
+    app = new OverseerApp()
+    app.currentDocument = doc
+    app._currentText = 'TEXT'
+    app.renderer.renderDocument(app.currentDocument)
+    expect(document.querySelector('.tags-field .tag-chips').classList.contains('chip-box')).toBe(true)
+  })
+
   it('is still usable with no vocabulary at all', () => {
     render('one, two', { vocabulary: null })
     expect(shown()).toEqual(['one', 'two'])

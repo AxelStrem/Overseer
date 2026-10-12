@@ -1696,6 +1696,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     color: #f5f5f5;
 }
 
+/* A field's chips drawn as boxes rather than pills - an enum's, unless it says otherwise - so a
+ * stage beside a row of tags reads as a different kind of thing. The picker opens inside the
+ * row, so what it offers takes the same shape. */
+.chip-box .tag-chip,
+.chip-box .tag-add {
+    border-radius: 3px;
+}
+
 /* A tag the document's list does not mention. Not hidden - it is in the document, and drawing
  * only the known ones would misreport what the field holds - but marked, because it is usually
  * a typo or a tag someone has since removed from the list. */
