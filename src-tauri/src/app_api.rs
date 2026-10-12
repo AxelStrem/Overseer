@@ -2355,3 +2355,52 @@ pub fn resolve_selective(
     }
 }
 
+
+/// Why an icon a document named was not handed out.
+#[derive(Debug, PartialEq)]
+pub enum IconRefused {
+    /// The name is not one that is looked up, whatever is on disk.
+    NotAName(String),
+    /// Nothing that may be handed out is there.
+    Missing(String),
+}
+
+/// The most an icon may weigh. An icon is a few kilobytes; a file many times that is not one,
+/// and is refused rather than drawn in a box an em wide.
+pub const ICON_MOST_BYTES: u64 = 256 * 1024;
+
+/// The text of an SVG icon a document names by a path relative to its own folder, as in
+/// `<icon=icons/carrot.svg>`.
+///
+/// The path comes from the document and, on the server, through the network, so it is checked
+/// the way the server checks a document's name: only plain names, no `..`, no root or drive,
+/// and nothing but `.svg`. The file found is then confirmed to sit under the document's folder,
+/// which is what catches a link pointing elsewhere. Both doors call this, so the desktop app
+/// and the server cannot disagree about what a document may reach.
+pub fn icon_beside(document: &std::path::Path, icon: &str) -> std::result::Result<String, IconRefused> {
+    use std::path::{Component, Path};
+    let relative = Path::new(icon);
+    if icon.is_empty() || relative.is_absolute() {
+        return Err(IconRefused::NotAName(format!("'{}' is not a path relative to the document", icon)));
+    }
+    if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
+        return Err(IconRefused::NotAName(format!("'{}' contains a path component that is not a name", icon)));
+    }
+    if relative.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("svg")) != Some(true) {
+        return Err(IconRefused::NotAName(format!("'{}' is not an .svg file", icon)));
+    }
+    let missing = || IconRefused::Missing(format!("no icon '{}'", icon));
+    let folder = document
+        .parent()
+        .and_then(|d| d.canonicalize().ok())
+        .ok_or_else(missing)?;
+    let found = folder.join(relative).canonicalize().map_err(|_| missing())?;
+    if !found.starts_with(&folder) || !found.is_file() {
+        return Err(missing());
+    }
+    let size = std::fs::metadata(&found).map_err(|_| missing())?.len();
+    if size > ICON_MOST_BYTES {
+        return Err(IconRefused::NotAName(format!("'{}' is too large to be an icon", icon)));
+    }
+    std::fs::read_to_string(&found).map_err(|_| missing())
+}

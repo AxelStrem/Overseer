@@ -389,6 +389,21 @@ impl DocumentRoot {
                     .map(serde_json::Value::String)
                     .unwrap_or(serde_json::Value::Null))
             }
+            // An icon the document names beside it; the same check the desktop app makes,
+            // and the document itself already resolved under the root.
+            "load_overseer_icon" => {
+                let path = arg_str(args, &["path"])
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                let icon = arg_str(args, &["icon"])
+                    .ok_or_else(|| RequestError::Rejected("'icon' is required".into()))?;
+                let file = self.resolve(&path)?;
+                app_api::icon_beside(&file, &icon)
+                    .map(serde_json::Value::String)
+                    .map_err(|refused| match refused {
+                        app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),
+                        app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
+                    })
+            }
             "parse_overseer_content" => {
                 let content = arg_str(args, &["content"])
                     .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;

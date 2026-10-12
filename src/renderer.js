@@ -45,17 +45,93 @@ export const textWithoutIcons = (s) => {
     return t.replace(ICON_IN_TEXT, ' ').replace(/\s+/g, ' ').trim()
 }
 
+/// What the inside of `<icon=...>` says: a library icon's name, or a path to an SVG beside the
+/// document - one with a `/` in it, or ending in `.svg` - and, after it, an optional
+/// `color=<colour>` to draw it in. A name the library cannot have, or a colour the page does not
+/// accept, comes back as nothing, which draws an empty slot.
+const iconParts = (raw) => {
+    const m = /^\s*(\S+)(?:\s+color=(.+?))?\s*$/i.exec(String(raw ?? ''))
+    if (!m) return {}
+    const color = m[2] !== undefined && new RegExp(`^${COLOR_VALUE}$`).test(m[2].trim()) ? m[2].trim() : null
+    if (m[2] !== undefined && !color) return {}
+    const name = m[1]
+    if (name.includes('/') || /\.svg$/i.test(name)) {
+        // Only the document's folder and below, as the server and the app check again.
+        const reaches = /\.svg$/i.test(name) && !/^\/|[\\:]/.test(name) &&
+            name.split('/').every((part) => part && part !== '.' && part !== '..')
+        return reaches ? { file: name, color } : {}
+    }
+    const key = name.toLowerCase()
+    return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(key) ? { key, color } : {}
+}
+
+// A document's own icons, by the document and the path it gives: the address the page draws
+// them from once they have come, or the promise of one while they are on their way. An icon's
+// text never becomes part of the page - it is drawn as an image or a mask, where an SVG's
+// scripts do not run.
+const documentIcons = new Map()
+const documentIconAddress = (file) => {
+    const doc = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+    const at = `${doc}\n${file}`
+    const known = documentIcons.get(at)
+    if (typeof known === 'string' || known === null) return known
+    if (!known && doc) {
+        documentIcons.set(at, invoke('load_overseer_icon', { path: doc, icon: file })
+            .then((svg) => typeof svg === 'string' ? URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })) : null)
+            .catch(() => null)
+            .then((url) => {
+                documentIcons.set(at, url)
+                // Every slot drawn while it was on its way, however it was drawn.
+                for (const el of document.querySelectorAll('.icon[data-icon-file]')) {
+                    if (el.dataset.iconFile === file) showDocumentIcon(el, url)
+                }
+            }))
+    }
+    return undefined
+}
+const showDocumentIcon = (el, url) => {
+    if (!url) return
+    el.style.setProperty('--icon', `url("${url}")`)
+    el.dataset.icon = el.dataset.iconFile
+}
+
+/// The attributes an icon's span is drawn with, shared by the element and the markdown's HTML.
+const iconAttributes = (raw) => {
+    const { key, file, color } = iconParts(raw)
+    const attrs = {}
+    const style = []
+    if (key) {
+        attrs['data-icon'] = key
+        style.push(`--icon: url("/icons/${key}.svg")`)
+    } else if (file) {
+        attrs['data-icon-file'] = file
+        // Its own colours unless it is given one: then it is a mask, as a library icon is.
+        if (!color) attrs['data-own-colours'] = ''
+        const url = documentIconAddress(file)
+        if (url) {
+            attrs['data-icon'] = file
+            style.push(`--icon: url("${url}")`)
+        }
+    }
+    if (color && (key || file)) style.push(`--icon-color: ${color}`)
+    if (style.length) attrs.style = style.join('; ')
+    return attrs
+}
+
 // In markdown an icon is carried through the parser as a mark of two private-use characters
-// around its name, and drawn once the HTML is made. As a tag it would be escaped as any other
-// HTML is, and its `>` would end a `<color=... | ...>` around it.
-const ICON_MARK = /([a-z0-9-]*)/g
-const markIcons = (s) => s.replace(ICON_IN_TEXT, (_, raw) => {
-    const key = String(raw).trim().toLowerCase()
-    return `${/^[a-z0-9]+(-[a-z0-9]+)*$/.test(key) ? key : ''}`
+// around what its tag says, and drawn once the HTML is made. As a tag it would be escaped as any
+// other HTML is, and its `>` would end a `<color=... | ...>` around it. What it says is carried as
+// letters, digits and `%` alone, which no markdown reads as anything.
+const ICON_MARK = /([A-Za-z0-9%]*)/g
+const markIcons = (s) => s.replace(ICON_IN_TEXT, (_, raw) =>
+    `${encodeURIComponent(String(raw)).replace(/[^A-Za-z0-9%]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`)
+const drawIconMarks = (html) => html.replace(ICON_MARK, (_, said) => {
+    let raw = ''
+    try { raw = decodeURIComponent(said) } catch (_) {}
+    const attrs = Object.entries(iconAttributes(raw))
+        .map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join('')
+    return `<span class="icon" aria-hidden="true"${attrs}></span>`
 })
-const drawIconMarks = (html) => html.replace(ICON_MARK, (_, key) => key
-    ? `<span class="icon" aria-hidden="true" data-icon="${key}" style="--icon: url(&quot;/icons/${key}.svg&quot;)"></span>`
-    : '<span class="icon" aria-hidden="true"></span>')
 
 // A scheme the page may follow, or none at all - a path on this server. Read with the whitespace and
 // control characters a browser drops from a URL taken out, so `java\tscript:` is seen for what it is.
@@ -2297,7 +2373,7 @@ export class OverseerRenderer {
         // Load button (emits 'load' event; backend handling will come later)
         const btn = document.createElement('button')
         btn.className = 'overseer-button'
-        const icon = (this.getParameterValue(node, 'icon') || '').toString().trim().toLowerCase()
+        const icon = (this.getParameterValue(node, 'icon') || '').toString().trim()
         if (icon) {
             btn.classList.add('icon-button')
             btn.appendChild(this.createIconElement(icon))
@@ -4610,20 +4686,17 @@ export class OverseerRenderer {
     }
 
     /**
-     * An icon from the library the build ships in `/icons`, drawn in the colour of the text
-     * around it (see `.icon` in styles.css). Only a plain name is looked up; anything else - a
-     * path, a quote that would end the address - draws an empty slot, as a name the library
-     * does not have does.
+     * An icon as `<icon=...>` names it: from the library the build ships in `/icons`, drawn in
+     * the colour of the text around it (see `.icon` in styles.css), or an SVG beside the document,
+     * drawn in its own colours - either in the colour a `color=` after it gives instead. A name
+     * the library cannot have, a path the document may not reach, or a quote that would end the
+     * address draws an empty slot, as a name the library does not have does.
      */
     createIconElement(name) {
         const span = document.createElement('span')
         span.className = 'icon'
         span.setAttribute('aria-hidden', 'true')
-        const key = String(name ?? '').trim().toLowerCase()
-        if (/^[a-z0-9]+(-[a-z0-9]+)*$/.test(key)) {
-            span.dataset.icon = key
-            span.style.setProperty('--icon', `url("/icons/${key}.svg")`)
-        }
+        for (const [attr, value] of Object.entries(iconAttributes(name))) span.setAttribute(attr, value)
         return span
     }
 
@@ -4662,7 +4735,7 @@ export class OverseerRenderer {
         const button = document.createElement('button')
         button.className = 'overseer-button'
         // Support icon-only or icon+label buttons
-        const icon = (this.getParameterValue(node, 'icon') || '').toString().trim().toLowerCase()
+        const icon = (this.getParameterValue(node, 'icon') || '').toString().trim()
         const labelText = this.getParameterValue(node, 'label')
         const labelSays = textWithoutIcons(labelText ?? '').trim()
         if (!icon && labelSays === '' && labelText && String(labelText).indexOf('<icon=') !== -1) {

@@ -78,6 +78,15 @@ async fn load_overseer_text(path: String, version: String) -> Result<Option<Stri
     Ok(app_api::text_of_version(&path, &version))
 }
 
+/// An SVG icon the open document names by a path relative to its own folder - see
+/// `app_api::icon_beside`.
+#[command]
+async fn load_overseer_icon(path: String, icon: String) -> Result<String> {
+    app_api::icon_beside(std::path::Path::new(&path), &icon).map_err(|refused| match refused {
+        app_api::IconRefused::NotAName(m) | app_api::IconRefused::Missing(m) => OverseerError::IoError(m),
+    })
+}
+
 // Save a regenerated document provided by the caller. We canonicalize via the serializer so
 // snapshot-driven trivia (comments/whitespace) is reapplied without needing the original text.
 #[command]
@@ -419,6 +428,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_overseer_file,
             load_overseer_text,
+            load_overseer_icon,
             save_overseer_file,
             save_overseer_file_from_text,
             save_overseer_file_with_original,

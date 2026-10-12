@@ -378,6 +378,21 @@ the tag into the icon. `icon="plus"` on a button is the short way of writing a l
 Anything else in angle brackets stays text. Where only text can go - the window's title - the
 icons are left out.
 
+A document can bring its own icons: a name with a `/` in it, or ending in `.svg`, is the path of
+an SVG file relative to the document's own folder. It is drawn in its own colours. After the name,
+`color=` draws any icon - the library's or the document's - in one colour instead of the text's.
+
+```overseer
+string carrot (label="<icon=icons/carrot.svg> Carrot") = "fresh"
+string late (label="<icon=alarm-clock color=#E91E63> Late") = "2 days"
+string pantry (label="<icon=icons/jar.svg color=gray> Pantry") = "full"
+```
+
+Only the document's folder and the folders under it can be reached: a path that starts at a root
+or a drive, or holds `..`, names no icon, and nor does a file that is not `.svg` or is larger than
+256 KB. Such a name, like one the library does not have, leaves an empty space where the icon
+would be. The SVG is drawn as a picture, so nothing it carries runs.
+
 #### Conditional actions inside action blocks
 
 You can conditionally execute actions inside any `on ... {}` block using an `if` action node. The condition is provided via the `cond` parameter (usually a formula) and, when truthy, the nested actions will run. When falsy, the nested actions are skipped.

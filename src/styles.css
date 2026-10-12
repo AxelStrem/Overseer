@@ -1186,11 +1186,18 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     width: 1em;
     height: 1em;
     vertical-align: -0.125em;
-    background-color: currentColor;
+    background-color: var(--icon-color, currentColor);
     -webkit-mask: var(--icon, none) center / contain no-repeat;
     mask: var(--icon, none) center / contain no-repeat;
 }
+/* A document's own SVG, without a colour given for it: drawn as the picture it is. */
+.icon[data-own-colours] {
+    background: var(--icon, none) center / contain no-repeat;
+    -webkit-mask: none;
+    mask: none;
+}
 .icon:not([data-icon]) { background-color: transparent; }
+.icon[data-own-colours]:not([data-icon]) { background-image: none; }
 
 /* Ensure no pseudo content renders beside labels in some engines */
 .overseer-button::before,
