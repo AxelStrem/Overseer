@@ -436,7 +436,7 @@ impl DocumentRoot {
                     RequestError::from_event("could not run the event", e)
                 })?)
             }
-            // The four that send an instruction rather than a document. The page names what to
+            // Those that send an instruction rather than a document. The page names what to
             // change and the backend changes what is on disk, so a write made in between - the
             // bot recording a meal, another tab - is still there afterwards.
             "append_overseer_entry" => {
@@ -475,6 +475,29 @@ impl DocumentRoot {
                         session,
                     )
                     .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))?),
+                )
+            }
+            "move_overseer_entry" => {
+                let named = document
+                    .ok_or_else(|| RequestError::Rejected("'document' is required".into()))?;
+                let at = self.resolve(named)?;
+                let entry = arg_strings(args, &["entry_path", "entryPath"]);
+                let to_list = arg_strings(args, &["to_list_path", "toListPath"]);
+                // Absent or null puts it last.
+                let before = args
+                    .get("before")
+                    .and_then(|v| v.as_array())
+                    .map(|_| arg_strings(args, &["before"]));
+                as_json(
+                    app_api::for_the_page(app_api::move_entry_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        entry,
+                        to_list,
+                        before,
+                        session,
+                    )
+                    .map_err(|e| RequestError::Failed(format!("could not move: {:?}", e)))?),
                 )
             }
             "ensure_overseer_entry" => {

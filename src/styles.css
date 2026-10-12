@@ -633,6 +633,47 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     outline-offset: 2px;
 }
 
+/* A list that says `movable=true`: its entries are dragged to another place in it, or into
+   another such list. A long press on a phone, so the page still scrolls under a finger; the
+   menu that a long press brings up would end the drag. */
+.overseer-list[data-movable="1"] > [data-uid] {
+    -webkit-touch-callout: none;
+}
+
+.overseer-list[data-movable="1"] > .is-dragged {
+    opacity: 0.35;
+}
+
+.overseer-dragging,
+.overseer-dragging * {
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: grabbing !important;
+}
+
+.overseer-list.drop-here {
+    outline: 2px dashed var(--primary-color);
+    outline-offset: 2px;
+}
+
+.overseer-drag-ghost {
+    position: fixed;
+    z-index: 10000;
+    pointer-events: none;
+    opacity: 0.85;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    background: var(--surface-color);
+    border-radius: 6px;
+}
+
+.overseer-drop-line {
+    position: fixed;
+    z-index: 10001;
+    pointer-events: none;
+    background: var(--primary-color);
+    border-radius: 2px;
+}
+
 .overseer-list {
     background: var(--surface-color);
     border: 1px solid var(--border-color);

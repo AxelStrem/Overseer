@@ -274,6 +274,24 @@ list History (entry=<Day>, key="day", window=3,
 What is left out is still in the file and still saved; it is simply not resolved. A note under
 the list says how many entries that was.
 
+#### Moving entries by hand
+
+`movable=true` lets a list's entries be dragged: to another place in the list, or into another
+movable list whose entries are made from the same template, which is how a board of columns is
+built. A drag is a write, so it needs writes allowed there (`mutable`). A list drawn in an order
+of its own (`sort_by`) takes an entry dropped into it from elsewhere, but cannot be reordered by
+hand. The entry moves in one change: it is never in both lists or in neither, and one undo puts
+it back.
+
+```overseer
+list Todo (entry=<Card>, movable=true) { }
+list Doing (entry=<Card>, movable=true) { }
+list Done (entry=<Card>, movable=true) { }
+```
+
+On a phone an entry is picked up by holding it still for a moment, since a finger that moves at
+once is scrolling.
+
 ## Advanced Features
 
 ### 1. Templates and Inheritance
@@ -1077,7 +1095,7 @@ div Tasks {
 - **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`)
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
-- **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`
+- **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`, `movable`
 - **Mounts**: `source`, `lazy`, `mutable`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`

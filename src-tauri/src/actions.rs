@@ -3377,6 +3377,141 @@ impl ActionExecutor {
         Ok(())
     }
 
+    /// Move one entry, named by its own path, to a place in a list - the same one or another.
+    ///
+    /// What a drag on the page writes. By path, like `remove_entry`, because a list does not have
+    /// to declare a key; and where it lands is said as the entry it goes before rather than as a
+    /// number, because a list drawn filtered or windowed does not show the places the file counts,
+    /// and the entry under the pointer is what the page actually knows. None puts it last.
+    ///
+    /// Taken out and put in as one change, so it cannot half-happen: whatever is refused is
+    /// refused before anything moves. The document decides where it is allowed - both lists say
+    /// `movable=true`, and two lists only trade entries made from the same template, so an
+    /// entry never arrives somewhere its fields mean nothing.
+    pub fn move_entry(
+        nodes: &mut Vec<OverseerNode>,
+        entry_path: &str,
+        to_list_path: &str,
+        before: Option<&str>,
+    ) -> Result<(), OverseerError> {
+        let find = |nodes: &Vec<OverseerNode>, path: &str| {
+            let (segments, _explicit_param, anchored) = Self::split_path_and_param(path);
+            Self::resolve_target_indices(nodes, &[], anchored, &segments)
+                .ok_or_else(|| OverseerError::ValidationError(format!("Nothing at: {}", path)))
+        };
+        let entry = find(nodes, entry_path)?;
+        let mut to = find(nodes, to_list_path)?;
+        let (&from_pos, from) = entry
+            .split_last()
+            .ok_or_else(|| OverseerError::ValidationError("Nothing to move".to_string()))?;
+        let from = from.to_vec();
+        let before_pos = match before {
+            Some(path) => {
+                let at = find(nodes, path)?;
+                match at.split_last() {
+                    Some((&pos, holder)) if holder == to.as_slice() => Some(pos),
+                    _ => {
+                        return Err(OverseerError::ValidationError(format!(
+                            "{} is not an entry of {}",
+                            path, to_list_path
+                        )))
+                    }
+                }
+            }
+            None => None,
+        };
+        if to.starts_with(&entry) {
+            return Err(OverseerError::ValidationError(format!(
+                "{} cannot go into a list inside itself",
+                entry_path
+            )));
+        }
+
+        let item = {
+            let source = Self::get_node_ref_by_indices(nodes, &from)
+                .filter(|n| n.node_type == "list")
+                .ok_or_else(|| {
+                    OverseerError::ValidationError(format!("{} is not in a list", entry_path))
+                })?;
+            let target = Self::get_node_ref_by_indices(nodes, &to)
+                .filter(|n| n.node_type == "list")
+                .ok_or_else(|| {
+                    OverseerError::ValidationError(format!("{} is not a list", to_list_path))
+                })?;
+            for list in [source, target] {
+                if !Self::says_movable(list) {
+                    return Err(OverseerError::ValidationError(format!(
+                        "{} does not say movable=true, so its entries stay where they are",
+                        list.name
+                    )));
+                }
+            }
+            let item = source.children.get(from_pos).cloned().ok_or_else(|| {
+                OverseerError::ValidationError(format!("Nothing at: {}", entry_path))
+            })?;
+            if from != to {
+                let made_from = Self::entry_template_name(source);
+                if made_from.is_none() || made_from != Self::entry_template_name(target) {
+                    return Err(OverseerError::ValidationError(format!(
+                        "{} and {} hold entries made from different templates",
+                        source.name, target.name
+                    )));
+                }
+                Self::refuse_a_key_already_held(target, &item, to_list_path, "move")?;
+            }
+            item
+        };
+        // Dropped where it already was: nothing ran, so nothing is written and there is no step
+        // to take back.
+        if from == to && (before_pos == Some(from_pos) || before_pos == Some(from_pos + 1)) {
+            return Ok(());
+        }
+        // Where the entry lands is said in the list as it stands now, and taking the entry out
+        // first moves everything after it up by one - the target list itself, when it sits in a
+        // later entry of the same list.
+        if to.len() > from.len() && to.starts_with(&from) && to[from.len()] > from_pos {
+            to[from.len()] -= 1;
+        }
+        let before_pos = match before_pos {
+            Some(pos) if from == to && pos > from_pos => Some(pos - 1),
+            other => other,
+        };
+
+        // Shape, not value, and not one `Shape` can follow - see `note_structural`.
+        note_structural();
+        let source = Self::get_node_mut_by_indices(nodes, &from)
+            .ok_or_else(|| OverseerError::ValidationError(format!("{} is not in a list", entry_path)))?;
+        source.children.remove(from_pos);
+        // Neither list matches its text any more, and a list that still does is replayed from it
+        // with the entry in its old place - see `remove_from_list`.
+        source.source_fingerprint = None;
+        let target = Self::get_node_mut_by_indices(nodes, &to)
+            .ok_or_else(|| OverseerError::ValidationError(format!("{} is not a list", to_list_path)))?;
+        let at = before_pos.unwrap_or(target.children.len()).min(target.children.len());
+        target.children.insert(at, item);
+        target.source_fingerprint = None;
+        Self::mark_field_explicit_override(nodes, &from);
+        Self::mark_field_explicit_override(nodes, &to);
+        Ok(())
+    }
+
+    /// Whether a list lets its entries be moved by hand - `movable=true`.
+    fn says_movable(list: &OverseerNode) -> bool {
+        match list.parameters.get("movable") {
+            Some(OverseerValue::Boolean(b)) => *b,
+            Some(OverseerValue::String(s)) => s.trim().eq_ignore_ascii_case("true"),
+            _ => false,
+        }
+    }
+
+    /// The name of the template a list makes its entries from, as `entry=<...>` says it.
+    fn entry_template_name(list: &OverseerNode) -> Option<String> {
+        let Some(OverseerValue::Template(t)) = list.parameters.get("entry") else { return None };
+        let raw = t.split('/').last().unwrap_or("").trim();
+        let name = raw.strip_prefix('<').and_then(|r| r.strip_suffix('>')).unwrap_or(raw).trim();
+        (!name.is_empty()).then(|| name.to_string())
+    }
+
     /// Set a value, as a `set` action would.
     pub fn assign_value(
         nodes: &mut Vec<OverseerNode>,

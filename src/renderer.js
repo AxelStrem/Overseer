@@ -1913,11 +1913,15 @@ export class OverseerRenderer {
                     if (nodeTypeLower === 'list') {
                         this.setUpTable(element, node)
                         this.drawEntriesLeftOut(element, node)
+                        this.makeEntriesMovable(element, node)
                     }
                 } else {
                     if (DEBUG_MODE) console.log('No children for node:', node)
                     // An empty list still draws its heading, which is when a heading says most.
-                    if (nodeTypeLower === 'list') this.setUpTable(element, node)
+                    if (nodeTypeLower === 'list') {
+                        this.setUpTable(element, node)
+                        this.makeEntriesMovable(element, node)
+                    }
                 }
             } catch (e) { if (DEBUG_MODE) console.warn('Style inheritance error:', e) }
         } else {
@@ -2913,6 +2917,295 @@ export class OverseerRenderer {
             letGo()
             element.classList.remove('would-press')
         })
+    }
+
+    /**
+     * Let the entries of a list be dragged - to another place in it, or into another list.
+     *
+     * Only where the document says so: the list says `movable=true`, and writes are allowed
+     * where it is, since a drag is a write. Two lists trade entries only when both are movable
+     * and make their entries from the same template; the backend checks all of it again, so this
+     * decides only what the page offers.
+     *
+     * One listener on the list rather than one per entry, so entries drawn again after a change
+     * are draggable without anybody remembering to say so.
+     */
+    makeEntriesMovable(element, node) {
+        if (!element || !node) return
+        const said = this.getParameterValue(node, 'movable')
+        if (said !== true && String(said).toLowerCase() !== 'true') return
+        if (this.getEffectiveMutableMode(node, element) !== 'true') return
+        if (this.entriesAreTabs(node)) return
+        element.dataset.movable = '1'
+        element.dataset.entryTemplate = this.entryTemplateOf(node)
+        // A list drawn in an order worked out from its entries has no order to drag into: an
+        // entry dropped in it from elsewhere lands where the order puts it.
+        const sorted = this.getParameterValue(node, 'sort_by') != null
+            || this.getParameterValue(node, 'sort') != null
+            || (node.children || []).some((c) => c?.parameters?._ui_sort_key !== undefined)
+        if (sorted) element.dataset.sorted = '1'
+        else delete element.dataset.sorted
+        if (element.__movable) return
+        element.__movable = true
+        element.addEventListener('pointerdown', (event) => this.armEntryDrag(event, element))
+        // A drag ends in a click on whatever it ended over, and that is not a press.
+        element.addEventListener('click', (event) => {
+            if (!this._dragJustEnded) return
+            event.preventDefault()
+            event.stopPropagation()
+        }, true)
+    }
+
+    /// The template a list makes its entries from, by name - what `entry=<...>` says.
+    entryTemplateOf(node) {
+        const raw = node?.parameters?.entry
+        const said = raw && typeof raw === 'object' ? (raw.Template ?? raw.String) : raw
+        const last = String(said ?? '').split('/').pop().trim()
+        return last.replace(/^<(.*)>$/, '$1').trim()
+    }
+
+    /**
+     * A pointer went down in a movable list: it becomes a drag once it means one.
+     *
+     * With a mouse that is a few pixels of movement with the button held, so a click is still a
+     * click and a double click still edits. A finger has to hold still a moment first, because a
+     * finger that moves straight away is scrolling the page - and the page is used on a phone.
+     * Never from inside something that keeps its own pointer: an editor, a box, a link.
+     */
+    armEntryDrag(event, list) {
+        if (this._entryDrag) return
+        if (event.pointerType === 'mouse' && event.button !== 0) return
+        const target = event.target
+        if (!target || !target.closest) return
+        // The innermost movable list a pointer is in is the one it drags in.
+        if (target.closest('.overseer-list[data-movable="1"]') !== list) return
+        if (target.closest('textarea, select, input, a[href], [contenteditable="true"]')) return
+        let entry = target
+        while (entry && entry.parentElement !== list) entry = entry.parentElement
+        if (!entry || !entry.dataset || !entry.dataset.uid || !entry.dataset.path) return
+
+        const touch = event.pointerType === 'touch' || event.pointerType === 'pen'
+        const drag = {
+            list, entry, touch,
+            pointerId: event.pointerId,
+            startX: event.clientX, startY: event.clientY,
+            x: event.clientX, y: event.clientY,
+            started: false, timer: null, target: null, before: null,
+        }
+        const end = (dropped) => this.endEntryDrag(dropped)
+        const onMove = (e) => {
+            if (e.pointerId !== drag.pointerId) return
+            drag.x = e.clientX
+            drag.y = e.clientY
+            const far = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY)
+            if (!drag.started) {
+                if (drag.touch) { if (far > 8) end(false) }
+                else if (far > 5) this.beginEntryDrag()
+                return
+            }
+            e.preventDefault()
+            this.followEntryDrag()
+        }
+        const onUp = (e) => { if (e.pointerId === drag.pointerId) end(drag.started) }
+        const onCancel = (e) => { if (e.pointerId === drag.pointerId) end(false) }
+        // Once a finger is dragging, moving it must not scroll the page as well.
+        const onTouchMove = (e) => { if (drag.started && e.cancelable) e.preventDefault() }
+        const onKey = (e) => { if (e.key === 'Escape') end(false) }
+        // A long press asks for the browser's menu, which would end the drag under it.
+        const onMenu = (e) => { if (drag.touch) e.preventDefault() }
+        drag.off = () => {
+            window.removeEventListener('pointermove', onMove)
+            window.removeEventListener('pointerup', onUp)
+            window.removeEventListener('pointercancel', onCancel)
+            window.removeEventListener('touchmove', onTouchMove)
+            window.removeEventListener('keydown', onKey)
+            window.removeEventListener('contextmenu', onMenu)
+        }
+        window.addEventListener('pointermove', onMove)
+        window.addEventListener('pointerup', onUp)
+        window.addEventListener('pointercancel', onCancel)
+        window.addEventListener('touchmove', onTouchMove, { passive: false })
+        window.addEventListener('keydown', onKey)
+        window.addEventListener('contextmenu', onMenu)
+        if (touch) drag.timer = setTimeout(() => this.beginEntryDrag(), 350)
+        this._entryDrag = drag
+    }
+
+    /// The pointer means a drag: lift the entry and mark where it can go.
+    beginEntryDrag() {
+        const drag = this._entryDrag
+        if (!drag || drag.started) return
+        drag.started = true
+        clearTimeout(drag.timer)
+        const rect = drag.entry.getBoundingClientRect()
+        drag.offsetX = drag.startX - rect.left
+        drag.offsetY = drag.startY - rect.top
+        const ghost = drag.entry.cloneNode(true)
+        ghost.removeAttribute('data-path')
+        ghost.removeAttribute('data-uid')
+        for (const inner of ghost.querySelectorAll('[data-path], [data-uid]')) {
+            inner.removeAttribute('data-path')
+            inner.removeAttribute('data-uid')
+        }
+        ghost.classList.add('overseer-drag-ghost')
+        ghost.style.width = `${rect.width}px`
+        document.body.appendChild(ghost)
+        drag.ghost = ghost
+        const line = document.createElement('div')
+        line.className = 'overseer-drop-line'
+        line.hidden = true
+        document.body.appendChild(line)
+        drag.line = line
+        drag.entry.classList.add('is-dragged')
+        document.body.classList.add('overseer-dragging')
+        try { window.getSelection()?.removeAllRanges() } catch (_) { /* nothing selected */ }
+        const template = drag.list.dataset.entryTemplate || ''
+        for (const list of document.querySelectorAll('.overseer-list[data-movable="1"]')) {
+            const accepts = list === drag.list
+                ? list.dataset.sorted !== '1'
+                : (template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
+            if (accepts) list.classList.add('accepts-drop')
+        }
+        this.followEntryDrag()
+    }
+
+    /// The entries of a list a drop can go before, in the order they are drawn.
+    droppableEntries(list, dragged) {
+        return Array.from(list.children).filter((el) => el !== dragged
+            && el.dataset && el.dataset.uid && el.dataset.path
+            && !el.hidden && !el.classList.contains('filtered-out'))
+    }
+
+    /// Move the ghost with the pointer, and say where the entry would land.
+    followEntryDrag() {
+        const drag = this._entryDrag
+        if (!drag || !drag.started) return
+        drag.ghost.style.left = `${drag.x - drag.offsetX}px`
+        drag.ghost.style.top = `${drag.y - drag.offsetY}px`
+        const under = typeof document.elementFromPoint === 'function'
+            ? document.elementFromPoint(drag.x, drag.y)
+            : null
+        const list = under && under.closest ? under.closest('.overseer-list.accepts-drop') : null
+        for (const shown of document.querySelectorAll('.overseer-list.drop-here')) {
+            if (shown !== list) shown.classList.remove('drop-here')
+        }
+        drag.target = list
+        drag.before = null
+        const line = drag.line
+        if (!list) { line.hidden = true; return }
+        list.classList.add('drop-here')
+        if (list.dataset.sorted === '1') { line.hidden = true; return }
+        const across = list.classList.contains('layout-horizontal') || list.classList.contains('layout-flow')
+        const entries = this.droppableEntries(list, drag.entry)
+        for (const el of entries) {
+            const r = el.getBoundingClientRect()
+            const goesBefore = across
+                ? (drag.y < r.top || (drag.y <= r.bottom && drag.x < r.left + r.width / 2))
+                : drag.y < r.top + r.height / 2
+            if (goesBefore) { drag.before = el; break }
+        }
+        const place = (left, top, width, height) => {
+            line.hidden = false
+            line.style.left = `${left}px`
+            line.style.top = `${top}px`
+            line.style.width = `${width}px`
+            line.style.height = `${height}px`
+        }
+        const last = entries[entries.length - 1]
+        if (drag.before) {
+            const r = drag.before.getBoundingClientRect()
+            if (across) place(r.left - 2, r.top, 3, r.height)
+            else place(r.left, r.top - 2, r.width, 3)
+        } else if (last) {
+            const r = last.getBoundingClientRect()
+            if (across) place(r.right - 1, r.top, 3, r.height)
+            else place(r.left, r.bottom - 1, r.width, 3)
+        } else {
+            const r = list.getBoundingClientRect()
+            place(r.left, r.top, r.width, 3)
+        }
+    }
+
+    /// Let go: put everything back, and write the move when it was dropped somewhere new.
+    endEntryDrag(dropped) {
+        const drag = this._entryDrag
+        if (!drag) return
+        this._entryDrag = null
+        clearTimeout(drag.timer)
+        drag.off()
+        if (!drag.started) return
+        drag.ghost?.remove()
+        drag.line?.remove()
+        drag.entry.classList.remove('is-dragged')
+        document.body.classList.remove('overseer-dragging')
+        for (const list of document.querySelectorAll('.overseer-list.accepts-drop, .overseer-list.drop-here')) {
+            list.classList.remove('accepts-drop', 'drop-here')
+        }
+        this._dragJustEnded = true
+        setTimeout(() => { this._dragJustEnded = false }, 0)
+        if (!dropped || !drag.target) return
+        const sorted = drag.target.dataset.sorted === '1'
+        if (drag.target === drag.list) {
+            // Dropped where it was drawn already: nothing to write.
+            const entries = this.droppableEntries(drag.list, null)
+            const next = entries[entries.indexOf(drag.entry) + 1] || null
+            if (drag.before === next) return
+        }
+        const read = (el) => JSON.parse(el.dataset.path)
+        this.moveEntry(drag.entry, read(drag.entry), read(drag.target),
+            drag.before && !sorted ? read(drag.before) : null)
+            .catch((err) => console.warn('The move failed:', err))
+    }
+
+    /**
+     * Ask for an entry to be moved, and show what the file then says.
+     *
+     * Nothing is moved on the page first: the backend decides, and the answer is the document as
+     * it is after the move - the same answer a press gets, taken on the same way.
+     */
+    async moveEntry(element, entryPath, toListPath, beforePath) {
+        const app = window.app
+        if (!app || !app.currentFile) return
+        let update = null
+        app._writingByInstruction = (app._writingByInstruction || 0) + 1
+        try {
+            update = await invoke('move_overseer_entry', {
+                path: app.currentFile,
+                entry_path: entryPath,
+                entryPath,
+                to_list_path: toListPath,
+                toListPath,
+                before: beforePath,
+            })
+        } catch (e) {
+            const said = refusalIn(e)
+            if (said !== null) this.sayRefused(element, said)
+            else console.warn('[Overseer] the move was refused', e)
+            return
+        } finally {
+            app._writingByInstruction -= 1
+        }
+        if (!update) return
+        app.alreadyWritten && app.alreadyWritten(update)
+        if (Array.isArray(update.changes)) {
+            app.tookTheText(update)
+            const touched = app.applyDocumentChanges(app.currentDocument, update.changes)
+            try {
+                this.repaintNodes(touched, app.currentDocument)
+            } catch (e) {
+                console.error('Render error (move repaint):', e)
+                this.renderDocument(app.currentDocument)
+            }
+        } else if (Array.isArray(update.nodes)) {
+            app._currentText = typeof update.text === 'string' ? update.text : null
+            app._textVersion = null
+            if (typeof app._applyResolvedDocumentWithFormulaPreservation === 'function') {
+                app._applyResolvedDocumentWithFormulaPreservation(update.nodes)
+            } else {
+                app.currentDocument = update.nodes
+            }
+            this.renderDocument(app.currentDocument)
+        }
     }
 
     /// Whether a node has an `on <event>` block - the backend's own test for having something to run.

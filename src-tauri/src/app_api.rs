@@ -1648,6 +1648,30 @@ pub fn remove_entry_at(
     })
 }
 
+/// Move one to a place in a list - the same one or another - as a drag on the page asks.
+///
+/// One change, so the entry is never in both lists or in neither, and one step to take back.
+/// `before` names the entry it lands in front of; none puts it last. See
+/// `ActionExecutor::move_entry`.
+pub fn move_entry_at(
+    path: &str,
+    document: &str,
+    entry_path: Vec<String>,
+    to_list_path: Vec<String>,
+    before: Option<Vec<String>>,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    change_document(path, document, session, move |nodes| {
+        let before = before.map(|b| format!("/{}", b.join("/")));
+        crate::actions::ActionExecutor::move_entry(
+            nodes,
+            &format!("/{}", entry_path.join("/")),
+            &format!("/{}", to_list_path.join("/")),
+            before.as_deref(),
+        )
+    })
+}
+
 /// Set one value, named by the path of node names the page already speaks in.
 pub fn write_value_at(
     path: &str,

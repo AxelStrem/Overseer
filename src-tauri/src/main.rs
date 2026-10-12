@@ -192,6 +192,18 @@ async fn remove_overseer_entry(
     app_api::remove_entry_at(&path, &path, entry_path, THE_WINDOW).map(app_api::for_the_page)
 }
 
+/// Move one to a place in a list, as a drag asks.
+#[command]
+async fn move_overseer_entry(
+    path: String,
+    entry_path: Vec<String>,
+    to_list_path: Vec<String>,
+    before: Option<Vec<String>>,
+) -> Result<app_api::ResolvedUpdate> {
+    app_api::move_entry_at(&path, &path, entry_path, to_list_path, before, THE_WINDOW)
+        .map(app_api::for_the_page)
+}
+
 /// Run one handler, the same way.
 #[command]
 async fn run_overseer_event(
@@ -425,6 +437,7 @@ fn main() {
             run_overseer_event,
             append_overseer_entry,
             remove_overseer_entry,
+            move_overseer_entry,
             ensure_overseer_entry,
             menu_places,
             menu_keep,
