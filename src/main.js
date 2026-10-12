@@ -40,7 +40,7 @@ try {
 // Quiet belongs at the call site, where you can see it. Replacing a global takes the console
 // away from someone who has not agreed to give it up.
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { OverseerRenderer } from './renderer.js'
+import { OverseerRenderer, textWithoutIcons } from './renderer.js'
 import { FileManager } from './file-manager.js'
 import { Drawer } from './drawer.js'
 
@@ -2179,7 +2179,7 @@ tab Main {
             return
         }
         let name = ''
-        try { name = this.drawer ? this.drawer.nameOfCurrent() : '' } catch (_) { /* the file's name, then */ }
+        try { name = this.drawer ? textWithoutIcons(this.drawer.nameOfCurrent()) : '' } catch (_) { /* the file's name, then */ }
         if (!name) name = String(this.currentFile).split(/[\\/]/).pop()
         document.title = `${name} - Overseer`
     }

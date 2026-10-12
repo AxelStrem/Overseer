@@ -339,6 +339,27 @@ added (`heart-filled`). Where two have the same name, the first in that order is
 name the library does not have leaves an empty space the size of an icon. An icon-only button
 says its name on hover.
 
+##### Icons in text
+
+Any text a document shows can hold an icon, written `<icon=name>` where the icon goes: a label, a
+value, a tab's label, a button's label, a tag or enum name, hover text, markdown.
+
+```overseer
+string due (label="<icon=clock> Due") = "today"
+button add (label="<icon=plus>") { }
+- {
+    - tag = "veg"
+    - name = "<icon=carrot> vegetable"
+}
+text note (markdown=true) = "<color=red | <icon=alarm-clock> **late**>"
+```
+
+The text is kept as written - in the file, in formulas, in the editor - and only drawing turns
+the tag into the icon. `icon="plus"` on a button is the short way of writing a label of
+`<icon=plus>`; a button or a chip that shows only icons says its name, or its tag, on hover.
+Anything else in angle brackets stays text. Where only text can go - the window's title - the
+icons are left out.
+
 #### Conditional actions inside action blocks
 
 You can conditionally execute actions inside any `on ... {}` block using an `if` action node. The condition is provided via the `cond` parameter (usually a formula) and, when truthy, the nested actions will run. When falsy, the nested actions are skipped.
@@ -854,6 +875,7 @@ text Colored (markdown=true) = "Normal <color=#E91E63 | **bold pink** and *itali
 
 Output will render `<span style="color:#E91E63">` wrapping the inner markdown result.
 - Unsupported or unsafe color values cause the tag to be stripped, leaving just `TEXT`.
+- `TEXT` can hold icons, `<color=red | <icon=clock> late>` (see "Icons in text").
 - Does not override or conflict with a node-level `font-color` parameter; spans simply apply inline style precedence.
 
 Security & Sanitization:

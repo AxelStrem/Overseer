@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { textWithoutIcons } from './renderer.js'
 
 /**
  * The drawer: the documents kept to hand, and what there is to do with the one that is open.
@@ -197,7 +198,7 @@ export class Drawer {
         item.className = 'drawer-place'
         const open = document.createElement('button')
         open.className = 'drawer-place-open'
-        open.textContent = this.nameOf(place)
+        this.app.renderer.setTextWithIcons(open, this.nameOf(place))
         open.title = place.path
         if (place.path === here) {
             item.classList.add('current')
@@ -208,7 +209,7 @@ export class Drawer {
         drop.className = 'drawer-place-drop'
         drop.textContent = '×'
         drop.title = 'Take off this list'
-        drop.setAttribute('aria-label', `Take ${this.nameOf(place)} off this list`)
+        drop.setAttribute('aria-label', `Take ${textWithoutIcons(this.nameOf(place))} off this list`)
         drop.addEventListener('click', (event) => {
             event.stopPropagation()
             this.drop(place.path)

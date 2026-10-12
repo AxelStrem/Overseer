@@ -92,4 +92,5 @@ The icon library is gathered at build time (`src/icons/library.mjs`, run from `v
 into `dist/icons/`, one SVG per name. It holds Overseer's own icons in `src/icons/` (their shapes
 adapted from Lucide's), and the icons of [Lucide](https://lucide.dev) (ISC licence, copyright Lucide
 Contributors) and [Tabler Icons](https://tabler.io/icons) (MIT licence, copyright Paweł Kuna).
-Their licence texts are copied into `dist/icons/LICENSES/` with them.
+Their licence texts are copied into `dist/icons/LICENSES/` with them. A document draws one by a
+button's `icon=`, or anywhere in its text as `<icon=name>`.

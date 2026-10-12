@@ -34,6 +34,29 @@ const escapeHtml = (s) => String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const COLOR_VALUE = '(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}|[a-zA-Z]+|rgba?\\([0-9.,\\s+%-]*\\)|hsla?\\([0-9.,\\s+%-]*\\))'
 const INLINE_COLOR = new RegExp(`^<span class="md-inline-color" style="color:${COLOR_VALUE}">$|^</span>$`)
+/// `<icon=name>` inside any text the page draws. The name is checked when it is drawn.
+const ICON_IN_TEXT = /<icon=([^<>]*)>/g
+
+/// Text with its icons taken out, for places that can only hold text: a title attribute, the
+/// window's title, a search over names.
+export const textWithoutIcons = (s) => {
+    const t = String(s ?? '')
+    if (t.indexOf('<icon=') === -1) return t
+    return t.replace(ICON_IN_TEXT, ' ').replace(/\s+/g, ' ').trim()
+}
+
+// In markdown an icon is carried through the parser as a mark of two private-use characters
+// around its name, and drawn once the HTML is made. As a tag it would be escaped as any other
+// HTML is, and its `>` would end a `<color=... | ...>` around it.
+const ICON_MARK = /([a-z0-9-]*)/g
+const markIcons = (s) => s.replace(ICON_IN_TEXT, (_, raw) => {
+    const key = String(raw).trim().toLowerCase()
+    return `${/^[a-z0-9]+(-[a-z0-9]+)*$/.test(key) ? key : ''}`
+})
+const drawIconMarks = (html) => html.replace(ICON_MARK, (_, key) => key
+    ? `<span class="icon" aria-hidden="true" data-icon="${key}" style="--icon: url(&quot;/icons/${key}.svg&quot;)"></span>`
+    : '<span class="icon" aria-hidden="true"></span>')
+
 // A scheme the page may follow, or none at all - a path on this server. Read with the whitespace and
 // control characters a browser drops from a URL taken out, so `java\tscript:` is seen for what it is.
 const safeUrl = (href) => {
@@ -2274,18 +2297,19 @@ export class OverseerRenderer {
         if (icon) {
             btn.classList.add('icon-button')
             btn.appendChild(this.createIconElement(icon))
-            const title = this.getParameterValue(node, 'label') || icon
+            const title = textWithoutIcons(this.getParameterValue(node, 'label') || '') || icon
             if (title) btn.title = String(title)
         } else {
             const label = this.getParameterValue(node, 'label') || 'Load'
             const labelSpan = document.createElement('span')
             labelSpan.className = 'overseer-button-label'
-            labelSpan.textContent = label
+            this.setTextWithIcons(labelSpan, label)
             btn.appendChild(labelSpan)
         }
         btn.addEventListener('click', async () => {
             if (btn.disabled) return
-            const prev = btn.textContent
+            // The children, not the text: a label's icons would not come back from its text.
+            const prev = Array.from(btn.childNodes)
             btn.disabled = true
             btn.textContent = 'Loading…'
             try {
@@ -2294,7 +2318,7 @@ export class OverseerRenderer {
                 // backend surfaces errors via _mount_error
             } finally {
                 btn.disabled = false
-                btn.textContent = prev
+                btn.replaceChildren(...prev)
             }
         })
         container.appendChild(btn)
@@ -2411,7 +2435,7 @@ export class OverseerRenderer {
     }
 
     labelTabHeader(header, node) {
-        header.textContent = this.getParameterValue(node, 'label') || node.name || 'Tab'
+        this.setTextWithIcons(header, this.getParameterValue(node, 'label') || node.name || 'Tab')
         // A sentence. `true` would say the label, which the header already shows.
         const said = this.getParameterValue(node, 'hover-text')
         const text = (typeof said === 'string' && said !== 'true' && said !== 'false') ? said.trim() : ''
@@ -2721,7 +2745,7 @@ export class OverseerRenderer {
         across.forEach((c, i) => {
             const cell = document.createElement('span')
             cell.className = 'table-heading'
-            cell.textContent = c.label || ''
+            this.setTextWithIcons(cell, c.label || '')
             cell.style.gridColumn = String(i + 1)
             header.appendChild(cell)
         })
@@ -2776,7 +2800,7 @@ export class OverseerRenderer {
             if (value !== null && value !== undefined) {
                 const valueElement = document.createElement('span')
                 valueElement.className = 'overseer-list-value'
-                valueElement.textContent = value
+                this.setTextWithIcons(valueElement, value)
                 listItem.appendChild(valueElement)
             }
         } else {
@@ -2805,7 +2829,7 @@ export class OverseerRenderer {
                         valueElement = this.createTextElement(node)
                         break
                     default:
-                        valueElement = document.createTextNode(this.getNodeValue(node) || '')
+                        valueElement = this.setTextWithIcons(document.createElement('span'), this.getNodeValue(node) || '')
                 }
                 listItem.appendChild(valueElement)
             } else {
@@ -3002,7 +3026,7 @@ export class OverseerRenderer {
                 } else {
                     const labelSpan = document.createElement('span')
                     labelSpan.className = 'overseer-button-label'
-                    labelSpan.textContent = label
+                    this.setTextWithIcons(labelSpan, label)
                     btnEl.appendChild(labelSpan)
                 }
                 btnEl.addEventListener('click', async () => {
@@ -3332,7 +3356,7 @@ export class OverseerRenderer {
         // comments that `find` should read all of.
         const searchText = (name) => {
             const child = this.entryField(entry, name)
-            return child ? this.valuesWithin(child).join(' ') : ''
+            return child ? textWithoutIcons(this.valuesWithin(child).join(' ')) : ''
         }
 
         if (wanted !== '') {
@@ -3397,7 +3421,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label')
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
 
@@ -3510,7 +3534,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label')
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
 
@@ -3564,7 +3588,7 @@ export class OverseerRenderer {
             } else {
                 chip = document.createElement('span')
                 chip.className = 'tag-chip tag-placeholder'
-                chip.textContent = String(this.getParameterValue(node, 'placeholder') || '—')
+                this.setTextWithIcons(chip, String(this.getParameterValue(node, 'placeholder') || '—'))
             }
             chips.appendChild(chip)
             if (!editable()) return
@@ -3652,12 +3676,15 @@ export class OverseerRenderer {
         const chip = document.createElement('span')
         chip.className = 'tag-chip'
         chip.dataset.tag = tag
-        chip.textContent = (known && known.name) || tag
+        const name = (known && known.name) || tag
+        this.setTextWithIcons(chip, name)
         if (known && known.colour) {
             chip.style.backgroundColor = known.colour
             chip.style.color = this.readableOn(known.colour)
         }
         if (known && known.hover) chip.title = String(known.hover)
+        // A chip that is only an icon still says what it is, when asked.
+        else if (textWithoutIcons(name).trim() === '') chip.title = tag
         if (!known) {
             // A tag the vocabulary does not list. Shown rather than hidden: it is in the
             // document, and dropping it from the display would misreport what the field holds.
@@ -3725,13 +3752,13 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
         
     const value = document.createElement('span')
     value.className = 'field-value'
-        value.textContent = this.getNodeValue(node) || ''
+        this.setTextWithIcons(value, this.getNodeValue(node) || '')
         
         // Make it editable on double-click (respect mutable)
         value.addEventListener('dblclick', () => {
@@ -3846,7 +3873,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label')
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
 
@@ -3934,7 +3961,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
         
@@ -3952,7 +3979,7 @@ export class OverseerRenderer {
             value.classList.add('markdown-enabled')
         } else {
             // Plain text with line breaks preserved
-            value.textContent = textContent
+            this.setTextWithIcons(value, textContent)
             value.style.whiteSpace = 'pre-wrap'
         }
         
@@ -3993,7 +4020,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
         
@@ -4065,13 +4092,13 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
         
     const value = document.createElement('span')
     value.className = 'field-value'
-        value.textContent = this.getNodeValue(node) || ''
+        this.setTextWithIcons(value, this.getNodeValue(node) || '')
         
         container.appendChild(value)
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
@@ -4090,7 +4117,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
 
@@ -4204,7 +4231,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            label.textContent = labelText
+            this.setTextWithIcons(label, labelText)
             container.appendChild(label)
         }
         
@@ -4284,13 +4311,50 @@ export class OverseerRenderer {
         return span
     }
 
+    /**
+     * Draws a document's text into `el`, with an icon for each `<icon=name>` in it. Everything
+     * else stays text - nodes are appended, never parsed as HTML - and text with no icon is set
+     * as `textContent`, as it always was. The text as written is kept in `data-text`, because
+     * what the element then holds as `textContent` has lost the icons' names.
+     */
+    setTextWithIcons(el, text) {
+        const s = text == null ? '' : String(text)
+        if (s.indexOf('<icon=') === -1) {
+            el.textContent = s
+            if (el.dataset && el.dataset.text !== undefined) delete el.dataset.text
+            return el
+        }
+        el.textContent = ''
+        let last = 0
+        for (const m of s.matchAll(ICON_IN_TEXT)) {
+            if (m.index > last) el.appendChild(document.createTextNode(s.slice(last, m.index)))
+            el.appendChild(this.createIconElement(m[1]))
+            last = m.index + m[0].length
+        }
+        if (last < s.length) el.appendChild(document.createTextNode(s.slice(last)))
+        el.dataset.text = s
+        return el
+    }
+
+    /// What an element drawn by `setTextWithIcons` says, as written.
+    textOf(el) {
+        if (!el) return ''
+        return el.dataset && el.dataset.text !== undefined ? el.dataset.text : String(el.textContent ?? '')
+    }
+
     createButtonElement(node) {
         const button = document.createElement('button')
         button.className = 'overseer-button'
         // Support icon-only or icon+label buttons
         const icon = (this.getParameterValue(node, 'icon') || '').toString().trim().toLowerCase()
         const labelText = this.getParameterValue(node, 'label')
-        if (icon && (!labelText || String(labelText).trim() === '')) {
+        const labelSays = textWithoutIcons(labelText ?? '').trim()
+        if (!icon && labelSays === '' && labelText && String(labelText).indexOf('<icon=') !== -1) {
+            // A label of icons alone is the long way of saying `icon=`, and is drawn the same.
+            button.classList.add('icon-button')
+            this.setTextWithIcons(button, labelText)
+            if (node.name) button.title = String(node.name)
+        } else if (icon && (!labelText || String(labelText).trim() === '')) {
             // Icon-only button
             button.classList.add('icon-button')
             button.appendChild(this.createIconElement(icon))
@@ -4308,7 +4372,7 @@ export class OverseerRenderer {
             const labelSpan = document.createElement('span')
             labelSpan.className = 'overseer-button-label'
             // Button label comes from explicit 'label' parameter; do not use node name
-            labelSpan.textContent = labelText ? String(labelText) : (icon ? '' : '')
+            this.setTextWithIcons(labelSpan, labelText ? String(labelText) : '')
             button.appendChild(labelSpan)
         }
         // Guard: ensure no internal children (like event handlers/actions) are appended
@@ -4341,7 +4405,8 @@ export class OverseerRenderer {
         if (labelText) {
             const label = document.createElement('label')
             label.appendChild(checkbox)
-            label.appendChild(document.createTextNode(labelText))
+            const words = document.createElement('span')
+            label.appendChild(this.setTextWithIcons(words, labelText))
             container.appendChild(label)
         } else {
             // Just the checkbox without any label for unnamed or internal checkboxes
@@ -5302,7 +5367,7 @@ export class OverseerRenderer {
         const said = this.getParameterValue(node, 'hover-text')
         if (said === undefined || said === null || said === false || said === 'false') return null
         if (said === true || said === 'true') {
-            const named = label ? label.textContent : ''
+            const named = label ? this.textOf(label) : ''
             return named && named.trim() !== '' ? named : null
         }
         const given = String(said)
@@ -5343,7 +5408,7 @@ export class OverseerRenderer {
             const text = target.dataset.hoverText
             if (!text) return
             const popup = this.theHoverPopup()
-            popup.textContent = text
+            this.setTextWithIcons(popup, text)
             popup.style.display = 'block'
             // Placed against the field rather than the pointer, so it does not follow the mouse
             // around inside a wide cell. Above where there is room and below where there is not.
@@ -6355,7 +6420,7 @@ export class OverseerRenderer {
         chevron.textContent = folded ? '▸' : '▾'
         const text = document.createElement('span')
         text.className = 'fold-label'
-        text.textContent = label
+        this.setTextWithIcons(text, label)
         header.appendChild(chevron)
         header.appendChild(text)
         const press = (e) => {
@@ -6406,7 +6471,7 @@ export class OverseerRenderer {
 
     makeFieldEditable(element, node, isMultiline = false) {
         // Capture the old displayed value before editing starts (for selective update diff only)
-        const oldValue = element.textContent
+        const oldValue = this.textOf(element)
 
         // Initialize editor with the raw user-provided value, not the displayed fallback/computed value
         const originalParam = node?.parameters?.value
@@ -6473,7 +6538,7 @@ export class OverseerRenderer {
             } catch(_) {}
 
             const newValue = input.value
-            const prevDisplay = element.textContent
+            const prevDisplay = this.textOf(element)
             const isFormulaInput = typeof newValue === 'string' && /\$\([\s\S]*\)/.test(newValue.trim())
             element.style.display = 'inline'
 
@@ -6499,7 +6564,7 @@ export class OverseerRenderer {
                     if (element.classList && element.classList.contains('markdown-enabled')) {
                         element.innerHTML = this.renderMarkdown(asText)
                     } else {
-                        element.textContent = asText
+                        this.setTextWithIcons(element, asText)
                     }
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('Optimistic repaint failed:', e)
@@ -6669,7 +6734,7 @@ export class OverseerRenderer {
                                         }
                                         display = `${pref}${body}${suf}`
                                     } catch(_) { /* fallback to raw newStr */ }
-                                    holder.textContent = display
+                                    this.setTextWithIcons(holder, display)
                                 } else {
                                     // As a fallback, re-render the owning list subtree
                                     try {
@@ -6699,7 +6764,7 @@ export class OverseerRenderer {
                         const el = document.querySelector(sel)
                         if (el) {
                             const holder = el.querySelector('.field-value, .text-content, .overseer-list-value') || el
-                            const shownRaw = holder ? String(holder.textContent ?? '') : ''
+                            const shownRaw = holder ? this.textOf(holder) : ''
                             // Try to account for numeric fields that render with prefix/suffix (e.g., kg)
                             let prefix = '', suffix = ''
                             try {
@@ -6860,9 +6925,9 @@ export class OverseerRenderer {
                                 const holder = targetEl.querySelector('.field-value, .text-content, .overseer-list-value') || targetEl
                                 const nv = (newValue == null) ? '' : String(newValue)
                                 if (holder.classList && holder.classList.contains('text-content') && holder.classList.contains('markdown-enabled')) {
-                                    holder.textContent = nv
+                                    this.setTextWithIcons(holder, nv)
                                 } else {
-                                    holder.textContent = nv
+                                    this.setTextWithIcons(holder, nv)
                                 }
                                 if (DEBUG_MODE) console.debug('[Overseer] Painted materialized field at', materializedRealPath)
                             } else {
@@ -7910,16 +7975,17 @@ export class OverseerRenderer {
                     return `<span class=\"md-inline-color\" style=\"color:${color}\">${esc}</span>`
                 })
             }
-            const preprocessed = preprocessColorTags(text)
+            const withIcons = typeof text === 'string' && text.indexOf('<icon=') !== -1 ? markIcons(text) : text
+            const preprocessed = preprocessColorTags(withIcons)
             // Use marked library for proper markdown rendering on preprocessed text
-            return markdown.parse(preprocessed);
+            return drawIconMarks(markdown.parse(preprocessed));
         } catch (error) {
             console.warn('Markdown parsing error:', error);
             // Fallback to basic markdown rendering, of the text escaped first for the same reason.
-            return escapeHtml(text)
+            return drawIconMarks(escapeHtml(markIcons(String(text ?? '')))
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                .replace(/\n/g, '<br>');
+                .replace(/\n/g, '<br>'));
         }
     }
 
@@ -8004,9 +8070,9 @@ export class OverseerRenderer {
                                 if (holder) {
                                     // If markdown-enabled, avoid innerHTML changes here; treat as plain text
                                     if (holder.classList && holder.classList.contains('text-content') && holder.classList.contains('markdown-enabled')) {
-                                        holder.textContent = nv
+                                        this.setTextWithIcons(holder, nv)
                                     } else {
-                                        holder.textContent = nv
+                                        this.setTextWithIcons(holder, nv)
                                     }
                                     updateCount++
                                 }
@@ -8286,7 +8352,7 @@ export class OverseerRenderer {
             else if (newValue.Boolean !== undefined) displayValue = newValue.Boolean
         }
 
-        element.textContent = displayValue
+        this.setTextWithIcons(element, displayValue)
     if (DEBUG_MODE) console.log(`✅ Updated element display to: ${displayValue}`)
     }
 
@@ -8457,7 +8523,7 @@ export class OverseerRenderer {
                     }
                     if (holder) {
                         const txt = (val === null || val === undefined) ? '' : String(val)
-                        if (holder.textContent !== txt) holder.textContent = txt
+                        if (this.textOf(holder) !== txt) this.setTextWithIcons(holder, txt)
                         if (DEBUG_MODE) console.log('📝 Updated list item value:', txt)
                         break
                     }
@@ -8465,7 +8531,7 @@ export class OverseerRenderer {
                     try {
                         const span = document.createElement('span')
                         span.className = 'overseer-list-value'
-                        span.textContent = (val === null || val === undefined) ? '' : String(val)
+                        this.setTextWithIcons(span, (val === null || val === undefined) ? '' : String(val))
                         element.appendChild(span)
                         if (DEBUG_MODE) console.log('📝 Inserted new list value holder for selective update')
                     } catch (_) { /* no-op */ }
@@ -8578,8 +8644,8 @@ export class OverseerRenderer {
                 if (DEBUG_MODE) console.log('📝 Updated markdown element')
             }
         } else {
-            if (textElement.textContent !== computedValue) {
-                textElement.textContent = computedValue
+            if (this.textOf(textElement) !== computedValue) {
+                this.setTextWithIcons(textElement, computedValue)
                 if (DEBUG_MODE) console.log('📝 Updated text element:', computedValue)
             }
         }
