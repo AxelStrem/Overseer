@@ -1523,7 +1523,9 @@ export class OverseerRenderer {
                         const hover = stated('hover-color') || this.shiftedBy(base, 0.12)
                         const press = stated('press-color') || this.shiftedBy(base, -0.12)
                         if (base) {
-                            element.style.backgroundColor = base
+                            // Through the stylesheet only: an inline background outranks its
+                            // `:hover` and `:active`, and the button would never change colour.
+                            element.style.backgroundColor = ''
                             element.style.setProperty('--overseer-button-bg', base)
                             // Readable on whatever it turned out to be, and only when the
                             // document has not said - the same rule the colour itself follows.
@@ -1534,8 +1536,20 @@ export class OverseerRenderer {
                                 element.style.color = this.wantsDarkText(base) ? '#1a1a1a' : '#ffffff'
                             }
                         }
-                        if (hover) element.style.setProperty('--overseer-button-hover', hover)
-                        if (press) element.style.setProperty('--overseer-button-press', press)
+                        // Handed no colour but "show what is behind you" - a row tinted only
+                        // sometimes says `inherit` the rest of the time. Nothing to brighten, so it
+                        // stays see-through, and hover and press wash it with its own text colour.
+                        const seeThrough = handedDown && !base
+                            && /^(inherit|transparent)$/i.test(String(effectiveBg || '').trim())
+                        if (seeThrough) {
+                            element.style.backgroundColor = ''
+                            element.style.setProperty('--overseer-button-bg', 'transparent')
+                        }
+                        const wash = (share) => `color-mix(in srgb, currentColor ${share}%, transparent)`
+                        const hoverAs = hover || (seeThrough ? wash(15) : null)
+                        const pressAs = press || (seeThrough ? wash(25) : null)
+                        if (hoverAs) element.style.setProperty('--overseer-button-hover', hoverAs)
+                        if (pressAs) element.style.setProperty('--overseer-button-press', pressAs)
                     } catch (_) { /* a button left the stylesheet's colour is no disaster */ }
                 }
 
@@ -2764,12 +2778,16 @@ export class OverseerRenderer {
             // where the shorter one's text does. The content is centred inside the cell instead.
             row.style.alignItems = ''
 
-            for (const cell of Array.from(row.children)) {
-                const name = this.fieldNameOf(cell)
+            for (let cell of Array.from(row.children)) {
+                cell = this.tableCellFor(cell)
+                if (!cell) continue
+                const held = cell.classList.contains('table-cell') ? cell.firstElementChild : cell
+                const name = this.fieldNameOf(held)
                 // The column owns the width now. Left on the cell, a percentage would be read
                 // against its own column rather than the row, and every cell would be a sliver
                 // of the space it asked for.
                 cell.style.width = ''
+                held.style.width = ''
                 if (column.has(name)) {
                     cell.style.gridColumn = String(column.get(name))
                 } else if (ownLine.has(name)) {
@@ -2830,6 +2848,32 @@ export class OverseerRenderer {
             header.appendChild(cell)
         })
         list.insertBefore(header, list.firstChild)
+    }
+
+    /**
+     * The element that is a button's place in a table: a cell of its own around it.
+     *
+     * A field fills its column, so the rule down the column's edge can be its own left border. A
+     * button is only as wide as itself: made the cell, it sits at the start of the column, and
+     * the rule takes the place of its left border, which then stays put when the rest of its
+     * border lights up on hover. So the rule goes on the cell, and the button sits in the middle
+     * of it with all four of its sides.
+     *
+     * Run again on every arrangement, like the rest of it: a button repainted in place lands
+     * back in its cell, and a cell whose button has gone since is taken out with it.
+     */
+    tableCellFor(element) {
+        if (element.classList.contains('table-cell')) {
+            if (element.firstElementChild) return element
+            element.remove()
+            return null
+        }
+        if (!element.classList.contains('overseer-button')) return element
+        const cell = document.createElement('div')
+        cell.className = 'table-cell'
+        element.replaceWith(cell)
+        cell.appendChild(element)
+        return cell
     }
 
     /** Which field a cell holds, by the last segment of the path it carries. */

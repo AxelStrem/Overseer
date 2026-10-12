@@ -225,6 +225,48 @@ describe('rules between the cells', () => {
   })
 })
 
+describe('a button in a table', () => {
+  beforeEach(setupDOM)
+
+  const COLUMNS_WITH_BUTTON = JSON.stringify([
+    { name: 'handle', label: 'id', width: '20%', span: false },
+    { name: 'talk', label: 'talk', width: '10%', span: false },
+  ])
+  const withButton = (n) => row(n, [
+    field('handle', `h${n}`, { label: 'id', width: 20 }),
+    Object.assign(base('talk', 'button'), {
+      parameters: { label: { String: 'talk' }, width: { CssSize: { Percentage: 10 } } },
+    }),
+  ])
+  const cellOf = () => document.querySelector('.table-row > .table-cell')
+
+  it('sits in a cell of its own, in its column', () => {
+    // The cell takes the rule down the column's edge, so the button keeps all four sides of its
+    // own border, and the cell is what is centred in the column rather than the button's start.
+    render([withButton(1)], { _columns: { String: COLUMNS_WITH_BUTTON }, lines: { String: 'vertical' } })
+    const cell = cellOf()
+    expect(cell, 'the button was left as the cell').toBeTruthy()
+    expect(cell.style.gridColumn).toBe('2')
+    expect(cell.firstElementChild.classList.contains('overseer-button')).toBe(true)
+    expect(cell.firstElementChild.style.width).toBe('')
+  })
+
+  it('keeps one cell however often the table is arranged', () => {
+    const app = render([withButton(1)], { _columns: { String: COLUMNS_WITH_BUTTON } })
+    app.renderer.arrangeTables()
+    app.renderer.arrangeTables()
+    expect(document.querySelectorAll('.table-cell').length).toBe(1)
+    expect(document.querySelectorAll('.table-cell .table-cell').length).toBe(0)
+  })
+
+  it('takes its cell with it when it is gone', () => {
+    const app = render([withButton(1)], { _columns: { String: COLUMNS_WITH_BUTTON } })
+    cellOf().firstElementChild.remove()
+    app.renderer.arrangeTables()
+    expect(cellOf()).toBeNull()
+  })
+})
+
 describe('the heading', () => {
   beforeEach(setupDOM)
 
@@ -310,6 +352,17 @@ describe('the stylesheet half', () => {
     const body = bodyOf('.overseer-list.view-table > .table-row')
     expect(body).toMatch(/grid-template-columns\s*:\s*subgrid/)
     expect(body).toMatch(/grid-column\s*:\s*1\s*\/\s*-1/)
+  })
+
+  it('draws the rules between columns straight', () => {
+    // A field's rounded corners bent its left border into something like an opening bracket.
+    expect(bodyOf('.overseer-list.view-table.table-lines-columns > .table-row > *'))
+      .toMatch(/border-radius\s*:\s*0/)
+  })
+
+  it('centres a button in its column', () => {
+    expect(bodyOf('.overseer-list.view-table > .table-row > .table-cell'))
+      .toMatch(/justify-content\s*:\s*center/)
   })
 
   it('does not force a display with !important anywhere', () => {

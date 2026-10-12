@@ -867,9 +867,18 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     min-height: 0;
 }
 
-/* Buttons sit on the line the fields' text sits on, as they do in a horizontal row. */
-.overseer-list.view-table > .table-row > .overseer-button {
-    align-self: center;
+/* A button's cell, which the renderer puts around it: the cell fills the column and takes the
+   rule down its edge, and the button sits in the middle of it with all four sides of its border,
+   on the line the fields' text sits on. */
+.overseer-list.view-table > .table-row > .table-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.overseer-list.view-table > .table-row > .table-cell > .overseer-button {
+    margin-left: 0;
+    margin-right: 0;
 }
 
 /* A field that takes a line of its own, below the columns and inside its row. Its whole point is
@@ -930,6 +939,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-list.view-table.table-lines-columns > .table-row > *,
 .overseer-list.view-table.table-lines-columns > .table-header > .table-heading {
     border-left: 1px solid var(--border-color);
+    /* A field's rounded corners would bend its left border into a bracket: a rule is straight. */
+    border-radius: 0;
 }
 
 /* No rule down the outside edge of the table, and none beside a note: it sits below the columns

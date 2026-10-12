@@ -79,6 +79,25 @@ describe('a button stands out from what it sits on', () => {
     expect(brightness(press)).toBeLessThan(brightness(base))
   })
 
+  it('leaves its colour to the stylesheet, so hover and press can change it', () => {
+    // An inline background outranks `:hover` and `:active` in the stylesheet, which then never
+    // showed the colours worked out for them.
+    expect(drawn(aDocumentWhere()).style.backgroundColor).toBe('')
+    setupDOM()
+    expect(drawn(aDocumentWhere({ 'background-color': { String: '#c0392b' } }, '#204080', false))
+      .style.backgroundColor).toBe('')
+  })
+
+  it('stays see-through on something that shows what is behind it, and still answers hover', () => {
+    // A project row is tinted only when much of it is done, and says `inherit` the rest of the
+    // time - which used to land on the button inline, where no hover colour could reach it.
+    const button = drawn(aDocumentWhere({}, 'inherit'))
+    expect(button.style.backgroundColor).toBe('')
+    expect(button.style.getPropertyValue('--overseer-button-bg')).toBe('transparent')
+    expect(button.style.getPropertyValue('--overseer-button-hover')).toMatch(/currentColor/)
+    expect(button.style.getPropertyValue('--overseer-button-press')).toMatch(/currentColor/)
+  })
+
   it('keeps a colour the document states for the button itself', () => {
     // Saying it is the point of saying it, so nothing is derived over the top.
     const doc = aDocumentWhere({ 'background-color': { String: '#c0392b' } }, '#204080', false)
