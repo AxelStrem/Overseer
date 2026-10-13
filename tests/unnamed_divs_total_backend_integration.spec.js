@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { answeringFromText } from './a_fake_backend_answers_from_text.js'
 
 // This test exercises the real selective backend paths (no local recompute stub) to ensure
 // that editing a list item field A or B under an unnamed transparent wrapper updates both
@@ -162,6 +163,9 @@ describe('backend integration: unnamed wrapper aggregate recomputes', () => {
     })
 
     const app = new OverseerApp()
+    // The page works from the text; the fake below still answers as it did.
+    invoke.mockImplementation(answeringFromText(invoke.getMockImplementation()))
+    app._currentText = 'DOC'
     app.currentDocument = JSON.parse(JSON.stringify(doc))
     app.renderer.renderDocument(app.currentDocument)
 

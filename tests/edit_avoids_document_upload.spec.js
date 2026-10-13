@@ -4,7 +4,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // large document that measured ~5.5 s for 10.5 MB - the IPC moves a couple of MB per second,
 // and it ran on every edit. The document's text is a fraction of that size and the backend
 // returns it with each resolve, so a run of ordinary field edits should send nothing but the
-// text and the changed values.
+// text and the changed values. When the page has no text, the file has it: the document is
+// never sent.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -76,7 +77,7 @@ function installBackend(calls) {
     if (cmd === 'parse_overseer_content_selective' || cmd === 'parse_overseer_content') {
       return deepClone(installBackend.doc)
     }
-    if (cmd === 'execute_overseer_event') return deepClone(args.nodes)
+    if (cmd === 'load_overseer_file') return 'FILE-TEXT'
     return null
   }
 }
@@ -106,7 +107,7 @@ describe('editing a field on a large document', () => {
     expect(installBackend.lastContent, 'the known text was not sent').toBe('DOC-TEXT')
   })
 
-  it('uploads once to recover the text, then stops', async () => {
+  it('reads the file once to recover the text, then stops', async () => {
     const calls = []
     const { invoke } = await import('@tauri-apps/api/core')
     invoke.mockImplementation(installBackend(calls))
@@ -114,19 +115,20 @@ describe('editing a field on a large document', () => {
     const app = new OverseerApp()
     app.currentDocument = buildDoc()
     installBackend.doc = buildDoc()
-    // No text in hand - an event restructured the document, say.
+    // No text in hand, and the instruction went unanswered, so the change goes the long way.
+    app.currentFile = 'doc.os'
     app._currentText = null
     app.renderer.renderDocument(app.currentDocument)
+    const fileReads = () => calls.filter(c => c === 'load_overseer_file').length
 
     editField('alpha', 'first')
     await new Promise(r => setTimeout(r, 50))
-    expect(uploadedDocument(calls), 'the document should be uploaded to rebuild the text').toBe(1)
+    expect(fileReads(), 'the file should be read for the text').toBe(1)
+    expect(installBackend.lastContent, 'the text of the file was not sent').toBe('FILE-TEXT')
 
     editField('beta', 'second')
     await new Promise(r => setTimeout(r, 50))
-    expect(
-      uploadedDocument(calls),
-      'the text returned by the first edit should have spared the second an upload'
-    ).toBe(1)
+    expect(fileReads(), 'the text returned by the first edit should have spared the second a read').toBe(1)
+    expect(uploadedDocument(calls), 'the document was uploaded').toBe(0)
   })
 })

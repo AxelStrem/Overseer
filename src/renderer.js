@@ -534,8 +534,6 @@ export class OverseerRenderer {
             // so the preview displays the selected key immediately (even if template had $today()).
             keyChild.parameters.value = coerced
             try { keyChild.parameters._computed_value = coerced } catch(_) {}
-            // Mark as explicit so when materialized later, the key is persisted
-            try { keyChild.parameters._override_present = { Boolean: true } } catch(_) {}
             // Reflect that this is a template-derived instance for styling/layout if needed
             preview.parameters = Object.assign({}, preview.parameters || {}, { _from_template: true })
 
@@ -8009,9 +8007,6 @@ export class OverseerRenderer {
 
         // Materialize before reading the document below, so the event runs against a tree
         // that actually contains the target.
-        // Materializing changes the document here, so the text the app holds stops describing
-        // it and this event has to carry the document itself.
-        let materializedForThisEvent = false
         let nextText = null
         if (Array.isArray(path) && path.includes('<phantom>')) {
             // With the press, when there is a handler for it and a file to write to, so the
@@ -8023,7 +8018,6 @@ export class OverseerRenderer {
                 : null
             const made = await this._materializePhantomForEvent(element, press)
             if (made && made.path) path = made.path
-            materializedForThisEvent = true
             if (made && made.ran) {
                 this.emptyTextboxes(Array.isArray(made.answer?.emptied) ? made.answer.emptied : [])
                 this.openFieldForEditing(made.answer?.start_editing)
@@ -8055,47 +8049,6 @@ export class OverseerRenderer {
         }
         // Whatever an earlier press was told no with is old news once something is pressed.
         this.sayRefused(null, null)
-        // Guard: ensure nodes is an array (backend expects Vec<OverseerNode> root or serialized map)
-        let nodesArg = window.app.currentDocument
-        if (nodesArg && !Array.isArray(nodesArg)) {
-            // Some earlier logic might have wrapped the document; attempt to unwrap
-            if (nodesArg.children && Array.isArray(nodesArg.children)) {
-                nodesArg = nodesArg.children
-            } else {
-                // Fallback: wrap single root into array
-                nodesArg = [nodesArg]
-            }
-        }
-        // Defensive: ensure no stray primitive sneaks into root document array
-        if (Array.isArray(nodesArg)) {
-            const invalids = []
-            for (let i = 0; i < nodesArg.length; i++) {
-                const n = nodesArg[i]
-                if (!n || typeof n !== 'object' || Array.isArray(n)) invalids.push({ index: i, type: typeof n, value: n })
-            }
-            if (invalids.length > 0) {
-                try { if (DEBUG_MODE) console.warn('[Overseer] Filtering invalid root nodes before event invoke', invalids) } catch(_) {}
-                nodesArg = nodesArg.filter(n => n && typeof n === 'object' && !Array.isArray(n))
-            }
-        }
-        // Normalize raw boolean parameter values into OverseerValue objects to satisfy serde expectations
-        try {
-            const wrapBooleanParams = (node) => {
-                if (!node || typeof node !== 'object') return
-                const p = node.parameters
-                if (p && typeof p === 'object') {
-                    for (const k of Object.keys(p)) {
-                        if (p[k] === true) p[k] = { Boolean: true }
-                        else if (p[k] === false) p[k] = { Boolean: false }
-                        else if (k === 'value' && typeof p[k] === 'object' && p[k] !== null) {
-                            // leave structured OverseerValue as-is
-                        }
-                    }
-                }
-                if (Array.isArray(node.children)) node.children.forEach(wrapBooleanParams)
-            }
-            if (Array.isArray(nodesArg)) nodesArg.forEach(wrapBooleanParams)
-        } catch(errNorm) { try { console.warn('[Overseer] boolean normalization failed', errNorm) } catch(_) {} }
         // Whether this press was sent as an instruction and is therefore already written. Both
         // endings of the press need to know, and they are in different scopes.
         let writtenAsAnInstruction = false
@@ -8105,49 +8058,14 @@ export class OverseerRenderer {
         let toOpen = null
         let updated = null
         try {
-            // Sanitize nodes: deep clone shallowly to strip any live references / accidental arrays in fields.
-            //
-            // Provenance must survive this. The backend serializer is snapshot-driven: it replays
-            // each node's original source text, looked up in the SourceRegistry by `source_id`
-            // (the snapshot itself is #[serde(skip)] and never crosses the IPC boundary). The
-            // response to this call is adopted as the live document, so anything dropped here is
-            // gone for every later save - taking comments, explicit type keywords and authored
-            // formatting with it, since there is no longer a merge_comments path to rebuild them.
-            const PROVENANCE_KEYS = [
-                'source_id',
-                'source_fingerprint',
-                'param_order',
-                'raw_value_literal',
-                'authored_dash',
-                'child_original_index',
-                'leading_blank_lines',
-                'template',
-            ]
-            const sanitizeNode = (n) => {
-                if (!n || typeof n !== 'object') return null
-                const copy = { name: n.name, node_type: n.node_type || n.type, parameters: {}, children: [], is_hierarchy_transparent: !!n.is_hierarchy_transparent }
-                for (const key of PROVENANCE_KEYS) {
-                    if (n[key] !== undefined) copy[key] = n[key]
-                }
-                if (n.parameters && typeof n.parameters === 'object') {
-                    for (const [k,v] of Object.entries(n.parameters)) {
-                        // Skip transient client-only helpers
-                        if (k === '_injected_link_params') continue
-                        copy.parameters[k] = v
-                    }
-                }
-                if (Array.isArray(n.children)) copy.children = n.children.map(ch => sanitizeNode(ch)).filter(Boolean)
-                return copy
-            }
-            // Send the document's text rather than the document.
+            // Send the document's text rather than the document, which is never sent.
             //
             // Uploading it measured ~5.5 s for 10.5 MB, since the IPC moves a couple of MB
             // per second - the same cost that was removed from the edit path. Rust owns the
             // document and rebuilds it from the text, which is two orders of magnitude
-            // smaller. The text is unknown right after something restructured the document
-            // client-side (materializing a phantom row, above), and then the document still
-            // has to travel, because the text does not yet describe it.
-            const knownText = (!materializedForThisEvent && typeof window.app._currentText === 'string')
+            // smaller. Making a preview real, above, is a write the backend made and answered
+            // with the text, so the text describes the document here too.
+            const knownText = typeof window.app._currentText === 'string'
                 ? window.app._currentText
                 : null
             // Say which button was pressed, rather than sending the document it sits in.
@@ -8244,10 +8162,9 @@ export class OverseerRenderer {
             // press that goes as an instruction never needs it and fetching it first would cost
             // every press what only a refused one needs.
             // Not with a value to write: the text was made before the value was, and the handler
-            // would read what it replaced. The document the page holds has it.
-            const theLongWay = (updated === undefined || updated === null) && !materializedForThisEvent
-                && withValue === undefined
-                ? (knownText ?? await window.app.textInHand())
+            // would read what it replaced. Only the instruction carries it.
+            const theLongWay = (updated === undefined || updated === null) && withValue === undefined
+                ? (knownText ?? await window.app.textToWorkFrom())
                 : null
             if (theLongWay !== null && (updated === undefined || updated === null)) {
                 const answer = await invoke('execute_overseer_event_with_text', {
@@ -8258,7 +8175,7 @@ export class OverseerRenderer {
                     eventName
                 }).catch((e) => {
                     if (refusalIn(e) !== null) throw e
-                    if (DEBUG_MODE) console.warn('[Overseer] text-driven event failed; sending the document', e)
+                    if (DEBUG_MODE) console.warn('[Overseer] text-driven event failed', e)
                     return null
                 })
                 if (answer && Array.isArray(answer.nodes)) {
@@ -8266,15 +8183,10 @@ export class OverseerRenderer {
                     nextText = typeof answer.text === 'string' ? answer.text : null
                 }
             }
+            // The document itself is never sent to have the press worked out on it: it no longer
+            // carries what writing it back needs, and the file would lose its comments and layout.
             if (updated === undefined || updated === null) {
-                const sanitized = Array.isArray(nodesArg) ? nodesArg.map(n=>sanitizeNode(n)).filter(Boolean) : []
-                updated = await invoke('execute_overseer_event', {
-                    nodes: sanitized,
-                    node_path: path,
-                    nodePath: path, // provide camelCase variant for environments expecting it
-                    event_name: eventName,
-                    eventName // camelCase variant
-                })
+                throw new Error('the press could not be worked out')
             }
         } catch(err) {
             // A press the document refused is its answer, not a failure: the person is told why,
@@ -8284,8 +8196,7 @@ export class OverseerRenderer {
                 this.sayRefused(element, said)
                 return
             }
-            // Attach additional context for debugging invalid args issues
-            try { console.warn('[Overseer] execute_overseer_event failed', err, { eventName, path, nodesType: typeof nodesArg, sampleNode: nodesArg && nodesArg[0] && nodesArg[0].name }) } catch(_) {}
+            try { console.warn('[Overseer] the press failed', err, { eventName, path }) } catch(_) {}
             throw err
         }
         // Only replace the document when the backend actually returned a document structure.
@@ -8439,31 +8350,6 @@ export class OverseerRenderer {
         if (!node.parameters) {
             node.parameters = {}
         }
-        // If this field is inherited from a template (no explicit override yet), convert it to an override
-        try {
-            const isTemplateChild = node?.parameters && (node.parameters._template_node === true || Object.keys(node.parameters).some(k => String(k).startsWith('_template_')))
-            const hasExplicitOverride = node?.parameters && (
-                node.parameters._explicit_child_override === true ||
-                (typeof node.parameters._explicit_child_override === 'object' && node.parameters._explicit_child_override?.Boolean === true) ||
-                node.parameters._override_present === true ||
-                (typeof node.parameters._override_present === 'object' && node.parameters._override_present?.Boolean === true)
-            )
-            if (isTemplateChild && !hasExplicitOverride) {
-                // Remove template markers that would make resolver/serializer drop edits
-                Object.keys(node.parameters).forEach(k => { if (k.startsWith('_template_')) delete node.parameters[k] })
-                delete node.parameters._template_node
-                // Use OverseerValue shape for booleans to match backend enum (externally tagged)
-                node.parameters._override_present = { Boolean: true }
-                node.parameters._explicit_child_override = { Boolean: true }
-                // Ensure parent tracks explicit override list if available
-                try {
-                    // Find parent path and update document in place if possible
-                    const path = this.buildNodePath(document.querySelector(`[data-path]`)) // fallback no-op
-                    // We defer strict parent tracking; serializer already consults _explicit_overrides where present
-                } catch (_) { /* no-op */ }
-            }
-        } catch (_) { /* ignore */ }
-        
         // Handle boolean values (from checkboxes)
         if (typeof newValue === 'boolean') {
             node.parameters.value = { Boolean: newValue }

@@ -8,10 +8,9 @@ use tauri::command;
 // and once into this binary - so the two could drift, and a helper used only by a test was
 // reported as dead code because this half of the build did not call it. That was most of the
 // build's warnings, and it hid the real ones among them.
-use overseer::actions::ActionExecutor;
 use overseer::file_ops::FileOperations;
 use overseer::types::*;
-use overseer::{app_api, docmgr, file_ops};
+use overseer::{app_api, docmgr};
 
 /// The documents kept to hand, in this app's own settings folder - see `overseer::menu`. The
 /// desktop's list names files anywhere on this computer, so it is kept here rather than beside
@@ -159,8 +158,8 @@ const THE_WINDOW: &str = "desktop";
 async fn write_overseer_values(
     path: String,
     values: Vec<app_api::ValueWrite>,
-) -> Result<app_api::ResolvedUpdate> {
-    app_api::write_values_at(&path, &path, values, THE_WINDOW).map(app_api::for_the_page)
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    app_api::write_values_at(&path, &path, values, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
 /// Add an entry to a list, with whatever fields the page has for it.
@@ -169,7 +168,7 @@ async fn append_overseer_entry(
     path: String,
     list_path: Vec<String>,
     fields: Option<std::collections::HashMap<String, OverseerValue>>,
-) -> Result<app_api::ResolvedUpdate> {
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
     app_api::append_entry_at(
         &path,
         &path,
@@ -177,7 +176,7 @@ async fn append_overseer_entry(
         fields.unwrap_or_default(),
         THE_WINDOW,
     )
-    .map(app_api::for_the_page)
+    .map(app_api::for_the_page).map(ForThePage)
 }
 
 /// Make sure a list has the entry a view is pointed at, and apply the edit that asked for it.
@@ -188,8 +187,8 @@ async fn append_overseer_entry(
 async fn ensure_overseer_entry(
     path: String,
     wanted: app_api::EntryWanted,
-) -> Result<app_api::ResolvedUpdate> {
-    app_api::ensure_entry_at(&path, &path, wanted, THE_WINDOW).map(app_api::for_the_page)
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    app_api::ensure_entry_at(&path, &path, wanted, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
 /// And take one out.
@@ -197,8 +196,8 @@ async fn ensure_overseer_entry(
 async fn remove_overseer_entry(
     path: String,
     entry_path: Vec<String>,
-) -> Result<app_api::ResolvedUpdate> {
-    app_api::remove_entry_at(&path, &path, entry_path, THE_WINDOW).map(app_api::for_the_page)
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    app_api::remove_entry_at(&path, &path, entry_path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
 /// Move one to a place in a list, as a drag asks.
@@ -208,9 +207,9 @@ async fn move_overseer_entry(
     entry_path: Vec<String>,
     to_list_path: Vec<String>,
     before: Option<Vec<String>>,
-) -> Result<app_api::ResolvedUpdate> {
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
     app_api::move_entry_at(&path, &path, entry_path, to_list_path, before, THE_WINDOW)
-        .map(app_api::for_the_page)
+        .map(app_api::for_the_page).map(ForThePage)
 }
 
 /// Run one handler, the same way.
@@ -221,7 +220,7 @@ async fn run_overseer_event(
     event_name: String,
     typed: Option<Vec<app_api::ValueWrite>>,
     writing: Option<Vec<app_api::ValueWrite>>,
-) -> Result<app_api::ResolvedUpdate> {
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
     app_api::run_event_at(
         &path,
         &path,
@@ -231,42 +230,11 @@ async fn run_overseer_event(
         typed.unwrap_or_default(),
         writing.unwrap_or_default(),
     )
-    .map(app_api::for_the_page)
+    .map(app_api::for_the_page).map(ForThePage)
 }
 
 #[command]
-async fn serialize_overseer_nodes(nodes: Vec<OverseerNode>) -> Result<String> {
-    match file_ops::OverseerFileHandler::serialize_nodes(&nodes) {
-        Ok(content) => Ok(content),
-        Err(e) => Err(OverseerError::SerializationError(format!(
-            "Failed to serialize nodes: {}",
-            e
-        ))),
-    }
-}
-
-/// `serialize_overseer_nodes` with the document delivered as raw bytes.
-///
-/// Passing the document as a normal command argument makes Tauri hand it to the webview's
-/// JSON IPC, which on a large document costs seconds - far more than the serialization it
-/// asks for, and more than receiving the same document back, which travels a different
-/// route. Taking the bytes directly avoids that path. The caller sends UTF-8 JSON; a JSON
-/// body is still accepted so an older caller keeps working.
-#[command]
-fn serialize_overseer_nodes_raw(request: tauri::ipc::Request<'_>) -> Result<String> {
-    let nodes: Vec<OverseerNode> = match request.body() {
-        tauri::ipc::InvokeBody::Raw(bytes) => serde_json::from_slice(bytes)
-            .map_err(|e| OverseerError::SerializationError(format!("Invalid node bytes: {}", e)))?,
-        tauri::ipc::InvokeBody::Json(value) => serde_json::from_value(value.clone())
-            .map_err(|e| OverseerError::SerializationError(format!("Invalid node json: {}", e)))?,
-    };
-    file_ops::OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
-        OverseerError::SerializationError(format!("Failed to serialize nodes: {}", e))
-    })
-}
-
-#[command]
-async fn parse_overseer_content(content: String, path: Option<String>) -> Result<Vec<OverseerNode>> {
+async fn parse_overseer_content(content: String, path: Option<String>) -> Result<ForThePage<Vec<OverseerNode>>> {
     // The same call the server makes. This used to record where the server did not, because the
     // recording cost seventy per cent of an open and only an editor got that back; it now costs
     // almost nothing and both want the graph. See `app_api::recording_is_on`.
@@ -278,6 +246,7 @@ async fn parse_overseer_content(content: String, path: Option<String>) -> Result
         Some(named) => app_api::load_document_for(content, named, THE_WINDOW),
         None => app_api::load_document(content),
     }
+    .map(ForThePage)
 }
 
 #[command]
@@ -285,8 +254,8 @@ async fn parse_overseer_content_selective(
     content: String,
     changed_fields: Vec<String>,
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
-) -> Result<Vec<OverseerNode>> {
-    app_api::resolve_selective(content, changed_fields, changed_field_values)
+) -> Result<ForThePage<Vec<OverseerNode>>> {
+    app_api::resolve_selective(content, changed_fields, changed_field_values).map(ForThePage)
 }
 
 
@@ -299,8 +268,8 @@ async fn parse_overseer_content_selective_with_text(
     content: String,
     changed_fields: Vec<String>,
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
-) -> Result<app_api::ResolvedDocument> {
-    app_api::resolve_selective_with_text(content, changed_fields, changed_field_values)
+) -> Result<ForThePage<app_api::ResolvedDocument>> {
+    app_api::resolve_selective_with_text(content, changed_fields, changed_field_values).map(ForThePage)
 }
 
 
@@ -314,8 +283,8 @@ async fn parse_overseer_content_selective_update(
     content: String,
     changed_fields: Vec<String>,
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
-) -> Result<app_api::ResolvedUpdate> {
-    app_api::resolve_selective_update(content, changed_fields, changed_field_values)
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    app_api::resolve_selective_update(content, changed_fields, changed_field_values).map(ForThePage)
 }
 
 /// Put the document back the way it was before the last write.
@@ -331,31 +300,14 @@ async fn find_overseer_files(_directory: String) -> Result<Vec<String>> {
     Ok(vec![])
 }
 
-#[command]
-async fn execute_overseer_event(
-    mut nodes: Vec<OverseerNode>,
-    node_path: Vec<String>,
-    event_name: String,
-) -> Result<Vec<OverseerNode>> {
-    #[cfg(feature = "debug-resolver")]
-    eprintln!(
-        "[TAURI] execute_overseer_event event='{}' path={:?}",
-        event_name, node_path
-    );
-    // Execute actions for the event; this will mutate nodes and re-resolve once
-    ActionExecutor::execute_event(&mut nodes, &node_path, &event_name)?;
-    Ok(nodes)
-}
-
-
-/// `execute_overseer_event` driven by the document's text rather than the document.
+/// Run an event on the document's text.
 #[command]
 async fn execute_overseer_event_with_text(
     content: String,
     node_path: Vec<String>,
     event_name: String,
-) -> Result<app_api::ResolvedDocument> {
-    app_api::execute_event_on_text(content, node_path, event_name)
+) -> Result<ForThePage<app_api::ResolvedDocument>> {
+    app_api::execute_event_on_text(content, node_path, event_name).map(ForThePage)
 }
 
 /// `scheduler_tick` driven by the document's text.
@@ -366,8 +318,8 @@ async fn execute_overseer_event_update(
     content: String,
     node_path: Vec<String>,
     event_name: String,
-) -> Result<app_api::ResolvedUpdate> {
-    app_api::execute_event_update(content, node_path, event_name)
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    app_api::execute_event_update(content, node_path, event_name).map(ForThePage)
 }
 
 
@@ -432,15 +384,12 @@ fn main() {
             save_overseer_file,
             save_overseer_file_from_text,
             save_overseer_file_with_original,
-            serialize_overseer_nodes,
-            serialize_overseer_nodes_raw,
             parse_overseer_content,
             parse_overseer_content_selective,
             parse_overseer_content_selective_with_text,
             parse_overseer_content_selective_update,
             find_overseer_files,
             undo_overseer_file,
-            execute_overseer_event,
             execute_overseer_event_with_text,
             execute_overseer_event_update,
             write_overseer_values,

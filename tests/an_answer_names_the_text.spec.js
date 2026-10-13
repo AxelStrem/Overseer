@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // compressed - and the page reads it only when something goes the long way: a write refused and
 // worked out from the text instead, or a save. So the page keeps the version, asks for the text
 // by it when one of those happens, and otherwise never asks. What has to hold is the last part
-// as much as the first: a page that fetched the text, or rebuilt it from the document, before
+// as much as the first: a page that fetched the text, or read the file, before
 // every edit just in case would pay more than the text ever cost.
 
 function setupDOM() {
@@ -67,7 +67,7 @@ const named = (version, extra = {}) => ({
 })
 
 describe('an answer that names the text', () => {
-  let app, serialized
+  let app
 
   beforeEach(() => {
     setupDOM()
@@ -78,8 +78,6 @@ describe('an answer that names the text', () => {
     app._currentText = 'TEXT-AS-OPENED'
     app._originalText = 'TEXT-AS-OPENED'
     app.renderer.renderDocument(app.currentDocument)
-    serialized = 0
-    app.serializeNodes = async () => { serialized++; return 'TEXT-REBUILT' }
   })
 
   it('keeps the version and asks for nothing more', async () => {
@@ -89,7 +87,7 @@ describe('an answer that names the text', () => {
     expect(app._currentText).toBe(null)
     expect(app._textVersion).toBe('V1')
     expect(calls('load_overseer_text').length, 'the text was fetched for nothing').toBe(0)
-    expect(serialized, 'the document was uploaded for nothing').toBe(0)
+    expect(calls('load_overseer_file').length, 'the file was read for nothing').toBe(0)
   })
 
   it('sends the next change without the text as well', async () => {
@@ -101,7 +99,7 @@ describe('an answer that names the text', () => {
     await settle()
     expect(calls('write_overseer_values').length).toBe(2)
     expect(calls('load_overseer_text').length, 'the text was fetched before an edit').toBe(0)
-    expect(serialized, 'the document was uploaded before an edit').toBe(0)
+    expect(calls('load_overseer_file').length, 'the file was read before an edit').toBe(0)
     expect(app._textVersion).toBe('V2')
   })
 
@@ -126,10 +124,10 @@ describe('an answer that names the text', () => {
     const longWay = calls('parse_overseer_content_selective_with_text')
     expect(longWay.length, 'the refused write did not go the long way').toBe(1)
     expect(longWay[0][1].content, 'the long way did not start from the named text').toBe('TEXT-V1')
-    expect(serialized, 'the document was uploaded although its text was there to fetch').toBe(0)
+    expect(calls('load_overseer_file').length, 'the file was read although the text was there to fetch').toBe(0)
   })
 
-  it('rebuilds the text from the document when the version is no longer kept', async () => {
+  it('reads the file when the version is no longer kept', async () => {
     let refuse = false
     invoke.mockImplementation(async (cmd) => {
       if (cmd === 'write_overseer_values') {
@@ -137,6 +135,7 @@ describe('an answer that names the text', () => {
         return named('V1')
       }
       if (cmd === 'load_overseer_text') return null
+      if (cmd === 'load_overseer_file') return 'TEXT-OF-THE-FILE'
       if (cmd === 'parse_overseer_content_selective_with_text') return { nodes: buildDoc(), text: 'TEXT-AFTER' }
       return null
     })
@@ -146,8 +145,8 @@ describe('an answer that names the text', () => {
     editField('alpha', 'edited again')
     await settle()
 
-    expect(serialized, 'the text was neither fetched nor rebuilt').toBe(1)
-    expect(calls('parse_overseer_content_selective_with_text')[0][1].content).toBe('TEXT-REBUILT')
+    expect(calls('load_overseer_file').length, 'the text was neither fetched nor read').toBe(1)
+    expect(calls('parse_overseer_content_selective_with_text')[0][1].content).toBe('TEXT-OF-THE-FILE')
   })
 
   it('checks a save against the file by version when that is all it was told', async () => {
@@ -180,7 +179,7 @@ describe('an answer that names the text', () => {
 })
 
 describe('a press after an answer that named the text', () => {
-  let app, serialized
+  let app
 
   const withButton = () => ([{
     name: 'doc', node_type: 'tab',
@@ -215,8 +214,6 @@ describe('a press after an answer that named the text', () => {
     app._textVersion = 'V1'
     app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
-    serialized = 0
-    app.serializeNodes = async () => { serialized++; return 'TEXT-REBUILT' }
   })
 
   it('goes as an instruction without fetching the text', async () => {

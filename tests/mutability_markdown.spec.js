@@ -45,11 +45,9 @@ describe('mutability parameter (markdown)', () => {
     expect(saveBtn).toBeTruthy()
     saveBtn.click()
 
-    // After save, normalize and expect original value persisted (guarded => UI-only)
-    const normalized = app.normalizeDocumentForSerialization(JSON.parse(JSON.stringify(app.currentDocument)))
-    const mNode = app.renderer.findNodeByPath(normalized, ['main','M'])
-    const v = mNode?.parameters?.value
-    const s = v && (v.String ?? (typeof v === 'string' ? v : null))
-    expect(s).toBe('Hello')
+    // A save puts the authored value back before writing (guarded => UI-only)
+    const revert = app.collectGuardedReverts(app.currentDocument).find(r => r.path === 'main/M')
+    expect(revert).toBeTruthy()
+    expect(revert.value).toEqual({ String: 'Hello' })
   })
 })

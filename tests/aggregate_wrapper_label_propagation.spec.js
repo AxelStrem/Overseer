@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { answeringFromText } from './a_fake_backend_answers_from_text.js'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
 
@@ -69,6 +70,9 @@ describe('Wrapper+label propagation', () => {
       return Promise.reject(new Error('Unhandled cmd '+cmd))
     })
   const app = new OverseerApp()
+  // The page works from the text; the fake below still answers as it did.
+  invoke.mockImplementation(answeringFromText(invoke.getMockImplementation()))
+  app._currentText = 'DOC'
     app.currentDocument = currentDoc
     // Edit A -> 5
     const item = app.currentDocument[0].children.find(n=>n.name==='L').children[0]

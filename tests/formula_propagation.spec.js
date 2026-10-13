@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { answeringFromText } from './a_fake_backend_answers_from_text.js'
 
 // Minimal DOM container expected by renderer
 function setupDOM() {
@@ -104,6 +105,9 @@ describe('Formula propagation', () => {
 
     // Now import app after mock in effect
     const app = new OverseerApp()
+    // The page works from the text; the fake below still answers as it did.
+    invoke.mockImplementation(answeringFromText(invoke.getMockImplementation()))
+    app._currentText = 'DOC'
 
     // Initial document identical to examples/basic/formula_propagation.os
     const before = [

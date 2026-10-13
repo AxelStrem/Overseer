@@ -60,58 +60,47 @@ describe('mutable=guarded via action does not persist on save', () => {
     const originalDoc = buildDoc()
     let currentDoc = deepClone(originalDoc)
 
-    // Capture nodes passed to serialize to verify saved content
-    let capturedNodes = null
+    let saved = null
 
     invoke.mockImplementation((cmd, args) => {
       if (cmd === 'get_next_timer_due_ms') return Promise.resolve(null)
       if (cmd === 'scheduler_tick') return Promise.resolve(null)
-      if (cmd === 'parse_overseer_content') return Promise.resolve(deepClone(currentDoc))
-      if (cmd === 'parse_overseer_content_selective') return Promise.resolve(deepClone(currentDoc))
-      if (cmd === 'execute_overseer_event') {
+      if (cmd === 'execute_overseer_event_with_text') {
         // Simulate backend action: set main/C to 99
-        const newDoc = deepClone(args.nodes)
-        const main = newDoc.find(n=>n.name==='main')
-        const C = main.children.find(n=>n.name==='C')
-        C.parameters.value = { Integer: 99 }
-        return Promise.resolve(newDoc)
+        const newDoc = deepClone(currentDoc)
+        newDoc.find(n=>n.name==='main').children.find(n=>n.name==='C').parameters.value = { Integer: 99 }
+        return Promise.resolve({ nodes: newDoc, text: 'DOC-WITH-C-99' })
       }
-      if (cmd === 'serialize_overseer_nodes') { capturedNodes = deepClone(args.nodes); return Promise.resolve('DOC') }
-      if (cmd === 'save_overseer_file') return Promise.resolve(null)
-      if (cmd === 'save_overseer_file_with_original') return Promise.resolve(null)
-      if (cmd === 'load_overseer_file') return Promise.resolve('')
+      if (cmd === 'save_overseer_file_from_text') { saved = args; return Promise.resolve(null) }
+      if (cmd === 'load_overseer_file') return Promise.resolve('DOC')
       return Promise.reject(new Error('unknown command: '+cmd))
     })
 
     const app = new OverseerApp()
     app.currentDocument = deepClone(currentDoc)
-    app._originalText = ''
+    app._currentText = 'DOC'
+    app._originalText = 'DOC'
     app.renderer.renderDocument(app.currentDocument)
-
-    // Wire test hook just in case
-    app._testHook_beforeSerialize = (nodes) => { capturedNodes = deepClone(nodes) }
 
     // Click the button to trigger action
     const btnEl = findByPath(['main','DoIt'])
     expect(btnEl).toBeTruthy()
-  btnEl.click()
-  // Wait a tick for async emitEvent handler to complete
-  await new Promise(r => setTimeout(r, 0))
+    btnEl.click()
+    // Wait a tick for async emitEvent handler to complete
+    await new Promise(r => setTimeout(r, 0))
 
     // After action, UI doc should show 99 for C but it must be tagged guarded for save
     const afterDoc = app.currentDocument
     const Cnode = afterDoc.find(n=>n.name==='main').children.find(n=>n.name==='C')
     expect(Cnode.parameters.value.Integer).toBe(99)
-    // Guarding flags may or may not be directly visible depending on tag timing, but save should revert
 
-  await app.saveFile()
+    app.currentFile = 'dummy.os'
+    await app.saveFile()
 
-    // Verify serialized nodes kept original C=66 due to guarded normalization
-    expect(capturedNodes).toBeTruthy()
-    const serC = capturedNodes.find(n=>n.name==='main').children.find(n=>n.name==='C')
-    // Either value remained 66 or guarded flags caused revert
-    const v = serC.parameters.value
-    const asInt = (v && typeof v==='object' && v.Integer!=null) ? v.Integer : (typeof v==='number' ? v : NaN)
-    expect(asInt).toBe(66)
+    // The text resolved with C=99 goes with C's authored 66, to be put back before writing.
+    expect(saved).toBeTruthy()
+    expect(saved.content).toBe('DOC-WITH-C-99')
+    const revert = (saved.guarded || []).find(g => g.path === 'main/C')
+    expect(revert && revert.value).toEqual({ Integer: 66 })
   })
 })

@@ -67,11 +67,10 @@ describe('mutability parameter', () => {
     input.value = '99'
     input.dispatchEvent(new window.Event('blur', { bubbles: true }))
 
-    // Normalize for serialization and assert original value is kept
-    const normalized = app.normalizeDocumentForSerialization(JSON.parse(JSON.stringify(app.currentDocument)))
-    const cNode = app.renderer.findNodeByPath(normalized, ['main','C'])
-    const cVal = cNode?.parameters?.value
-    const cNum = (cVal && (cVal.Integer ?? parseInt(cVal.String || cVal.Float || cVal, 10)))
-    expect(cNum).toBe(55)
+    // A save puts the authored value back before writing
+    const reverts = app.collectGuardedReverts(app.currentDocument)
+    const cRevert = reverts.find(r => r.path === 'main/C')
+    expect(cRevert).toBeTruthy()
+    expect(cRevert.value).toEqual({ Integer: 55 })
   })
 })

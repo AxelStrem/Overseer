@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { answeringFromText } from './a_fake_backend_answers_from_text.js'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
@@ -148,6 +149,9 @@ describe('Unnamed divs: total aggregate updates after editing A or B', () => {
     })
 
   const app = new OverseerApp()
+  // The page works from the text; the fake below still answers as it did.
+  invoke.mockImplementation(answeringFromText(invoke.getMockImplementation()))
+  app._currentText = 'DOC'
   app.currentDocument = currentDoc
   // Render using same pattern as other UI tests
   app.renderer.renderDocument(app.currentDocument)

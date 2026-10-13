@@ -24,19 +24,19 @@ pub struct OverseerNode {
     #[serde(default, skip_serializing_if = "not_so")]
     pub is_hierarchy_transparent: bool,
     // Parameter insertion order as authored (list of keys) - used to preserve ordering fidelity
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "kept_from_the_page_or_empty")]
     pub param_order: Vec<String>,
     // Raw literal for this node's value (if it was an explicitly authored numeric with formatting such as trailing zeros)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "kept_from_the_page_or_none")]
     pub raw_value_literal: Option<String>,
     // Whether this node's value line was authored using dash shorthand (- name = value)
-    #[serde(default, skip_serializing_if = "not_so")]
+    #[serde(default, skip_serializing_if = "kept_from_the_page_or_not_so")]
     pub authored_dash: bool,
     // Original child order index relative to its siblings as parsed (used for stable round-trip ordering)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "kept_from_the_page_or_none")]
     pub child_original_index: Option<usize>,
     // Number of blank (empty) lines that preceded this node in the source
-    #[serde(default, skip_serializing_if = "none_of_them")]
+    #[serde(default, skip_serializing_if = "kept_from_the_page_or_none_of_them")]
     pub leading_blank_lines: u8,
     // Snapshot of original source trivia and spans (runtime metadata only).
     //
@@ -46,9 +46,9 @@ pub struct OverseerNode {
     // Read far more often than changed; a change makes the node its own copy, `Arc::make_mut`.
     #[serde(skip)]
     pub source_snapshot: Option<std::sync::Arc<NodeSourceSnapshot>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "kept_from_the_page_or_none")]
     pub source_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "kept_from_the_page_or_none")]
     pub source_fingerprint: Option<u64>,
 }
 
@@ -231,8 +231,21 @@ impl From<HashMap<String, OverseerValue>> for Params {
 
 impl Serialize for Params {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        if writing_for_the_page() {
+            return serializer.collect_map(self.iter().filter(|(k, _)| !only_for_writing_back(k)));
+        }
         serializer.collect_map(self.iter())
     }
+}
+
+/// A parameter the engine keeps to write the document back as it was authored, or to know what
+/// a template supplied - which the page never reads.
+///
+/// `_template_type` is the exception among the template's notes: the page reads it to tell what
+/// a node was declared as.
+fn only_for_writing_back(key: &str) -> bool {
+    (key.starts_with("_template_") && key != "_template_type")
+        || matches!(key, "_explicit_child_override" | "_override_present" | "_explicit_overrides")
 }
 
 impl<'de> Deserialize<'de> for Params {
@@ -263,6 +276,56 @@ fn not_so(flag: &bool) -> bool {
 /// The same, for a count that is usually nought.
 fn none_of_them(count: &u8) -> bool {
     *count == 0
+}
+
+thread_local! {
+    static FOR_THE_PAGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn writing_for_the_page() -> bool {
+    FOR_THE_PAGE.with(|on| on.get())
+}
+
+/// A value written for the page, without what only writing the document back needs.
+///
+/// A node carries where it came from in the text - its parameters' order, its place among its
+/// siblings, the blank lines before it, a fingerprint of its source - and its parameters carry
+/// notes on what a template supplied and what is overridden. The serializer needs all of it,
+/// and the disk cache keeps it with the nodes; the page reads none of it, now that every change
+/// reaches the file as an instruction or as text rather than as the document sent back. It was
+/// most of every open: 4.5 MB of the 7.3 an open of tasks.os answered.
+///
+/// A wrapper rather than a different type, so that every answer holding nodes - a document, a
+/// change, a subtree - is written the same way, through whichever door serializes it.
+pub struct ForThePage<T>(pub T);
+
+impl<T: Serialize> Serialize for ForThePage<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                FOR_THE_PAGE.with(|on| on.set(self.0));
+            }
+        }
+        let _restore = Restore(FOR_THE_PAGE.with(|on| on.replace(true)));
+        self.0.serialize(serializer)
+    }
+}
+
+fn kept_from_the_page_or_empty<T>(list: &Vec<T>) -> bool {
+    list.is_empty() || writing_for_the_page()
+}
+
+fn kept_from_the_page_or_none<T>(value: &Option<T>) -> bool {
+    value.is_none() || writing_for_the_page()
+}
+
+fn kept_from_the_page_or_not_so(flag: &bool) -> bool {
+    not_so(flag) || writing_for_the_page()
+}
+
+fn kept_from_the_page_or_none_of_them(count: &u8) -> bool {
+    none_of_them(count) || writing_for_the_page()
 }
 
 impl OverseerNode {

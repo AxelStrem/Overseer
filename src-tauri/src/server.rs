@@ -307,8 +307,10 @@ fn from_value<T: serde::de::DeserializeOwned>(
         .map_err(|e| RequestError::Rejected(format!("'{}' is not what it should be: {}", name, e)))
 }
 
+/// Every answer here goes to the page, so it is written without what only the serializer
+/// reads - see `ForThePage`.
 fn as_json<T: serde::Serialize>(value: T) -> std::result::Result<serde_json::Value, RequestError> {
-    serde_json::to_value(value)
+    serde_json::to_value(crate::types::ForThePage(value))
         .map_err(|e| RequestError::Failed(format!("could not encode the answer: {}", e)))
 }
 
@@ -581,14 +583,6 @@ impl DocumentRoot {
                     .map_err(|e| RequestError::from_event("could not run the event", e))?),
                 )
             }
-            "serialize_overseer_nodes" | "serialize_overseer_nodes_raw" => {
-                let nodes: Vec<OverseerNode> = from_value(args, "nodes")?;
-                as_json(
-                    crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes).map_err(|e| {
-                        RequestError::Failed(format!("could not serialize the document: {}", e))
-                    })?,
-                )
-            }
             "execute_overseer_event_with_text" => {
                 let content = arg_str(args, &["content"])
                     .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;
@@ -598,16 +592,6 @@ impl DocumentRoot {
                 as_json(app_api::execute_event_on_text(content, path, event).map_err(|e| {
                     RequestError::from_event("could not run the event", e)
                 })?)
-            }
-            "execute_overseer_event" => {
-                let mut nodes: Vec<OverseerNode> = from_value(args, "nodes")?;
-                let path = arg_strings(args, &["node_path", "nodePath"]);
-                let event = arg_str(args, &["event_name", "eventName"])
-                    .ok_or_else(|| RequestError::Rejected("'event_name' is required".into()))?;
-                app_api::execute_event(&mut nodes, &path, &event).map_err(|e| {
-                    RequestError::from_event("could not run the event", e)
-                })?;
-                as_json(nodes)
             }
             "parse_overseer_content_selective" => {
                 let content = arg_str(args, &["content"])

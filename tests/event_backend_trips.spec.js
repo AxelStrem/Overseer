@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// Every field edit emits a 'change' event. Answering one means uploading the whole document,
+// Every field edit emits a 'change' event. Answering one meant uploading the whole document,
 // which measured ~5.5 s for 10.5 MB - and the backend's answer, when the node declares no
 // handler, is the document unchanged. A document that handles no change events (exercise.os
 // declares none) was paying that on every single edit for nothing.
@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 //
 // When a handler does exist, the trip carries the document's text rather than the document,
 // for the same reason the edit path does - Rust owns the document and rebuilds it from text
-// that is two orders of magnitude smaller.
+// that is two orders of magnitude smaller. With no text in hand, the file has it.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -62,14 +62,17 @@ function buildDoc() {
 
 describe('emitting an event', () => {
   let calls
+  let sent
   let installDoc
   beforeEach(async () => {
     setupDOM()
     calls = []
+    sent = []
     const { invoke } = await import('@tauri-apps/api/core')
     invoke.mockImplementation(async (cmd, args) => {
       calls.push(cmd)
-      if (cmd === 'execute_overseer_event') return JSON.parse(JSON.stringify(args.nodes))
+      sent.push([cmd, args])
+      if (cmd === 'load_overseer_file') return 'FILE-TEXT'
       if (cmd === 'execute_overseer_event_with_text') {
         return { nodes: JSON.parse(JSON.stringify(installDoc)), text: 'DOC-TEXT-AFTER' }
       }
@@ -78,7 +81,7 @@ describe('emitting an event', () => {
     installDoc = buildDoc()
   })
 
-  const eventCalls = () => calls.filter(c => c === 'execute_overseer_event').length
+  const eventCalls = () => calls.filter(c => c === 'execute_overseer_event_with_text').length
 
   it('makes no backend call when the node declares no handler', async () => {
     const app = new OverseerApp()
@@ -88,12 +91,13 @@ describe('emitting an event', () => {
 
     await app.renderer.emitEvent(node, null, 'change')
 
-    expect(eventCalls(), 'the document was uploaded to run a handler that does not exist').toBe(0)
+    expect(calls.length, 'the backend was asked to run a handler that does not exist').toBe(0)
   })
 
   it('still calls the backend when a handler is declared', async () => {
     const app = new OverseerApp()
     app.currentDocument = buildDoc()
+    app._currentText = 'DOC-TEXT'
     const node = app.currentDocument[0].children[1]
     node.__overseer_path = ['doc', 'acts']
 
@@ -105,6 +109,7 @@ describe('emitting an event', () => {
   it('still calls the backend for a mount, which acts on load without declaring a handler', async () => {
     const app = new OverseerApp()
     app.currentDocument = buildDoc()
+    app._currentText = 'DOC-TEXT'
     const mount = {
       name: 'm', node_type: 'mount', parameters: {}, children: [],
       is_hierarchy_transparent: false, source_id: 's1n_m', param_order: [],
@@ -126,23 +131,24 @@ describe('emitting an event', () => {
 
     await app.renderer.emitEvent(node, null, 'click')
 
-    expect(
-      calls.filter(c => c === 'execute_overseer_event').length,
-      'the document was uploaded even though its text was known'
-    ).toBe(0)
-    expect(calls.filter(c => c === 'execute_overseer_event_with_text').length).toBe(1)
+    expect(eventCalls()).toBe(1)
+    expect(sent.find(([c]) => c === 'execute_overseer_event_with_text')[1].content).toBe('DOC-TEXT')
     expect(app._currentText, 'the text returned by the event was not kept').toBe('DOC-TEXT-AFTER')
   })
 
-  it('falls back to sending the document when no text is known', async () => {
+  it('reads the file when no text is known, and never sends the document', async () => {
     const app = new OverseerApp()
     app.currentDocument = buildDoc()
+    app.currentFile = 'doc.os'
     app._currentText = null
     const node = app.currentDocument[0].children[1]
     node.__overseer_path = ['doc', 'acts']
 
+    // The instruction goes unanswered, so the press goes the long way, from the text.
     await app.renderer.emitEvent(node, null, 'click')
 
-    expect(calls.filter(c => c === 'execute_overseer_event').length).toBe(1)
+    expect(calls.filter(c => c === 'load_overseer_file').length).toBe(1)
+    expect(sent.find(([c]) => c === 'execute_overseer_event_with_text')[1].content).toBe('FILE-TEXT')
+    expect(sent.some(([, args]) => args && 'nodes' in args), 'the document was sent').toBe(false)
   })
 })

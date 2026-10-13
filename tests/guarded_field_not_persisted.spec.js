@@ -5,8 +5,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // overwrite the authored `$(today())`, or the document stops defaulting to today.
 //
 // Day navigation goes through a `set` action rather than a field edit, so this checks the
-// action path specifically - what reaches `serialize_overseer_nodes` after the backend has
-// changed a guarded field.
+// action path specifically - what a save sends after the backend has changed a guarded field.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -90,7 +89,38 @@ function findByName(nodes, name) {
 describe('a guarded field changed by an action', () => {
   beforeEach(() => setupDOM())
 
-  async function navigateAndSave(app, clicks) {
+  // Presses Prev, then saves, answering for the backend: each press steps the date back a day,
+  // as the real `set` action does, and the answer carries the text resolved with it applied.
+  // Answers with what the save sent.
+  async function navigateAndSave(clicks) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const dates = ['2026-08-05', '2026-08-04', '2026-08-03']
+    let step = 0
+    let saved = null
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === 'execute_overseer_event_with_text') {
+        const doc = deepClone(buildDoc())
+        const node = findByName(doc, 'selected_date')
+        const next = dates[Math.min(step++, dates.length - 1)]
+        node.parameters.value = { String: next }
+        node.parameters._computed_value = { String: next }
+        return Promise.resolve({ nodes: doc, text: `TEXT-AT-${next}` })
+      }
+      if (cmd === 'save_overseer_file_from_text') {
+        saved = args
+        return Promise.resolve(null)
+      }
+      if (cmd === 'load_overseer_file') return Promise.resolve('DOC')
+      return Promise.resolve(null)
+    })
+
+    const app = new OverseerApp()
+    app.currentDocument = buildDoc()
+    app.currentFile = 'C:/tmp/tracker.os'
+    app._currentText = 'DOC'
+    app._originalText = 'DOC'
+    app.renderer.renderDocument(app.currentDocument)
+
     const prevEl = Array.from(document.querySelectorAll('[data-path]')).find(el => {
       try { return JSON.parse(el.dataset.path || '[]').slice(-1)[0] === 'Prev' } catch { return false }
     })
@@ -100,91 +130,30 @@ describe('a guarded field changed by an action', () => {
       btn.dispatchEvent(new Event('click', { bubbles: true }))
       await new Promise(r => setTimeout(r, 30))
     }
-    let sent = null
-    app._testHook_beforeSerialize = (nodes) => { sent = deepClone(nodes) }
+    // The in-memory document may hold the navigated date - that is the point of guarded.
     await app.saveFile()
-    return sent
+    return saved
   }
 
+  const revertOf = (saved) => ((saved && saved.guarded) || []).find(g => g.path.endsWith('selected_date'))
+
   it('is not persisted, so the authored formula survives the save', async () => {
-    const { invoke } = await import('@tauri-apps/api/core')
-    invoke.mockImplementation((cmd, args) => {
-      if (cmd === 'get_next_timer_due_ms' || cmd === 'scheduler_tick') return Promise.resolve(null)
-      if (cmd === 'execute_overseer_event') {
-        // What the backend does for `set`: writes the new value onto the node.
-        const doc = deepClone(args.nodes)
-        const node = findByName(doc, 'selected_date')
-        node.parameters.value = { String: '2026-08-05' }
-        node.parameters._computed_value = { String: '2026-08-05' }
-        return Promise.resolve(doc)
-      }
-      if (cmd === 'serialize_overseer_nodes') return Promise.resolve('DOC')
-      if (cmd === 'save_overseer_file' || cmd === 'save_overseer_file_with_original') return Promise.resolve(null)
-      if (cmd === 'load_overseer_file') return Promise.resolve('DOC')
-      return Promise.resolve(null)
-    })
-
-    const app = new OverseerApp()
-    app.currentDocument = buildDoc()
-    app.currentFile = 'C:/tmp/tracker.os'
-    app._originalText = 'DOC'
-    app.renderer.renderDocument(app.currentDocument)
-
-    // Navigate a day, exactly as pressing Prev does.
-    const prevEl = Array.from(document.querySelectorAll('[data-path]')).find(el => {
-      try { return JSON.parse(el.dataset.path || '[]').slice(-1)[0] === 'Prev' } catch { return false }
-    })
-    expect(prevEl, 'the Prev button should render').toBeTruthy()
-    const btn = prevEl.matches('button') ? prevEl : prevEl.querySelector('button')
-    btn.dispatchEvent(new Event('click', { bubbles: true }))
-    await new Promise(r => setTimeout(r, 30))
-
-    // The in-memory document may hold the navigated date - that is the point of guarded.
-    let sent = null
-    app._testHook_beforeSerialize = (nodes) => { sent = deepClone(nodes) }
-    await app.saveFile()
-
-    expect(sent, 'the save path should serialize the document').toBeTruthy()
-    const saved = findByName(sent, 'selected_date')
-    expect(saved, 'the field should still be present').toBeTruthy()
+    const saved = await navigateAndSave(1)
+    expect(saved, 'the save should send the text').toBeTruthy()
+    const revert = revertOf(saved)
     expect(
-      saved.parameters.value,
-      `a guarded field must be written as authored, got ${JSON.stringify(saved.parameters.value)}`
+      revert && revert.value,
+      `a guarded field must be written as authored, got ${JSON.stringify(saved.guarded)}`
     ).toEqual({ Formula: 'today()' })
   })
 
   it('survives repeated changes, not just the first', async () => {
-    const { invoke } = await import('@tauri-apps/api/core')
-    // Each click steps the date back a day, as the real `set` action does.
-    const dates = ['2026-08-05', '2026-08-04', '2026-08-03']
-    let step = 0
-    invoke.mockImplementation((cmd, args) => {
-      if (cmd === 'get_next_timer_due_ms' || cmd === 'scheduler_tick') return Promise.resolve(null)
-      if (cmd === 'execute_overseer_event') {
-        const doc = deepClone(args.nodes)
-        const node = findByName(doc, 'selected_date')
-        const next = dates[Math.min(step++, dates.length - 1)]
-        node.parameters.value = { String: next }
-        node.parameters._computed_value = { String: next }
-        return Promise.resolve(doc)
-      }
-      if (cmd === 'serialize_overseer_nodes') return Promise.resolve('DOC')
-      if (cmd === 'save_overseer_file' || cmd === 'save_overseer_file_with_original') return Promise.resolve(null)
-      if (cmd === 'load_overseer_file') return Promise.resolve('DOC')
-      return Promise.resolve(null)
-    })
-
-    const app = new OverseerApp()
-    app.currentDocument = buildDoc()
-    app.currentFile = 'C:/tmp/tracker.os'
-    app._originalText = 'DOC'
-    app.renderer.renderDocument(app.currentDocument)
-
-    const sent = await navigateAndSave(app, 2)
-    const saved = findByName(sent, 'selected_date')
+    const saved = await navigateAndSave(2)
+    expect(saved.content).toBe('TEXT-AT-2026-08-04')
+    const revert = revertOf(saved)
     expect(
-      saved.parameters.value,
-      `after two changes the authored value must still be restored, not the intermediate one - got ${JSON.stringify(saved.parameters.value)}`
+      revert && revert.value,
+      `after two changes the authored value must still be restored, not the intermediate one - got ${JSON.stringify(saved.guarded)}`
     ).toEqual({ Formula: 'today()' })
   })
 

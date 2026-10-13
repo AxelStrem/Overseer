@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { PROFILE, profileMark, profiled, now } from './profile.js'
+import { profileMark, profiled, now } from './profile.js'
 
 // Debug is opt-in only via ?debug=1; localStorage flag is ignored to avoid accidental noise
 const DEBUG_MODE = (() => {
@@ -8,26 +8,6 @@ const DEBUG_MODE = (() => {
         return !!(qs && qs.includes('debug=1'))
     } catch { return false }
 })();
-
-// Tauri sends IPC over a custom protocol, and falls back permanently to the postMessage
-// interface if that ever fails (a blocked protocol or a CSP error). The two transports have
-// very different costs for a large payload: postMessage encodes a byte array by expanding it
-// into a JSON array of one number per byte, so raw bytes become the worst possible encoding
-// on exactly the route where the payload is already expensive. Tauri announces the switch on
-// console.warn and nowhere else, so that is where we learn which transport we are on.
-let ipcCustomProtocolFailed = false
-try {
-    const _warn = console.warn.bind(console)
-    console.warn = (...args) => {
-        try {
-            if (!ipcCustomProtocolFailed && typeof args[0] === 'string'
-                && args[0].includes('IPC custom protocol failed')) {
-                ipcCustomProtocolFailed = true
-            }
-        } catch(_) {}
-        return _warn(...args)
-    }
-} catch(_) {}
 
 // Nothing is silenced here any more.
 //
@@ -90,48 +70,13 @@ export class OverseerApp {
         this.currentDocument = newDoc
     }
 
-    // Normalize document for serialization (on a deep-cloned copy).
-    // IMPORTANT: This must not mutate the live in-memory document, otherwise flags like
-    // _guarded_edit get stripped too early during selective reevaluation, and guarded
-    // edits may end up persisted on subsequent saves. Always operate on a clone.
-    //
-    // - Ensures required schema fields exist (e.g., is_hierarchy_transparent)
-    // - Coerces known booleans to OverseerValue shapes
-    // - Applies guarded semantics (restore/drop values) only on the clone
-    // - Strips internal/transient parameters on the clone
-    // Hand the document to the serializer as raw bytes.
-    //
-    // Passing a large document to invoke() as an ordinary argument routes it through the
-    // webview's JSON IPC, which measured ~5.5 s for an 8.9 MB document - two orders of
-    // magnitude more than the serialization it is asking for, and far more than the same
-    // document costs travelling back the other way. Encoding it here and sending bytes
-    // avoids that path. If anything about the raw route is unavailable, the plain command
-    // still works and is used instead.
-    async serializeNodes(nodes) {
-        // Raw bytes only pay off on the custom protocol, which sends them as a request body.
-        // On the postMessage fallback they are expanded to one JSON number per byte, which is
-        // far worse than letting Tauri serialize the document itself.
-        const json = JSON.stringify(nodes)
-        if (PROFILE) {
-            console.warn(`[profile]     payload ${(json.length / 1048576).toFixed(1)} MB via ${ipcCustomProtocolFailed ? 'postMessage (custom protocol failed)' : 'custom protocol'}`)
-        }
-        if (!ipcCustomProtocolFailed) {
-            try {
-                return await invoke('serialize_overseer_nodes_raw', new TextEncoder().encode(json))
-            } catch (e) {
-                console.warn('Raw serialization failed; falling back to JSON IPC:', e)
-            }
-        }
-        return await invoke('serialize_overseer_nodes', { nodes })
-    }
-
     // Guarded fields, with the value the document authored for each.
     //
     // `mutable="guarded"` means a change stays in the open document and never reaches disk.
     // The text held for the next interaction comes from resolving *with* those changes - that
     // is how navigating a day updates the view - so it cannot be saved as it stands. This is
-    // the same restoration normalizeDocumentForSerialization performs, expressed as the few
-    // fields that differ rather than as a whole document to be serialized.
+    // the authored values travel alongside the text, as the few fields that differ, and are put
+    // back before it is written.
     //
     // Segments carry an ordinal when siblings share a name, so a path through several unnamed
     // wrappers still names one node.
@@ -384,101 +329,6 @@ export class OverseerApp {
         return touched
     }
 
-    normalizeDocumentForSerialization(doc) {
-        // Deep clone helper (prefer structuredClone when available)
-        const deepClone = (obj) => {
-            try { if (typeof structuredClone === 'function') return structuredClone(obj) } catch(_) {}
-            try { return JSON.parse(JSON.stringify(obj)) } catch(_) { return obj }
-        }
-        const profileCloneStart = (typeof performance !== 'undefined' ? performance.now() : Date.now())
-        const root = deepClone(doc)
-        const profileWalkStart = profileMark('    deep clone', profileCloneStart)
-        const visit = (node) => {
-            if (!node || typeof node !== 'object') return
-            // Ensure required schema property exists for all nodes
-            if (typeof node.is_hierarchy_transparent !== 'boolean') node.is_hierarchy_transparent = false
-            const p = node.parameters
-            if (p && typeof p === 'object') {
-                const isFlagTrue = (v) => v === true || (v && typeof v === 'object' && v.Boolean === true)
-                const fix = (k) => {
-                    if (p[k] === true) p[k] = { Boolean: true }
-                    if (p[k] === false) p[k] = { Boolean: false }
-                }
-                fix('_override_present')
-                fix('_explicit_child_override')
-                // Flags introduced by renderer for UI/rerender hints
-                fix('_from_template')
-                // Guarded edit handling: ensure UI-only changes do not persist
-                try {
-                    if (isFlagTrue(p._guarded_edit)) {
-                        if (isFlagTrue(p._guarded_was_new_override)) {
-                            // This override was created only in the session; drop it entirely
-                            if (Object.prototype.hasOwnProperty.call(p, 'value')) {
-                                delete p.value
-                            }
-                        } else if (p._guarded_original_value !== undefined) {
-                            // Restore the original explicit value captured at edit time
-                            p.value = p._guarded_original_value
-                        }
-                        // Strip guarded flags unconditionally before serialization
-                        delete p._guarded_edit
-                        delete p._guarded_was_new_override
-                        delete p._guarded_original_value
-                    }
-                } catch(_) { /* non-fatal */ }
-                // Strip parameters that were injected during link flattening so they don't persist to disk.
-                // These are copied from the real target into the proxy for UI but should not serialize as overrides.
-                try {
-                    if (Array.isArray(p._injected_link_params)) {
-                        for (const key of p._injected_link_params) {
-                            if (!key) continue
-                            // Never remove the original 'link' parameter itself
-                            if (key === 'link') continue
-                            if (Object.prototype.hasOwnProperty.call(p, key)) {
-                                delete p[key]
-                            }
-                        }
-                        delete p._injected_link_params
-                    }
-                } catch(_) { /* non-fatal */ }
-                // Remove any shadow/computed link param produced client-side
-                if (p && p._computed_link !== undefined) delete p._computed_link
-            }
-            if (Array.isArray(node.children)) {
-                // For link proxy roots, tag ONLY the explicit override specs (the children actually present in source).
-                // We deliberately do NOT blanket-tag every rendered descendant of the link target (which are not
-                // materialized into node.children anyway) to avoid unintended serialization of inherited template fields.
-                try {
-                    const isLinkProxy = p && (p.link !== undefined || p._computed_link !== undefined)
-                    if (isLinkProxy) {
-                        for (const ch of node.children) {
-                            if (!ch || typeof ch !== 'object') continue
-                            const cp = ch.parameters
-                            if (!cp || typeof cp !== 'object') continue
-                            // Heuristic: treat as explicit override only if it already had a non-internal parameter OR a value override.
-                            const hasUserParam = Object.keys(cp).some(k => {
-                                if (k === 'value') return true
-                                if (k.startsWith('_')) return false
-                                // Ignore template shadow markers copied into overrides
-                                if (cp['_' + 'template_' + k] !== undefined || cp['_template_' + k] !== undefined) return false
-                                return true
-                            })
-                            if (hasUserParam) {
-                                if (!cp._explicit_child_override) cp._explicit_child_override = { Boolean: true }
-                                if (!cp._override_present) cp._override_present = { Boolean: true }
-                            }
-                        }
-                    }
-                } catch(_) { /* ignore */ }
-                node.children.forEach(visit)
-            }
-        }
-        if (Array.isArray(root)) root.forEach(visit)
-        else visit(root)
-        profileMark('    walk', profileWalkStart)
-        return root
-    }
-
     initializeEventListeners() {
         // File operations
     const openBtn = document.getElementById('open-file-btn')
@@ -714,16 +564,21 @@ tab Main {
                 }
             } catch(_) { /* non-fatal safeguard */ }
             
-            // Write the text already in hand rather than uploading the document to be
-            // serialized - the same saving the edit path makes, since the IPC moves a couple
-            // of MB per second. Guarded fields are the one thing the text gets wrong: it
-            // came from resolving with their UI-only values applied, so the values the
-            // document authored travel alongside and are restored before writing.
-            let content = await this.textInHand()
-            const guarded = typeof content === 'string'
-                ? this.collectGuardedReverts(this.currentDocument)
-                : null
-            let savedFromText = typeof content === 'string'
+            // Without a file there is nowhere to write it.
+            if (!this.currentFile) {
+                this.setStatus('Nothing to save to (no file selected)', '', 'info')
+                // Do not attempt disk writes without a target path
+                this.isDocumentModified = false
+                this.updateTitle()
+                return
+            }
+
+            // Write the text in hand - the page never sends the document to be serialized.
+            // Guarded fields are the one thing the text gets wrong: it came from resolving with
+            // their UI-only values applied, so the values the document authored travel
+            // alongside and are restored before writing.
+            const content = await this.textToWorkFrom()
+            const guarded = this.collectGuardedReverts(this.currentDocument)
             // What the file said when this page last heard - as text, or by version when the
             // answer that told it only named the text. Sent both ways, because the server reads
             // its own spelling and the desktop app the other.
@@ -732,60 +587,20 @@ tab Main {
                 : this._originalVersion
                     ? { original: null, original_version: this._originalVersion, originalVersion: this._originalVersion }
                     : { original: null }
-            if (!savedFromText) {
-                const _nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
-                try { if (typeof this._testHook_beforeSerialize === 'function') this._testHook_beforeSerialize(_nodesForSerialization) } catch(_) { /* test-only hook */ }
-                content = await this.serializeNodes(_nodesForSerialization)
-            }
 
-            // If no file path is set yet, treat this as a dry-run serialization only
-            if (!this.currentFile) {
-                this.setStatus('Document serialized (no file selected)', '', 'info')
-                // Do not attempt disk writes without a target path
-                this.isDocumentModified = false
-                this.updateTitle()
-                return
-            }
-
-            if (savedFromText) {
-                await invoke('save_overseer_file_from_text', {
-                    path: this.currentFile,
-                    content,
-                    guarded,
-                    // What the file said when this page loaded it. The backend refuses the
-                    // write if the file has moved on since, because the text being sent was
-                    // built without whatever moved it - and overwriting is silent.
-                    ...baseline
-                })
-                try {
-                    this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
-                    this._originalVersion = null
-                } catch (_) { /* non-fatal */ }
-            } else if (this._originalText != null) {
-                // If we have original raw text, use the merge-save API to preserve comments/whitespace
-                await invoke('save_overseer_file_with_original', {
-                    path: this.currentFile,
-                    regenerated: content,
-                    original: this._originalText
-                })
-                // After saving, refresh our original baseline from disk to keep merges stable
-                try {
-                    this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
-                    this._originalVersion = null
-                } catch (_) { /* non-fatal */ }
-            } else {
-                // Fallback if no baseline is available (e.g., new unsaved file in memory)
-                await invoke('save_overseer_file', {
-                    ...baseline,
-                    path: this.currentFile,
-                    content
-                })
-                // Try to set baseline now
-                try {
-                    this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
-                    this._originalVersion = null
-                } catch(_) {}
-            }
+            await invoke('save_overseer_file_from_text', {
+                path: this.currentFile,
+                content,
+                guarded,
+                // What the file said when this page loaded it. The backend refuses the
+                // write if the file has moved on since, because the text being sent was
+                // built without whatever moved it - and overwriting is silent.
+                ...baseline
+            })
+            try {
+                this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                this._originalVersion = null
+            } catch (_) { /* non-fatal */ }
             
             // Mark document as saved
             this.isDocumentModified = false
@@ -1393,30 +1208,22 @@ tab Main {
             // in between: a newer edit would have superseded this request and returned above.
             let oldDocument = null
 
-            // Serialize current nodes to DSL - unless the text is already in hand.
+            // The document's text, for the ways that send it - never the document itself.
             //
-            // Uploading the document to have it serialized measured ~5.5 s for 10.5 MB: the
-            // IPC moves about 2 MB/s, and this runs on every edit. The text of the same
-            // document is ~250 KB, and the backend hands it back with each resolve, so a plain
-            // field edit can send that instead. Anything that changes the document outside
-            // this path clears the text, and then the document is uploaded once to rebuild it.
+            // Uploading the document to have it serialized measured ~5.5 s for 10.5 MB, and
+            // needed every node to carry where it came from in the text. The text is ~250 KB,
+            // and the backend hands it back with each resolve; when it is not in hand, the
+            // file has it - see `textToWorkFrom`.
             //
             // Worked out only by the ways that send it. A change sent as an instruction sends no
             // text, and the answer to the last one named the text rather than carrying it, so
-            // working it out first would fetch it - or failing that upload the whole document -
-            // on every edit, for nothing.
+            // working it out first would fetch it on every edit, for nothing.
             let content = null
             const contentNow = async () => {
                 if (typeof content === 'string') return content
-                content = await this.textInHand()
-                if (typeof content === 'string') {
-                    profileAt = profileMark('  reuse document text (nothing uploaded)', profileAt)
-                } else {
-                    const nodesForSerialization = this.normalizeDocumentForSerialization(this.currentDocument)
-                    profileAt = profileMark('  normalize (clone + walk)', profileAt)
-                    content = await this.serializeNodes(nodesForSerialization)
-                    profileAt = profileMark('  serialize (IPC + backend)', profileAt)
-                }
+                content = await this.textToWorkFrom()
+                if (typeof content !== 'string') throw new Error('no text to work the change out from')
+                profileAt = profileMark('  document text', profileAt)
                 return content
             }
             // Parse + resolve + evaluate on backend with selective updates
@@ -1524,15 +1331,9 @@ tab Main {
             let resolved = null
             const answer = (update && Array.isArray(update.nodes))
                 ? { nodes: update.nodes, text: update.text }
-                : await invoke('parse_overseer_content_selective_with_text', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
-            if (answer && Array.isArray(answer.nodes)) {
-                resolved = answer.nodes
-                this.tookTheText(answer)
-            } else {
-                resolved = await invoke('parse_overseer_content_selective', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
-                this._currentText = null
-                this._textVersion = null
-            }
+                : await invoke('parse_overseer_content_selective_with_text', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
+            resolved = answer.nodes
+            this.tookTheText(answer)
             profileAt = profileMark('resolve (backend round trip)', profileAt)
             // Another edit was made while this was in flight, and a newer request already
             // carries it. This answer describes the document as it was before that edit, so
@@ -1977,8 +1778,11 @@ tab Main {
             console.warn('❌ Selective reevaluation failed, falling back to full update:', error)
             // Fallback: do full resolution without selective DOM updates
             try {
-                const content = await this.serializeNodes(this.normalizeDocumentForSerialization(this.currentDocument))
-                const resolved = await invoke('parse_overseer_content', { content })
+                // From the text, which is what the file holds when nothing else is in hand: the
+                // change that failed is not in it, and the page shows what is.
+                const content = await this.textToWorkFrom()
+                if (typeof content !== 'string') throw new Error('no text to work the document out from')
+                const resolved = await invoke('parse_overseer_content', { content, path: this.currentFile })
                 this._currentText = content
                 this._textVersion = null
                 if (this._isSupersededReevaluation(reevaluationTicket)) {
@@ -2079,6 +1883,24 @@ tab Main {
         return null
     }
 
+    /// The text to work from, read from the file when none is in hand.
+    ///
+    /// Every change reaches the file as it is made - as an instruction, or as text worked out
+    /// from text - so the file says what the document does, short of what the person looking
+    /// has set, which it never holds. The page used to send the document it holds to be
+    /// serialized instead, and every node had to carry where it came from in the text for
+    /// that, which was most of what every open answered. Null only without a file.
+    async textToWorkFrom() {
+        const held = await this.textInHand()
+        if (typeof held === 'string') return held
+        if (!this.currentFile) return null
+        const text = await invoke('load_overseer_file', { path: this.currentFile })
+        if (typeof text !== 'string') return null
+        this._currentText = text
+        this._textVersion = null
+        return text
+    }
+
     /// Write what has changed, shortly.
     ///
     /// Open, edit, save was right when a document was a local file and this app was the only way
@@ -2139,11 +1961,9 @@ tab Main {
             const outcome = await invoke('undo_overseer_file', { path: this.currentFile })
             await this.rereadFromDisk()
             if (this.restoreViewerValues(this.currentDocument, viewers) > 0) {
-                // The text just read from the file does not hold these, and the next press
-                // works from that text. Letting it go makes the document the one source again,
-                // at the cost of serializing it once.
-                this._currentText = null
-                this._textVersion = null
+                // Drawn again with them. The text just read from the file is kept: it does not
+                // hold these, but the file never does, and a change goes to the backend as an
+                // instruction - the document is not sent to be serialized.
                 try { this.renderer.renderDocument(this.currentDocument) } catch (_) { /* best-effort */ }
             }
             const left = outcome && typeof outcome.steps_left === 'number'

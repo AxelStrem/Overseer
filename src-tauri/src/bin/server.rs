@@ -375,7 +375,8 @@ async fn document(
         .await
         .map_err(|e| respond(RequestError::Failed(format!("resolving panicked: {}", e))))?
         .map_err(respond)?;
-    Ok(Json(json!({ "nodes": resolved })))
+    // As the page has it, without what only writing the document back needs - see `ForThePage`.
+    Ok(Json(json!({ "nodes": overseer::types::ForThePage(resolved) })))
 }
 
 /// Hand back to the operating system the memory a request stopped needing.
