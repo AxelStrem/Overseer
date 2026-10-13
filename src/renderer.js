@@ -6699,9 +6699,13 @@ export class OverseerRenderer {
             return false
         }
         value.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-        const editor = value.parentNode
-            ? Array.from(value.parentNode.children).find((c) => c.classList && c.classList.contains('field-editor'))
+        // A field's own editor, or the markdown editor with its Save and Cancel around the text.
+        const opened = value.parentNode
+            ? Array.from(value.parentNode.children).find((c) => c.classList
+                && (c.classList.contains('field-editor') || c.classList.contains('markdown-editor-container')))
             : null
+        const markdown = !!(opened && opened.classList.contains('markdown-editor-container'))
+        const editor = markdown ? opened.querySelector('textarea') : opened
         // Hidden by its declaration rather than by a formula: nothing written into it will show
         // it, and nothing that comes back will put it away either.
         const hidden = this.getParameterValue(node, 'hidden')
@@ -6722,10 +6726,136 @@ export class OverseerRenderer {
             close('')
             return false
         }
-        editor.addEventListener('blur', () => close(editor.value))
+        if (markdown) {
+            // Its text is left for its own buttons, so it is closed by them and not by a blur.
+            opened.querySelector('.save-btn')?.addEventListener('click', () => close(editor.value))
+            opened.querySelector('.cancel-btn')?.addEventListener('click', () => close(this.getNodeValue(node)))
+        } else {
+            editor.addEventListener('blur', () => { if (!this.blurLeftTheWindow(editor)) close(editor.value) })
+        }
         editor.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') close(this.getNodeValue(node))
         })
+        return editor
+    }
+
+    /// Whether a blur is the window being left rather than the field: another app or window
+    /// chosen, or the browser tab put away. The field keeps its focus then - the page gives it
+    /// back on the way in - while a press elsewhere on the page has already moved it.
+    blurLeftTheWindow(editor) {
+        try {
+            if (document.activeElement !== editor) return false
+            return document.visibilityState === 'hidden'
+                || (typeof document.hasFocus === 'function' && !document.hasFocus())
+        } catch (_) { return false }
+    }
+
+    /// Where an edit not yet written is kept: per tab and per document, like folds and tabs.
+    draftMemoryKey() {
+        return `overseer.draft:${(window.app && window.app.currentFile) || ''}`
+    }
+
+    /// Keep what is typed into a field's editor, for as long as it is open, so that a reload - or
+    /// a browser tab put away and thrown out - opens it again as it was: see `putBackDraft`.
+    ///
+    /// Kept in sessionStorage as the field's place among its siblings, all the way down - what
+    /// `openFieldForEditing` opens a field by - and its fold key, which names an entry of a keyed
+    /// list by its key, to tell whether that place still holds the same field. Nothing is kept
+    /// while the text is what the editor opened with, nor for a field under a preview of a link,
+    /// whose entry does not exist until something is written into it.
+    keepDraftOf(element, node, editor, was) {
+        const none = { drop() {} }
+        try {
+            if (element.closest && element.closest('[data-link-phantom]')) return none
+            const at = this.indexPathOf(window.app && window.app.currentDocument, node)
+            if (!at) return none
+            const key = this.foldKeyFor(node.__overseer_path)
+            const memory = this.draftMemoryKey()
+            const opened = String(was ?? '')
+            let dropped = false
+            const keep = () => {
+                if (dropped) return
+                try {
+                    if (editor.value === opened) { sessionStorage.removeItem(memory); return }
+                    sessionStorage.setItem(memory, JSON.stringify({
+                        path: at, key, text: editor.value, was: opened,
+                        start: editor.selectionStart, end: editor.selectionEnd,
+                    }))
+                } catch (_) { /* kept for this page only, in the editor itself */ }
+            }
+            for (const kind of ['input', 'keyup', 'mouseup', 'select']) editor.addEventListener(kind, keep)
+            return {
+                drop() {
+                    dropped = true
+                    try { sessionStorage.removeItem(memory) } catch (_) { /* nothing kept */ }
+                },
+            }
+        } catch (_) { return none }
+    }
+
+    /// Where a node is in a document, as the index of each node on the way among its siblings.
+    indexPathOf(doc, node) {
+        if (!Array.isArray(doc) || !node) return null
+        const walk = (level, trail) => {
+            for (let i = 0; i < level.length; i++) {
+                const here = level[i]
+                if (here === node) return [...trail, i]
+                if (here && Array.isArray(here.children) && here.children.length > 0) {
+                    const found = walk(here.children, [...trail, i])
+                    if (found) return found
+                }
+            }
+            return null
+        }
+        return walk(doc, [])
+    }
+
+    /// Open again the editor a reload took away, with what had been typed into it and the caret
+    /// where it was - see `keepDraftOf`. Once, after a document is first drawn in this page.
+    ///
+    /// Only into the same field: when the file has moved things since, the place may hold
+    /// another, and the edit is let go with a word in the status bar. A field written to
+    /// elsewhere meanwhile still gets its edit back, since nothing is written until it is
+    /// finished, but the status bar says so.
+    putBackDraft() {
+        const memory = this.draftMemoryKey()
+        let draft = null
+        try { draft = JSON.parse(sessionStorage.getItem(memory) || 'null') } catch (_) { draft = null }
+        if (!draft || !Array.isArray(draft.path) || typeof draft.text !== 'string') return false
+        const say = (message, kind) => {
+            try { window.app && window.app.setStatus && window.app.setStatus(message, '', kind) } catch (_) { /* no status bar */ }
+        }
+        const letGo = () => {
+            try { sessionStorage.removeItem(memory) } catch (_) { /* nothing kept */ }
+            say('An unsaved edit could not be put back into its field', 'warning')
+            return false
+        }
+        const doc = window.app && window.app.currentDocument
+        let node = null
+        let level = Array.isArray(doc) ? doc : []
+        for (const index of draft.path) {
+            node = level[index]
+            if (!node) return letGo()
+            level = Array.isArray(node.children) ? node.children : []
+        }
+        if (!node || !Array.isArray(node.__overseer_path) || this.foldKeyFor(node.__overseer_path) !== draft.key) {
+            return letGo()
+        }
+        const editor = this.openFieldForEditing({ path: draft.path })
+        if (!editor) return letGo()
+        const changed = editor.value !== draft.was
+        editor.value = draft.text
+        try {
+            const end = draft.text.length
+            const at = (n) => Math.min(Math.max(Number.isInteger(n) ? n : end, 0), end)
+            editor.setSelectionRange(at(draft.start), at(draft.end))
+        } catch (_) { /* the caret at the end */ }
+        try { editor.focus() } catch (_) { /* not focusable here */ }
+        // Kept again as it now stands, under this editor.
+        editor.dispatchEvent(new Event('input', { bubbles: true }))
+        say(changed
+            ? 'An unsaved edit was put back; the field has changed since it began'
+            : 'An unsaved edit was put back', changed ? 'warning' : 'info')
         return true
     }
 
@@ -6947,12 +7077,14 @@ export class OverseerRenderer {
         element.parentNode.insertBefore(input, element.nextSibling)
         input.focus()
         input.select()
-        
+        const draft = this.keepDraftOf(element, node, input, initialEditorText)
+
         let editingFinished = false
         const finishEditing = async () => {
             if (editingFinished) return
             editingFinished = true
-            
+            draft.drop()
+
             // Capture field path before any DOM manipulation (may be synthetic for phantom)
             let fieldPath = null
             try {
@@ -7394,13 +7526,16 @@ export class OverseerRenderer {
             }
         }
         
-        input.addEventListener('blur', finishEditing)
+        // Leaving the window is not leaving the field: the editor stays open, what was typed in
+        // it kept, and the field is finished when it is left on the page.
+        input.addEventListener('blur', () => { if (!this.blurLeftTheWindow(input)) finishEditing() })
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !isMultiline) {
                 finishEditing()
             }
             if (e.key === 'Escape') {
                 editingFinished = true
+                draft.drop()
                 element.style.display = 'inline'
                 try {
                     input.remove()
@@ -7549,7 +7684,8 @@ export class OverseerRenderer {
         element.style.display = 'none'
     element.parentNode.insertBefore(editorContainer, element.nextSibling)
         textarea.focus()
-        
+        const draft = this.keepDraftOf(element, node, textarea, rawMarkdown)
+
         let isPreviewMode = false
         
         // Mode toggle functionality
@@ -7572,6 +7708,7 @@ export class OverseerRenderer {
         })
         
     const finishEditing = async (save = true) => {
+            draft.drop()
             if (save) {
                 const newValue = textarea.value
                 // Update the element with rendered markdown

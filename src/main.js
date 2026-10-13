@@ -622,7 +622,9 @@ export class OverseerApp {
 
             if (DEBUG_MODE) this.setStatus('DEBUG: Renderer called, switching to editor screen...')
             this.showEditorScreen()
-            
+            // A field that was being edited when the page went away, opened again as it was.
+            try { this.renderer.putBackDraft() } catch (_) { /* the edit is let go */ }
+
             // Final status update handled by updateTitle()
             if (DEBUG_MODE) this.setStatus('File loaded successfully - DEBUG VERSION')
             
