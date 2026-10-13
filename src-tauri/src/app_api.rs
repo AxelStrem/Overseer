@@ -2378,18 +2378,67 @@ pub const ICON_MOST_BYTES: u64 = 256 * 1024;
 /// which is what catches a link pointing elsewhere. Both doors call this, so the desktop app
 /// and the server cannot disagree about what a document may reach.
 pub fn icon_beside(document: &std::path::Path, icon: &str) -> std::result::Result<String, IconRefused> {
+    let found = file_beside(document, icon, &["svg"], ICON_MOST_BYTES, "an icon")?;
+    std::fs::read_to_string(&found).map_err(|_| IconRefused::Missing(format!("no icon '{}'", icon)))
+}
+
+/// The most a document's own image may weigh. A photo or a screenshot is well under it; the
+/// whole of it travels to the page in one answer, as base64.
+pub const IMAGE_MOST_BYTES: u64 = 8 * 1024 * 1024;
+
+/// The raster images a document may show, by extension, and the type each is served as.
+const IMAGE_TYPES: &[(&str, &str)] = &[
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("jpeg", "image/jpeg"),
+    ("webp", "image/webp"),
+    ("gif", "image/gif"),
+];
+
+/// A raster image a document names by a path relative to its own folder, as in
+/// `image plate = "images/plate.jpg"` or `![plate](images/plate.jpg)`: its type and its bytes in
+/// base64, which is how both doors can hand it to the page - the desktop app has no address to
+/// serve it from, and the server's token is a cookie an `<img>` would carry to any route.
+/// Checked exactly as an icon is, with the raster extensions in place of `.svg`.
+pub fn image_beside(document: &std::path::Path, image: &str) -> std::result::Result<serde_json::Value, IconRefused> {
+    use base64::Engine as _;
+    let extensions: Vec<&str> = IMAGE_TYPES.iter().map(|(e, _)| *e).collect();
+    let found = file_beside(document, image, &extensions, IMAGE_MOST_BYTES, "an image")?;
+    let extension = found.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let mime = IMAGE_TYPES.iter().find(|(e, _)| *e == extension).map(|(_, m)| *m).unwrap_or_default();
+    let bytes = std::fs::read(&found).map_err(|_| IconRefused::Missing(format!("no image '{}'", image)))?;
+    Ok(serde_json::json!({
+        "mime": mime,
+        "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+    }))
+}
+
+/// A file a document names beside it, under its own folder and nowhere else, with one of the
+/// extensions given and no larger than `most` bytes. The path comes from the document and, on
+/// the server, through the network, so it is checked the way the server checks a document's
+/// name before anything is read: only plain names, no `..`, no root or drive. The file found is
+/// then confirmed to sit under the document's folder, which is what catches a link pointing
+/// elsewhere.
+fn file_beside(
+    document: &std::path::Path,
+    name: &str,
+    extensions: &[&str],
+    most: u64,
+    what: &str,
+) -> std::result::Result<std::path::PathBuf, IconRefused> {
     use std::path::{Component, Path};
-    let relative = Path::new(icon);
-    if icon.is_empty() || relative.is_absolute() {
-        return Err(IconRefused::NotAName(format!("'{}' is not a path relative to the document", icon)));
+    let relative = Path::new(name);
+    if name.is_empty() || relative.is_absolute() {
+        return Err(IconRefused::NotAName(format!("'{}' is not a path relative to the document", name)));
     }
     if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
-        return Err(IconRefused::NotAName(format!("'{}' contains a path component that is not a name", icon)));
+        return Err(IconRefused::NotAName(format!("'{}' contains a path component that is not a name", name)));
     }
-    if relative.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("svg")) != Some(true) {
-        return Err(IconRefused::NotAName(format!("'{}' is not an .svg file", icon)));
+    let extension = relative.extension().and_then(|e| e.to_str()).unwrap_or_default();
+    if !extensions.iter().any(|e| e.eq_ignore_ascii_case(extension)) {
+        return Err(IconRefused::NotAName(format!("'{}' is not {} file", name, what)));
     }
-    let missing = || IconRefused::Missing(format!("no icon '{}'", icon));
+    let missing = || IconRefused::Missing(format!("no {} '{}'", what.trim_start_matches("an "), name));
     let folder = document
         .parent()
         .and_then(|d| d.canonicalize().ok())
@@ -2399,8 +2448,8 @@ pub fn icon_beside(document: &std::path::Path, icon: &str) -> std::result::Resul
         return Err(missing());
     }
     let size = std::fs::metadata(&found).map_err(|_| missing())?.len();
-    if size > ICON_MOST_BYTES {
-        return Err(IconRefused::NotAName(format!("'{}' is too large to be an icon", icon)));
+    if size > most {
+        return Err(IconRefused::NotAName(format!("'{}' is too large to be {}", name, what)));
     }
-    std::fs::read_to_string(&found).map_err(|_| missing())
+    Ok(found)
 }

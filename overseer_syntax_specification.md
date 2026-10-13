@@ -162,6 +162,7 @@ list Priorities (entry=int) {
 - `button`: Clickable button with actions
 - `checkbox`: Boolean toggle with actions
 - `chart`: Data visualization element (planned)
+- `image`: A picture kept beside the document (see "Images")
 
 #### Logic Types:
 - `trigger`: Conditional logic execution
@@ -392,6 +393,24 @@ Only the document's folder and the folders under it can be reached: a path that 
 or a drive, or holds `..`, names no icon, and nor does a file that is not `.svg` or is larger than
 256 KB. Such a name, like one the library does not have, leaves an empty space where the icon
 would be. The SVG is drawn as a picture, so nothing it carries runs.
+
+#### Images
+
+An `image` shows a picture the document keeps beside it: its value is the path of a PNG, JPEG,
+WebP or GIF file relative to the document's own folder.
+
+```overseer
+image plate (width=50%) = "images/plate.jpg"
+image shelf (label="The pantry shelf") = "images/shelf.png"
+```
+
+It is drawn as large as it is given room for, keeping its proportions: `width` and `height` size
+it, as they size any node. Its label heads it and says what the picture is to whoever cannot see
+it; without one, its name does. The same paths are reached as an icon's, under the document's
+folder and nowhere else, and a file larger than 8 MB is refused. A path that cannot be reached, or
+a file that is not there, leaves an empty space. A picture is fetched only when it is drawn, so one
+inside a folded div costs nothing until the div is opened. Markdown text shows the same images,
+`![plate](images/plate.jpg)` (see "Markdown Text Formatting").
 
 #### Conditional actions inside action blocks
 
@@ -897,6 +916,10 @@ Markdown is the only markup a text field has. HTML written in one is shown as th
 drawn - a field may hold what an agent quoted from a page, and the page holds the server's token. A
 link or an image goes only to an `http`, `https` or `mailto` address or to a path on the document's
 own server; one to anything else is drawn as its words.
+
+An image whose path has no scheme and no leading `/`, `![plate](images/plate.jpg)`, is one beside
+the document, found and refused exactly as an `image` node's is (see "Images"). An image from an
+`http` or `https` address is drawn as it is, and is not told which page asked for it.
 
 ##### Inline Color Syntax (Markdown Extension)
 You can apply color to an inline span of markdown text without assigning a `font-color` parameter to the whole `text` node using the custom angle bracket form:

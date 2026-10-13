@@ -1107,6 +1107,29 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     white-space: pre-wrap;
 }
 
+/* An image never overflows what it is given, and keeps its proportions when only its width is. */
+.image-field > img,
+.text-content img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.image-field > img:not([style*="height"]),
+.text-content img {
+    height: auto;
+}
+
+/* Refused, missing, or still on its way: an empty space rather than the browser's broken picture
+ * stretched across the field. */
+.image-field > img:not([src]),
+.text-content img:not([src]) {
+    width: 2em;
+    height: 2em;
+    visibility: hidden;
+}
+
 .text-content strong {
     font-weight: 600;
 }

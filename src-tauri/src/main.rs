@@ -86,6 +86,14 @@ async fn load_overseer_icon(path: String, icon: String) -> Result<String> {
     })
 }
 
+/// A raster image the open document names beside it - see `app_api::image_beside`.
+#[command]
+async fn load_overseer_image(path: String, image: String) -> Result<serde_json::Value> {
+    app_api::image_beside(std::path::Path::new(&path), &image).map_err(|refused| match refused {
+        app_api::IconRefused::NotAName(m) | app_api::IconRefused::Missing(m) => OverseerError::IoError(m),
+    })
+}
+
 // Save a regenerated document provided by the caller. We canonicalize via the serializer so
 // snapshot-driven trivia (comments/whitespace) is reapplied without needing the original text.
 #[command]
@@ -381,6 +389,7 @@ fn main() {
             load_overseer_file,
             load_overseer_text,
             load_overseer_icon,
+            load_overseer_image,
             save_overseer_file,
             save_overseer_file_from_text,
             save_overseer_file_with_original,

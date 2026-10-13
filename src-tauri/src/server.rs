@@ -406,6 +406,18 @@ impl DocumentRoot {
                         app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
                     })
             }
+            // A raster image the document names beside it, checked as an icon is.
+            "load_overseer_image" => {
+                let path = arg_str(args, &["path"])
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                let image = arg_str(args, &["image"])
+                    .ok_or_else(|| RequestError::Rejected("'image' is required".into()))?;
+                let file = self.resolve(&path)?;
+                app_api::image_beside(&file, &image).map_err(|refused| match refused {
+                    app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),
+                    app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
+                })
+            }
             "parse_overseer_content" => {
                 let content = arg_str(args, &["content"])
                     .ok_or_else(|| RequestError::Rejected("'content' is required".into()))?;

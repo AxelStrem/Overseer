@@ -95,6 +95,48 @@ const showDocumentIcon = (el, url) => {
     el.dataset.icon = el.dataset.iconFile
 }
 
+/// Whether a path a document gives for an image may be asked for: one beside the document or
+/// below, with a raster image's extension. Only the document's folder and below, as the server
+/// and the app check again.
+const IMAGE_EXTENSION = /\.(png|jpe?g|webp|gif)$/i
+export const imageBeside = (path) => {
+    const p = String(path ?? '')
+    return IMAGE_EXTENSION.test(p) && !/^\/|[\\:?#]/.test(p) &&
+        p.split('/').every((part) => part && part !== '.' && part !== '..')
+}
+
+// A document's own raster images, by the document and the path it gives, the way its icons are
+// kept: the blob address once the bytes have come, null for one refused or missing, or the
+// promise while they are on their way. Asked for only when something draws one, so an image under
+// a folded div is not fetched until the div is opened.
+const documentImages = new Map()
+const documentImageAddress = (file) => {
+    const doc = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+    const at = `${doc}\n${file}`
+    const known = documentImages.get(at)
+    if (typeof known === 'string' || known === null) return known
+    if (!known && doc) {
+        documentImages.set(at, invoke('load_overseer_image', { path: doc, image: file })
+            .then((got) => {
+                if (!got || typeof got.data !== 'string' || !/^image\//.test(got.mime || '')) return null
+                const bytes = Uint8Array.from(atob(got.data), (c) => c.charCodeAt(0))
+                return URL.createObjectURL(new Blob([bytes], { type: got.mime }))
+            })
+            .catch(() => null)
+            .then((url) => {
+                documentImages.set(at, url)
+                for (const img of document.querySelectorAll('img[data-image-file]')) {
+                    if (img.dataset.imageFile === file) showDocumentImage(img, url)
+                }
+            }))
+    }
+    return undefined
+}
+const showDocumentImage = (img, url) => {
+    if (url) img.src = url
+    else img.classList.add('image-missing')
+}
+
 /// The attributes an icon's span is drawn with, shared by the element and the markdown's HTML.
 const iconAttributes = (raw) => {
     const { key, file, color } = iconParts(raw)
@@ -153,8 +195,21 @@ const markdown = new Marked({
             return `<a href="${escapeHtml(href)}"${title ? ` title="${escapeHtml(title)}"` : ''}>${text}</a>`
         },
         image(href, title, text) {
+            const titled = `alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ''}`
+            // A path with no scheme and no leading `/` is an image beside the document, which
+            // comes through the same door as the document itself.
+            let file = String(href ?? '')
+            try { file = decodeURI(file) } catch (_) {}
+            if (!/^[^/?#]*:/.test(file) && !file.startsWith('/')) {
+                if (!imageBeside(file)) return escapeHtml(text)
+                const url = documentImageAddress(file)
+                const src = url ? ` src="${escapeHtml(url)}"` : ''
+                const missing = url === null ? ' class="image-missing"' : ''
+                return `<img data-image-file="${escapeHtml(file)}"${src}${missing} ${titled}>`
+            }
             if (!safeUrl(href)) return escapeHtml(text)
-            return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ''}>`
+            // An image from elsewhere tells its server the page was opened; not where from.
+            return `<img src="${escapeHtml(href)}" ${titled} referrerpolicy="no-referrer" loading="lazy">`
         },
     },
 })
@@ -2068,6 +2123,8 @@ export class OverseerRenderer {
                 return this.createCheckboxElement(node)
             case 'chart':
                 return this.createChartElement(node)
+            case 'image':
+                return this.createImageElement(node)
             case 'mount':
                 return this.createMountElement(node)
             default:
@@ -4442,6 +4499,38 @@ export class OverseerRenderer {
     this.applyLayoutStyles(container, node)
     // Apply default field styling if no explicit parameters are set
     this.applyFieldDefaultStyles(container, node)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
+    /// `image photo (width=50%) = "images/plate.jpg"`: a raster image beside the document, drawn
+    /// as large as the node is given room for. Its label, if it has one, is its alt text and
+    /// heads it; otherwise its name is the alt text. One that is refused or missing is an empty space.
+    createImageElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field image-field'
+        const labelText = this.getParameterValue(node, 'label')
+        if (labelText) {
+            const label = document.createElement('label')
+            this.setTextWithIcons(label, labelText)
+            container.appendChild(label)
+        }
+        const img = document.createElement('img')
+        img.className = 'image-content'
+        img.alt = labelText ? textWithoutIcons(labelText) : (node.name || '')
+        const file = String(this.getNodeValue(node) ?? '').trim()
+        if (imageBeside(file)) {
+            img.dataset.imageFile = file
+            const url = documentImageAddress(file)
+            if (url !== undefined) showDocumentImage(img, url)
+        } else {
+            img.classList.add('image-missing')
+        }
+        const params = node.parameters || {}
+        if (params.width) img.style.width = '100%'
+        if (params.height) img.style.height = '100%'
+        container.appendChild(img)
+        this.applyLayoutStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
     }

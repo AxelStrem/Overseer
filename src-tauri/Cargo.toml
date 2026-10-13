@@ -50,6 +50,9 @@ notify = "6.0"
 # Hashing for source fingerprinting
 twox-hash = "1.6"
 
+# A document's own raster images travel to the page as text
+base64 = "0.22"
+
 [dev-dependencies]
 parking_lot = "0.12"
 

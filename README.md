@@ -42,7 +42,7 @@ It binds to loopback unless told otherwise. Reachable from outside, it refuses t
 
 Nodes are typed and nest. Containers are `tab`, `div` and `list`; values are `string`, `int`,
 `float`, `bool` and `timestamp`; the rest draw or do something — `text`, `button`, `chart`,
-`plot`, `tags`, `filter`, `timer`, `checkbox`, `mount`.
+`plot`, `image`, `tags`, `filter`, `timer`, `checkbox`, `mount`.
 
 Four ideas carry most of the weight:
 
