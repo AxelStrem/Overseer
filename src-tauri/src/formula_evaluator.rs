@@ -488,20 +488,24 @@ impl FormulaEvaluator {
         context: &EvaluationContext,
         item_node: &OverseerNode,
     ) -> Result<OverseerValue, OverseerError> {
-        let expr = match Self::parse_expression(lambda_src) {
-            Ok(e) => e,
-            Err(_) => {
-                return Err(OverseerError::FormulaError(
-                    "invalid formula error".to_string(),
-                ))
-            }
-        };
-        match &expr {
-            FormulaExpression::Lambda { .. } => {
-                Self::eval_lambda(&expr, None, Some(item_node), None, context)
-            }
-            _ => Self::eval_lambda(&expr, None, Some(item_node), None, context),
-        }
+        let expr = Self::parse_lambda(lambda_src)?;
+        Self::evaluate_parsed_lambda_on_item(&expr, context, item_node)
+    }
+
+    /// Parse a lambda once, for a caller about to apply it to every entry of a list - parsing it
+    /// again per entry cost more than evaluating it.
+    pub fn parse_lambda(lambda_src: &str) -> Result<FormulaExpression, OverseerError> {
+        Self::parse_expression(lambda_src)
+            .map_err(|_| OverseerError::FormulaError("invalid formula error".to_string()))
+    }
+
+    /// `evaluate_lambda_on_item`, for a lambda already parsed with `parse_lambda`.
+    pub fn evaluate_parsed_lambda_on_item(
+        expr: &FormulaExpression,
+        context: &EvaluationContext,
+        item_node: &OverseerNode,
+    ) -> Result<OverseerValue, OverseerError> {
+        Self::eval_lambda(expr, None, Some(item_node), None, context)
     }
     /// Helper: get effective parameter value preferring computed shadow
     /// Whether a field states a value of its own.

@@ -45,15 +45,25 @@ fn find_template_by_name(nodes: &[OverseerNode], template_name: &str) -> Option<
 }
 
 /// Multi-pass template resolution that handles template dependencies.
-/// Templates can depend on other templates, so we need multiple passes to resolve everything.
+///
+/// One pass resolves everything it can reach: `resolve_node_templates` walks into a node's children
+/// after it has replaced them, so a list or an instance inside a template's body is instantiated
+/// in the same pass as the entry that brought it in. What a further pass can still help is only a
+/// node whose template was not found, and only once that template's name names a node - which it
+/// can only come to do by being instantiated. So another pass runs only then. Going round again on
+/// progress alone made every document with a template pay for a second pass - a clone of the
+/// instantiated tree and a rebuild of every entry - to learn that nothing had changed; and a
+/// mounted list, which arrives without the template it was written with, misses on every pass.
 fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
     const MAX_PASSES: usize = 10; // Prevent infinite loops
     let mut pass = 0;
     let mut made_progress = true;
+    let mut found_a_missed_template = true;
 
-    while made_progress && pass < MAX_PASSES {
+    while made_progress && found_a_missed_template && pass < MAX_PASSES {
         made_progress = false;
         pass += 1;
+        let mut missed: Vec<String> = Vec::new();
         debug_resolver!("[RESOLVER] Template resolution pass {}", pass);
 
         // Create a snapshot of nodes for template lookup (immutable reference)
@@ -65,10 +75,13 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
 
         // Try to resolve templates in this pass
         for node in nodes.iter_mut() {
-            if resolve_node_templates(node, &nodes_snapshot, &mut made_progress) {
+            if resolve_node_templates(node, &nodes_snapshot, &mut missed) {
                 made_progress = true;
             }
         }
+        TEMPLATE_PASSES.with(|p| p.set(pass));
+        found_a_missed_template = made_progress
+            && missed.iter().any(|name| names_a_node(nodes, name));
         if profiling {
             eprintln!(
                 "[PHASE]     tmpl pass {} {:.1} ms (clone {:.1} ms) progress={}",
@@ -94,6 +107,14 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
             pass
         );
     }
+}
+
+/// Whether any node in the tree has this name - what `find_template_by_name` looks for, without
+/// the clone.
+fn names_a_node(nodes: &[OverseerNode], name: &str) -> bool {
+    nodes
+        .iter()
+        .any(|node| node.name == name || names_a_node(&node.children, name))
 }
 
 /// Public entry point to resolve all templates in a document AST.
@@ -1311,11 +1332,12 @@ fn table_columns(template: &OverseerNode) -> String {
 }
 
 /// Resolves templates for a single node and its children.
-/// Returns true if any progress was made in this pass.
+/// Returns true if any progress was made in this pass, and adds to `missed` the name of each
+/// template it was asked for and could not find.
 fn resolve_node_templates(
     node: &mut OverseerNode,
     all_nodes: &[OverseerNode],
-    made_progress: &mut bool,
+    missed: &mut Vec<String>,
 ) -> bool {
     let mut local_progress = false;
 
@@ -1778,6 +1800,7 @@ fn resolve_node_templates(
                             template_name
                         );
                         // Template not found - might be resolved in a later pass
+                        missed.push(template_name.to_string());
                     }
                 }
                 OverseerValue::String(type_name) => {
@@ -1983,12 +2006,13 @@ fn resolve_node_templates(
                 "[RESOLVER] Warning: Template not found for node: {}",
                 template_name
             );
+            missed.push(template_name.to_string());
         }
     }
 
     // Recursively process children
     for child in node.children.iter_mut() {
-        if resolve_node_templates(child, all_nodes, made_progress) {
+        if resolve_node_templates(child, all_nodes, missed) {
             local_progress = true;
         }
     }
@@ -2662,6 +2686,17 @@ pub fn passes_taken() -> usize {
 
 thread_local! {
     static WORKED_OUT_WHOLE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    static TEMPLATE_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many template passes the last resolve on this thread took. One is enough for any document
+/// whose templates are all found, and a second used to run every time - see
+/// `resolve_templates_multipass`.
+pub fn template_passes_taken() -> usize {
+    TEMPLATE_PASSES.with(|p| p.get())
 }
 
 /// How many times this thread has worked a document out whole. A change that should have been
@@ -3699,30 +3734,48 @@ unsafe fn recursively_evaluate_node_formulas_selective(
 // Note: child formula evaluation is handled via recursively_evaluate_node_formulas above
 
 /// Compute UI sort keys for list items when a list declares sort_by (lambda or expression)
+///
+/// Every key is worked out against the document as it stands and only then written, so no key
+/// sees another this phase wrote. That used to be done by evaluating against a clone of the whole
+/// worked-out document, which cost more than the keys themselves.
 fn compute_list_ui_sort_keys(nodes: &mut Vec<OverseerNode>) {
-    let snapshot = nodes.clone();
-    let len = nodes.len();
-    for i in 0..len {
-        let node_ptr: *mut OverseerNode = &mut nodes[i] as *mut _;
-        let mut current_path = vec![unsafe { (&*node_ptr).name.clone() }];
-        unsafe {
-            recursively_compute_sort_keys(node_ptr, std::ptr::null(), &mut current_path, &snapshot, &mut crate::addressing::Level::default());
+    let mut keys: Vec<(Vec<usize>, OverseerValue)> = Vec::new();
+    let mut at = Vec::new();
+    for (i, node) in nodes.iter().enumerate() {
+        at.push(i);
+        let mut current_path = vec![node.name.clone()];
+        collect_sort_keys(
+            node,
+            &mut at,
+            &mut current_path,
+            nodes,
+            &mut crate::addressing::Level::default(),
+            &mut keys,
+        );
+        at.pop();
+    }
+    for (at, key) in keys {
+        let mut entry = &mut nodes[at[0]];
+        for &c in &at[1..] {
+            entry = &mut entry.children[c];
         }
+        // Store as internal UI-only key
+        entry.parameters.insert("_ui_sort_key".to_string(), key);
     }
 }
 
-unsafe fn recursively_compute_sort_keys(
-    node_ptr: *mut OverseerNode,
-    _parent_ptr: *const OverseerNode,
+/// The sort keys under `node`, each with the child indices that lead to its entry from the
+/// document's top.
+fn collect_sort_keys(
+    node: &OverseerNode,
+    at: &mut Vec<usize>,
     current_path: &mut Vec<String>,
     document_root: &[OverseerNode],
     // Numbers this node's children in the path - see `addressing::Level`.
     level: &mut crate::addressing::Level,
+    keys: &mut Vec<(Vec<usize>, OverseerValue)>,
 ) {
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
-    use crate::types::OverseerValue;
-
-    let node: &mut OverseerNode = &mut *node_ptr;
 
     if out_of_view(node) {
         return;
@@ -3737,41 +3790,50 @@ unsafe fn recursively_compute_sort_keys(
                 _ => "",
             };
             if !sort_src.is_empty() {
-                for (idx, child) in node.children.iter_mut().enumerate() {
+                let parsed = FormulaEvaluator::parse_lambda(sort_src);
+                for (idx, child) in node.children.iter().enumerate() {
                     // Build context for evaluating against the child; bind as current and provide parent
                     let mut path = current_path.clone();
                     path.push(child.name.clone());
                     let ctx = EvaluationContext::new_with_current_and_parent(
                         child,
-                        Some(&*node_ptr),
+                        Some(node),
                         path,
                         document_root,
                     );
-                    let key = FormulaEvaluator::evaluate_lambda_on_item(sort_src, &ctx, child)
+                    let key = parsed
+                        .as_ref()
+                        .ok()
+                        .and_then(|expr| {
+                            FormulaEvaluator::evaluate_parsed_lambda_on_item(expr, &ctx, child).ok()
+                        })
                         .unwrap_or(OverseerValue::Integer(idx as i64));
-                    // Store as internal UI-only key
-                    child.parameters.insert("_ui_sort_key".to_string(), key);
+                    let mut entry_at = at.clone();
+                    entry_at.push(idx);
+                    keys.push((entry_at, key));
                 }
             }
         }
     }
 
     // Recurse into children - a wrapper is no step of the path, see `addressing::Level`.
-    for c in 0..node.children.len() {
-        let child_ptr: *mut OverseerNode = &mut node.children[c] as *mut _;
-        if crate::addressing::is_wrapper(&*child_ptr) {
-            recursively_compute_sort_keys(child_ptr, node as *const OverseerNode, current_path, document_root, level);
-            continue;
+    for (c, child) in node.children.iter().enumerate() {
+        at.push(c);
+        if crate::addressing::is_wrapper(child) {
+            collect_sort_keys(child, at, current_path, document_root, level, keys);
+        } else {
+            current_path.push(level.segment(&child.name));
+            collect_sort_keys(
+                child,
+                at,
+                current_path,
+                document_root,
+                &mut crate::addressing::Level::default(),
+                keys,
+            );
+            current_path.pop();
         }
-        current_path.push(level.segment(&(*child_ptr).name));
-        recursively_compute_sort_keys(
-            child_ptr,
-            node as *const OverseerNode,
-            current_path,
-            document_root,
-            &mut crate::addressing::Level::default(),
-        );
-        current_path.pop();
+        at.pop();
     }
 }
 
