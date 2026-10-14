@@ -393,7 +393,8 @@ Names are lower case, words joined by `-`. The library holds Overseer's own icon
 [Tabler](https://tabler.io/icons) under their own names, Tabler's filled ones with `-filled`
 added (`heart-filled`). Where two have the same name, the first in that order is the one drawn. A
 name the library does not have leaves an empty space the size of an icon. An icon-only button
-says its name on hover.
+says its name on hover. A button wider than what it shows - given a `width`, or stretched across
+a vertical div - keeps its icon and label together in its middle.
 
 ##### Icons in text
 

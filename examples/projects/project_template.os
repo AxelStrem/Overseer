@@ -166,6 +166,11 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                 timestamp at (format="datetime", precision="minutes", font-size=11px, font-color="#9ca3af", margin=0) =
                     "2026-01-01T00:00:00Z"
                 string author (font-size=11px, font-weight="bold", margin=0) = ""
+                button drop (icon="trash-2", margin=0, hover-text="Remove this comment") {
+                    on click {
+                        remove (from="../../Comments", keyField="at", keyValue=$(../at))
+                    }
+                }
             }
             text body (markdown=true, font-size=12px, margin=0) = ""
         }
@@ -256,7 +261,8 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
 
             div Talk (foldable=true, folded=true, span="row", layout="vertical", margin=0, spacing=4) {
                 list Comments (entry=<Comment>, layout="vertical", spacing=4, border-style=none) { }
-                button add (label="add comment", margin=0) {
+                button add (label="add comment", icon="message-square-plus", margin-top=4, margin-bottom=8,
+                            margin-left=0, margin-right=0) {
                     on click {
                         append (list="../Comments") {
                             - at = $(now())

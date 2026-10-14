@@ -1252,6 +1252,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-button {
     display: inline-flex;
     align-items: center;
+    /* A button stretched across its row, or given a width, keeps its icon and label together in
+       the middle rather than at its left edge. */
+    justify-content: center;
     gap: 0; /* avoid stray inline gap artifacts next to text */
     overflow: hidden; /* hide any stray inline decorations */
     padding: 8px 16px;

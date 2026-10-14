@@ -187,6 +187,28 @@ fn adding_a_comment_opens_the_new_one_for_typing() {
 }
 
 #[test]
+fn a_comment_can_be_removed_and_only_that_one_goes() {
+    serialised(|| {
+        let file = a_project("remove", TEMPLATE);
+        comment(&file, "project/Items/[brace]", "a second thought");
+        comment(&file, "project/Items/[editor]", "said elsewhere");
+        let said = said_on(&file, "project/Items/[brace]");
+        assert_eq!(said.len(), 2, "{:?}", said);
+        let elsewhere = said_on(&file, "project/Items/[editor]");
+
+        // Addresses come in document order, so the first remove button is the first comment's.
+        let first = overseer::addressing::addresses(&opened(&file))
+            .into_iter()
+            .find(|a| a.starts_with("project/Items/[brace]/Talk/Comments/") && a.ends_with("/drop"))
+            .expect("a comment has no remove button");
+        let answer = press(&file, &first, &[]);
+        assert!(answer.wrote, "removing a comment wrote nothing");
+        assert_eq!(said_on(&file, "project/Items/[brace]"), &said[1..], "the wrong comment went");
+        assert_eq!(said_on(&file, "project/Items/[editor]"), elsewhere, "another item's comment changed");
+    });
+}
+
+#[test]
 fn finishing_carries_the_conversation_and_the_work_into_history() {
     serialised(|| {
         // brace, with a session of work recorded on it the way the loop records one.
