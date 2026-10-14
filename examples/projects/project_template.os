@@ -34,13 +34,24 @@
 
 tab project (label="Project", mutable=true) {
     string name (label="", font-size=22px) = "Untitled project"
-    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** a larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
 
     div (hidden=true) {
-        div Label (layout="horizontal", margin=0, spacing=6, alignment="center") {
-            string tag (label="", width=25%) = ""
-            string name (label="", width=45%) = ""
-            string colour (label="", kind="color", width=30%) = "#6b7280"
+        div Label (layout="vertical", margin=0, spacing=2) {
+            div (layout="horizontal", margin=0, spacing=6, alignment="center") {
+                string tag (label="", width=25%) = ""
+                string name (label="", width=42%) = ""
+                string colour (label="", kind="color", width=27%) = "#6b7280"
+                button about (icon="note", margin=0, width=6%,
+                              font-color=$(../About/about == "" ? "#6b7280" : "inherit")) {
+                    on click {
+                        toggle_fold (path="../About")
+                    }
+                }
+            }
+            div About (foldable=true, folded=true, margin=0) {
+                text about (label="", markdown=true, font-size=12px) = ""
+            }
         }
 
         list Stages (entry=<Label>, key="tag") {
@@ -134,6 +145,11 @@ tab project (label="Project", mutable=true) {
                 - colour = "#6b7280"
             }
             - {
+                - tag = "discuss"
+                - name = "discuss"
+                - colour = "#0369a1"
+            }
+            - {
                 - tag = "first"
                 - name = "first"
                 - colour = "#e11d48"
@@ -142,11 +158,6 @@ tab project (label="Project", mutable=true) {
                 - tag = "asked"
                 - name = "asked"
                 - colour = "#b45309"
-            }
-            - {
-                - tag = "discuss"
-                - name = "discuss"
-                - colour = "#0369a1"
             }
         }
 
@@ -179,11 +190,13 @@ tab project (label="Project", mutable=true) {
                                     (done >= 25 ? "#1c2a3a" : "inherit")),
                   font-color=$(waiting > 0 ? "#6b7280" : "inherit")) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
-            string handle (label="id", font-size=11px, width=8%) = ""
-            string title (label="title", font-size=14px, width=16%,
+            string handle (label="id", font-size=11px, width=7%) = ""
+            string title (label="title", font-size=14px, width=29%,
+                          hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
-            enum stage (label="stage", vocabulary="/project/Stages", width=9%,
+            enum stage (label="stage", vocabulary="/project/Stages", width=7%,
+                        hover-text="Where it is: filed, planning, ready, testing or later",
                         withhold=$(open_kids > 0 ? "finished, cancelled" : "")) = "filed" {
                 on change {
                     if (cond=$((../stage == "finished" || ../stage == "cancelled") && ../open_kids == 0)) {
@@ -196,17 +209,24 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
-            string parent (label="of", font-size=11px, width=7%) = ""
-            tags after (label="after", vocabulary="/project/Items, /project/History", width=7%) = ""
-            tags labels (label="tags", vocabulary="/project/Labels", width=10%) = ""
-            tags flags (label="flags", vocabulary="/project/Flags", width=9%) = ""
-            int done (label="done", format="trim", precision=0, suffix="%", width=6%,
+            string parent (label="of", font-size=11px, width=6%,
+                           hover-text="The larger item this is part of") = ""
+            tags after (label="after", vocabulary="/project/Items, /project/History", width=6%,
+                        hover-text="The items this waits on; grey while any is still open") = ""
+            tags labels (label="tags", vocabulary="/project/Labels", width=9%,
+                         hover-text="The parts of the project it is in") = ""
+            tags flags (label="flags", vocabulary="/project/Flags", width=6%,
+                        hover-text="How it is to be worked") = ""
+            int done (label="done", format="trim", precision=0, suffix="%", width=5%,
+                      hover-text="How much of its parts is finished, by points",
                       hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
                           (/project/Items.filter(|x| x/parent == ../handle)
                                          .map(|x| x/done * x/weight).sum()
                            + finished_weight * 100) / weight)
-            int points (label="pts", format="trim", width=5%) = 1
-            enum complexity (label="think", vocabulary="/project/Complexities", width=7%) = "unassigned"
+            int points (label="pts", format="trim", width=4%,
+                        hover-text="How much work: 1 the smallest thing, 8 most of a day") = 1
+            enum complexity (label="think", vocabulary="/project/Complexities", width=7%,
+                             hover-text="How much thinking building it takes") = "unassigned"
 
             button talk (icon="note", margin=0, width=3%,
                          font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
@@ -220,7 +240,8 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
-            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=7%) =
+            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=5%,
+                               hover-text="Since it was filed, or a part of it last closed") =
                 $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
                   /project/History.filter(|x| x/parent == ../handle)
                                   .map(|x| x/finished_at).max())
@@ -270,18 +291,18 @@ tab project (label="Project", mutable=true) {
 
         div Finished (layout="vertical", margin=0, spacing=2) {
             div (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center") {
-                timestamp finished_at (format="datetime", precision="minutes", width=20%) =
+                timestamp finished_at (format="datetime", precision="minutes", width=16%) =
                     "2026-01-01T00:00:00Z"
                 timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
                 string title (width=30%) = ""
                 enum status (label="", vocabulary="/project/Statuses", width=10%) = "finished"
-                string handle (hidden=true) = ""
+                string handle (label="", font-size=11px, width=8%) = ""
                 string parent (hidden=true) = ""
                 tags after (hidden=true) = ""
-                tags labels (label="", vocabulary="/project/Labels", width=18%) = ""
+                tags labels (label="", vocabulary="/project/Labels", width=16%) = ""
                 tags flags (hidden=true) = ""
-                int points (label="", format="trim", width=6%) = 0
-                enum complexity (label="", vocabulary="/project/Complexities", width=7%) = "unassigned"
+                int points (label="", format="trim", width=5%) = 0
+                enum complexity (label="", vocabulary="/project/Complexities", width=6%) = "unassigned"
 
                 button talk (icon="note", margin=0, width=3%,
                              font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
@@ -302,7 +323,7 @@ tab project (label="Project", mutable=true) {
                                hidden=$(/project/History.filter(|x| x/handle == ../parent).count() > 0)) {
                     on click {
                         if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() == 0)) {
-                            append (list="/project/Items", from="..") {
+                            prepend (list="/project/Items", from="..") {
                                 - complexity = "unassigned"
                             }
                             remove (from="/project/History", keyField="handle", keyValue=$(../handle))
@@ -348,14 +369,14 @@ tab project (label="Project", mutable=true) {
                     if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() > 0 || /project/History.filter(|x| x/handle == ../handle).count() > 0)) {
                         refuse = "this id is taken, say another"
                     }
-                    append (list="/project/Items", from="..") {
+                    prepend (list="/project/Items", from="..") {
                         - added = $(now())
                     }
                 }
             }
         }
 
-        list Items (entry=<Item>, key="handle", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", hover-text=true, sort_by=$(|x| 0 - millis_since_epoch(x/added))) {
+        list Items (entry=<Item>, key="handle", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", hover-text=true, movable=true) {
             - {
                 - added = "2026-09-01T09:00:00+04:00"
                 - handle = "editor"

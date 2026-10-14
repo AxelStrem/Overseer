@@ -90,13 +90,13 @@ fn every_project_offers_the_same_flags_in_order() {
     let tags: Vec<String> = flags
         .children
         .iter()
-        .filter_map(|e| e.children.iter().find(|c| c.name == "tag"))
+        .filter_map(|e| overseer::addressing::effective_children(e).into_iter().map(|(_, c)| c).find(|c| c.name == "tag"))
         .filter_map(|c| match c.parameters.get("value") {
             Some(OverseerValue::String(s)) => Some(s.clone()),
             _ => None,
         })
         .collect();
-    assert_eq!(tags, ["manual", "auto", "first", "asked", "discuss"]);
+    assert_eq!(tags, ["manual", "auto", "discuss", "first", "asked"]);
 }
 
 #[test]

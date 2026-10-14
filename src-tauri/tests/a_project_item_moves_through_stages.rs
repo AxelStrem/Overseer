@@ -226,7 +226,7 @@ fn every_project_offers_the_same_stages_in_order() {
     let tags: Vec<String> = stages
         .children
         .iter()
-        .filter_map(|e| e.children.iter().find(|c| c.name == "tag"))
+        .filter_map(|e| overseer::addressing::effective_children(e).into_iter().map(|(_, c)| c).find(|c| c.name == "tag"))
         .filter_map(|c| match c.parameters.get("value") {
             Some(OverseerValue::String(s)) => Some(s.clone()),
             _ => None,
@@ -277,7 +277,7 @@ fn every_project_has_the_same_complexity_scale() {
     let tags: Vec<String> = scale
         .children
         .iter()
-        .filter_map(|e| e.children.iter().find(|c| c.name == "tag"))
+        .filter_map(|e| overseer::addressing::effective_children(e).into_iter().map(|(_, c)| c).find(|c| c.name == "tag"))
         .filter_map(|c| match c.parameters.get("value") {
             Some(OverseerValue::String(s)) => Some(s.clone()),
             _ => None,
