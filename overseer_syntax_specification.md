@@ -658,6 +658,24 @@ the press. It changes nothing by itself - the field is written when something is
 so a press that only opens a field is answered without working the document out again. After
 other actions in the same block, the field opens once they have run.
 
+An action's path can name an entry of a list by its place, `[0]` the first and `[-1]` the last,
+counting from the end when the number is negative. A list without a key has nothing else to
+name an entry by, and this is how a press reaches the entry it has just made - one press adds a
+comment and opens it for typing:
+
+```overseer
+button add (label="add comment") {
+    on click {
+        append (list="../Comments") {
+            - at = $(now())
+        }
+        start_editing (path="../Comments[-1]/body")
+    }
+}
+```
+
+A place past either end names nothing, and the press is refused.
+
 #### Folding a div away
 
 A div that says `foldable=true` can be folded away and brought back. With a label, the label is
@@ -684,7 +702,8 @@ list is sorted or filtered.
 `fold`, `unfold` and `toggle_fold` do the same from any action block, with `path` found as any
 other action's is. A target that is not a foldable div refuses the press. Like `start_editing`
 they change nothing in the document, so a press that only folds is answered without working it
-out again.
+out again. A button whose press opens a div - `toggle_fold` or `unfold` - is drawn pressed while
+the div is open, so a row of such buttons says which of its sections are showing.
 
 ```overseer
 button notes (label="notes") {

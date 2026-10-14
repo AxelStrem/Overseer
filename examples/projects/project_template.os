@@ -186,16 +186,18 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
         }
 
         div Item (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center",
-                  background-color=$(done >= 75 ? "#14321f" :
-                                    (done >= 25 ? "#1c2a3a" : "inherit")),
+                  background-color=$(flags.filter(|t| t == "asked").count() > 0 ? "#38331a" :
+                                    (stage == "testing" ? "#2c2140" :
+                                    (done >= 75 ? "#14321f" :
+                                    (done >= 25 ? "#1c2a3a" : "inherit")))),
                   font-color=$(waiting > 0 ? "#6b7280" : "inherit")) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=7%) = ""
-            string title (label="title", font-size=14px, width=29%,
+            string title (label="title", font-size=14px, width=27%,
                           hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
-            enum stage (label="stage", vocabulary="/project/Stages", width=7%,
+            enum stage (label="stage", vocabulary="/project/Stages", width=6%,
                         hover-text="Where it is: filed, planning, ready, testing or later",
                         withhold=$(open_kids > 0 ? "finished, cancelled" : "")) = "filed" {
                 on change {
@@ -211,13 +213,13 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
 
             enum parent (label="of", placeholder="", font-size=11px, width=6%,
                          hover-text="The larger item this is part of") = ""
-            tags after (label="after", width=6%,
+            tags after (label="after", width=10%,
                         hover-text="The items this waits on; grey while any is still open") = ""
             tags labels (label="tags", vocabulary="/project/Labels", width=9%,
                          hover-text="The parts of the project it is in") = ""
             tags flags (label="flags", vocabulary="/project/Flags", width=6%,
                         hover-text="How it is to be worked") = ""
-            int done (label="done", format="trim", precision=0, suffix="%", width=5%,
+            int done (label="done", format="trim", precision=0, suffix="%", width=4%,
                       hover-text="How much of its parts is finished, by points",
                       hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
                           (/project/Items.filter(|x| x/parent == ../handle)
@@ -225,7 +227,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                            + finished_weight * 100) / weight)
             int points (label="pts", format="trim", width=4%,
                         hover-text="How much work: 1 the smallest thing, 8 most of a day") = 1
-            enum complexity (label="think", vocabulary="/project/Complexities", width=7%,
+            enum complexity (label="think", vocabulary="/project/Complexities", width=6%,
                              hover-text="How much thinking building it takes") = "unassigned"
 
             button talk (icon="note", margin=0, width=3%,
@@ -240,7 +242,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                 }
             }
 
-            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=5%,
+            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=6%,
                                hover-text="Since it was filed, or a part of it last closed") =
                 $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
                   /project/History.filter(|x| x/parent == ../handle)
@@ -254,17 +256,13 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
 
             div Talk (foldable=true, folded=true, span="row", layout="vertical", margin=0, spacing=4) {
                 list Comments (entry=<Comment>, layout="vertical", spacing=4, border-style=none) { }
-                div NewComment (layout="horizontal", margin=0, spacing=6, alignment="center") {
-                    textbox body (label="", placeholder="a comment - markdown is fine", width=80%, margin=0) = ""
-                    button add (label="+ comment", margin=0, width=18%) {
-                        on click {
-                            if (cond=$(../body != "")) {
-                                append (list="../../Comments", from="..") {
-                                    - at = $(now())
-                                    - author = "owner"
-                                }
-                            }
+                button add (label="add comment", margin=0) {
+                    on click {
+                        append (list="../Comments") {
+                            - at = $(now())
+                            - author = "owner"
                         }
+                        start_editing (path="../Comments[-1]/body")
                     }
                 }
             }
@@ -360,7 +358,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                            width=12%) = ""
             textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=12%) = ""
             textbox flags (label="", placeholder="flags", vocabulary="/project/Flags", width=10%) = ""
-            textbox points (label="", placeholder="pts", width=7%) = ""
+            textbox points (label="", placeholder="pts", width=7%) = "5"
             button add (label="+ task", margin=0, width=12%) {
                 on click {
                     if (cond=$(../handle == "")) {

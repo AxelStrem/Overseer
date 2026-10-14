@@ -1,7 +1,7 @@
 //! A project item holds a conversation and a record of the agents' work on it.
 //!
-//! The one-line note an item had became a list of comments, each dated and signed, with a box at
-//! the bottom to add one; and beside it a list of the work agents did on the item, one record a
+//! The one-line note an item had became a list of comments, each dated and signed, with a button at
+//! the bottom that adds one and opens it for typing; and beside it a list of the work agents did on the item, one record a
 //! session. Both sit under the row folded away, each opened by a button of its own in the row -
 //! the work button only where there is work to show - and both go to History when the item closes
 //! and come back with it, which `a_closed_item_can_be_reopened` checks the other way round.
@@ -139,28 +139,30 @@ fn the_buttons_say_whether_there_is_anything_behind_them() {
     });
 }
 
+/// Press `add comment` on an item, and type into the comment it opens, as the page would.
+fn comment(file: &str, item: &str, text: &str) {
+    let answer = press(file, &format!("{}/Talk/add", item), &[]);
+    assert!(answer.wrote, "adding a comment wrote nothing");
+    let body = answer.start_editing.expect("the new comment was not opened for typing").address;
+    let w = app_api::ValueWrite { node_path: names_of(file, &body), value: OverseerValue::String(text.to_string()) };
+    app_api::write_values_at(file, "p.os", vec![w], "s").expect("the comment was not written");
+}
+
 #[test]
 fn a_comment_is_added_dated_and_signed_under_the_ones_before() {
     serialised(|| {
         let file = a_project("add", TEMPLATE);
         // editor has nothing said about it, so its whole conversation is new to the file.
-        let answer = press(
-            &file,
-            "project/Items/[editor]/Talk/NewComment/add",
-            &[("project/Items/[editor]/Talk/NewComment/body", "split it in **two**\nfirst the model")],
-        );
-        assert!(answer.wrote, "adding a comment wrote nothing");
+        comment(&file, "project/Items/[editor]", "split it in **two**
+first the model");
         let said = said_on(&file, "project/Items/[editor]");
         assert_eq!(said.len(), 1, "{:?}", said);
         assert!(said[0][0].starts_with("2026-10-01T09:00:00"), "dated {}", said[0][0]);
         assert_eq!(said[0][1], "owner");
-        assert_eq!(said[0][2], "split it in **two**\nfirst the model");
+        assert_eq!(said[0][2], "split it in **two**
+first the model");
 
-        press(
-            &file,
-            "project/Items/[brace]/Talk/NewComment/add",
-            &[("project/Items/[brace]/Talk/NewComment/body", "seen again today")],
-        );
+        comment(&file, "project/Items/[brace]", "seen again today");
         let said = said_on(&file, "project/Items/[brace]");
         assert_eq!(said.iter().map(|c| c[2].as_str()).collect::<Vec<_>>(), [
             "only when the value comes first; a body on its own is fine",
@@ -170,13 +172,17 @@ fn a_comment_is_added_dated_and_signed_under_the_ones_before() {
 }
 
 #[test]
-fn an_empty_box_adds_nothing() {
+fn adding_a_comment_opens_the_new_one_for_typing() {
     serialised(|| {
-        let file = a_project("empty", TEMPLATE);
-        let before = std::fs::read_to_string(&file).unwrap();
-        let answer = press(&file, "project/Items/[editor]/Talk/NewComment/add", &[]);
-        assert!(!answer.wrote, "an empty comment was written");
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+        let file = a_project("opens", TEMPLATE);
+        let before = overseer::addressing::addresses(&opened(&file));
+        let answer = press(&file, "project/Items/[brace]/Talk/add", &[]);
+        let said = said_on(&file, "project/Items/[brace]");
+        assert_eq!(said.len(), 2, "{:?}", said);
+        assert_eq!((said[1][1].as_str(), said[1][2].as_str()), ("owner", ""), "{:?}", said);
+        let body = answer.start_editing.expect("nothing was opened for typing").address;
+        assert!(body.starts_with("project/Items/[brace]/Talk/Comments/") && body.ends_with("/body"), "opened {}", body);
+        assert!(!before.contains(&body), "opened a comment that was already there: {}", body);
     });
 }
 

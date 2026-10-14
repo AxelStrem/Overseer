@@ -1811,6 +1811,23 @@ impl ActionExecutor {
         if path.is_empty() {
             return None;
         }
+        // Split a segment of the form "name[n]" into (name, position): the n-th entry of the
+        // list it names, counting from 0, and from the end when n is negative - so a press can
+        // reach the entry it has just appended to a list that has no key to name it by.
+        fn split_position(seg: &str) -> (&str, Option<i64>) {
+            if let (Some(open), true) = (seg.rfind('['), seg.ends_with(']')) {
+                if let Ok(n) = seg[open + 1..seg.len() - 1].trim().parse::<i64>() {
+                    return (&seg[..open], Some(n));
+                }
+            }
+            (seg, None)
+        }
+        // The child at a position among a node's own children, negative counting from the end.
+        fn at_position(node: &OverseerNode, n: i64) -> Option<usize> {
+            let len = node.children.len() as i64;
+            let at = if n < 0 { len + n } else { n };
+            (0..len).contains(&at).then_some(at as usize)
+        }
         // Parse a segment of the form "name#k" into (name, ordinal)
         fn parse_seg(seg: &str) -> (&str, Option<usize>) {
             if let Some(hash_pos) = seg.rfind('#') {
@@ -1894,7 +1911,8 @@ impl ActionExecutor {
 
         let mut indices: Vec<usize> = Vec::new();
         // Find first segment anywhere in the (transparent-flattened) roots
-        let mut chain = find_root_chain(nodes, &path[0])?;
+        let (first, first_position) = split_position(&path[0]);
+        let mut chain = find_root_chain(nodes, first)?;
         indices.append(&mut chain);
         // Walk remaining segments, allowing transparent traversal and ordinal selection at each step
         let mut cur: &OverseerNode = {
@@ -1904,9 +1922,15 @@ impl ActionExecutor {
             }
             node_ref
         };
+        if let Some(n) = first_position {
+            let at = at_position(cur, n)?;
+            indices.push(at);
+            cur = &cur.children[at];
+        }
         for seg in &path[1..] {
+            let (seg, position) = split_position(seg);
             let (base, ord) = parse_seg(seg);
-            if eff_name(cur) == base && ord.is_none() {
+            if eff_name(cur) == base && ord.is_none() && position.is_none() {
                 // Segment refers to current node by name; continue
                 continue;
             }
@@ -1923,6 +1947,11 @@ impl ActionExecutor {
                     node_ref = &node_ref.children[*idx];
                 }
                 cur = node_ref;
+                if let Some(n) = position {
+                    let at = at_position(cur, n)?;
+                    indices.push(at);
+                    cur = &cur.children[at];
+                }
             } else {
                 return None;
             }

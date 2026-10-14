@@ -1326,6 +1326,13 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     display: none !important;
 }
 
+/* A button that opens a div, while the div is open: its colour washed with the accent, so it
+   reads as switched on. Before hover and press, which still show over it. */
+.overseer-button.toggled {
+    background: color-mix(in srgb, var(--primary-color) 35%, var(--overseer-button-bg, transparent));
+    border-color: color-mix(in srgb, var(--primary-color) 60%, var(--border-color));
+}
+
 .overseer-button:hover {
     background: var(--overseer-button-hover, #1d4ed8);
     border-color: var(--primary-color);

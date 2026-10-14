@@ -5593,7 +5593,62 @@ export class OverseerRenderer {
     // Honor explicit margin/padding on buttons (do not apply container defaults)
     this.applyLayoutStyles(button, node)
     this.applyNodeStyles(button, node)
+        this.markFoldButton(button, node)
         return button
+    }
+
+    /// The path of the div a button opens - by `toggle_fold` or `unfold` in its `on click` - found
+    /// from the button's own drawn path the way the server finds an action's: `..` up a level,
+    /// wrappers taking no step of their own. Null for a button that opens no div.
+    foldTargetOf(node) {
+        const own = node && node.__overseer_path
+        if (!Array.isArray(own) || !Array.isArray(node.children)) return null
+        const click = node.children.find((c) => String(c?.name || '').toLowerCase() === 'click')
+        const action = (click?.children || []).find((c) => {
+            const kind = String(c?.name || c?.node_type || '').toLowerCase()
+            return kind === 'toggle_fold' || kind === 'unfold'
+        })
+        const said = action ? this.getParameterValue(action, 'path') : null
+        if (typeof said !== 'string' || said.trim() === '') return null
+        const at = said.trim().startsWith('/') ? [] : own.slice()
+        for (const segment of said.trim().split('/')) {
+            const step = segment.trim()
+            if (step === '' || step === '.') continue
+            if (step === '..') {
+                if (at.length === 0) return null
+                at.pop()
+            } else {
+                at.push(step)
+            }
+        }
+        return at.length > 0 ? at : null
+    }
+
+    /// A button that opens a div is drawn pressed while the div is open, so the row says which
+    /// of its sections are showing. Kept on the button, and brought up to date by `setFolded`,
+    /// which redraws only the div - not the row the button sits in.
+    markFoldButton(button, node) {
+        const target = this.foldTargetOf(node)
+        if (!target) return
+        button.__overseerFoldTarget = target
+        button.classList.add('overseer-fold-button')
+        this.showFoldPressed(button)
+    }
+
+    showFoldPressed(button) {
+        try {
+            const target = button.__overseerFoldTarget
+            const doc = window.app && window.app.currentDocument
+            const div = Array.isArray(doc) && target ? this.findNodeByPath(doc, target) : null
+            if (!div || !this.isFoldable(div)) {
+                button.classList.remove('toggled')
+                button.removeAttribute('aria-pressed')
+                return
+            }
+            const open = !this.isFolded(div, target)
+            button.classList.toggle('toggled', open)
+            button.setAttribute('aria-pressed', open ? 'true' : 'false')
+        } catch (_) { /* drawn unpressed */ }
     }
 
     createCheckboxElement(node) {
@@ -7792,10 +7847,13 @@ export class OverseerRenderer {
         this.keepFolds()
         const doc = window.app && window.app.currentDocument
         // Drawn again from the div, or from the nearest drawn ancestor when it was folded away.
-        for (let i = path.length; i > 0; i--) {
-            if (this.rerenderSubtree(doc, path.slice(0, i))) return
+        let drawn = false
+        for (let i = path.length; i > 0 && !drawn; i--) {
+            drawn = !!this.rerenderSubtree(doc, path.slice(0, i))
         }
-        this.renderDocument(doc)
+        if (!drawn) this.renderDocument(doc)
+        // A button that opens this div may be outside what was drawn again.
+        document.querySelectorAll('.overseer-fold-button').forEach((button) => this.showFoldPressed(button))
     }
 
     /// The header of a foldable div with a label: pressed anywhere, it folds the div or unfolds it.
