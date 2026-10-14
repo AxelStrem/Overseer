@@ -354,7 +354,9 @@ impl DocumentRoot {
         // The hazard a whole-document save brings is that the page may be stale: the bot could
         // have recorded something since it loaded, and this text would quietly replace it. So
         // where the client tells us what it started from, that is checked first.
-        if cmd.starts_with("save_") {
+        // A pasted image is written beside the document rather than into it, so it is not one
+        // of these saves, whatever its name says; it is answered with the reads below.
+        if cmd.starts_with("save_") && cmd != "save_overseer_image" {
             return self.save(cmd, args);
         }
 
@@ -417,6 +419,23 @@ impl DocumentRoot {
                     app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),
                     app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
                 })
+            }
+            // An image pasted into the document's text, kept beside it under a name picked
+            // here; the answer is the path the text refers to it by.
+            "save_overseer_image" => {
+                let path = arg_str(args, &["path"])
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                let mime = arg_str(args, &["mime"])
+                    .ok_or_else(|| RequestError::Rejected("'mime' is required".into()))?;
+                let data = arg_str(args, &["data"])
+                    .ok_or_else(|| RequestError::Rejected("'data' is required".into()))?;
+                let file = self.resolve(&path)?;
+                app_api::save_image_beside(&file, &mime, &data)
+                    .map(serde_json::Value::String)
+                    .map_err(|refused| match refused {
+                        app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),
+                        app_api::IconRefused::Missing(m) => RequestError::Failed(m),
+                    })
             }
             "parse_overseer_content" => {
                 let content = arg_str(args, &["content"])

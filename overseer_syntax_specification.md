@@ -473,6 +473,13 @@ a file that is not there, leaves an empty space. A picture is fetched only when 
 inside a folded div costs nothing until the div is opened. Markdown text shows the same images,
 `![plate](images/plate.jpg)` (see "Markdown Text Formatting").
 
+A picture pasted or dropped into the editor of a markdown text is kept beside the document, in
+`images/<document name>/` under a name made from the time, such as
+`images/tracker/20261014-153012.png`, and the text gets `![](images/tracker/20261014-153012.png)`
+where the caret is. The same types and the same 8 MB hold as for a picture shown. A text that
+says `markdown=false`, and a one-line field, take no pictures, since there the reference would
+only be words. Removing the reference from the text leaves the file where it is.
+
 #### Conditional actions inside action blocks
 
 You can conditionally execute actions inside any `on ... {}` block using an `if` action node. The condition is provided via the `cond` parameter (usually a formula) and, when truthy, the nested actions will run. When falsy, the nested actions are skipped.

@@ -38,6 +38,10 @@ struct Service {
 /// What lets the frontend run against this server rather than the desktop app.
 const BRIDGE: &str = include_str!("../bridge.js");
 
+/// The most a command's body may weigh: room for the largest image kept, in base64, and the
+/// JSON around it.
+const API_MOST_BYTES: usize = (overseer::app_api::IMAGE_MOST_BYTES as usize) / 3 * 4 + 1024 * 1024;
+
 #[derive(serde::Deserialize)]
 struct CommandBody {
     /// The document the caller is working on, so what it mounts can be resolved.
@@ -569,7 +573,12 @@ async fn serve() {
         .route("/documents", get(list))
         // A name may contain directories, so it is matched to the end of the path.
         .route("/doc/*name", get(document_or_page))
-        .route("/api/:cmd", post(command))
+        // A pasted image travels as base64 inside the JSON, a third larger than the image, and
+        // axum refuses bodies over 2 MB by default; this lets one as large as is kept through.
+        .route(
+            "/api/:cmd",
+            post(command).layer(axum::extract::DefaultBodyLimit::max(API_MOST_BYTES)),
+        )
         // The document API: a subtree is named by an address that survives a resolve.
         .route("/v1/node", get(read_at).post(set_at))
         .route("/v1/append", post(append_at))

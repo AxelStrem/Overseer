@@ -2413,6 +2413,62 @@ pub fn image_beside(document: &std::path::Path, image: &str) -> std::result::Res
     }))
 }
 
+/// Keeps an image pasted into the document's text beside it, under `images/<document name>/`,
+/// and answers with the path the text refers to it by, relative to the document.
+///
+/// The name is picked here, from the time, never by the caller, so nothing a request says can
+/// place a file anywhere else. A name already taken gets `-2`, `-3`, ...; the file is created
+/// only if it is not there, so two pastes in the same second cannot overwrite each other. The
+/// type and the size are those `image_beside` hands out, so whatever is saved can be shown.
+pub fn save_image_beside(
+    document: &std::path::Path,
+    mime: &str,
+    data: &str,
+) -> std::result::Result<String, IconRefused> {
+    use base64::Engine as _;
+    use std::io::Write as _;
+    let extension = IMAGE_TYPES
+        .iter()
+        .find(|(_, m)| m.eq_ignore_ascii_case(mime))
+        .map(|(e, _)| *e)
+        .ok_or_else(|| IconRefused::NotAName(format!("'{}' is not an image type that is kept", mime)))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.trim())
+        .map_err(|_| IconRefused::NotAName("the image is not valid base64".into()))?;
+    if bytes.is_empty() {
+        return Err(IconRefused::NotAName("the image is empty".into()));
+    }
+    if bytes.len() as u64 > IMAGE_MOST_BYTES {
+        return Err(IconRefused::NotAName("the image is too large to be kept".into()));
+    }
+    let stem = document
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| IconRefused::Missing("no document to keep the image beside".into()))?;
+    let folder = document
+        .parent()
+        .ok_or_else(|| IconRefused::Missing("no document to keep the image beside".into()))?
+        .join("images")
+        .join(stem);
+    std::fs::create_dir_all(&folder)
+        .map_err(|e| IconRefused::Missing(format!("cannot make the images folder: {:?}", e.kind())))?;
+    let at = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    for n in 1u32.. {
+        let name = if n == 1 { format!("{}.{}", at, extension) } else { format!("{}-{}.{}", at, n, extension) };
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(folder.join(&name)) {
+            Ok(mut file) => {
+                file.write_all(&bytes)
+                    .map_err(|e| IconRefused::Missing(format!("cannot write the image: {:?}", e.kind())))?;
+                return Ok(format!("images/{}/{}", stem, name));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(IconRefused::Missing(format!("cannot write the image: {:?}", e.kind()))),
+        }
+    }
+    unreachable!("a free name is always found")
+}
+
 /// A file a document names beside it, under its own folder and nowhere else, with one of the
 /// extensions given and no larger than `most` bytes. The path comes from the document and, on
 /// the server, through the network, so it is checked the way the server checks a document's

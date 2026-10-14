@@ -8526,6 +8526,53 @@ export class OverseerRenderer {
         } catch (_) { return null }
     }
 
+    /// An image pasted or dropped into a markdown editor is kept beside the document - the
+    /// server or the app picks its name under `images/<document name>/` - and the editor gets
+    /// `![](that path)` where the caret is when the answer comes. Only a markdown text takes them,
+    /// since only there is the reference drawn as the picture. Anything that is not an image is
+    /// left to the browser, so pasting text is as it always was.
+    takeImagesInto(textarea) {
+        const imagesOf = (files) => Array.from(files || []).filter((f) => f && /^image\//.test(f.type || ''))
+        const keep = async (images) => {
+            const doc = (window.app && window.app.currentFile) || ''
+            if (!doc) return
+            for (const image of images) {
+                let path
+                try {
+                    const data = await new Promise((resolve, reject) => {
+                        const reader = new FileReader()
+                        reader.onload = () => resolve(String(reader.result || '').replace(/^data:[^,]*,/, ''))
+                        reader.onerror = () => reject(reader.error)
+                        reader.readAsDataURL(image)
+                    })
+                    path = await invoke('save_overseer_image', { path: doc, mime: image.type, data })
+                } catch (e) {
+                    this.sayRefused(textarea, `The image was not kept: ${e && e.message ? e.message : e}`)
+                    continue
+                }
+                if (typeof path !== 'string' || !textarea.isConnected) continue
+                this.sayRefused(null, null)
+                textarea.setRangeText(`![](${path})`, textarea.selectionStart, textarea.selectionEnd, 'end')
+                textarea.dispatchEvent(new Event('input', { bubbles: true }))
+            }
+        }
+        textarea.addEventListener('paste', (e) => {
+            const images = imagesOf(e.clipboardData && e.clipboardData.files)
+            if (images.length === 0) return
+            e.preventDefault()
+            keep(images)
+        })
+        textarea.addEventListener('dragover', (e) => {
+            if (e.dataTransfer && Array.from(e.dataTransfer.items || []).some((i) => i.kind === 'file')) e.preventDefault()
+        })
+        textarea.addEventListener('drop', (e) => {
+            const images = imagesOf(e.dataTransfer && e.dataTransfer.files)
+            if (images.length === 0) return
+            e.preventDefault()
+            keep(images)
+        })
+    }
+
     makeMarkdownFieldEditable(element, node) {
         // Get the raw markdown text from the node, not the rendered HTML
         const rawMarkdown = this.getNodeValue(node) || ''
@@ -8577,6 +8624,7 @@ export class OverseerRenderer {
     element.parentNode.insertBefore(editorContainer, element.nextSibling)
         textarea.focus()
         const draft = this.keepDraftOf(element, node, textarea, rawMarkdown)
+        this.takeImagesInto(textarea)
 
         let isPreviewMode = false
         
