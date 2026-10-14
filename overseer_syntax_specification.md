@@ -293,6 +293,24 @@ list Done (entry=<Card>, movable=true) { }
 On a phone an entry is picked up by holding it still for a moment, since a finger that moves at
 once is scrolling.
 
+#### Drawing a list as a board
+
+`view="board"` draws one list in columns, by the value its entries hold in an `enum` field named
+by `by`: one column for each value of the field's vocabulary, in the order the vocabulary lists
+them, headed by the value's chip and how many entries it shows. A value the vocabulary does not
+hold gets a column of its own at the end, so nothing in the file goes unseen.
+
+```overseer
+list Tasks (entry=<Task>, view="board", by="stage") { }
+```
+
+Dragging an entry into another column writes that value into its field, exactly as picking it
+from the field's chip would: the field's `on change` runs with it as one change, `mutable` is
+respected, and a value the field `withhold`s takes no drop. Nothing moves in the list itself -
+an entry stands in its column where it stands in the list - so a filter, `sort_by` and `window`
+work on a board as on any list. Unlike `movable=true`, which moves entries between lists, this
+keeps every entry in one list and moves it by what it says.
+
 ## Advanced Features
 
 ### 1. Templates and Inheritance
@@ -1165,7 +1183,7 @@ div Tasks {
 - **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`)
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
-- **Lists**: `entry`, `key`, `window`, `sort_by`, `view`, `header`, `sticky`, `lines`, `movable`
+- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `lines`, `movable`
 - **Mounts**: `source`, `lazy`, `mutable`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`

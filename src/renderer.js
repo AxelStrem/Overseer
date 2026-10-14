@@ -1168,6 +1168,8 @@ export class OverseerRenderer {
         for (const list of resorted) {
             if (!within(list.__overseer_path) && !this.putEntriesInOrder(list)) redraw(list.__overseer_path)
         }
+        // An entry repainted in a board stays in the column it was drawn in until asked again.
+        try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
         return true
     }
 
@@ -1247,7 +1249,8 @@ export class OverseerRenderer {
     repaintEntries(list, change) {
         const path = list.__overseer_path
         if (!Array.isArray(path) || path.length === 0 || change.renamed || change.whole) return false
-        if (String(this.getParameterValue(list, 'view') || '') === 'table') return false
+        const view = String(this.getParameterValue(list, 'view') || '')
+        if (view === 'table' || view === 'board') return false
         // Entries that are tabs are drawn as one system, not as rows of the list.
         if (this.entriesAreTabs(list)) return false
         const element = this.drawnElementAt(path, 'overseer-list')
@@ -2062,6 +2065,7 @@ export class OverseerRenderer {
                     if (nodeTypeLower === 'list') {
                         this.setUpTable(element, node)
                         this.drawEntriesLeftOut(element, node)
+                        this.setUpBoard(element, node)
                         this.makeEntriesMovable(element, node)
                     }
                 } else {
@@ -2069,6 +2073,7 @@ export class OverseerRenderer {
                     // An empty list still draws its heading, which is when a heading says most.
                     if (nodeTypeLower === 'list') {
                         this.setUpTable(element, node)
+                        this.setUpBoard(element, node)
                         this.makeEntriesMovable(element, node)
                     }
                 }
@@ -2952,6 +2957,192 @@ export class OverseerRenderer {
         for (const list of document.querySelectorAll('.view-table')) this.arrangeTable(list)
     }
 
+    /**
+     * A list drawn as a board: one column for each value an `enum` field of its entries can hold,
+     * in the order its vocabulary lists them, and each entry in the column of the value it holds.
+     *
+     * `view="board", by="stage"`. Only the drawing changes: the entries are drawn as they always
+     * are and then put in their columns, in the order the list shows them, so a filter, a sort
+     * and a window work on a board as on any list. Moving an entry to another column writes the
+     * field - see `writeEnumValue` - and does not move it in the list.
+     *
+     * The columns come from the field's vocabulary, which the field says on the template, so a
+     * board with nothing in it still has its columns. A value the vocabulary does not list has a
+     * column of its own at the end, to show what the file holds; nothing is dropped there.
+     *
+     * Written to be run again at any time: a value written, an entry repainted, and the entry is
+     * put back in the column it now belongs in - see `arrangeBoards`.
+     */
+    setUpBoard(element, node) {
+        if (!element || !node) return
+        if (String(this.getParameterValue(node, 'view') || '') !== 'board') return
+        const by = String(this.getParameterValue(node, 'by') ?? '').trim()
+        if (!by || this.entriesAreTabs(node)) return
+        const field = this.boardFieldOf(node, by)
+        if (!field || this.tagVocabulary(field).size === 0) return
+        element.dataset.board = by
+        // The columns lay the board out; the list's own direction would only fight them.
+        element.classList.add('view-board')
+        element.classList.remove('layout-vertical', 'layout-horizontal', 'layout-flow')
+        this.arrangeBoard(element, node)
+        // A drop is a write of the field, so it is offered wherever the field could be picked.
+        if (this.getEffectiveMutableMode(node, element) === 'false') return
+        element.dataset.boardDrag = '1'
+        this.listenForEntryDrags(element)
+    }
+
+    /// The field a board is drawn by: on its first entry, or on the template it makes them from.
+    boardFieldOf(list, by) {
+        for (const entry of list.children || []) {
+            const found = this.entryField(entry, by)
+            if (found) return this.isEnum(found) ? found : null
+        }
+        const template = this.templateNamed(this.entryTemplateOf(list))
+        const found = template ? this.entryField(template, by) : null
+        return found && this.isEnum(found) ? found : null
+    }
+
+    isEnum(node) {
+        return String(node?.node_type || node?.type || '').toLowerCase() === 'enum'
+    }
+
+    /// The node a list's `entry=<...>` names, looked for in the open document.
+    templateNamed(name) {
+        const doc = window.app && window.app.currentDocument
+        if (!name || !doc) return null
+        const stack = (Array.isArray(doc) ? doc : [doc]).slice().reverse()
+        while (stack.length) {
+            const at = stack.pop()
+            if (!at || typeof at !== 'object') continue
+            const type = String(at.node_type || at.type || '').toLowerCase()
+            if (at.name === name && type !== 'list') return at
+            const kids = Array.isArray(at.children) ? at.children : []
+            for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i])
+        }
+        return null
+    }
+
+    /// The value an entry holds in the field its board is drawn by.
+    boardValueOf(entry, by) {
+        const field = this.entryField(entry, by)
+        return field ? String(this.getNodeValue(field) ?? '').trim() : ''
+    }
+
+    /// Where a field of an entry is drawn - the path a write to it names.
+    fieldPathIn(entry, entryPath, field) {
+        const seek = (node, path) => {
+            for (const child of (node && node.children) || []) {
+                if (!child) continue
+                const at = this.childPathFor(node, child, path)
+                if (child === field) return at
+                const found = seek(child, at)
+                if (found) return found
+            }
+            return null
+        }
+        return seek(entry, entryPath)
+    }
+
+    /// Put each entry of a board in its column, the columns drawn afresh.
+    arrangeBoard(element, node) {
+        const by = element.dataset.board
+        if (!by) return
+        const field = this.boardFieldOf(node, by)
+        if (!field) return
+        const vocabulary = this.tagVocabulary(field)
+
+        const drawn = new Map()
+        for (const el of element.querySelectorAll(':scope > [data-uid], :scope > .overseer-board > .board-column > .board-column-body > [data-uid]')) {
+            drawn.set(el.getAttribute('data-uid'), el)
+        }
+        element.querySelector(':scope > .overseer-board')?.remove()
+
+        const board = document.createElement('div')
+        board.className = 'overseer-board'
+        const columns = new Map()
+        const column = (value, known, unlisted) => {
+            const el = document.createElement('div')
+            el.className = 'board-column'
+            el.dataset.value = value
+            if (unlisted) el.dataset.unlisted = '1'
+            const head = document.createElement('div')
+            head.className = 'board-column-head'
+            let chip
+            if (unlisted) {
+                chip = document.createElement('span')
+                chip.className = 'tag-chip tag-placeholder'
+                chip.textContent = '—'
+                chip.title = 'not one of the values this field lists'
+            } else {
+                chip = this.tagChip(value, known, null)
+            }
+            const chips = document.createElement('span')
+            chips.className = `tag-chips chip-${this.chipShape(field)}`
+            chips.appendChild(chip)
+            const count = document.createElement('span')
+            count.className = 'board-column-count'
+            head.append(chips, count)
+            const body = document.createElement('div')
+            body.className = 'board-column-body'
+            el.append(head, body)
+            board.appendChild(el)
+            return body
+        }
+        for (const [value, known] of vocabulary) columns.set(value, column(value, known, false))
+        let elsewhere = null
+
+        for (const entry of this.inDisplayOrder(node)) {
+            const el = entry && entry.__uid ? drawn.get(entry.__uid) : null
+            if (!el) continue
+            const body = columns.get(this.boardValueOf(entry, by))
+                || (elsewhere = elsewhere || column('', null, true))
+            body.appendChild(el)
+        }
+        element.insertBefore(board, element.firstChild)
+        this.countBoardColumns(board)
+    }
+
+    /// How many entries each column of a board shows, the filter's narrowing taken into account.
+    countBoardColumns(board) {
+        for (const column of board.querySelectorAll(':scope > .board-column')) {
+            const body = column.querySelector(':scope > .board-column-body')
+            const shown = Array.from(body ? body.children : [])
+                .filter((el) => !el.hidden && !el.classList.contains('filtered-out')).length
+            const count = column.querySelector(':scope > .board-column-head > .board-column-count')
+            if (count) count.textContent = String(shown)
+        }
+    }
+
+    /** Put every board's entries back in the columns they now belong in. */
+    arrangeBoards() {
+        const doc = window.app && window.app.currentDocument
+        if (!doc) return
+        for (const element of document.querySelectorAll('.overseer-list.view-board')) {
+            let node = null
+            try { node = this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { node = null }
+            if (node) this.arrangeBoard(element, node)
+        }
+    }
+
+    /// The columns of a board a dragged entry can be dropped in: the values its field would offer.
+    boardColumnsTaking(drag) {
+        const entryNode = this.nodeDrawnBy(drag.entry)
+        const field = entryNode ? this.entryField(entryNode, drag.list.dataset.board) : null
+        if (!field || this.getEffectiveMutableMode(field, drag.entry) === 'false') return null
+        const vocabulary = this.tagVocabulary(field)
+        const held = String(this.getNodeValue(field) ?? '').trim()
+        // The same values the field's own picker leaves out - see `createEnumElement`.
+        const withheld = new Set(String(this.getParameterValue(field, 'withhold') ?? '')
+            .split(',').map(s => s.trim()).filter(Boolean))
+        const columns = Array.from(drag.list.querySelectorAll(':scope > .overseer-board > .board-column'))
+            .filter((c) => c.dataset.unlisted !== '1'
+                && c.dataset.value !== held
+                && !withheld.has(c.dataset.value)
+                && vocabulary.get(c.dataset.value)?.offered !== false)
+        const entryPath = JSON.parse(drag.entry.dataset.path)
+        return { field, held, columns, path: this.fieldPathIn(entryNode, entryPath, field) }
+    }
+
     coerceSortKey(key) {
         // Support numbers and string keys; fall back to string comparison
         if (key === null || key === undefined) return Number.MAX_SAFE_INTEGER
@@ -3117,6 +3308,8 @@ export class OverseerRenderer {
         if (said !== true && String(said).toLowerCase() !== 'true') return
         if (this.getEffectiveMutableMode(node, element) !== 'true') return
         if (this.entriesAreTabs(node)) return
+        // A board places its entries by a field, not by where they stand in the list.
+        if (element.dataset.board) return
         element.dataset.movable = '1'
         element.dataset.entryTemplate = this.entryTemplateOf(node)
         // A list drawn in an order worked out from its entries has no order to drag into: an
@@ -3126,6 +3319,11 @@ export class OverseerRenderer {
             || (node.children || []).some((c) => c?.parameters?._ui_sort_key !== undefined)
         if (sorted) element.dataset.sorted = '1'
         else delete element.dataset.sorted
+        this.listenForEntryDrags(element)
+    }
+
+    /// The listeners a list's entries are dragged by - once for each list element.
+    listenForEntryDrags(element) {
         if (element.__movable) return
         element.__movable = true
         element.addEventListener('pointerdown', (event) => this.armEntryDrag(event, element))
@@ -3159,10 +3357,10 @@ export class OverseerRenderer {
         const target = event.target
         if (!target || !target.closest) return
         // The innermost movable list a pointer is in is the one it drags in.
-        if (target.closest('.overseer-list[data-movable="1"]') !== list) return
+        if (target.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"]') !== list) return
         if (target.closest('textarea, select, input, a[href], [contenteditable="true"]')) return
         let entry = target
-        while (entry && entry.parentElement !== list) entry = entry.parentElement
+        while (entry && !this.isEntryElementOf(entry, list)) entry = entry.parentElement
         if (!entry || !entry.dataset || !entry.dataset.uid || !entry.dataset.path) return
 
         const touch = event.pointerType === 'touch' || event.pointerType === 'pen'
@@ -3212,10 +3410,23 @@ export class OverseerRenderer {
         this._entryDrag = drag
     }
 
+    /// Whether an element is one of a list's entries: drawn in it, or in a column of it as a board.
+    isEntryElementOf(el, list) {
+        const parent = el.parentElement
+        if (!parent) return false
+        if (parent === list) return true
+        return parent.classList.contains('board-column-body') && parent.closest('.overseer-list') === list
+    }
+
     /// The pointer means a drag: lift the entry and mark where it can go.
     beginEntryDrag() {
         const drag = this._entryDrag
         if (!drag || drag.started) return
+        // On a board, a drag is a value picked: nothing to lift when there is nothing to pick.
+        if (drag.list.dataset.board) {
+            drag.board = this.boardColumnsTaking(drag)
+            if (!drag.board || drag.board.columns.length === 0) { this.endEntryDrag(false); return }
+        }
         drag.started = true
         clearTimeout(drag.timer)
         const rect = drag.entry.getBoundingClientRect()
@@ -3240,8 +3451,9 @@ export class OverseerRenderer {
         drag.entry.classList.add('is-dragged')
         document.body.classList.add('overseer-dragging')
         try { window.getSelection()?.removeAllRanges() } catch (_) { /* nothing selected */ }
-        const template = drag.list.dataset.entryTemplate || ''
-        for (const list of document.querySelectorAll('.overseer-list[data-movable="1"]')) {
+        for (const column of drag.board ? drag.board.columns : []) column.classList.add('accepts-drop')
+        const template = drag.board ? null : (drag.list.dataset.entryTemplate || '')
+        for (const list of drag.board ? [] : document.querySelectorAll('.overseer-list[data-movable="1"]')) {
             const accepts = list === drag.list
                 ? list.dataset.sorted !== '1'
                 : (template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
@@ -3266,8 +3478,9 @@ export class OverseerRenderer {
         const under = typeof document.elementFromPoint === 'function'
             ? document.elementFromPoint(drag.x, drag.y)
             : null
-        const list = under && under.closest ? under.closest('.overseer-list.accepts-drop') : null
-        for (const shown of document.querySelectorAll('.overseer-list.drop-here')) {
+        const wanted = drag.board ? '.board-column.accepts-drop' : '.overseer-list.accepts-drop'
+        const list = under && under.closest ? under.closest(wanted) : null
+        for (const shown of document.querySelectorAll('.drop-here')) {
             if (shown !== list) shown.classList.remove('drop-here')
         }
         drag.target = list
@@ -3275,6 +3488,8 @@ export class OverseerRenderer {
         const line = drag.line
         if (!list) { line.hidden = true; return }
         list.classList.add('drop-here')
+        // A column has no order of its own to drop into: the entry stands where the list has it.
+        if (drag.board) { line.hidden = true; return }
         if (list.dataset.sorted === '1') { line.hidden = true; return }
         const across = list.classList.contains('layout-horizontal') || list.classList.contains('layout-flow')
         const entries = this.droppableEntries(list, drag.entry)
@@ -3319,12 +3534,19 @@ export class OverseerRenderer {
         drag.line?.remove()
         drag.entry.classList.remove('is-dragged')
         document.body.classList.remove('overseer-dragging')
-        for (const list of document.querySelectorAll('.overseer-list.accepts-drop, .overseer-list.drop-here')) {
+        for (const list of document.querySelectorAll('.accepts-drop, .drop-here')) {
             list.classList.remove('accepts-drop', 'drop-here')
         }
         this._dragJustEnded = true
         setTimeout(() => { this._dragJustEnded = false }, 0)
         if (!dropped || !drag.target) return
+        if (drag.board) {
+            const { field, path, held } = drag.board
+            if (!path) return
+            this.writeEnumValue(field, path, held, drag.target.dataset.value)
+                .catch((err) => console.warn('The write failed:', err))
+            return
+        }
         const sorted = drag.target.dataset.sorted === '1'
         if (drag.target === drag.list) {
             // Dropped where it was drawn already: nothing to write.
@@ -3819,6 +4041,8 @@ export class OverseerRenderer {
                 label.textContent = narrowed ? `${showing} of ${total}` : `${total}`
             }
         }
+        // A board's columns say how many they show, and the filter has just changed that.
+        for (const board of document.querySelectorAll('.overseer-board')) this.countBoardColumns(board)
     }
 
     /** Whether one entry survives the filter. Empty filter, everything survives. */
@@ -4029,33 +4253,9 @@ export class OverseerRenderer {
         const choose = async (after) => {
             const before = held()
             if (after === before) return
-            const path = this.buildNodePath(container)
-            const anchor = this._anchorForPath(path)
-            this.updateNodeValue(node, after)
+            const writing = this.writeEnumValue(node, this.buildNodePath(container), before, after)
             paint()
-            if (this.declaresEvent(node, 'change') && window.app.currentFile) {
-                // The value and what its handler does, as one change and one step to take back.
-                // As two, taking back the second left the first: a task picked as finished came
-                // back on the list still saying finished.
-                try {
-                    await this.emitEvent(node, { dataset: { path: JSON.stringify(path) } }, 'change', { String: after })
-                } catch (_) {}
-                return
-            }
-            try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
-            try {
-                // With the value - see the note in `createTagsElement`. Waited for, unlike the
-                // other fields, because a handler below may be about to read it from the file.
-                const joined = path.join('/')
-                await window.app.reevaluateDocumentSelective(
-                    [joined], [{ path: joined, oldValue: before, newValue: after }]
-                )
-            } catch (_) {
-                try { await window.app.reevaluateDocumentSelective([]) } catch (_) {}
-            }
-            const now = anchor ? this._pathFromAnchor(anchor) : path
-            if (!now) return
-            try { await this.emitEvent(node, { dataset: { path: JSON.stringify(now) } }, 'change') } catch (_) {}
+            await writing
         }
 
         const paint = () => {
@@ -4102,6 +4302,43 @@ export class OverseerRenderer {
         this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
+    }
+
+    /**
+     * Write one value into an enum field, as picking it does - from its chip, or by dropping its
+     * entry in another column of a board.
+     *
+     * The value is put in the document here first, so whatever shows it can be drawn straight
+     * away. Then, when the field has an `on change` and there is a file, the value and what its
+     * handler does go as one instruction: as two, taking back the second left the first, and a
+     * task picked as finished came back on the list still saying finished. Otherwise the value is
+     * written, and the handler asked for afterwards, of the entry the value was picked on -
+     * wherever the write has put it since.
+     */
+    async writeEnumValue(node, path, before, after) {
+        const anchor = this._anchorForPath(path)
+        this.updateNodeValue(node, after)
+        try { this.arrangeBoards() } catch (_) { /* never break a write over a view */ }
+        if (this.declaresEvent(node, 'change') && window.app.currentFile) {
+            try {
+                await this.emitEvent(node, { dataset: { path: JSON.stringify(path) } }, 'change', { String: after })
+            } catch (_) {}
+            return
+        }
+        try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
+        try {
+            // With the value - see the note in `createTagsElement`. Waited for, unlike the
+            // other fields, because a handler below may be about to read it from the file.
+            const joined = path.join('/')
+            await window.app.reevaluateDocumentSelective(
+                [joined], [{ path: joined, oldValue: before, newValue: after }]
+            )
+        } catch (_) {
+            try { await window.app.reevaluateDocumentSelective([]) } catch (_) {}
+        }
+        const now = anchor ? this._pathFromAnchor(anchor) : path
+        if (!now) return
+        try { await this.emitEvent(node, { dataset: { path: JSON.stringify(now) } }, 'change') } catch (_) {}
     }
 
     /**
@@ -8909,6 +9146,8 @@ export class OverseerRenderer {
                 }
             } catch (_) { /* best-effort only */ }
 
+            // A value that decides which column of a board its entry stands in moves the entry.
+            try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
             if (DEBUG_MODE) console.log(`✅ Selective update completed: ${updateCount} elements updated`)
             return updateCount > 0
             
@@ -8959,6 +9198,7 @@ export class OverseerRenderer {
                 const bg = getComputedStyle(parent).backgroundColor || null
                 const done = this.repaintTab(node, el, pathArray, { backgroundColor: bg })
                 try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
+                try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
                 try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return done
             }
@@ -8979,6 +9219,7 @@ export class OverseerRenderer {
                 // as the tab that lost its content on a repaint - and a repainted cell drops out
                 // of its column.
                 try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
+                try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
                 try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return true
             }

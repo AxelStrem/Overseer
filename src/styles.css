@@ -640,8 +640,68 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     -webkit-touch-callout: none;
 }
 
-.overseer-list[data-movable="1"] > .is-dragged {
+.overseer-list[data-movable="1"] > .is-dragged,
+.overseer-list[data-board-drag="1"] .board-column-body > .is-dragged {
     opacity: 0.35;
+}
+
+/* A list drawn as a board: a column for each value of a field, side by side. A board wider than
+   the page scrolls sideways rather than squeezing its columns, on a phone as well - a column too
+   narrow for its cards says less than one scrolled to. */
+.overseer-list.view-board {
+    display: block;
+    overflow-x: auto;
+}
+
+.overseer-board {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 0 8px 8px;
+}
+
+.board-column {
+    flex: 1 0 220px;
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 6px;
+    background: var(--background-color);
+}
+
+.board-column-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: inherit;
+}
+
+.board-column-count {
+    font-size: 12px;
+    opacity: 0.6;
+}
+
+.board-column-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 40px;
+}
+
+.overseer-list[data-board-drag="1"] .board-column-body > [data-uid] {
+    -webkit-touch-callout: none;
+}
+
+.board-column.drop-here {
+    outline: 2px dashed var(--primary-color);
+    outline-offset: 1px;
 }
 
 .overseer-dragging,
