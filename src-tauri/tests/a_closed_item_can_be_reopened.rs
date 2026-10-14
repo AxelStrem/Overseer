@@ -152,6 +152,21 @@ fn a_finished_record_comes_back_at_filed_with_what_it_kept() {
 }
 
 #[test]
+fn a_reopened_item_goes_on_top_of_the_open_list() {
+    serialised(|| {
+        let file = a_project("ontop");
+        let first_open = |file: &str| {
+            let text = std::fs::read_to_string(file).unwrap();
+            let items = &text[text.find("list Items (").unwrap()..];
+            items.lines().find_map(|l| l.trim().strip_prefix("- handle = \"").map(|h| h.trim_end_matches('"').to_string())).unwrap()
+        };
+        assert_ne!(first_open(&file), "roundtrip");
+        assert!(press(&file, "project/History/[roundtrip]/reopen").wrote, "reopening wrote nothing");
+        assert_eq!(first_open(&file), "roundtrip");
+    });
+}
+
+#[test]
 fn the_parent_counts_a_reopened_part_as_open_again() {
     serialised(|| {
         let file = a_project("rollup");
