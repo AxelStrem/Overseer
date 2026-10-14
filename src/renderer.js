@@ -1296,12 +1296,24 @@ export class OverseerRenderer {
         return true
     }
 
-    /// A list's entries in the order it shows them: by `_ui_sort_key`, and where it says nothing,
-    /// by where they stand.
+    /// A list's entries in the order it shows them: by the columns the reader sorted it by, then
+    /// by `_ui_sort_key`, and where neither says anything, by where they stand.
     inDisplayOrder(list) {
+        const sorts = this.columnSortsOf(list)
+        const byColumns = sorts.map(({ field, way }) => {
+            const vocabulary = this.columnVocabulary(list, field)
+            return { field, way, vocabulary }
+        })
         return (list.children || [])
-            .map((ch, idx) => ({ ch, idx }))
+            .map((ch, idx) => ({
+                ch, idx,
+                keys: byColumns.map(({ field, vocabulary }) => this.columnSortValue(ch, field, vocabulary)),
+            }))
             .sort((a, b) => {
+                for (let i = 0; i < byColumns.length; i++) {
+                    const order = this.compareColumnValues(a.keys[i], b.keys[i], byColumns[i].way)
+                    if (order !== 0) return order
+                }
                 const ka = (a.ch?.parameters && a.ch.parameters['_ui_sort_key'] !== undefined) ? a.ch.parameters['_ui_sort_key'] : a.idx
                 const kb = (b.ch?.parameters && b.ch.parameters['_ui_sort_key'] !== undefined) ? b.ch.parameters['_ui_sort_key'] : b.idx
                 const va = this.coerceSortKey(ka)
@@ -1311,6 +1323,172 @@ export class OverseerRenderer {
                 return a.idx - b.idx
             })
             .map((x) => x.ch)
+    }
+
+    /**
+     * The fields a reader may sort a list by: what its `sortable` names, in a table view only.
+     *
+     * Outside a table there is no heading to click, and so nothing to sort by.
+     */
+    sortableColumnsOf(list) {
+        if (!list || String(this.getParameterValue(list, 'view') || '') !== 'table') return []
+        const said = this.getParameterValue(list, 'sortable')
+        if (said === null || said === undefined) return []
+        return String(said).split(',').map((s) => s.trim()).filter(Boolean)
+    }
+
+    /// Where the sorts of the document open in this tab are kept, by list - see `foldsHere`.
+    columnSortsHere() {
+        const file = (window.app && window.app.currentFile) || ''
+        if (!this._columnSorts || this._columnSortsFile !== file) {
+            this._columnSortsFile = file
+            this._columnSorts = new Map()
+            try {
+                const kept = JSON.parse(sessionStorage.getItem(`overseer.sorts:${file}`) || '[]')
+                if (Array.isArray(kept)) for (const [key, sorts] of kept) this._columnSorts.set(key, sorts)
+            } catch (_) { /* nothing kept */ }
+        }
+        return this._columnSorts
+    }
+
+    keepColumnSorts() {
+        try {
+            sessionStorage.setItem(`overseer.sorts:${this._columnSortsFile || ''}`, JSON.stringify([...this.columnSortsHere()]))
+        } catch (_) { /* not kept past this page */ }
+    }
+
+    /**
+     * The columns a list is sorted by now, the one that decides first ahead: `{ field, way }`,
+     * `way` being `desc` or `asc`.
+     *
+     * A sort is how somebody is looking, like a fold, so it is the tab's and never the
+     * document's. One kept for a column the list no longer offers is passed over.
+     */
+    columnSortsOf(list) {
+        const offered = this.sortableColumnsOf(list)
+        if (offered.length === 0) return []
+        const kept = this.columnSortsHere().get(this.foldKeyFor(list.__overseer_path || []))
+        if (!Array.isArray(kept)) return []
+        return kept.filter((s) => s && offered.includes(s.field) && (s.way === 'asc' || s.way === 'desc'))
+    }
+
+    /// Whether a reader has sorted a list by any of its columns.
+    isColumnSorted(list) {
+        return this.columnSortsOf(list).length > 0
+    }
+
+    /**
+     * A column's heading was clicked: none, then descending, then ascending, then none again.
+     *
+     * The column clicked last decides first, and the ones clicked before it break its ties.
+     */
+    cycleColumnSort(list, field) {
+        const key = this.foldKeyFor(list.__overseer_path || [])
+        const sorts = this.columnSortsOf(list)
+        const now = sorts.find((s) => s.field === field)
+        const rest = sorts.filter((s) => s.field !== field)
+        const next = !now ? 'desc' : (now.way === 'desc' ? 'asc' : null)
+        const after = next ? [{ field, way: next }, ...rest] : rest
+        const all = this.columnSortsHere()
+        if (after.length) all.set(key, after)
+        else all.delete(key)
+        this.keepColumnSorts()
+    }
+
+    /// The vocabulary a column's values are ordered by, read from the list's entry template.
+    columnVocabulary(list, field) {
+        const entry = (list.children || []).find((ch) => this.columnField(ch, field))
+        const node = entry && this.columnField(entry, field)
+        if (!node) return null
+        const type = String(node.node_type || node.type || '').toLowerCase()
+        if (type !== 'enum' && type !== 'tags') return null
+        const vocabulary = this.tagVocabulary(node)
+        return { type, order: new Map([...vocabulary.keys()].map((tag, i) => [tag, i])) }
+    }
+
+    /// The field of an entry with this name, looking through the containers that do not count.
+    columnField(entry, field) {
+        for (const child of entry?.children || []) {
+            if (!child) continue
+            if (child.name === field) return child
+            if (child.is_hierarchy_transparent) {
+                const inside = this.columnField(child, field)
+                if (inside) return inside
+            }
+        }
+        return null
+    }
+
+    /**
+     * What an entry holds in a column, as it sorts: null for nothing, a number, a text, or for
+     * tags the places in the vocabulary of the tags it holds, highest first.
+     *
+     * An enum sorts by its place in the vocabulary, and tags as a number with a bit for each tag,
+     * a later tag in the vocabulary a higher bit - so the tags compared highest first is the same
+     * order as those numbers, without one to overflow.
+     */
+    columnSortValue(entry, field, vocabulary) {
+        const node = this.columnField(entry, field)
+        if (!node) return null
+        const p = node.parameters || {}
+        let raw = p.value
+        if (raw && typeof raw === 'object' && raw.Formula !== undefined) raw = p._computed_value
+        if (raw && typeof raw === 'object') {
+            if (raw.Null !== undefined) return null
+            if (raw.Integer !== undefined) return Number(raw.Integer)
+            if (raw.Float !== undefined) return Number(raw.Float)
+            if (raw.Boolean !== undefined) return raw.Boolean ? 1 : 0
+            raw = raw.String ?? raw.Date ?? raw.Timestamp ?? null
+        }
+        if (raw === null || raw === undefined) return null
+        if (typeof raw === 'number') return raw
+        if (typeof raw === 'boolean') return raw ? 1 : 0
+        const text = String(raw).trim()
+        if (text === '' || text.toLowerCase() === 'null') return null
+        const type = String(node.node_type || node.type || '').toLowerCase()
+        if (vocabulary && vocabulary.type === 'tags') {
+            const places = text.split(',').map((t) => t.trim()).filter(Boolean)
+                .map((t) => vocabulary.order.has(t) ? vocabulary.order.get(t) : -1)
+            return places.length ? { tags: places.sort((a, b) => b - a) } : null
+        }
+        if (vocabulary && vocabulary.type === 'enum') {
+            return vocabulary.order.has(text) ? vocabulary.order.get(text) : { text, unknown: true }
+        }
+        if (type === 'timestamp') {
+            const at = Date.parse(text)
+            return isNaN(at) ? text : at
+        }
+        if (['int', 'integer', 'float', 'number', 'percent', 'money'].includes(type)) {
+            const n = Number(text)
+            return isNaN(n) ? text : n
+        }
+        return text
+    }
+
+    /// Two column values in the order a sort asks for; nothing goes last whichever way it sorts.
+    compareColumnValues(a, b, way) {
+        const empty = (v) => v === null || v === undefined
+        if (empty(a) || empty(b)) return empty(a) === empty(b) ? 0 : (empty(a) ? 1 : -1)
+        // A value the vocabulary does not know goes after the ones it does, as an empty one does.
+        const unknown = (v) => typeof v === 'object' && v.unknown
+        if (unknown(a) !== unknown(b)) return unknown(a) ? 1 : -1
+        let order
+        if (a.tags && b.tags) {
+            order = 0
+            for (let i = 0; i < Math.max(a.tags.length, b.tags.length) && order === 0; i++) {
+                if (i >= a.tags.length) order = -1
+                else if (i >= b.tags.length) order = 1
+                else order = a.tags[i] - b.tags[i]
+            }
+        } else if (typeof a === 'number' && typeof b === 'number') {
+            order = a - b
+        } else {
+            const ta = typeof a === 'object' ? String(a.text ?? '') : String(a)
+            const tb = typeof b === 'object' ? String(b.text ?? '') : String(b)
+            order = ta.localeCompare(tb, undefined, { numeric: true, sensitivity: 'base' })
+        }
+        order = Math.sign(order)
+        return way === 'desc' ? -order : order
     }
 
     /// The element drawn for this path, preferring one of this class and the one nearest the top.
@@ -2030,20 +2208,7 @@ export class OverseerRenderer {
                     // For list nodes, render in UI-sorted order using _ui_sort_key
                     const renderChildren = () => {
                         let children = node.children
-                        if (nodeTypeLower === 'list') {
-                            children = node.children
-                                .map((ch, idx) => ({ ch, idx }))
-                                .sort((a, b) => {
-                                    const ka = (a.ch?.parameters && a.ch.parameters['_ui_sort_key'] !== undefined) ? a.ch.parameters['_ui_sort_key'] : a.idx
-                                    const kb = (b.ch?.parameters && b.ch.parameters['_ui_sort_key'] !== undefined) ? b.ch.parameters['_ui_sort_key'] : b.idx
-                                    const va = this.coerceSortKey(ka)
-                                    const vb = this.coerceSortKey(kb)
-                                    if (va < vb) return -1
-                                    if (va > vb) return 1
-                                    return a.idx - b.idx
-                                })
-                                .map(x => x.ch)
-                        }
+                        if (nodeTypeLower === 'list') children = this.inDisplayOrder(node)
                         // A folded div draws its header and nothing under it.
                         const foldedAway = this.isFoldable(node) && this.isFolded(node, path)
                         const filteredChildren = foldedAway ? [] : children.filter(ch => this.shouldRenderChild(node, ch))
@@ -2802,6 +2967,17 @@ export class OverseerRenderer {
         // `horizontal` between the rows.
         const lines = this.getParameterValue(node, 'lines')
         list.dataset.lines = (lines === null || lines === undefined) ? '' : String(lines)
+        // The columns a reader may sort by, and how they are sorted now - for the heading, which
+        // is drawn again with every arrangement and has only the element to go by.
+        const sortable = this.sortableColumnsOf(node)
+        if (sortable.length) {
+            list.dataset.sortable = JSON.stringify(sortable)
+            list.dataset.columnSorts = JSON.stringify(this.columnSortsOf(node))
+            list.dataset.listPath = JSON.stringify(node.__overseer_path || [])
+        } else {
+            delete list.dataset.sortable
+            delete list.dataset.columnSorts
+        }
         this.arrangeTable(list)
     }
 
@@ -2906,14 +3082,54 @@ export class OverseerRenderer {
         // the usual reason this silently does nothing.
         if (list.dataset.stickyHeader === '1') header.classList.add('sticky')
 
+        let sortable = []
+        let sorts = []
+        try {
+            sortable = JSON.parse(list.dataset.sortable || '[]')
+            sorts = JSON.parse(list.dataset.columnSorts || '[]')
+        } catch (_) { /* not sortable */ }
         across.forEach((c, i) => {
             const cell = document.createElement('span')
             cell.className = 'table-heading'
             this.setTextWithIcons(cell, c.label || '')
             cell.style.gridColumn = String(i + 1)
+            if (sortable.includes(c.name)) this.makeHeadingSort(list, cell, c.name, sorts)
             header.appendChild(cell)
         })
         list.insertBefore(header, list.firstChild)
+    }
+
+    /**
+     * A heading a reader sorts its column by: an icon beside its label, and a click that turns
+     * the column's sort to the next one and draws the list again in that order.
+     */
+    makeHeadingSort(list, cell, field, sorts) {
+        const way = sorts.find((s) => s.field === field)?.way || null
+        cell.classList.add('sortable')
+        if (way) cell.classList.add('sorted')
+        cell.dataset.sort = way || 'none'
+        // The label gives way in a narrow column, and the icon stays whole.
+        const label = document.createElement('span')
+        label.className = 'sort-label'
+        label.append(...Array.from(cell.childNodes))
+        cell.appendChild(label)
+        const icon = this.createIconElement(
+            way === 'desc' ? 'arrow-down-wide-narrow' : (way === 'asc' ? 'arrow-up-narrow-wide' : 'arrow-up-down'))
+        icon.classList.add('sort-icon')
+        cell.appendChild(icon)
+        cell.title = way === 'desc' ? 'Sorted descending' : (way === 'asc' ? 'Sorted ascending' : 'Sort')
+        cell.addEventListener('click', (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            const doc = window.app && window.app.currentDocument
+            let path = []
+            try { path = JSON.parse(list.dataset.listPath || '[]') } catch (_) { return }
+            const node = doc && this.findNodeByPath(doc, path)
+            if (!node) return
+            this.cycleColumnSort(node, field)
+            if (!this.rerenderSubtree(doc, path)) this.renderDocument(doc)
+            try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
+        })
     }
 
     /**
@@ -3310,6 +3526,12 @@ export class OverseerRenderer {
         if (this.entriesAreTabs(node)) return
         // A board places its entries by a field, not by where they stand in the list.
         if (element.dataset.board) return
+        // Nor is there anywhere to drag to while a reader has it sorted: the order on screen is
+        // not the list's, and a drag in it would write an order nobody can see.
+        if (this.isColumnSorted(node)) {
+            delete element.dataset.movable
+            return
+        }
         element.dataset.movable = '1'
         element.dataset.entryTemplate = this.entryTemplateOf(node)
         // A list drawn in an order worked out from its entries has no order to drag into: an

@@ -293,6 +293,25 @@ list Done (entry=<Card>, movable=true) { }
 On a phone an entry is picked up by holding it still for a moment, since a finger that moves at
 once is scrolling.
 
+#### Sorting a table by its columns
+
+`sortable` names the fields a reader may sort a table by. Each of their headings shows a sort
+icon, and a click on it turns the column's sort from none to descending, to ascending, and back
+to none. The column clicked last decides first, and the ones sorted before it break its ties.
+With no column sorted, the list is in the order of the document again.
+
+```overseer
+list Items (entry=<Item>, view="table", header=true, movable=true,
+            sortable="handle, stage, flags, points") { }
+```
+
+A sort is how somebody is looking, like a fold: it lasts as long as the page is open, and
+nothing of it reaches the document. An `enum` sorts in the order its vocabulary lists its values,
+and `tags` as a number with a bit for each tag it holds, a tag later in the vocabulary taking a
+higher bit; numbers, dates and timestamps sort by value and anything else as text. An empty value
+goes last whichever way the column sorts. While a reader has a list sorted, its entries cannot be
+dragged, even if it is `movable`. Outside a table view `sortable` does nothing.
+
 #### Drawing a list as a board
 
 `view="board"` draws one list in columns, by the value its entries hold in an `enum` field named
@@ -1183,7 +1202,7 @@ div Tasks {
 - **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`)
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
-- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `lines`, `movable`
+- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `lines`, `movable`, `sortable`
 - **Mounts**: `source`, `lazy`, `mutable`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`

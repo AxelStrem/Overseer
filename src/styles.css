@@ -983,6 +983,32 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     white-space: nowrap;
 }
 
+/* A column a reader may sort by: its icon faint until it sorts, so a heading row of them stays
+   quiet. */
+.table-heading.sortable {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.table-heading .sort-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.table-heading .sort-icon {
+    flex-shrink: 0;
+    margin-left: 3px;
+    opacity: 0.35;
+}
+
+.table-heading.sortable:hover .sort-icon,
+.table-heading.sorted .sort-icon {
+    opacity: 1;
+}
+
 /* Rules between the cells, for a table wide enough that the eye loses its place along a row. Off
    by default: on a short table they are clutter, and the row's own tint already separates one row
    from the next. `lines=true` draws both; `lines="vertical"` or `lines="horizontal"` draws one.

@@ -256,8 +256,22 @@ export class OverseerApp {
         // back in order - see `putEntriesInOrder`. Carried on what is returned, since that is what
         // every caller hands to `repaintNodes`.
         const resorted = []
+        // A list a reader sorted by its columns is in an order the backend knows nothing about,
+        // so a change anywhere inside one of its entries may move that entry.
+        const inSortedList = (path) => {
+            for (let at = path.length - 2; at >= 1; at--) {
+                const node = nodeAt(path.slice(0, at))
+                if (node && node.node_type === 'list') {
+                    try {
+                        if (this.renderer.isColumnSorted(node) && !resorted.includes(node)) resorted.push(node)
+                    } catch (_) { /* never break applying a change over a view */ }
+                    return
+                }
+            }
+        }
 
         for (const change of changes || []) {
+            if (change.kind === 'parameters' || change.kind === 'subtree') inSortedList(change.path)
             if (change.kind === 'parameters') {
                 const node = nodeAt(change.path)
                 if (!node) continue
