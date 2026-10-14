@@ -1524,6 +1524,7 @@ export class OverseerRenderer {
         // Straight away, rather than leaving it to the filter element's own timeout: a full
         // render would otherwise show every entry for a frame before hiding most of them again.
         try { this.applyFilters() } catch (_) { /* a filter must never break a render */ }
+        try { this.reopenDraftIfDrawn() } catch (_) { /* the edit stays kept */ }
         return rendered
     }
     _renderDocumentProfiled(overseerDocument) {
@@ -7554,9 +7555,18 @@ export class OverseerRenderer {
                 } catch (_) { /* kept for this page only, in the editor itself */ }
             }
             for (const kind of ['input', 'keyup', 'mouseup', 'select']) editor.addEventListener(kind, keep)
+            // Watched while it is open: a drawing that takes it off the page - its div folded,
+            // its tab drawn again - is followed by `reopenDraftIfDrawn`.
+            this._draftEditor = editor
+            this._draftWatched = true
+            const self = this
             return {
                 drop() {
                     dropped = true
+                    if (self._draftEditor === editor) {
+                        self._draftEditor = null
+                        self._draftWatched = false
+                    }
                     try { sessionStorage.removeItem(memory) } catch (_) { /* nothing kept */ }
                 },
             }
@@ -7581,13 +7591,15 @@ export class OverseerRenderer {
     }
 
     /// Open again the editor a reload took away, with what had been typed into it and the caret
-    /// where it was - see `keepDraftOf`. Once, after a document is first drawn in this page.
+    /// where it was - see `keepDraftOf`. After a document is first drawn in this page, and,
+    /// `quiet`, after any drawing that took an open editor off the page - see `reopenDraftIfDrawn`.
     ///
     /// Only into the same field: when the file has moved things since, the place may hold
     /// another, and the edit is let go with a word in the status bar. A field written to
     /// elsewhere meanwhile still gets its edit back, since nothing is written until it is
-    /// finished, but the status bar says so.
-    putBackDraft() {
+    /// finished, but the status bar says so. A field that is still there but not drawn - its div
+    /// folded - keeps its edit until it is drawn again.
+    putBackDraft({ quiet = false } = {}) {
         const memory = this.draftMemoryKey()
         let draft = null
         try { draft = JSON.parse(sessionStorage.getItem(memory) || 'null') } catch (_) { draft = null }
@@ -7602,17 +7614,26 @@ export class OverseerRenderer {
         }
         const doc = window.app && window.app.currentDocument
         let node = null
+        let parent = null
+        let path = []
         let level = Array.isArray(doc) ? doc : []
         for (const index of draft.path) {
             node = level[index]
             if (!node) return letGo()
+            // Worked out here, the way `applyFolds` does, rather than read off the node: a field
+            // in a folded div has not been drawn, so it carries no drawn path yet.
+            path = parent ? this.childPathFor(parent, node, path) : [node.name || node.node_type || node.type || `root_${index}`]
+            parent = node
             level = Array.isArray(node.children) ? node.children : []
         }
-        if (!node || !Array.isArray(node.__overseer_path) || this.foldKeyFor(node.__overseer_path) !== draft.key) {
-            return letGo()
-        }
+        if (!node || this.foldKeyFor(path) !== draft.key) return letGo()
+        // Opening a field takes the focus; a quiet putting back gives it back to whatever held it.
+        const held = quiet ? document.activeElement : null
         const editor = this.openFieldForEditing({ path: draft.path })
-        if (!editor) return letGo()
+        if (!editor) {
+            this._draftWatched = true
+            return false
+        }
         const changed = editor.value !== draft.was
         editor.value = draft.text
         try {
@@ -7620,13 +7641,56 @@ export class OverseerRenderer {
             const at = (n) => Math.min(Math.max(Number.isInteger(n) ? n : end, 0), end)
             editor.setSelectionRange(at(draft.start), at(draft.end))
         } catch (_) { /* the caret at the end */ }
-        try { editor.focus() } catch (_) { /* not focusable here */ }
+        try {
+            if (held && held !== document.body && held.isConnected && held !== editor) held.focus()
+            else editor.focus()
+        } catch (_) { /* not focusable here */ }
         // Kept again as it now stands, under this editor.
         editor.dispatchEvent(new Event('input', { bubbles: true }))
+        if (quiet) return true
         say(changed
             ? 'An unsaved edit was put back; the field has changed since it began'
             : 'An unsaved edit was put back', changed ? 'warning' : 'info')
         return true
+    }
+
+    /// After a drawing: open again an editor it took off the page, with what was typed into it -
+    /// its div folded and unfolded, its tab drawn again - once its field is drawn.
+    ///
+    /// Only an edit this page has had open, or put back from a reload while it could not be
+    /// drawn: the first drawing after a reload is left to `putBackDraft` and its word in the
+    /// status bar. A field hidden while it is empty is not drawn at all, so for one of those the
+    /// div it is in being drawn, and not folded, is enough.
+    reopenDraftIfDrawn() {
+        if (!this._draftWatched || this._reopeningDraft) return false
+        if (this._draftEditor && this._draftEditor.isConnected) return false
+        try {
+            const draft = JSON.parse(sessionStorage.getItem(this.draftMemoryKey()) || 'null')
+            if (!draft || !Array.isArray(draft.path)) {
+                this._draftWatched = false
+                return false
+            }
+            const doc = window.app && window.app.currentDocument
+            let parent = null
+            let node = null
+            let level = Array.isArray(doc) ? doc : []
+            for (const index of draft.path) {
+                parent = node
+                node = level[index]
+                if (!node) break
+                level = Array.isArray(node.children) ? node.children : []
+            }
+            const isDrawn = (n) => !!(n && n.__uid && document.querySelector(`[data-uid="${n.__uid}"]`))
+            if (node && !isDrawn(node)) {
+                const hidden = this.getParameterValue(node, 'hidden')
+                const hiddenWhileEmpty = hidden === true || String(hidden).toLowerCase() === 'true'
+                const parentOpen = isDrawn(parent)
+                    && !(this.isFoldable(parent) && this.isFolded(parent, parent.__overseer_path || []))
+                if (!hiddenWhileEmpty || !parentOpen) return false
+            }
+            this._reopeningDraft = true
+            try { return this.putBackDraft({ quiet: true }) } finally { this._reopeningDraft = false }
+        } catch (_) { return false }
     }
 
     /// Whether a div says it can be folded away - `foldable=true`.
@@ -9396,6 +9460,13 @@ export class OverseerRenderer {
 
     // Replace a rendered subtree at a given path with a freshly rendered one from the provided document
     rerenderSubtree(documentArray, pathArray) {
+        const done = this._rerenderSubtree(documentArray, pathArray)
+        if (done) {
+            try { this.reopenDraftIfDrawn() } catch (_) { /* the edit stays kept */ }
+        }
+        return done
+    }
+    _rerenderSubtree(documentArray, pathArray) {
         try {
             // Determine the node at this path to infer expected container class
             const node = this.findNodeByPath(documentArray, pathArray)
