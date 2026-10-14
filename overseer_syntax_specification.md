@@ -394,6 +394,30 @@ or a drive, or holds `..`, names no icon, and nor does a file that is not `.svg`
 256 KB. Such a name, like one the library does not have, leaves an empty space where the icon
 would be. The SVG is drawn as a picture, so nothing it carries runs.
 
+##### Chips in text
+
+Any text a document shows can name an entry of a vocabulary (see "Tags"), written `<#key>`: it is
+drawn as that entry's chip, with its name, its colour and its `title` on hover - the chip a `tags`
+field holding the key would draw. The key is looked up in the nearest `vocabulary`, the text's own
+field's or an ancestor's, so a container that names a list once lets everything inside mention
+its entries:
+
+```overseer
+tab project (vocabulary="/project/Items, /project/History") {
+    ...
+    text body (markdown=true) = "Waits on <#parser>, as <#escape> did."
+}
+```
+
+A key no vocabulary holds is drawn as a plain chip of the word. As with icons, the text is kept as
+written - in the file, in formulas, in the editor - and a filter matches the key inside it. Inside
+markdown code, `` `<#key>` `` stays text.
+
+Pressing a chip that stands for an entry - in text, in a `tags` field, or an `enum` with nothing to
+pick - shows the entry: the folds and tabs around it open, it is scrolled into view and marked for
+a moment. An entry the filter hides, or one in a list the page does not draw, is not shown, and
+the chip says why on hover.
+
 #### Images
 
 An `image` shows a picture the document keeps beside it: its value is the path of a PNG, JPEG,
@@ -695,6 +719,12 @@ already held. A task naming the tasks it waits on, open or finished, each in its
 tags after (vocabulary="/project/Items, /project/History") = "parser, escape"
 ```
 
+A `vocabulary` is handed down, as `hide-labels` is: said on a container, it is the vocabulary of
+every field inside that names none of its own, and of the chips in their text (see "Chips in
+text"). A field that names its own uses that one. So a project names its items once, on its tab,
+and both the field saying what a task waits on and every comment that mentions a task draw from
+it, while its labels and its stage keep their own lists.
+
 `shape` says how its chips are drawn: `pill`, rounded at the ends, which tags are unless told
 otherwise, or `box`, a rectangle with softened corners, which an `enum` is. A filter's row of
 chips takes the shape of the field it narrows by.
@@ -715,7 +745,9 @@ One value out of a list of them: a task's stage, say. The same vocabulary a `tag
 a handle, a name, a colour - and the same chip, holding exactly one. Pressing it offers the other
 values in the order the list gives them, and the one picked replaces it. A value the list does not
 hold still shows, marked, as an unlisted tag does; with nothing chosen, a dashed chip is the place
-to press, showing the field's `placeholder` if it has one. Its chip is a box rather than a
+to press, showing the field's `placeholder` if it has one - stated empty, `placeholder=""`, the
+place says nothing until the mouse is on it. The picker never offers the entry the field is part
+of. Its chip is a box rather than a
 tag's pill, so the one value of a list reads apart from a set of labels beside it; `shape="pill"`
 draws it as a tag.
 

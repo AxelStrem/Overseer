@@ -36,11 +36,16 @@ const COLOR_VALUE = '(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}|[a-zA-Z]+|rgba?\\([0-9.,\\
 const INLINE_COLOR = new RegExp(`^<span class="md-inline-color" style="color:${COLOR_VALUE}">$|^</span>$`)
 /// `<icon=name>` inside any text the page draws. The name is checked when it is drawn.
 const ICON_IN_TEXT = /<icon=([^<>]*)>/g
+/// `<#key>` inside any text the page draws: a chip for the entry the nearest vocabulary knows by
+/// that key. In markdown it reaches the HTML escaped, as any `<` that opens no tag does.
+const CHIP_IN_TEXT = /<#([^<>\s]+)>/g
+const CHIP_IN_HTML = /&lt;#([^<>&\s]+)&gt;/g
 
 /// Text with its icons taken out, for places that can only hold text: a title attribute, the
-/// window's title, a search over names.
+/// window's title, a search over names. A chip says its key.
 export const textWithoutIcons = (s) => {
-    const t = String(s ?? '')
+    let t = String(s ?? '')
+    if (t.indexOf('<#') !== -1) t = t.replace(CHIP_IN_TEXT, '$1')
     if (t.indexOf('<icon=') === -1) return t
     return t.replace(ICON_IN_TEXT, ' ').replace(/\s+/g, ' ').trim()
 }
@@ -1377,6 +1382,7 @@ export class OverseerRenderer {
         // Defensive guards: in headless test environments elements can be null
         this.watchForHoverText(this.contentDisplay)
         this.watchForHoverText(this.tabContainer)
+        this.watchForChipPresses(this.contentDisplay)
         if (this.contentDisplay) {
             try { this.contentDisplay.innerHTML = '' } catch(_) {}
         }
@@ -2979,7 +2985,7 @@ export class OverseerRenderer {
             if (value !== null && value !== undefined) {
                 const valueElement = document.createElement('span')
                 valueElement.className = 'overseer-list-value'
-                this.setTextWithIcons(valueElement, value)
+                this.setTextWithIcons(valueElement, value, node)
                 listItem.appendChild(valueElement)
             }
         } else {
@@ -3008,7 +3014,7 @@ export class OverseerRenderer {
                         valueElement = this.createTextElement(node)
                         break
                     default:
-                        valueElement = this.setTextWithIcons(document.createElement('span'), this.getNodeValue(node) || '')
+                        valueElement = this.setTextWithIcons(document.createElement('span'), this.getNodeValue(node) || '', node)
                 }
                 listItem.appendChild(valueElement)
             } else {
@@ -3711,7 +3717,7 @@ export class OverseerRenderer {
     fieldVocabularyIn(list, name) {
         for (const entry of (list && list.children) || []) {
             const field = this.entryField(entry, name)
-            if (field && this.getParameterValue(field, 'vocabulary')) return this.tagVocabulary(field)
+            if (field && this.vocabularyFor(field)) return this.tagVocabulary(field)
         }
         return new Map()
     }
@@ -3898,7 +3904,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label')
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
 
@@ -3951,7 +3957,9 @@ export class OverseerRenderer {
                 const removing = editable()
                     ? () => { write(held().filter(t => t !== tag)); paint() }
                     : null
-                chips.appendChild(this.tagChip(tag, vocabulary.get(tag), removing))
+                const chip = this.tagChip(tag, vocabulary.get(tag), removing)
+                this.letChipReveal(chip, vocabulary.get(tag))
+                chips.appendChild(chip)
             }
             if (!editable()) return
             // Offered rather than always shown: a hundred tasks each with a picker open is
@@ -3963,11 +3971,7 @@ export class OverseerRenderer {
             add.addEventListener('click', (event) => {
                 event.stopPropagation()
                 // Nor the entry this field is part of: a task does not wait on itself.
-                const here = JSON.stringify(this.buildNodePath(container))
-                const itself = (tag) => {
-                    const at = vocabulary.get(tag).at
-                    return Array.isArray(at) && here.startsWith(JSON.stringify(at).slice(0, -1) + ',')
-                }
+                const itself = this.entryHolding(container, vocabulary)
                 const spare = [...vocabulary.keys()]
                     .filter(tag => !held().includes(tag) && vocabulary.get(tag).offered !== false && !itself(tag))
                 this.offerTags(add, spare, vocabulary, (tag) => { write([...held(), tag]); paint() })
@@ -4011,7 +4015,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label')
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
 
@@ -4063,24 +4067,33 @@ export class OverseerRenderer {
                 chip = this.tagChip(value, vocabulary.get(value), null)
                 if (!vocabulary.has(value)) chip.title = 'not one of the values this field lists'
             } else {
+                // A placeholder stated empty is a place to press with nothing in it: a column
+                // most of whose rows hold nothing - an item with no parent - is not a column of
+                // dashes.
+                const said = this.getParameterValue(node, 'placeholder')
                 chip = document.createElement('span')
                 chip.className = 'tag-chip tag-placeholder'
-                this.setTextWithIcons(chip, String(this.getParameterValue(node, 'placeholder') || '—'))
+                this.setTextWithIcons(chip, said === null || said === undefined ? '—' : String(said))
             }
             chips.appendChild(chip)
-            if (!editable()) return
             // Values not to offer just now, usually worked out: a task cannot be finished while
             // anything under it is still open, and the picker is where that is said.
             const withheld = new Set(String(this.getParameterValue(node, 'withhold') ?? '')
                 .split(',').map(s => s.trim()).filter(Boolean))
             const others = [...vocabulary.keys()]
                 .filter(v => v !== value && !withheld.has(v) && vocabulary.get(v).offered !== false)
-            if (others.length === 0) return
+            if (!editable() || others.length === 0) {
+                // Nothing to pick, so a press shows what the value stands for instead.
+                if (value) this.letChipReveal(chip, vocabulary.get(value))
+                return
+            }
             chip.classList.add('enum-choice')
             chip.title = chip.title ? `${chip.title} - press to change` : 'press to change'
             chip.addEventListener('click', (event) => {
                 event.stopPropagation()
-                this.offerTags(chip, others, vocabulary, (picked) => { choose(picked) })
+                // Nor the entry this field is part of: an item is not its own parent.
+                const itself = this.entryHolding(container, vocabulary)
+                this.offerTags(chip, others.filter(v => !itself(v)), vocabulary, (picked) => { choose(picked) })
             })
         }
         paint()
@@ -4104,11 +4117,75 @@ export class OverseerRenderer {
      * hover. Several lists can be named, separated by commas: the first is what the picker
      * offers, and the rest only name and colour what is already held - the finished tasks, say,
      * which a task may still list but nobody would pick.
+     *
+     * The field's own `vocabulary`, or the nearest ancestor's - see `vocabularyFor`. Worked out
+     * once for each vocabulary while the page draws: a project's hundreds of comments all reach
+     * the same one, and its lists do not change in the middle of a drawing.
      */
     tagVocabulary(node) {
+        const where = this.vocabularyFor(node)
+        if (!where) return new Map()
+        if (!this._vocabularies) {
+            this._vocabularies = new Map()
+            setTimeout(() => { this._vocabularies = null }, 0)
+        }
+        if (!this._vocabularies.has(where)) this._vocabularies.set(where, this.readVocabulary(where))
+        return this._vocabularies.get(where)
+    }
+
+    /**
+     * Which lists a field's chips are named from: its own `vocabulary`, or else the nearest
+     * ancestor's. Said once on a container, it is meant for everything inside it, the way
+     * `hide-labels` is - a project names its items once, and every comment within can mention
+     * one while a field naming a list of its own keeps that one.
+     *
+     * Worked out here rather than copied down by the resolver, as the styles are: nothing but the
+     * page reads it, and a copy on each of a project's thousands of nodes would be most of what
+     * an open answers.
+     */
+    vocabularyFor(node) {
+        for (let at = node; at; at = this.parentOf(at)) {
+            const where = this.getParameterValue(at, 'vocabulary')
+            if (where) return String(where)
+        }
+        return null
+    }
+
+    /**
+     * The node holding this one in the document, or null.
+     *
+     * The document's nodes do not know their parents, so they are found all at once and kept
+     * until the document is another one. A node they were found before is looked for again, once
+     * at most while the page draws - a change puts new nodes in the document, and a node that is
+     * in none, made up on the spot, must not have the whole document walked for each question.
+     */
+    parentOf(node) {
+        const doc = window.app && window.app.currentDocument
+        if (!doc || !node || typeof node !== 'object') return null
+        const stale = !this._parents || this._parentsOf !== doc
+        if (stale || (!this._parents.has(node) && !this._parentsFresh)) {
+            const parents = new WeakMap()
+            const stack = []
+            for (const root of Array.isArray(doc) ? doc : [doc]) {
+                if (root && typeof root === 'object') { parents.set(root, null); stack.push(root) }
+            }
+            while (stack.length) {
+                const at = stack.pop()
+                for (const child of at.children || []) {
+                    if (child && typeof child === 'object') { parents.set(child, at); stack.push(child) }
+                }
+            }
+            this._parents = parents
+            this._parentsOf = doc
+            this._parentsFresh = true
+            setTimeout(() => { this._parentsFresh = false }, 0)
+        }
+        return this._parents.get(node) || null
+    }
+
+    /// The entries of the lists a vocabulary names, by key - see `tagVocabulary`.
+    readVocabulary(where) {
         const found = new Map()
-        const where = this.getParameterValue(node, 'vocabulary')
-        if (!where) return found
         const lists = String(where).split(',').map(s => s.trim()).filter(Boolean)
         lists.forEach((path, at) => {
             try {
@@ -4193,6 +4270,140 @@ export class OverseerRenderer {
         return chip
     }
 
+    /// Whether a key of this vocabulary names the entry `element` is drawn inside - asked of a
+    /// picker, which does not offer a task as something it waits on, or as its own parent.
+    entryHolding(element, vocabulary) {
+        const here = JSON.stringify(this.buildNodePath(element))
+        return (key) => {
+            const at = vocabulary.get(key) && vocabulary.get(key).at
+            return Array.isArray(at) && here.startsWith(JSON.stringify(at).slice(0, -1) + ',')
+        }
+    }
+
+    /**
+     * A `<#key>` in text: the chip the vocabulary `node` reaches draws for that key - its name,
+     * its colour, its title on hover - exactly as a tags field would draw it. A key the
+     * vocabulary does not hold is a plain chip of the word, not marked as a stray the way a tags
+     * field marks one: text never claimed to pick from the list.
+     */
+    inlineChip(key, node) {
+        const known = node ? this.tagVocabulary(node).get(key) : undefined
+        const chip = this.tagChip(key, known, null)
+        chip.classList.add('inline-chip')
+        if (!known) {
+            chip.classList.remove('tag-unknown')
+            chip.removeAttribute('title')
+        }
+        this.letChipReveal(chip, known)
+        return chip
+    }
+
+    /// Lets a chip show the entry it stands for when pressed - see `revealEntry`. Only chips with
+    /// nothing else to do on a press are given it: a filter's chip or a picker's has.
+    letChipReveal(chip, known) {
+        if (!known || !Array.isArray(known.at)) return
+        chip.dataset.at = JSON.stringify(known.at)
+        chip.classList.add('chip-reveals')
+    }
+
+    /**
+     * Show the entry at this path: open the folds and the tabs it is in, scroll it into view and
+     * mark it for a moment. Nothing is shown, and what stood in the way is answered, when the
+     * entry is not in the document, is in a list the page does not draw, or the filter hides it
+     * - the filter is somebody's choice, and is not undone behind their back.
+     */
+    revealEntry(at) {
+        const why = this.whyNotRevealed(at)
+        if (why) return why
+        const entry = this.findNodeByPath(window.app.currentDocument, at)
+        // Outermost first, and asked again after each: an inner fold is not drawn, and has no
+        // place to open, until the outer one is open.
+        for (let folds = this.foldsAround(entry), left = 32; folds.length > 0 && left > 0; folds = this.foldsAround(entry), left--) {
+            this.setFolded(folds[0], folds[0].__overseer_path, false)
+        }
+        const drawn = this.drawnElementOf(entry)
+        if (!drawn) return 'not shown on this page'
+        const pages = []
+        for (let el = drawn; el; el = el.parentElement) {
+            if (el.dataset && el.dataset.tabId !== undefined && el.style.display === 'none') pages.unshift(el)
+        }
+        for (const page of pages) {
+            const bar = page.classList.contains('tab-content') ? this.tabContainer : page.parentElement?.previousElementSibling
+            const header = bar && Array.from(bar.children).find((h) => h.dataset && h.dataset.tabId === page.dataset.tabId)
+            if (header) header.click()
+        }
+        if (typeof drawn.scrollIntoView === 'function') drawn.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        drawn.classList.remove('revealed')
+        // Read once, so the mark starts again on an entry pressed twice in a row.
+        void drawn.offsetWidth
+        drawn.classList.add('revealed')
+        setTimeout(() => drawn.classList.remove('revealed'), 1600)
+        return null
+    }
+
+    /// What keeps the entry at this path from being shown, or null when it can be.
+    whyNotRevealed(at) {
+        const doc = window.app && window.app.currentDocument
+        const entry = doc ? this.findNodeByPath(doc, at) : null
+        if (!entry) return 'not in this document'
+        const drawn = this.drawnElementOf(entry)
+        if (drawn) return drawn.closest('.filtered-out') ? 'hidden by the filter' : null
+        return this.foldsAround(entry).length > 0 ? null : 'not shown on this page'
+    }
+
+    drawnElementOf(node) {
+        if (!node || !node.__uid || !this.contentDisplay) return null
+        return this.contentDisplay.querySelector(`[data-uid="${String(node.__uid).replace(/["\\]/g, '\\$&')}"]`)
+    }
+
+    /// The folded divs around a node, outermost first, when they are all that hide it: each
+    /// drawn, or inside one that is, and nothing around it hidden.
+    foldsAround(node) {
+        const holders = []
+        for (let at = this.parentOf(node); at; at = this.parentOf(at)) holders.unshift(at)
+        const folds = []
+        for (const holder of holders) {
+            const hidden = this.getParameterValue(holder, 'hidden')
+            if (hidden === true || String(hidden).toLowerCase() === 'true') return []
+            if (this.isFoldable(holder) && Array.isArray(holder.__overseer_path)
+                && this.isFolded(holder, holder.__overseer_path)) folds.push(holder)
+        }
+        return folds
+    }
+
+    /// Watch the document for a press on a chip that stands for an entry - see `letChipReveal`.
+    /// Delegated, like the hover text, so chips drawn as markdown's HTML answer too.
+    watchForChipPresses(within) {
+        if (!within || within.dataset.chipPressesWatched === '1') return
+        within.dataset.chipPressesWatched = '1'
+        const at = (chip) => { try { return JSON.parse(chip.dataset.at) } catch (_) { return null } }
+        within.addEventListener('click', (event) => {
+            const chip = event.target?.closest?.('.chip-reveals')
+            if (!chip || event.target.closest('.tag-remove')) return
+            const path = at(chip)
+            if (!path) return
+            event.stopPropagation()
+            const why = this.revealEntry(path)
+            if (why) this.sayWhyNotRevealed(chip, why)
+        })
+        // Said before it is pressed, where the mouse rests: the chip's own title with the reason
+        // after it, worked out as it is asked for, since the filter changes under it.
+        within.addEventListener('mouseover', (event) => {
+            const chip = event.target?.closest?.('.chip-reveals')
+            if (!chip) return
+            const path = at(chip)
+            if (path) this.sayWhyNotRevealed(chip, this.whyNotRevealed(path))
+        })
+    }
+
+    sayWhyNotRevealed(chip, why) {
+        if (chip.dataset.said === undefined) chip.dataset.said = chip.getAttribute('title') || ''
+        const said = chip.dataset.said
+        const title = why ? (said ? `${said} - ${why}` : why) : said
+        if (title) chip.title = title
+        else chip.removeAttribute('title')
+    }
+
     /** The tags not yet on this field, to pick from. Closes on the next click anywhere. */
     offerTags(beside, available, vocabulary, chosen) {
         document.querySelectorAll('.tag-picker').forEach(picker => picker.remove())
@@ -4222,6 +4433,14 @@ export class OverseerRenderer {
      * saturated blue and a saturated yellow average the same and want opposite ink.
      */
     readableOn(colour) {
+        // Kept by colour: a page of comments draws hundreds of chips in a handful of colours, and
+        // each answer costs a style recalculation.
+        if (!this._readable) this._readable = new Map()
+        if (!this._readable.has(colour)) this._readable.set(colour, this._readableOn(colour))
+        return this._readable.get(colour)
+    }
+
+    _readableOn(colour) {
         try {
             const probe = document.createElement('span')
             probe.style.color = colour
@@ -4243,13 +4462,13 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
         
     const value = document.createElement('span')
     value.className = 'field-value'
-        this.setTextWithIcons(value, this.getNodeValue(node) || '')
+        this.setTextWithIcons(value, this.getNodeValue(node) || '', node)
         
         // Make it editable on double-click (respect mutable)
         value.addEventListener('dblclick', () => {
@@ -4364,7 +4583,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label')
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
 
@@ -4452,7 +4671,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
         
@@ -4466,11 +4685,11 @@ export class OverseerRenderer {
         
         if (isMarkdownEnabled) {
             // Use markdown rendering
-            value.innerHTML = this.renderMarkdown(textContent)
+            value.innerHTML = this.renderMarkdown(textContent, node)
             value.classList.add('markdown-enabled')
         } else {
             // Plain text with line breaks preserved
-            this.setTextWithIcons(value, textContent)
+            this.setTextWithIcons(value, textContent, node)
             value.style.whiteSpace = 'pre-wrap'
         }
         
@@ -4512,7 +4731,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label')
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
         const img = document.createElement('img')
@@ -4543,7 +4762,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
         
@@ -4615,13 +4834,13 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
         
     const value = document.createElement('span')
     value.className = 'field-value'
-        this.setTextWithIcons(value, this.getNodeValue(node) || '')
+        this.setTextWithIcons(value, this.getNodeValue(node) || '', node)
         
         container.appendChild(value)
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
@@ -4640,7 +4859,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
 
@@ -4754,7 +4973,7 @@ export class OverseerRenderer {
         const labelText = this.getParameterValue(node, 'label');
         if (labelText) {
             const label = document.createElement('label')
-            this.setTextWithIcons(label, labelText)
+            this.setTextWithIcons(label, labelText, node)
             container.appendChild(label)
         }
         
@@ -4836,19 +5055,24 @@ export class OverseerRenderer {
      * else stays text - nodes are appended, never parsed as HTML - and text with no icon is set
      * as `textContent`, as it always was. The text as written is kept in `data-text`, because
      * what the element then holds as `textContent` has lost the icons' names.
+     *
+     * A `<#key>` in it is a chip, named and coloured by the vocabulary `node` reaches - see
+     * `inlineChip`. Without a node it is still a chip, of the key alone.
      */
-    setTextWithIcons(el, text) {
+    setTextWithIcons(el, text, node = null) {
         const s = text == null ? '' : String(text)
-        if (s.indexOf('<icon=') === -1) {
+        if (s.indexOf('<icon=') === -1 && s.indexOf('<#') === -1) {
             el.textContent = s
             if (el.dataset && el.dataset.text !== undefined) delete el.dataset.text
             return el
         }
         el.textContent = ''
         let last = 0
-        for (const m of s.matchAll(ICON_IN_TEXT)) {
+        const marks = [...s.matchAll(ICON_IN_TEXT), ...s.matchAll(CHIP_IN_TEXT)].sort((a, b) => a.index - b.index)
+        for (const m of marks) {
+            if (m.index < last) continue
             if (m.index > last) el.appendChild(document.createTextNode(s.slice(last, m.index)))
-            el.appendChild(this.createIconElement(m[1]))
+            el.appendChild(m[0].startsWith('<#') ? this.inlineChip(m[1], node) : this.createIconElement(m[1]))
             last = m.index + m[0].length
         }
         if (last < s.length) el.appendChild(document.createTextNode(s.slice(last)))
@@ -7214,9 +7438,9 @@ export class OverseerRenderer {
                 try {
                     const asText = (newValue == null) ? '' : String(newValue)
                     if (element.classList && element.classList.contains('markdown-enabled')) {
-                        element.innerHTML = this.renderMarkdown(asText)
+                        element.innerHTML = this.renderMarkdown(asText, node)
                     } else {
-                        this.setTextWithIcons(element, asText)
+                        this.setTextWithIcons(element, asText, node)
                     }
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('Optimistic repaint failed:', e)
@@ -7786,7 +8010,7 @@ export class OverseerRenderer {
                 textarea.focus()
             } else {
                 // Switch to preview mode
-                preview.innerHTML = this.renderMarkdown(textarea.value)
+                preview.innerHTML = this.renderMarkdown(textarea.value, node)
                 textarea.style.display = 'none'
                 preview.style.display = 'block'
                 modeToggle.textContent = 'Edit'
@@ -7799,7 +8023,7 @@ export class OverseerRenderer {
             if (save) {
                 const newValue = textarea.value
                 // Update the element with rendered markdown
-                element.innerHTML = this.renderMarkdown(newValue)
+                element.innerHTML = this.renderMarkdown(newValue, node)
                 
                 // Compute field path for selective updates and guarded marking
                 let fieldPath = null
@@ -8496,7 +8720,19 @@ export class OverseerRenderer {
         node.parameters.value = { String: text }
     }
 
-    renderMarkdown(text) {
+    renderMarkdown(text, node = null) {
+        const html = this._renderMarkdownAlone(text)
+        return typeof text === 'string' && text.indexOf('<#') !== -1 ? this.drawChipsInHtml(html, node) : html
+    }
+
+    /// The `<#key>`s of drawn markdown, as chips - outside code, where `<#key>` is how the
+    /// marker itself is written about. See `inlineChip`.
+    drawChipsInHtml(html, node) {
+        return html.split(/(<code[\s\S]*?<\/code>)/).map((part, i) => i % 2 === 1 ? part
+            : part.replace(CHIP_IN_HTML, (_, key) => this.inlineChip(key, node).outerHTML)).join('')
+    }
+
+    _renderMarkdownAlone(text) {
         try {
             // Preprocess custom inline color syntax before passing to markdown parser.
             // Syntax: <color=#FF0000 | This text is red>
@@ -9068,7 +9304,7 @@ export class OverseerRenderer {
                     }
                     if (holder) {
                         const txt = (val === null || val === undefined) ? '' : String(val)
-                        if (this.textOf(holder) !== txt) this.setTextWithIcons(holder, txt)
+                        if (this.textOf(holder) !== txt) this.setTextWithIcons(holder, txt, newNode)
                         if (DEBUG_MODE) console.log('📝 Updated list item value:', txt)
                         break
                     }
@@ -9076,7 +9312,7 @@ export class OverseerRenderer {
                     try {
                         const span = document.createElement('span')
                         span.className = 'overseer-list-value'
-                        this.setTextWithIcons(span, (val === null || val === undefined) ? '' : String(val))
+                        this.setTextWithIcons(span, (val === null || val === undefined) ? '' : String(val), newNode)
                         element.appendChild(span)
                         if (DEBUG_MODE) console.log('📝 Inserted new list value holder for selective update')
                     } catch (_) { /* no-op */ }
@@ -9183,14 +9419,14 @@ export class OverseerRenderer {
         const computedValue = this.getNodeValue(newNode)
         // If this is a markdown-enabled block, update innerHTML; otherwise textContent
         if (textElement.classList.contains('text-content') && textElement.classList.contains('markdown-enabled')) {
-            const html = this.renderMarkdown(String(computedValue ?? ''))
+            const html = this.renderMarkdown(String(computedValue ?? ''), newNode)
             if (textElement.innerHTML !== html) {
                 textElement.innerHTML = html
                 if (DEBUG_MODE) console.log('📝 Updated markdown element')
             }
         } else {
             if (this.textOf(textElement) !== computedValue) {
-                this.setTextWithIcons(textElement, computedValue)
+                this.setTextWithIcons(textElement, computedValue, newNode)
                 if (DEBUG_MODE) console.log('📝 Updated text element:', computedValue)
             }
         }
