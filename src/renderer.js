@@ -9300,9 +9300,12 @@ export class OverseerRenderer {
         // Normalize input
         const text = (newValue ?? '').toString()
 
-        // Empty text maps to explicit Null sentinel
+        // Emptied, a field of text holds empty text, as its template's default does; anything else
+        // holds nothing. Null for a tags field was written to the file as `- flags = null`, which
+        // whatever read it next took for a flag named null.
         if (text.trim() === '') {
-            node.parameters.value = { Null: null }
+            const kind = (node.node_type || node.type || '').toLowerCase()
+            node.parameters.value = ['string', 'text', 'textbox', 'tags', 'enum'].includes(kind) ? { String: '' } : { Null: null }
             return
         }
 

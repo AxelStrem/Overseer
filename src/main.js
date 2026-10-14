@@ -781,7 +781,9 @@ tab Main {
             return raw // Already shaped
         }
         if (raw == null || (typeof raw === 'string' && raw.trim() === '')) {
-            return { Null: null }
+            // Emptied, a field of text holds empty text, as its template's default does - Null
+            // reached the file as `- flags = null` once a tag field's last chip was taken off.
+            return ['string', 'text', 'textbox', 'tags', 'enum'].includes(t) ? { String: '' } : { Null: null }
         }
         if (t === 'int') {
             const n = parseInt(asString(raw), 10)
