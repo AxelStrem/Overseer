@@ -6441,6 +6441,10 @@ export class OverseerRenderer {
         if (params.width) {
             element.style.width = this.convertCssSizeValue(params.width)
         }
+        // A width in pixels is a size the document asked for, not a share of the row: in a row too
+        // narrow for it, the row wraps or scrolls rather than squeezing it (see `.keeps-width`).
+        const widthCss = params.width ? String(element.style.width) : ''
+        element.classList.toggle('keeps-width', widthCss.endsWith('px'))
         
         // Height parameter  
         if (params.height) {

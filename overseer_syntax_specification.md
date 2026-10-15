@@ -947,6 +947,20 @@ div RoundedBox (border-radius=8px) {                // Rounded corners
 div SharpBox (border-radius=0px) {                  // Sharp corners
 ```
 
+A width in pixels is kept. In a horizontal row too narrow for it, the row wraps it to the next line rather
+than squeezing it, and a row wider than the page scrolls sideways inside a container that says
+`overflow-x=auto`. A width in percent is a share of the row and shrinks with it. Together they lay out
+columns of fixed-width cards that scroll rather than squash:
+
+```overseer
+div (overflow-x=auto) {
+    div (layout="horizontal", width=1500px) {
+        list Ideas (entry=<Card>, layout="horizontal", width=820px) { }
+        list Done (entry=<Card>, layout="horizontal", width=420px) { }
+    }
+}
+```
+
 #### Hiding Labels:
 
 A field shows its `label` beside or above its value. A container can say once that the fields

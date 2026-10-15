@@ -640,6 +640,11 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     -webkit-touch-callout: none;
 }
 
+/* An empty one is still a place to drop: with nothing in it, it would be too thin to find. */
+.overseer-list[data-movable="1"] {
+    min-height: 48px;
+}
+
 .overseer-list[data-movable="1"] > .is-dragged,
 .overseer-list[data-board-drag="1"] .board-column-body > .is-dragged {
     opacity: 0.35;
@@ -826,6 +831,13 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-div.layout-flow > *,
 .overseer-list.layout-flow > * {
     min-width: 0;
+}
+
+/* A width given in pixels is kept: a row too narrow for it wraps it to the next line, or scrolls
+   if it is told to, rather than squeezing it to less than was asked for. */
+.overseer-div.layout-horizontal > .keeps-width,
+.overseer-list.layout-horizontal > .keeps-width {
+    flex-shrink: 0;
 }
 
 /* A container that scrolls takes the height its row gives it rather than adding its own: stretched
