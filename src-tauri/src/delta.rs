@@ -113,6 +113,13 @@ pub fn diff(before: &[OverseerNode], after: &[OverseerNode]) -> Vec<DocumentChan
     let mut changes = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut left_out: Vec<String> = Vec::new();
+    compare_wrappers(
+        before,
+        after,
+        "",
+        &[],
+        &mut Walk { seen: &mut seen, changes: &mut changes, left_out: &mut left_out },
+    );
     compare(
         None,
         &addressing::effective_roots(after),
@@ -290,7 +297,44 @@ fn compare_one(
             parameters: node.parameters.clone(),
         });
     }
+    compare_wrappers(&was.children, &node.children, &address, &here, walk);
     compare(Some(node), &addressing::effective_children(node), &address, &here, previous, walk);
+}
+
+/// What changed on the wrappers among these children, and on wrappers inside those.
+///
+/// A wrapper has no address, so matching by address steps through it to what it holds and never
+/// compares the wrapper itself. But it carries worked-out parameters of its own - every style its
+/// parent hands down, worked out again on it - and the page paints it with them. A project item's
+/// colour handed into the unnamed row at the top of each comment stayed the old one after the
+/// item's `asked` was taken off, while everything around it changed. Matched by index instead,
+/// which is safe here: this is only reached where the addressed children matched, and reported
+/// under the parent's address, which is the one the page draws a wrapper with.
+fn compare_wrappers(
+    before: &[OverseerNode],
+    after: &[OverseerNode],
+    address: &str,
+    here: &[usize],
+    walk: &mut Walk,
+) {
+    for (index, node) in after.iter().enumerate() {
+        if !addressing::is_wrapper(node) {
+            continue;
+        }
+        let Some(was) = before.get(index).filter(|w| addressing::is_wrapper(w)) else {
+            continue;
+        };
+        let mut at = here.to_vec();
+        at.push(index);
+        if was.parameters != node.parameters {
+            walk.changes.push(DocumentChange::Parameters {
+                address: address.to_string(),
+                path: at.clone(),
+                parameters: node.parameters.clone(),
+            });
+        }
+        compare_wrappers(&was.children, &node.children, address, &at, walk);
+    }
 }
 
 fn repeats(segments: &[String]) -> bool {

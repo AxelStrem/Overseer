@@ -303,3 +303,35 @@ fn a_list_whose_entries_share_a_key_is_sent_whole() {
     // One of the two changed where it stands: matched by address, it was compared with the other.
     applied(&shared, &shared.replace("- qty = 2", "- qty = 5"));
 }
+
+const TINTED: &str = r##"tab t (mutable=true) {
+    div (hidden=true) {
+        div Card (layout="vertical", background-color=$(flag == "hot" ? "#38331a" : "inherit")) {
+            string flag = ""
+            div (layout="horizontal") {
+                string note = ""
+            }
+        }
+    }
+    list Cards (entry=<Card>) {
+        - {
+            - flag = "hot"
+        }
+    }
+}
+"##;
+
+#[test]
+fn a_div_without_a_name_is_told_what_changed_about_it() {
+    // A div without a name has no address of its own, and the comparison went by addresses only,
+    // so it stepped through one to what is inside and never compared the div itself. The colour
+    // an entry hands down is worked out again on every node under it, that div among them, and
+    // the page kept painting it the old colour: the top of every comment on a project item stayed
+    // yellow after the item's `asked` was taken off.
+    let changes = applied(TINTED, &TINTED.replace("- flag = \"hot\"", "- flag = \"cold\""));
+    assert!(
+        changes.iter().any(|c| matches!(c, DocumentChange::Parameters { path, .. } if path.len() == 4)),
+        "the div inside the card was not among the changes: {:?}",
+        changes.iter().map(|c| (c.address(), c.path().to_vec())).collect::<Vec<_>>()
+    );
+}
