@@ -378,6 +378,8 @@ impl OverseerNode {
         let is_transparent = match node_type.as_str() {
             "tab" => true,
             "div" if name.is_none() => true,
+            // A mark only draws something - a grip, say - and holds no value: nothing addresses it.
+            "mark" if name.is_none() => true,
             _ => false,
         };
 

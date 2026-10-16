@@ -163,6 +163,7 @@ list Priorities (entry=int) {
 - `checkbox`: Boolean toggle with actions
 - `chart`: Data visualization element (planned)
 - `image`: A picture kept beside the document (see "Images")
+- `mark`: Something drawn with no value of its own, such as a grip (see "Marks")
 
 #### Logic Types:
 - `trigger`: Conditional logic execution
@@ -293,7 +294,8 @@ list Done (entry=<Card>, movable=true) { }
 An entry is picked up by what lies around its values - the space of the entry and of its fields,
 their labels, the gaps between them - never by a value itself, so a value's text can still be
 selected. On a phone an entry is picked up by holding it still for a moment, since a finger that
-moves at once is scrolling.
+moves at once is scrolling. A grip in the entry (`mark (type="grip")`, see "Marks") picks it up
+from anywhere, and at once under a finger.
 
 #### Sorting a table by its columns
 
@@ -539,6 +541,28 @@ A picture pasted or dropped into the editor of a markdown text is kept beside th
 where the caret is. The same types and the same 8 MB hold as for a picture shown. A text that
 says `markdown=false`, and a one-line field, take no pictures, since there the reference would
 only be words. Removing the reference from the text leaves the file where it is.
+
+#### Marks
+
+A `mark` is drawn and nothing more: it is unnamed, holds no value, and, like an unnamed `div`, is
+no step of any address, so it can be added to or taken out of a document without changing a
+formula. Its `type` says what it draws.
+
+`grip` is the place an entry of a movable list, or a card of a board, is dragged by: a press on it
+lifts the entry whatever lies around it, and a finger on it drags at once. Where the list cannot be
+dragged, it is drawn faint and lifts nothing.
+
+```overseer
+div Card (layout="vertical") {
+    div (layout="horizontal") {
+        mark (type="grip")
+        string title = ""
+    }
+    text notes = ""
+}
+```
+
+A `mark` of a type the page does not know draws nothing.
 
 #### Conditional actions inside action blocks
 
@@ -1304,6 +1328,7 @@ div Tasks {
 - **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
+- **Marks**: `type` (on a `mark`: `grip`)
 - **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`)
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`

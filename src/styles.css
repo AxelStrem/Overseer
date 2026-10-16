@@ -709,6 +709,34 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     outline-offset: 1px;
 }
 
+.overseer-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Faint where nothing can be dragged by it: a list that is not movable, or is sorted. */
+.mark-grip {
+    align-self: center;
+    padding: 2px;
+    opacity: 0.25;
+}
+
+.overseer-list[data-movable="1"] .mark-grip,
+.overseer-list[data-board-drag="1"] .mark-grip {
+    opacity: 0.5;
+    cursor: grab;
+    /* A finger on a grip drags at once, so it must not scroll the page as well. */
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.overseer-list[data-movable="1"] .mark-grip:hover,
+.overseer-list[data-board-drag="1"] .mark-grip:hover {
+    opacity: 0.9;
+}
+
 .overseer-dragging,
 .overseer-dragging * {
     user-select: none;

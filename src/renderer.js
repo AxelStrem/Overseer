@@ -2359,6 +2359,8 @@ export class OverseerRenderer {
                 return this.createChartElement(node)
             case 'image':
                 return this.createImageElement(node)
+            case 'mark':
+                return this.createMarkElement(node)
             case 'mount':
                 return this.createMountElement(node)
             default:
@@ -3632,6 +3634,8 @@ export class OverseerRenderer {
      * Never from inside something that keeps its own pointer: an editor, a box, a link. Nor from a
      * field's value, where a press and a move select its text: an entry is grabbed by what lies
      * around its values - a field's padding and label, the gaps between fields, its own space.
+     * A grip (`mark (type="grip")`) the entry holds always drags it, and a finger on one drags at
+     * once.
      */
     armEntryDrag(event, list) {
         if (this._entryDrag) return
@@ -3640,9 +3644,14 @@ export class OverseerRenderer {
         if (!target || !target.closest) return
         // The innermost movable list a pointer is in is the one it drags in.
         if (target.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"]') !== list) return
-        if (target.closest('textarea, select, input, a[href], [contenteditable="true"]')) return
-        const field = target.closest('.overseer-field')
-        if (field && list.contains(field) && target !== field && !target.closest('label')) return
+        // A grip is there to be dragged by, whatever lies around it.
+        const grip = target.closest('.mark-grip')
+        const byGrip = !!grip && list.contains(grip)
+        if (!byGrip) {
+            if (target.closest('textarea, select, input, a[href], [contenteditable="true"]')) return
+            const field = target.closest('.overseer-field')
+            if (field && list.contains(field) && target !== field && !target.closest('label')) return
+        }
         let entry = target
         while (entry && !this.isEntryElementOf(entry, list)) entry = entry.parentElement
         if (!entry || !entry.dataset || !entry.dataset.uid || !entry.dataset.path) return
@@ -3690,8 +3699,10 @@ export class OverseerRenderer {
         window.addEventListener('touchmove', onTouchMove, { passive: false })
         window.addEventListener('keydown', onKey)
         window.addEventListener('contextmenu', onMenu)
-        if (touch) drag.timer = setTimeout(() => this.beginEntryDrag(), 350)
         this._entryDrag = drag
+        // A finger on a grip means the drag: the hold only stands in for knowing that.
+        if (touch && byGrip) this.beginEntryDrag()
+        else if (touch) drag.timer = setTimeout(() => this.beginEntryDrag(), 350)
     }
 
     /// Whether an element is one of a list's entries: drawn in it, or in a column of it as a board.
@@ -5241,6 +5252,24 @@ export class OverseerRenderer {
     this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
+    }
+
+    /// `mark (type="grip")`: something drawn for the eye and the hand, with no value of its own.
+    /// A grip is what an entry of a movable list, or a board card, is always dragged by. A type
+    /// this page does not know draws an empty element, so a document written for a later page
+    /// shows nothing here rather than something wrong.
+    createMarkElement(node) {
+        const element = document.createElement('span')
+        const type = String(this.getParameterValue(node, 'type') ?? '').trim().toLowerCase()
+        element.className = 'overseer-mark'
+        if (type) element.dataset.mark = type
+        if (type === 'grip') {
+            element.classList.add('mark-grip')
+            element.appendChild(this.createIconElement('grip-vertical'))
+        }
+        this.applyLayoutStyles(element, node)
+        this.applyNodeStyles(element, node)
+        return element
     }
 
     /// `image photo (width=50%) = "images/plate.jpg"`: a raster image beside the document, drawn
