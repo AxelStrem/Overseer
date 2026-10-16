@@ -115,17 +115,63 @@ fn by_name<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode
 }
 
 /// Where a file a reference names is. The one place a base is looked for: next to the document
-/// that names it, or next to the base that does. A user library and a shipped standard library
-/// are to be searched after it.
+/// that names it, or next to the base that does, and failing that in the templates that ship
+/// with Overseer - see `library`. A file beside the document always comes first.
 fn locate(file: &str, beside: Option<&Path>) -> PathBuf {
     let path = Path::new(file);
     if path.is_absolute() {
         return path.to_path_buf();
     }
+    let near = nearby(file, beside);
+    if near.exists() {
+        return near;
+    }
+    in_library(file).unwrap_or(near)
+}
+
+/// Where a file a reference names would be if it were beside the document or base.
+fn nearby(file: &str, beside: Option<&Path>) -> PathBuf {
     match beside {
-        Some(dir) => dir.join(path),
+        Some(dir) => dir.join(file),
         None => crate::docmgr::manager::DocumentManager::resolve_from_document(file),
     }
+}
+
+/// The file in the library, if it is there. A path that climbs out of a folder (`../x.os`) is
+/// written relative to the document and never means a library file.
+fn in_library(file: &str) -> Option<PathBuf> {
+    let path = Path::new(file);
+    if path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return None;
+    }
+    let found = library()?.join(path);
+    found.exists().then_some(found)
+}
+
+/// The templates that ship with Overseer - its `examples` folder - which any document can
+/// inherit from wherever it is. `OVERSEER_LIBRARY` names the folder where it is put somewhere of
+/// its own, as the server image does. Without it, the checkout the program was built from is
+/// used while it is there, so an edit to a template is seen at once; and then the copy the
+/// desktop bundle carries beside the executable (`library`, or on macOS in `Resources`).
+///
+/// The variable is read each time, so a test can point it elsewhere; the rest is looked for once.
+pub fn library() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("OVERSEER_LIBRARY").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    static DEFAULT: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
+        let exe = std::env::current_exe().ok();
+        let dir = exe.as_deref().and_then(Path::parent);
+        let bundled = dir.map(|d| d.join("library"));
+        let mac = dir.map(|d| d.join("../Resources/library"));
+        std::iter::once(Some(source))
+            .chain([bundled, mac])
+            .flatten()
+            .find(|p| p.is_dir())
+            .map(|p| p.canonicalize().unwrap_or(p))
+    });
+    DEFAULT.clone()
 }
 
 /// A path as a reference can carry it: absolute where the file is there to be found, and with
@@ -204,9 +250,14 @@ pub fn path_of(file: &str) -> String {
 pub fn held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
     fn named(path: &str, out: &mut Vec<String>) {
         if let Some(file) = reference(path).file {
-            let file = path_of(&file);
-            if !out.contains(&file) {
-                out.push(file);
+            let found = path_of(&file);
+            // A base taken from the library gives way to a file of that name put beside the
+            // document later, so where that file would be is watched as a missing base is.
+            let near = as_key(&nearby(&file, None));
+            for file in [found, near] {
+                if !out.contains(&file) {
+                    out.push(file);
+                }
             }
         }
     }

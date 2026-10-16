@@ -482,6 +482,13 @@ several, is refused, as is a reference to a file that is not there or a node it 
 the instance is then kept as written. A document is worked out again once a base it was made from
 changes, or a file that base was made from, or a missing base appears.
 
+A file that is not next to the document is looked for in the templates that ship with Overseer -
+its `examples` folder - so any document, wherever it is, can be made from one of them:
+`<projects/project_template.os/project>`. A file of the same name next to the document is used
+first, and one put there later takes over. A path that climbs out of the folder (`../`) is never
+looked for there, and nothing a document does writes to the library. The server and the desktop
+app carry the folder with them; `OVERSEER_LIBRARY` names another.
+
 Unnamed instances need no block: `<project_base.os/tab1>` on three lines gives three tabs. Being
 wrappers, they put what they hold at their parent's address, so a `<tags.os/tag_list>` panel in
 `project` has its list at `/project/Labels`, and the same field in two of them is `note` and

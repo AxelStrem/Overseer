@@ -7,6 +7,11 @@
     "frontendDist": "../dist"
   },
   "identifier": "com.overseer.app",
+  "bundle": {
+    "resources": {
+      "../examples/": "library/"
+    }
+  },
   "app": {
     "windows": [
       {
