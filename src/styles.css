@@ -12,6 +12,9 @@
     --warning-color: #f59e0b;
     --error-color: #ef4444;
     --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+    /* A shade laid over whatever is beneath, so that a highlight keeps the colour of a tinted
+       row rather than covering it with the page's own. */
+    --hover-tint: rgba(15, 23, 42, 0.05);
 }
 
 /* Global Styles */
@@ -1137,7 +1140,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .overseer-field:hover {
-    background: var(--background-color);
+    background: var(--hover-tint);
 }
 
 /* Where a label sits relative to its value.
@@ -1231,7 +1234,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .field-value:hover {
     border-color: var(--border-color);
-    background: var(--surface-color);
+    background: var(--hover-tint);
 }
 
 .string-field .field-value {
@@ -1781,6 +1784,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
         --success-color: #22c55e;
         --warning-color: #eab308;
         --error-color: #f87171;
+        --hover-tint: rgba(255, 255, 255, 0.06);
     }
     
     .error-details {
