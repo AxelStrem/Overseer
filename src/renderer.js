@@ -8394,7 +8394,21 @@ export class OverseerRenderer {
                 }
             }
             if (DEBUG_MODE) console.log('Field updated:', node.name, newValue)
-            
+
+            // With an `on change` and a file, the value travels with the handler and the two are
+            // written as one change, as an enum's pick is: written apart, they were two steps to
+            // take back, and the handler's write could land before the value's and lose it. A
+            // formula typed in, and an entry just made from a phantom, keep the way below.
+            const handled = this.declaresEvent(node, 'change')
+            if (handled && window.app && window.app.currentFile && fieldPath
+                && !isFormulaInput && !isUnderPhantom && !materializedRealPath) {
+                let target = null
+                try { target = this.findNodeByPath(window.app.currentDocument, String(fieldPath).split('/')) } catch(_) {}
+                const value = window.app.coerceToOverseerValue(target || node, newValue)
+                try { await this.emitEvent(node, element, 'change', value) } catch(_) {}
+                return
+            }
+
             // Mark document as modified
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
@@ -8411,8 +8425,10 @@ export class OverseerRenderer {
                         newValue: newValue
                     }])
                     
-                    // Skip event emission for any successful selective update (DOM-only or backend selective)
-                    if (updateResult && updateResult.success) {
+                    // Skip event emission for any successful selective update (DOM-only or backend
+                    // selective), which keeps a chart from redrawing - unless the field has a
+                    // handler of its own, which is then asked for after the value is in.
+                    if (updateResult && updateResult.success && !handled) {
                         if (updateResult.domOnly) {
                             if (DEBUG_MODE) console.log('🎯 Skipping element event for DOM-only update (prevents chart refresh)')
                         } else {
