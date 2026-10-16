@@ -82,16 +82,6 @@ fn os_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// Written in a syntax the language no longer has - styles as `font-size: 20px`, templates as
-/// `entry=../Item` - and so passed over in part, which is what they now say.
-const OLDER_SYNTAX: &[&str] = &[
-    "ex2.os",
-    "example.os",
-    "font_size_test.os",
-    "grid_layout_showcase.os",
-    "test_border_overflow.os",
-];
-
 #[test]
 fn the_example_documents_read_whole() {
     let mut files = Vec::new();
@@ -102,7 +92,6 @@ fn the_example_documents_read_whole() {
         let (_, nodes) = overseer::parser::parse_document(&text).unwrap();
         let mut errors = Vec::new();
         errors_in(&nodes, &mut errors);
-        let older = OLDER_SYNTAX.iter().any(|name| file.ends_with(name));
-        assert_eq!(errors.is_empty(), !older, "{}: {errors:?}", file.display());
+        assert!(errors.is_empty(), "{}: {errors:?}", file.display());
     }
 }

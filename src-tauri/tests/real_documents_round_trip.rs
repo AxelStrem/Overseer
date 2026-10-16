@@ -93,20 +93,10 @@ fn the_documents_in_use_survive_a_round_trip() {
     eprintln!("{checked} documents in use round-tripped unchanged");
 }
 
-/// Examples that did not round-trip before this test existed, and still do not.
-///
-/// Old scratch demos, none of them in use: a chart written `chart x(type=pie)` with no space, a
-/// quoted string used as a node name, a leading comment on the first line. Listed rather than
-/// quietly skipped, so the number can only go down - and so that a change which breaks a
-/// seventh has somewhere to show up.
-const ALREADY_BROKEN: &[&str] = &[
-    "ex2.os",
-    "example.os",
-    "font_size_test.os",
-    "grid_layout_showcase.os",
-    "link_proxy_basic.os",
-    "test_border_overflow.os",
-];
+/// Examples that did not round-trip before this test existed, and still do not. Listed rather
+/// than quietly skipped, so the number can only go down - and so that a change which breaks one
+/// has somewhere to show up.
+const ALREADY_BROKEN: &[&str] = &[];
 
 #[test]
 fn the_examples_survive_a_round_trip() {
