@@ -896,7 +896,13 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
         "".to_string()
     };
 
+    // An instance written without a name is a wrapper, as an unnamed div is: it adds no step to
+    // any address, and what it holds is named as though it sat in its parent.
+    let unnamed_instance = template_path.is_some() && node_name_value.is_none();
     let mut node = OverseerNode::new_with_type(final_node_type.clone(), node_name_value);
+    if unnamed_instance {
+        node.is_hierarchy_transparent = true;
+    }
     node.template = template_path;
     if let Some((param_map, order)) = parameters_with_order {
         node.param_order = order;

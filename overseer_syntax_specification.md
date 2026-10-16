@@ -394,7 +394,9 @@ tab Tasks {
 #### How an instance is matched onto its template
 
 An instance - `<Card> c { ... }`, or an entry of a list with `entry=` - starts as a copy of its
-template, and what it writes is matched onto that copy:
+template. An instance written without a name, `<Card> { ... }`, is a wrapper, as an unnamed div
+is: it adds no step to any address, and what it holds is named as though it sat in its parent.
+What an instance writes is matched onto the copy:
 
 - A **named** element finds the field of its name, in any order and through unnamed nodes, and
   overrides its value, its parameters and, element by element, its block.
@@ -475,8 +477,10 @@ several, is refused, as is a reference to a file that is not there or a node it 
 the instance is then kept as written. A document is worked out again once a base it was made from
 changes, or a file that base was made from, or a missing base appears.
 
-Unnamed instances need no block: `<project_base.os/tab1>` on three lines gives three tabs. Named
-ones keep their addresses apart, `a/note` and `b/note`.
+Unnamed instances need no block: `<project_base.os/tab1>` on three lines gives three tabs. Being
+wrappers, they put what they hold at their parent's address, so a `<tags.os/tag_list>` panel in
+`project` has its list at `/project/Labels`, and the same field in two of them is `note` and
+`note#1`. Named ones keep their addresses apart, `a/note` and `b/note`.
 
 A base's absolute paths (`/project/Items`) assume the name of its root node, so an instance that
 uses them keeps that name, or the base uses relative paths (`../Items`).
