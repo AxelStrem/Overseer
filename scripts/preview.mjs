@@ -533,11 +533,15 @@ async function main() {
                 await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
                 await settle()
             },
-            /// Pick an option of an enum or tags field: its chip pressed, then the option.
+            /// Pick an option of an enum or tags field: the add button of a tags field, or the
+            /// chip of an enum, pressed, then the option.
             async pick(target, option) {
                 const chip = await evaluate((t) => {
                     const found = window.__preview.find(t)
-                    const chip = found.el && (found.el.querySelector('.tag-chip, .tags-add, .enum-field') || found.el)
+                    // One selector at a time: a list of them matches in document order, and a
+                    // tags field draws the tags it holds before its add button.
+                    const first = (...selectors) => selectors.map((s) => found.el.querySelector(s)).find(Boolean)
+                    const chip = found.el && (first('.tag-add', '.enum-choice', '.tag-chip') || found.el)
                     if (!chip) return null
                     chip.setAttribute('data-preview-pick', '')
                     return true
