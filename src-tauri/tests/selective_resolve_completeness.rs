@@ -12,11 +12,13 @@ use overseer::docmgr::manager::DocumentManager;
 use overseer::types::*;
 
 // Provenance ids are minted per parse, so they always differ; what matters is whether the
-// rendered content differs.
+// rendered content differs. The edited node also carries the mark that says it was written to
+// here, which a node read from text never has: it is what the writer saves, not what is drawn.
 fn params_of(n: &OverseerNode) -> Vec<String> {
     let mut m: Vec<String> = n
         .parameters
         .iter()
+        .filter(|(k, _)| k.as_str() != overseer::file_ops::EDITED_HERE)
         .map(|(k, v)| format!("{}={:?}", k, v))
         .collect();
     m.sort();

@@ -2655,6 +2655,7 @@ fn mark_template_child_recursive(node: &mut OverseerNode) {
     // What the template's own instances wrote is the template's now, not this instance's.
     node.parameters.remove("_written_at");
     node.parameters.remove("_written_up");
+    node.parameters.remove(crate::file_ops::EDITED_HERE);
     // Mark a simple flag to indicate this whole node is from a template
     node.parameters
         .insert("_template_node".to_string(), OverseerValue::Boolean(true));

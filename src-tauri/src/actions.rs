@@ -2109,6 +2109,10 @@ impl ActionExecutor {
         if !same {
             node.parameters.remove(&marker);
             node.parameters.remove(&format!("_inherited_{}", key));
+            node.parameters.insert(
+                crate::file_ops::EDITED_HERE.to_string(),
+                OverseerValue::Boolean(true),
+            );
         }
         // If overriding the 'value' of a template-derived child, mark explicit override for serializer
         if key == "value" {
@@ -2618,6 +2622,10 @@ impl ActionExecutor {
     fn record_an_override(node: &mut OverseerNode, key: &str) {
         node.parameters.remove(&format!("_template_{}", key));
         node.parameters.remove(&format!("_inherited_{}", key));
+        node.parameters.insert(
+            crate::file_ops::EDITED_HERE.to_string(),
+            OverseerValue::Boolean(true),
+        );
         if key != "value" {
             return;
         }
@@ -2885,6 +2893,7 @@ impl ActionExecutor {
         // What the template's own instances wrote is the template's now, not this clone's.
         node.parameters.remove("_written_at");
         node.parameters.remove("_written_up");
+        node.parameters.remove(crate::file_ops::EDITED_HERE);
         node.parameters
             .insert("_template_node".to_string(), OverseerValue::Boolean(true));
         let keys: Vec<String> = node

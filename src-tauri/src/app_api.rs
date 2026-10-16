@@ -169,6 +169,8 @@ fn write_edited_value(node: &mut OverseerNode, value: OverseerValue) {
     );
     node.parameters
         .insert("_override_present".to_string(), OverseerValue::Boolean(true));
+    node.parameters
+        .insert(crate::file_ops::EDITED_HERE.to_string(), OverseerValue::Boolean(true));
 }
 
 pub(crate) fn set_field_value_by_path(

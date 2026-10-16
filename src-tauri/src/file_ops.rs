@@ -2127,7 +2127,7 @@ impl FileOperations {
             return true;
         }
         if Self::is_a_nested_instance(node) {
-            return false;
+            return Self::holds_a_marked_edit(node);
         }
         let mut anchor = None;
         let mut inner = Vec::new();
@@ -2144,6 +2144,29 @@ impl FileOperations {
             node.parameters.get("_from_template"),
             Some(OverseerValue::Boolean(true))
         )
+    }
+
+    /// Whether a node, or one inside it, was written to here rather than given by a template.
+    fn holds_a_marked_edit(node: &OverseerNode) -> bool {
+        matches!(
+            node.parameters.get(EDITED_HERE),
+            Some(OverseerValue::Boolean(true))
+        ) || node.children.iter().any(Self::holds_a_marked_edit)
+    }
+
+    /// The pieces inside a nested instance: only what holds an edit marked as made here, found
+    /// through the nodes the address does not name.
+    fn gather_marked<'a>(children: &'a [OverseerNode], pieces: &mut Vec<BlockPiece<'a>>) {
+        for child in children {
+            if !Self::holds_a_marked_edit(child) {
+                continue;
+            }
+            if Self::walked_through(child) {
+                Self::gather_marked(&child.children, pieces);
+            } else {
+                pieces.push(BlockPiece::Added(None, child));
+            }
+        }
     }
 
     fn line_indent_at(text: &str, at: usize) -> String {
@@ -2286,7 +2309,7 @@ impl FileOperations {
             let mut by_place: Vec<(usize, String)> = Vec::new();
             for (anchor, child) in &added {
                 let mut text = String::new();
-                Self::write_added(child, &mut text, &inner_indent, unit)?;
+                Self::write_added(child, &mut text, &inner_indent, unit, false)?;
                 let at = match anchor {
                     Some(a) => match ends.get(a) {
                         Some(e) => *e,
@@ -2581,7 +2604,16 @@ impl FileOperations {
     /// A node no block wrote, as the override that says what was set on it since: `- name = value`
     /// for a field, the container named with the same again inside for one that holds edits, and
     /// a node made at runtime or a list given records written whole.
-    fn write_added(node: &OverseerNode, output: &mut String, indent: &str, unit: &str) -> Result<()> {
+    ///
+    /// Inside an instance a template holds, only what was marked as edited here is written
+    /// (`only_marked`): the rest carries the template's own overrides.
+    fn write_added(
+        node: &OverseerNode,
+        output: &mut String,
+        indent: &str,
+        unit: &str,
+        only_marked: bool,
+    ) -> Result<()> {
         let given = Self::is_template_derived(node) || Self::written_mark(node).is_some();
         if !given || node.node_type == "list" {
             let mut text = String::from("\n");
@@ -2595,7 +2627,10 @@ impl FileOperations {
         }
         let mut anchor = None;
         let mut inner = Vec::new();
-        if !Self::is_a_nested_instance(node) {
+        let only_marked = only_marked || Self::is_a_nested_instance(node);
+        if only_marked {
+            Self::gather_marked(&node.children, &mut inner);
+        } else {
             Self::gather_block(&node.children, 0, true, false, &mut anchor, &mut inner);
         }
         output.push_str(indent);
@@ -2620,7 +2655,7 @@ impl FileOperations {
         let deeper = format!("{}{}", indent, unit);
         for piece in inner {
             if let BlockPiece::Added(_, child) = piece {
-                Self::write_added(child, output, &deeper, unit)?;
+                Self::write_added(child, output, &deeper, unit, only_marked)?;
             }
         }
         output.push_str(indent);
@@ -3369,6 +3404,12 @@ impl FileOperations {
 }
 
 // Public facade used by other modules and tests
+/// Set on a node by whatever writes to it - the page's edit and an action's - and never by the
+/// template's text: a template's own overrides carry every other mark an edit carries, and
+/// copying a template takes it off. It is what says an edit inside an instance a template holds
+/// is the entry's own.
+pub const EDITED_HERE: &str = "_edited_here";
+
 pub struct OverseerFileHandler;
 
 impl OverseerFileHandler {
