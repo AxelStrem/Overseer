@@ -10,39 +10,6 @@ macro_rules! debug_resolver {
     };
 }
 
-/// Finds a specific template by name in the node tree (on-demand search).
-/// This allows any node to be a template, not just div nodes with hidden=true.
-fn find_template_by_name(nodes: &[OverseerNode], template_name: &str) -> Option<OverseerNode> {
-    for node in nodes {
-        // Any node can be a template if its name matches
-        if node.name == template_name {
-            debug_resolver!(
-                "[RESOLVER] Found template: {} (type: {}) with {} children",
-                node.name,
-                node.node_type,
-                node.children.len()
-            );
-            #[cfg(feature = "debug-resolver")]
-            {
-                for child in &node.children {
-                    println!(
-                        "[RESOLVER]   Template field: {} (type: {})",
-                        child.name, child.node_type
-                    );
-                }
-            }
-            return Some(node.clone());
-        }
-        // Recurse into children to find nested templates.
-        if !node.children.is_empty() {
-            if let Some(template) = find_template_by_name(&node.children, template_name) {
-                return Some(template);
-            }
-        }
-    }
-    None
-}
-
 /// Multi-pass template resolution that handles template dependencies.
 ///
 /// One pass resolves everything it can reach: `resolve_node_templates` walks into a node's children
@@ -108,7 +75,7 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
     }
 }
 
-/// Whether any node in the tree has this name - what `find_template_by_name` looks for, without
+/// Whether any node in the tree has this name - what `bases::find` looks for, without
 /// the clone.
 fn names_a_node(nodes: &[OverseerNode], name: &str) -> bool {
     nodes
@@ -1330,6 +1297,11 @@ fn table_columns(template: &OverseerNode) -> String {
     serde_json::to_string(&columns).unwrap_or_else(|_| "[]".to_string())
 }
 
+thread_local! {
+    /// The templates whose instances `resolve_node_templates` is inside of, innermost last.
+    static INSTANTIATING: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Resolves templates for a single node and its children.
 /// Returns true if any progress was made in this pass, and adds to `missed` the name of each
 /// template it was asked for and could not find.
@@ -1362,18 +1334,12 @@ fn resolve_node_templates(
             Some(OverseerValue::String(view)) if view == "table"
         );
         if wants_a_table {
-            let template_name = match node.parameters.get("entry") {
-                Some(OverseerValue::Template(path)) => Some(
-                    path.trim_start_matches("../")
-                        .split('/')
-                        .last()
-                        .unwrap_or("")
-                        .to_string(),
-                ),
+            let template_path = match node.parameters.get("entry") {
+                Some(OverseerValue::Template(path)) => Some(path.clone()),
                 _ => None,
             };
-            if let Some(name) = template_name {
-                if let Some(template_node) = find_template_by_name(all_nodes, &name) {
+            if let Some(path) = template_path {
+                if let Some(template_node) = crate::bases::find(all_nodes, &path) {
                     let columns = table_columns(&template_node);
                     node.parameters
                         .insert("_columns".to_string(), OverseerValue::String(columns));
@@ -1389,15 +1355,21 @@ fn resolve_node_templates(
                         node.name,
                         template_path
                     );
-                    // Simplified path resolution: allow both <../Task> and <Task>
-                    let template_name = template_path
-                        .trim_start_matches("../")
-                        .split('/')
-                        .last()
-                        .unwrap_or("");
+                    // Simplified path resolution: allow both <../Task> and <Task>, and
+                    // <base.os/Task> for a template of another file.
+                    let template_path = template_path.clone();
+                    let reference = crate::bases::reference(&template_path);
+                    let template_name = reference.name.as_str();
                     debug_resolver!("[RESOLVER] Resolved template name: {}", template_name);
 
-                    if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
+                    let found = crate::bases::find_or_why(all_nodes, &template_path);
+                    if let Err(why) = &found {
+                        node.parameters.insert(
+                            crate::bases::ERROR.to_string(),
+                            OverseerValue::String(why.clone()),
+                        );
+                    }
+                    if let Some(template_node) = found.ok().flatten() {
                         debug_resolver!(
                             "[RESOLVER] Found template node for {}, processing {} children",
                             template_name,
@@ -1802,8 +1774,11 @@ fn resolve_node_templates(
                             "[RESOLVER] Warning: Template not found: {}",
                             template_name
                         );
-                        // Template not found - might be resolved in a later pass
-                        missed.push(template_name.to_string());
+                        // Template not found - might be resolved in a later pass. One in
+                        // another file is there or not whatever this document comes to hold.
+                        if reference.file.is_none() {
+                            missed.push(template_name.to_string());
+                        }
                     }
                 }
                 OverseerValue::String(type_name) => {
@@ -1889,18 +1864,38 @@ fn resolve_node_templates(
 
     // If this node is a direct template instance (e.g., <Colorful> Instance { ... }),
     // clone the template's parameters and children, then merge overrides from the instance.
+    let mut instantiating: Option<String> = None;
     if let Some(template_path) = &node.template.clone() {
         debug_resolver!(
             "[RESOLVER] Node {} has template: {}",
             node.name,
             template_path
         );
-        let template_name = template_path
-            .trim_start_matches("../")
-            .split('/')
-            .last()
-            .unwrap_or("");
-        if let Some(template_node) = find_template_by_name(all_nodes, template_name) {
+        let reference = crate::bases::reference(template_path);
+        let template_name = reference.name.as_str();
+        let key = crate::bases::short(template_path);
+        // An instance the template's own text holds, of a template already being copied above
+        // it, would be copied again inside every copy, without end. One the document wrote is
+        // finite however deep it goes, so only the first kind is refused.
+        let copied_from_template_text = node.parameters.contains_key("_template_node");
+        let found = if copied_from_template_text
+            && INSTANTIATING.with(|above| above.borrow().contains(&key))
+        {
+            Err(format!("'{}' holds an instance of itself", template_name))
+        } else {
+            crate::bases::find_or_why(all_nodes, template_path)
+        };
+        if let Err(why) = &found {
+            node.parameters.insert(
+                crate::bases::ERROR.to_string(),
+                OverseerValue::String(why.clone()),
+            );
+        }
+        let found = found.ok().flatten();
+        if found.is_some() {
+            instantiating = Some(key);
+        }
+        if let Some(template_node) = found {
             debug_resolver!(
                 "[RESOLVER] Instantiating template {} for instance {}",
                 template_name,
@@ -2005,15 +2000,25 @@ fn resolve_node_templates(
                 "[RESOLVER] Warning: Template not found for node: {}",
                 template_name
             );
-            missed.push(template_name.to_string());
+            if reference.file.is_none() && node.parameters.get(crate::bases::ERROR).is_none() {
+                missed.push(template_name.to_string());
+            }
         }
     }
 
     // Recursively process children
+    if let Some(key) = &instantiating {
+        INSTANTIATING.with(|above| above.borrow_mut().push(key.clone()));
+    }
     for child in node.children.iter_mut() {
         if resolve_node_templates(child, all_nodes, missed) {
             local_progress = true;
         }
+    }
+    if instantiating.is_some() {
+        INSTANTIATING.with(|above| {
+            above.borrow_mut().pop();
+        });
     }
 
     debug_resolver!(

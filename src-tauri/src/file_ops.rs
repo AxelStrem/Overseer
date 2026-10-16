@@ -1772,7 +1772,8 @@ impl FileOperations {
                 let is_template_list_entry = node.node_type == "list"
                     && matches!(
                         node.parameters.get("entry"),
-                        Some(OverseerValue::Template(entry_type)) if entry_type == &child.node_type
+                        Some(OverseerValue::Template(entry_type))
+                            if crate::bases::reference(entry_type).name == child.node_type
                     );
 
                 // A wrapper holding a list written into is written through, list and values both:

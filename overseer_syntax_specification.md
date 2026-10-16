@@ -418,6 +418,38 @@ that reached it (`div (background=#eee) { - links = "..." }`), inside a named ov
 (`- Deep (x=2) { - inner = "..." }`), or on the instance itself, after the element written before
 it. A parameter set on a named node the template gave is written as `- Deep (x=3)`.
 
+#### A template from another file
+
+A template reference can start with a file: `<project_base.os/project>` names the node `project`
+of `project_base.os`. It works wherever a template goes - an instance's type, a list's `entry=`,
+an action's `template=` - and the file is looked for next to the document, or as a path from
+there (`<lib/project_base.os/project>`).
+
+```overseer
+<project_base.os/project> project {
+    - name = "Overseer"
+    - Items {
+        - {
+            - title = "a"
+        }
+    }
+}
+```
+
+The base is read as it is written, not worked out on its own: its node is copied in like any
+template, so its formulas run on the deriving document's data. A reference inside the base means
+what it means there - a bare `<Task>` that names a node of the base names that one, and a file it
+names is looked for next to the base. A bare reference the base does not define is left for the
+deriving document to supply. A template that holds an instance of itself, in one file or across
+several, is refused, as is a reference to a file that is not there or a node it does not have;
+the instance is then kept as written.
+
+Unnamed instances need no block: `<project_base.os/tab1>` on three lines gives three tabs. Named
+ones keep their addresses apart, `a/note` and `b/note`.
+
+A base's absolute paths (`/project/Items`) assume the name of its root node, so an instance that
+uses them keeps that name, or the base uses relative paths (`../Items`).
+
 ### 4. Actions and Triggers
 
 Overseer supports interactive elements and automated actions:

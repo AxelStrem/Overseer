@@ -1,0 +1,229 @@
+//! Templates written in another file: `<project_base.os/project>`.
+//!
+//! A template reference whose path starts with a file - any segment ending in `.os` before the
+//! last - names a node of that file rather than of the document. The file is parsed and not
+//! worked out: its nodes are copied into the document that names them as any template's are, so
+//! their formulas run against that document's data.
+//!
+//! What a base's own references mean is settled when it is read, in its own scope: a reference to
+//! a third file is looked up next to the base, and a bare one that names a node of the base names
+//! that node. Both are rewritten to the base's or the third file's full path, so they mean the same
+//! once copied into a document in another folder. A bare one the base does not define is left as
+//! it is, and the document that inherits it supplies the node.
+
+use crate::types::{OverseerNode, OverseerValue};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
+
+/// The parameter an instance or a list is given when the template it names could not be had -
+/// its file missing or unparsable, the node not in it, or an instance that holds itself.
+pub const ERROR: &str = "_inherit_error";
+
+/// A template reference, split into the file it names, if any, and the node's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reference {
+    pub file: Option<String>,
+    pub name: String,
+}
+
+/// Split a reference as written - `<Task>`, `<../Task>`, `<base.os/Task>` - into its parts. The
+/// node is named by the last segment, as it always has been; what comes before it only matters
+/// when it names a file.
+pub fn reference(path: &str) -> Reference {
+    let path = path.trim();
+    let path = path
+        .strip_prefix('<')
+        .and_then(|p| p.strip_suffix('>'))
+        .unwrap_or(path)
+        .trim();
+    let segments: Vec<&str> = path.split('/').collect();
+    let name = segments.last().copied().unwrap_or("").trim().to_string();
+    let file_end = segments[..segments.len().saturating_sub(1)]
+        .iter()
+        .rposition(|segment| segment.trim().ends_with(".os"));
+    let file = file_end.map(|end| segments[..=end].join("/"));
+    Reference { file, name }
+}
+
+/// The reference cut to what finding its node needs: the name, with the file in front when it
+/// names one. `<../Task>` comes out `Task`, `<base.os/Task>` comes out `base.os/Task`.
+pub fn short(path: &str) -> String {
+    let found = reference(path);
+    match found.file {
+        Some(file) => format!("{}/{}", file, found.name),
+        None => found.name,
+    }
+}
+
+/// The node a template reference names: in the file it names, or in the document.
+pub fn find(document: &[OverseerNode], path: &str) -> Option<OverseerNode> {
+    find_or_why(document, path).ok().flatten()
+}
+
+/// As `find`, saying why a file the reference names could not be read. A node that is not there
+/// is `Ok(None)`, as it is for a template of the document's own, which may yet be made.
+pub fn find_or_why(document: &[OverseerNode], path: &str) -> Result<Option<OverseerNode>, String> {
+    let found = reference(path);
+    match &found.file {
+        None => Ok(by_name(document, &found.name).cloned()),
+        Some(file) => {
+            let base = load(file)?;
+            match by_name(&base, &found.name) {
+                Some(node) => Ok(Some(node.clone())),
+                None => Err(format!("no '{}' in {}", found.name, file_name(file))),
+            }
+        }
+    }
+}
+
+fn by_name<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+    for node in nodes {
+        if node.name == name {
+            return Some(node);
+        }
+        if let Some(found) = by_name(&node.children, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Where a file a reference names is. The one place a base is looked for: next to the document
+/// that names it, or next to the base that does. A user library and a shipped standard library
+/// are to be searched after it.
+fn locate(file: &str, beside: Option<&Path>) -> PathBuf {
+    let path = Path::new(file);
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    match beside {
+        Some(dir) => dir.join(path),
+        None => crate::docmgr::manager::DocumentManager::resolve_from_document(file),
+    }
+}
+
+/// A path as a reference can carry it: absolute where the file is there to be found, and with
+/// forward slashes, which is what a reference is split on.
+fn as_key(path: &Path) -> String {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let text = path.to_string_lossy().replace('\\', "/");
+    // `canonicalize` on Windows gives the verbatim form, which nothing else here writes.
+    text.strip_prefix("//?/").map(str::to_string).unwrap_or(text)
+}
+
+/// The file's name alone, for an error message - never the folder it is in.
+fn file_name(file: &str) -> String {
+    Path::new(file)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file.to_string())
+}
+
+type Stamp = (std::time::SystemTime, u64);
+
+fn stamp(path: &str) -> Option<Stamp> {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok().map(|t| (t, m.len())))
+}
+
+static CACHE: LazyLock<Mutex<std::collections::HashMap<String, (Stamp, Arc<Vec<OverseerNode>>)>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// A base's nodes as parsed, with its own references settled in its scope. Read again only once
+/// the file on disk has changed: a document is worked out again after every edit, and each time
+/// it asks for the same base.
+pub fn load(file: &str) -> Result<Arc<Vec<OverseerNode>>, String> {
+    let key = as_key(&locate(file, None));
+    let now = stamp(&key);
+    if let Some(now) = now {
+        if let Ok(cache) = CACHE.lock() {
+            if let Some((then, nodes)) = cache.get(&key) {
+                if *then == now {
+                    return Ok(nodes.clone());
+                }
+            }
+        }
+    }
+    let shown = file_name(file);
+    let text = std::fs::read_to_string(&key).map_err(|_| format!("{} could not be read", shown))?;
+    let (_rest, mut nodes) = crate::parser::parse_document(&text)
+        .map_err(|_| format!("{} could not be parsed", shown))?;
+    let beside = Path::new(&key).parent().map(Path::to_path_buf);
+    let mut own = std::collections::HashSet::new();
+    names_in(&nodes, &mut own);
+    for node in nodes.iter_mut() {
+        settle(node, &key, beside.as_deref(), &own);
+    }
+    let nodes = Arc::new(nodes);
+    if let Some(now) = now {
+        if let Ok(mut cache) = CACHE.lock() {
+            cache.insert(key, (now, nodes.clone()));
+        }
+    }
+    Ok(nodes)
+}
+
+fn names_in(nodes: &[OverseerNode], names: &mut std::collections::HashSet<String>) {
+    for node in nodes {
+        if !node.name.is_empty() {
+            names.insert(node.name.clone());
+        }
+        names_in(&node.children, names);
+    }
+}
+
+/// Rewrite a base's references so they mean, wherever the node is copied to, what they mean in
+/// the base.
+fn settle(
+    node: &mut OverseerNode,
+    base: &str,
+    beside: Option<&Path>,
+    own: &std::collections::HashSet<String>,
+) {
+    let rewrite = |path: &str| -> Option<String> {
+        let found = reference(path);
+        match found.file {
+            Some(file) => Some(format!("{}/{}", as_key(&locate(&file, beside)), found.name)),
+            None if own.contains(&found.name) => Some(format!("{}/{}", base, found.name)),
+            None => None,
+        }
+    };
+    if let Some(path) = &node.template {
+        if let Some(settled) = rewrite(path) {
+            node.template = Some(settled);
+        }
+    }
+    for (_key, value) in node.parameters.iter_mut() {
+        if let OverseerValue::Template(path) = value {
+            if let Some(settled) = rewrite(path) {
+                *path = settled;
+            }
+        }
+    }
+    for child in node.children.iter_mut() {
+        settle(child, base, beside, own);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reference_names_its_file_only_when_a_segment_ends_in_os() {
+        assert_eq!(reference("Task"), Reference { file: None, name: "Task".into() });
+        assert_eq!(reference("../Task"), Reference { file: None, name: "Task".into() });
+        assert_eq!(reference("<Root/Task>"), Reference { file: None, name: "Task".into() });
+        assert_eq!(
+            reference("base.os/Task"),
+            Reference { file: Some("base.os".into()), name: "Task".into() }
+        );
+        assert_eq!(
+            reference("E:/docs/lib/base.os/Task"),
+            Reference { file: Some("E:/docs/lib/base.os".into()), name: "Task".into() }
+        );
+        assert_eq!(short("<../Task>"), "Task");
+        assert_eq!(short("lib/base.os/Task"), "lib/base.os/Task");
+    }
+}

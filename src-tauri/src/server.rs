@@ -959,19 +959,6 @@ fn check_expected(
     Ok(())
 }
 
-/// The node a template name refers to, wherever it was declared.
-fn find_template<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
-    for node in nodes {
-        if node.name == name {
-            return Some(node);
-        }
-        if let Some(found) = find_template(&node.children, name) {
-            return Some(found);
-        }
-    }
-    None
-}
-
 /// Every field name an entry made from this template could accept.
 ///
 /// Both forms callers use: the bare name of a field anywhere in the template, and the path to
@@ -1522,7 +1509,7 @@ impl DocumentRoot {
                     _ => None,
                 })
             {
-                if let Some(template) = find_template(nodes, &template_name) {
+                if let Some(template) = crate::bases::find(nodes, &template_name) {
                     reject_unknown_fields(&template, fields)?;
                 }
             }

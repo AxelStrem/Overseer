@@ -1355,24 +1355,10 @@ impl ActionExecutor {
                 // Template to clone
                 let template_name = match action.parameters.get("template") {
                     Some(OverseerValue::Template(t)) => {
-                        let raw = t.split('/').last().unwrap_or("");
-                        let trimmed = raw.trim();
-                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2
-                        {
-                            trimmed[1..trimmed.len() - 1].to_string()
-                        } else {
-                            trimmed.to_string()
-                        }
+                        crate::bases::short(t)
                     }
                     Some(OverseerValue::String(s)) => {
-                        let raw = s.split('/').last().unwrap_or("");
-                        let trimmed = raw.trim();
-                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2
-                        {
-                            trimmed[1..trimmed.len() - 1].to_string()
-                        } else {
-                            trimmed.to_string()
-                        }
+                        crate::bases::short(s)
                     }
                     _ => {
                         return Err(OverseerError::ValidationError(
@@ -1507,24 +1493,10 @@ impl ActionExecutor {
                 // Optional template override
                 let template_name_opt: Option<String> = match action.parameters.get("template") {
                     Some(OverseerValue::Template(t)) => {
-                        let raw = t.split('/').last().unwrap_or("");
-                        let trimmed = raw.trim();
-                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2
-                        {
-                            Some(trimmed[1..trimmed.len() - 1].to_string())
-                        } else {
-                            Some(trimmed.to_string())
-                        }
+                        Some(crate::bases::short(t))
                     }
                     Some(OverseerValue::String(s)) => {
-                        let raw = s.split('/').last().unwrap_or("");
-                        let trimmed = raw.trim();
-                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2
-                        {
-                            Some(trimmed[1..trimmed.len() - 1].to_string())
-                        } else {
-                            Some(trimmed.to_string())
-                        }
+                        Some(crate::bases::short(s))
                     }
                     _ => None,
                 };
@@ -1547,24 +1519,10 @@ impl ActionExecutor {
                     .or_else(|_| Self::require_string(&action.parameters, "to"))?;
                 let template_name_opt: Option<String> = match action.parameters.get("template") {
                     Some(OverseerValue::Template(t)) => {
-                        let raw = t.split('/').last().unwrap_or("");
-                        let trimmed = raw.trim();
-                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2
-                        {
-                            Some(trimmed[1..trimmed.len() - 1].to_string())
-                        } else {
-                            Some(trimmed.to_string())
-                        }
+                        Some(crate::bases::short(t))
                     }
                     Some(OverseerValue::String(s)) => {
-                        let raw = s.split('/').last().unwrap_or("");
-                        let trimmed = raw.trim();
-                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2
-                        {
-                            Some(trimmed[1..trimmed.len() - 1].to_string())
-                        } else {
-                            Some(trimmed.to_string())
-                        }
+                        Some(crate::bases::short(s))
                     }
                     _ => None,
                 };
@@ -2779,19 +2737,6 @@ impl ActionExecutor {
         Ok(())
     }
 
-    // Find any node by name recursively
-    fn find_node_by_name<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
-        for n in nodes {
-            if n.name == name {
-                return Some(n);
-            }
-            if let Some(found) = Self::find_node_by_name(&n.children, name) {
-                return Some(found);
-            }
-        }
-        None
-    }
-
     // Create a list item by cloning template definition and marking template-derived fields
     /// Cut a cloned subtree loose from the text the template was written in.
     ///
@@ -3146,9 +3091,10 @@ impl ActionExecutor {
             } else {
                 template_name
             };
-            let template_def = Self::find_node_by_name(document, tn).ok_or_else(|| {
+            let template_def = crate::bases::find(document, tn).ok_or_else(|| {
                 OverseerError::ValidationError(format!("Template not found: {}", template_name))
             })?;
+            let template_def = &template_def;
             let style_guide = Self::derive_list_entry_style(list_node, goes == WhereItGoes::First);
             let mut new_item = Self::clone_from_template(template_def);
             Self::set_field_value_on_item(&mut new_item, &effective_key_field, key_value);
@@ -3845,22 +3791,16 @@ impl ActionExecutor {
                     let chosen_template_name = if let Some(name) = template_name {
                         name.to_string()
                     } else {
-                        let raw = t.split('/').last().unwrap_or("");
-                        let trimmed = raw.trim();
-                        if trimmed.starts_with('<') && trimmed.ends_with('>') && trimmed.len() >= 2
-                        {
-                            trimmed[1..trimmed.len() - 1].to_string()
-                        } else {
-                            trimmed.to_string()
-                        }
+                        crate::bases::short(t)
                     };
-                    let template_def = Self::find_node_by_name(document, &chosen_template_name)
+                    let template_def = crate::bases::find(document, &chosen_template_name)
                         .ok_or_else(|| {
                             OverseerError::ValidationError(format!(
                                 "Template not found: {}",
                                 chosen_template_name
                             ))
                         })?;
+                    let template_def = &template_def;
                     let mut new_item = Self::clone_from_template(template_def);
                     // New item should adopt opposite of parent list effective layout
                     if let Some(OverseerValue::String(parent_eff)) =

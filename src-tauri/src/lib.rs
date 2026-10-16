@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod addressing;
 pub mod app_api;
+pub mod bases;
 pub mod dependencies;
 pub mod document_cache;
 pub mod document_disk;
