@@ -391,6 +391,11 @@ tab Tasks {
 }
 ```
 
+An instance's kind is its template's name, so a template cannot be named after a type - `tags`,
+`list`, `button` and the rest under "Reserved Keywords", in any case. A reference to one is
+refused, saying why, as a reference to a missing node is: nothing is copied, and the instance is
+drawn as a div holding what it was written with.
+
 #### How an instance is matched onto its template
 
 An instance - `<Card> c { ... }`, or an entry of a list with `entry=` - starts as a copy of its
@@ -1405,6 +1410,7 @@ div Tasks {
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`
 - **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
+- **Types** (not to be a template's name): `tab`, `div`, `list`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`
 
 ---
 

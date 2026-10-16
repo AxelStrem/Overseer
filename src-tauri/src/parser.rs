@@ -891,7 +891,14 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     let final_node_type = if let Some(nt) = node_type_value.clone() {
         nt
     } else if let Some(t) = &template_path {
-        t.split('/').last().unwrap_or_default().to_string()
+        // A template named after a field type is refused by the resolver; until then, and after,
+        // its instance is not to be taken for that field, so it stands as a div.
+        let name = t.split('/').last().unwrap_or_default();
+        if crate::bases::is_type(name) {
+            "div".to_string()
+        } else {
+            name.to_string()
+        }
     } else {
         "".to_string()
     };

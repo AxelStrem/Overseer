@@ -65,10 +65,31 @@ pub fn find(document: &[OverseerNode], path: &str) -> Option<OverseerNode> {
     find_or_why(document, path).ok().flatten()
 }
 
-/// As `find`, saying why a file the reference names could not be read. A node that is not there
-/// is `Ok(None)`, as it is for a template of the document's own, which may yet be made.
+/// The kinds of node the engine and the page choose what to do by. An instance's type is its
+/// template's name, so a template named after one of these would be taken for that kind of
+/// field - a root named `tags` drew a tags field - and such a name is refused. The page lowercases
+/// a type before choosing, so the comparison ignores case.
+pub const TYPES: &[&str] = &[
+    "tab", "div", "list", "list_item", "string", "textbox", "text", "tags", "enum", "filter", "int",
+    "float", "date", "timestamp", "bool", "button", "checkbox", "chart", "image", "mark", "mount",
+];
+
+/// Whether a name is one of `TYPES`, and so cannot name a template.
+pub fn is_type(name: &str) -> bool {
+    TYPES.iter().any(|ty| ty.eq_ignore_ascii_case(name.trim()))
+}
+
+/// As `find`, saying why a file the reference names could not be read, or why the node it names
+/// cannot be a template. A node that is not there is `Ok(None)`, as it is for a template of the
+/// document's own, which may yet be made.
 pub fn find_or_why(document: &[OverseerNode], path: &str) -> Result<Option<OverseerNode>, String> {
     let found = reference(path);
+    if is_type(&found.name) {
+        return Err(format!(
+            "'{}' is a field type, and cannot name a template",
+            found.name
+        ));
+    }
     match &found.file {
         None => Ok(by_name(document, &found.name).cloned()),
         Some(file) => {
