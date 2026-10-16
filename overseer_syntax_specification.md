@@ -290,8 +290,10 @@ list Doing (entry=<Card>, movable=true) { }
 list Done (entry=<Card>, movable=true) { }
 ```
 
-On a phone an entry is picked up by holding it still for a moment, since a finger that moves at
-once is scrolling.
+An entry is picked up by what lies around its values - the space of the entry and of its fields,
+their labels, the gaps between them - never by a value itself, so a value's text can still be
+selected. On a phone an entry is picked up by holding it still for a moment, since a finger that
+moves at once is scrolling.
 
 #### Sorting a table by its columns
 

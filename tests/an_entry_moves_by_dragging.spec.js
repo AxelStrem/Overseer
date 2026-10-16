@@ -43,7 +43,8 @@ const list = (name, parameters, entries) => base(name, 'list', {
 const movable = { movable: { Boolean: true } }
 
 const theDocument = ({ tabMutable = true } = {}) => [base('s', 'tab', { mutable: { Boolean: tabMutable } }, [
-  list('A', movable, [card('a1', onClick()), card('a2'), card('a3')]),
+  list('A', movable, [card('a1', onClick()), card('a2'),
+    card('a3', base('note', 'string', { value: { String: 'n' }, label: { String: 'Note' } }))]),
   list('B', movable, [card('b1')]),
   list('C', {}, [card('c1')]),
   base('N', 'list', { entry: { Template: '<Note>' }, layout: { String: 'vertical' }, ...movable }, [card('n1')]),
@@ -222,6 +223,35 @@ describe('dragging an entry', () => {
     pointer(window, 'pointermove', 50, 65, 'touch')
     pointer(window, 'pointerup', 50, 65, 'touch')
     expect(moves()).toEqual([expect.objectContaining({ entry_path: ['s', 'A', 'a1'], before: null })])
+  })
+
+  it('leaves a value to select its text, and drags from what lies around it', () => {
+    render()
+    const a3 = entryAt('A', 'a3')
+    const field = a3.querySelector('.overseer-field:has(label)')
+    const value = field.querySelector('.field-value, .text-content')
+    expect(value).not.toBeNull()
+    const pressAndMove = (target) => {
+      pointer(target, 'pointerdown', 50, 45)
+      pointer(window, 'pointermove', 50, 30)
+      pointer(window, 'pointermove', 50, 5)
+      pointer(window, 'pointerup', 50, 5)
+    }
+
+    pressAndMove(value)
+    expect(document.querySelector('.overseer-drag-ghost')).toBeNull()
+    expect(moves()).toEqual([])
+
+    pressAndMove(field)
+    expect(moves()).toEqual([expect.objectContaining({ entry_path: ['s', 'A', 'a3'] })])
+
+    invoke.mockClear()
+    pressAndMove(field.querySelector('label'))
+    expect(moves()).toHaveLength(1)
+
+    invoke.mockClear()
+    pressAndMove(a3)
+    expect(moves()).toHaveLength(1)
   })
 
   it('lets Escape put the entry down where it was', () => {

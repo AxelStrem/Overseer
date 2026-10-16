@@ -3572,7 +3572,9 @@ export class OverseerRenderer {
      * With a mouse that is a few pixels of movement with the button held, so a click is still a
      * click and a double click still edits. A finger has to hold still a moment first, because a
      * finger that moves straight away is scrolling the page - and the page is used on a phone.
-     * Never from inside something that keeps its own pointer: an editor, a box, a link.
+     * Never from inside something that keeps its own pointer: an editor, a box, a link. Nor from a
+     * field's value, where a press and a move select its text: an entry is grabbed by what lies
+     * around its values - a field's padding and label, the gaps between fields, its own space.
      */
     armEntryDrag(event, list) {
         if (this._entryDrag) return
@@ -3582,6 +3584,8 @@ export class OverseerRenderer {
         // The innermost movable list a pointer is in is the one it drags in.
         if (target.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"]') !== list) return
         if (target.closest('textarea, select, input, a[href], [contenteditable="true"]')) return
+        const field = target.closest('.overseer-field')
+        if (field && list.contains(field) && target !== field && !target.closest('label')) return
         let entry = target
         while (entry && !this.isEntryElementOf(entry, list)) entry = entry.parentElement
         if (!entry || !entry.dataset || !entry.dataset.uid || !entry.dataset.path) return
