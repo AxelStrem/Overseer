@@ -1,7 +1,6 @@
 use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
 #[allow(unused_imports)]
 use crate::types::{Color, CssSize, NodeSourceSnapshot, OverseerNode, OverseerValue};
-use std::collections::HashMap;
 
 // Debug logging macro for resolver
 macro_rules! debug_resolver {
@@ -1481,6 +1480,7 @@ fn resolve_node_templates(
                                         param_order: Vec::new(),
                                         raw_value_literal: None,
                                         authored_dash: false,
+                                        authored_plus: false,
                                         child_original_index: None,
                                         leading_blank_lines: 0,
                                         source_snapshot: None,
@@ -1520,16 +1520,7 @@ fn resolve_node_templates(
                                         // Assign ordering index after authored children (authored indices assigned at parse time). Since these are cloned now, just use sequence.
                                         child.child_original_index = Some(c_idx);
                                     }
-                                    let overrides: HashMap<String, &OverseerNode> = list_item
-                                        .children
-                                        .iter()
-                                        .map(|o| (o.name.clone(), o))
-                                        .collect();
-                                    debug_resolver!(
-                                        "[RESOLVER]     Override fields: {:?}",
-                                        overrides.keys().collect::<Vec<_>>()
-                                    );
-                                    merge_node(&mut resolved_item, &overrides);
+                                    merge_node(&mut resolved_item, &list_item.children);
                                     // After merging, recursively propagate authored_dash, explicit markers, and ordering from override tree
                                     fn propagate_override_metadata(
                                         src: &OverseerNode,
@@ -1659,6 +1650,7 @@ fn resolve_node_templates(
                                         param_order: Vec::new(),
                                         raw_value_literal: None,
                                         authored_dash: false,
+                                        authored_plus: false,
                                         child_original_index: None,
                                         leading_blank_lines: 0,
                                         source_snapshot: None,
@@ -1723,6 +1715,7 @@ fn resolve_node_templates(
                                             param_order: Vec::new(),
                                             raw_value_literal: None,
                                             authored_dash: false,
+                                            authored_plus: false,
                                             child_original_index: None,
                                             leading_blank_lines: 0,
                                             source_snapshot: None,
@@ -1970,14 +1963,10 @@ fn resolve_node_templates(
                 }
             }
             if !instance_children.is_empty() {
-                let overrides: HashMap<String, &OverseerNode> = instance_children
-                    .iter()
-                    .map(|o| (o.name.clone(), o))
-                    .collect();
-                // Taken from the children rather than the map's keys: a HashMap iterates in
-                // an order that varies between runs, and this list is stored on the node and
-                // read back by the serializer, so map order would make resolving the same
-                // document twice produce two different results.
+                // Taken from the children in their order: this list is stored on the node and
+                // read back by the serializer, so an order that varied between runs (as a
+                // HashMap's keys once did here) would make resolving the same document twice
+                // produce two different results.
                 let override_names: Vec<String> =
                     instance_children.iter().map(|o| o.name.clone()).collect();
                 debug_resolver!(
@@ -1990,7 +1979,7 @@ fn resolve_node_templates(
                     "_explicit_overrides".to_string(),
                     OverseerValue::String(override_names.join(",")),
                 );
-                merge_node(node, &overrides);
+                merge_node(node, &instance_children);
             }
 
             // Recursively infer '-' types based on template structure
@@ -2326,192 +2315,301 @@ fn adopt_source_metadata(target: &mut OverseerNode, source: &OverseerNode) {
     }
 }
 
-fn merge_node(template: &mut OverseerNode, overrides: &HashMap<String, &OverseerNode>) {
+/// Whether a node was written without a name of its own. The parser names such a node after its
+/// type (`div { }` is a div called `div`), so the two being the same is what unnamed looks like.
+fn is_unnamed(node: &OverseerNode) -> bool {
+    node.name.is_empty() || node.name == node.node_type
+}
+
+/// Whether an unnamed override can stand for an unnamed template node: the same type, or `-`,
+/// which stands for any. An instance in the template answers to its template's type as well.
+fn unnamed_types_match(wanted: &OverseerNode, candidate: &OverseerNode) -> bool {
+    wanted.node_type == "-"
+        || wanted.node_type == candidate.node_type
+        || matches!(
+            candidate.parameters.get("_original_type"),
+            Some(OverseerValue::String(t)) if *t == wanted.node_type
+        )
+}
+
+/// Every node of `node` an override can reach by walking it, in document order: the children, and
+/// what is inside the unnamed ones. Paths compare in the same order, so the first path at or after
+/// a cursor is the next node the walk comes to.
+fn walk_paths(node: &OverseerNode, prefix: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+    for (i, child) in node.children.iter().enumerate() {
+        prefix.push(i);
+        out.push(prefix.clone());
+        if child.node_type != "list" && (child.is_hierarchy_transparent || is_unnamed(child)) {
+            walk_paths(child, prefix, out);
+        }
+        prefix.pop();
+    }
+}
+
+/// The next unnamed node at or after `cursor` that `wanted` can stand for. Named nodes are walked
+/// past: an unnamed override never lands on a named field.
+fn find_unnamed_from(
+    container: &OverseerNode,
+    cursor: &[usize],
+    wanted: &OverseerNode,
+) -> Option<Vec<usize>> {
+    let mut paths = Vec::new();
+    walk_paths(container, &mut Vec::new(), &mut paths);
+    paths.into_iter().find(|path| {
+        path.as_slice() >= cursor
+            && get_child_by_path(container, path)
+                .map(|candidate| is_unnamed(candidate) && unnamed_types_match(wanted, candidate))
+                .unwrap_or(false)
+    })
+}
+
+fn get_child_by_path<'a>(node: &'a OverseerNode, path: &[usize]) -> Option<&'a OverseerNode> {
+    let mut current = node;
+    for &idx in path {
+        current = current.children.get(idx)?;
+    }
+    Some(current)
+}
+
+/// The position just after the node at `path`, at its own depth.
+fn after(path: &[usize]) -> Vec<usize> {
+    let mut next = path.to_vec();
+    if let Some(last) = next.last_mut() {
+        *last += 1;
+    }
+    next
+}
+
+/// Merges an instance's block into a clone of its template, walking the two together.
+///
+/// A named element finds its field by name, in any order and through unnamed nodes, as it always
+/// has. Unnamed elements and `+` elements follow a cursor through the template instead: an unnamed
+/// one lands on the next unnamed node of its type, a `+` one is put in where the cursor is, and any
+/// match moves the cursor to just after what it matched. So `tab { } tab { div (background=#eee) }`
+/// reaches the second tab's div, and a `+` after `- name = ...` lands right after `name`. An element
+/// that matches nothing is kept, after the inherited elements of its own block, and does not move
+/// the cursor.
+fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]) {
     debug_resolver!(
         "[RESOLVER] Merging overrides into template with {} fields (transparent-aware)",
         template.children.len()
     );
 
-    // Apply each override by locating the target field path in the template via transparent-aware lookup
-    for (ov_name, override_field) in overrides.iter() {
-        if let Some(path) = find_accessible_child_path(template, ov_name) {
-            if let Some(template_field) = get_child_mut_by_path(template, &path) {
-                debug_resolver!(
-                    "[RESOLVER]   Merging field: {} (template type: {}, override type: {})",
-                    template_field.name,
-                    template_field.node_type,
-                    override_field.node_type
-                );
+    let mut cursor: Vec<usize> = vec![0];
+    let mut unmatched: Vec<OverseerNode> = Vec::new();
 
-                adopt_source_metadata(template_field, override_field);
-
-                // Override a simple value (e.g., name = "...")
-                if let Some(val) = override_field.parameters.get("value") {
-                    debug_resolver!("[RESOLVER]     Setting value: {:?}", val);
-                    // Always set the value from the explicit override
-                    template_field
-                        .parameters
-                        .insert("value".to_string(), val.clone());
-                    // Preserve original raw numeric/text literal formatting if present on override
-                    if override_field.raw_value_literal.is_some() {
-                        template_field.raw_value_literal = override_field.raw_value_literal.clone();
-                    }
-                    // Treat presence in source as an explicit override even if equal to template default
-                    template_field.parameters.insert(
-                        "_override_present".to_string(),
-                        OverseerValue::Boolean(true),
-                    );
-                    template_field.parameters.insert(
-                        "_explicit_child_override".to_string(),
-                        OverseerValue::Boolean(true),
-                    );
-                    debug_resolver!(
-                        "[RESOLVER] set explicit override (value) on '{}'",
-                        template_field.name
-                    );
-                    // Remove template marker for value if present so serializers won't treat it as inherited
-                    if template_field.parameters.contains_key("_template_value") {
-                        template_field.parameters.remove("_template_value");
-                    }
-                    // Propagate authored dash provenance so serializer can retain concise form
-                    if override_field.authored_dash {
-                        template_field.authored_dash = true;
-                    }
-                    // Preserve original sibling ordering if override carried an index (use existing if already set)
-                    if template_field.child_original_index.is_none()
-                        && override_field.child_original_index.is_some()
-                    {
-                        template_field.child_original_index = override_field.child_original_index;
-                    }
-                }
-
-                // If this field is a list, handle entry inheritance and recursive merge
-                if template_field.node_type == "list" {
-                    // If override does not specify entry, inherit from template
-                    if !override_field.parameters.contains_key("entry") {
-                        if let Some(entry) = template_field.parameters.get("entry") {
-                            template_field
-                                .parameters
-                                .insert("entry".to_string(), entry.clone());
-                        }
-                    } else if let Some(entry) = override_field.parameters.get("entry") {
-                        // If override specifies entry, use it
-                        template_field
-                            .parameters
-                            .insert("entry".to_string(), entry.clone());
-                    }
-                    // Recursively resolve/merge children for nested lists
-                    if !override_field.children.is_empty() {
-                        template_field.children = override_field.children.clone();
-                        template_field.parameters.insert(
-                            "_override_present".to_string(),
-                            OverseerValue::Boolean(true),
-                        );
-                        template_field.parameters.insert(
-                            "_explicit_child_override".to_string(),
-                            OverseerValue::Boolean(true),
-                        );
-                        debug_resolver!(
-                            "[RESOLVER] set explicit override (list children) on '{}'",
-                            template_field.name
-                        );
-                    }
-                    // Preserve dash-authored style from the override for list containers too,
-                    // so the serializer can emit "- name { ... }" instead of "list name { ... }" when authored that way.
-                    if override_field.authored_dash {
-                        template_field.authored_dash = true;
-                    }
-                } else if !override_field.children.is_empty() {
-                    // For non-list container nodes, deep-merge override children by name
-                    // rather than replacing the entire children array. This preserves defaults
-                    // for siblings that are not explicitly overridden.
-                    let override_order: Vec<String> = override_field
-                        .children
-                        .iter()
-                        .map(|c| c.name.clone())
-                        .collect();
-                    let mut child_overrides: HashMap<String, &OverseerNode> = HashMap::new();
-                    for ch in &override_field.children {
-                        child_overrides.insert(ch.name.clone(), ch);
-                    }
-                    if !child_overrides.is_empty() {
-                        // Mark the container as having explicit child overrides
-                        template_field.parameters.insert(
-                            "_override_present".to_string(),
-                            OverseerValue::Boolean(true),
-                        );
-                        template_field.parameters.insert(
-                            "_explicit_child_override".to_string(),
-                            OverseerValue::Boolean(true),
-                        );
-                        debug_resolver!(
-                            "[RESOLVER] deep-merging {} child override(s) into container '{}'",
-                            child_overrides.len(),
-                            template_field.name
-                        );
-                        // Recursively merge into this container field
-                        merge_node(template_field, &child_overrides);
-                        // If the override container itself was dash-authored, propagate to template_field
-                        if override_field.authored_dash {
-                            template_field.authored_dash = true;
-                        }
-                        if template_field.child_original_index.is_none()
-                            && override_field.child_original_index.is_some()
-                        {
-                            template_field.child_original_index =
-                                override_field.child_original_index;
-                        }
-                        // Apply ordering & dash provenance to overridden children
-                        if !override_order.is_empty() {
-                            for (seq, name) in override_order.iter().enumerate() {
-                                if let Some(ch) =
-                                    template_field.children.iter_mut().find(|c| c.name == *name)
-                                {
-                                    if child_overrides
-                                        .get(name)
-                                        .map(|o| o.authored_dash)
-                                        .unwrap_or(false)
-                                    {
-                                        ch.authored_dash = true;
-                                    }
-                                    ch.child_original_index = Some(seq);
-                                }
-                            }
-                            // Push non-overridden children after overridden ones, preserving existing order among them
-                            let mut next_idx = override_order.len();
-                            for ch in template_field.children.iter_mut() {
-                                if override_order.iter().any(|n| n == &ch.name) {
-                                    continue;
-                                }
-                                if ch.child_original_index.is_none() {
-                                    ch.child_original_index = Some(next_idx);
-                                    next_idx += 1;
-                                } else {
-                                    ch.child_original_index = Some(
-                                        ch.child_original_index.unwrap() + override_order.len(),
-                                    );
-                                }
-                            }
-                        }
-                    } else {
-                        debug_resolver!(
-                            "[RESOLVER]     No child overrides to merge for '{}'",
-                            template_field.name
-                        );
-                    }
-                }
-            // Ensure node_type is preserved from template (do not overwrite)
+    for override_field in overrides {
+        if override_field.authored_plus {
+            let (index, parent_path) = cursor.split_last().expect("the cursor is never empty");
+            let parent = if parent_path.is_empty() {
+                Some(&mut *template)
             } else {
-                debug_resolver!(
-                    "[RESOLVER]   Override '{}' path lookup failed unexpectedly",
-                    ov_name
-                );
+                get_child_mut_by_path(template, parent_path)
+            };
+            if let Some(parent) = parent {
+                let index = (*index).min(parent.children.len());
+                parent.children.insert(index, override_field.clone());
+                cursor = parent_path.to_vec();
+                cursor.push(index + 1);
             }
+            continue;
+        }
+
+        // `StepTasks { ... }` names the field `StepTasks` the way `div { }` leaves a div unnamed:
+        // which one it is shows only in what the template has, so a typeless-looking element that
+        // finds no unnamed node of its type is looked up by name too - but only lands on a named field.
+        let path = if is_unnamed(override_field) {
+            find_unnamed_from(template, &cursor, override_field).or_else(|| {
+                if override_field.name == "-" {
+                    return None;
+                }
+                find_accessible_child_path(template, &override_field.name).filter(|path| {
+                    get_child_by_path(template, path)
+                        .map(|found| !is_unnamed(found))
+                        .unwrap_or(false)
+                })
+            })
         } else {
-            debug_resolver!(
-                "[RESOLVER]   Override '{}' had no matching field in template (considering transparency)",
-                ov_name
+            find_accessible_child_path(template, &override_field.name)
+        };
+
+        match path {
+            Some(path) => {
+                if let Some(template_field) = get_child_mut_by_path(template, &path) {
+                    merge_into_field(template_field, override_field);
+                }
+                cursor = after(&path);
+            }
+            None => {
+                debug_resolver!(
+                    "[RESOLVER]   Override '{}' had no matching field in template; kept after the inherited ones",
+                    override_field.name
+                );
+                unmatched.push(override_field.clone());
+            }
+        }
+    }
+
+    template.children.extend(unmatched);
+}
+
+/// Applies one override to the template field it matched: its value, its own parameters, and its
+/// block, merged by the same walk.
+fn merge_into_field(template_field: &mut OverseerNode, override_field: &OverseerNode) {
+    debug_resolver!(
+        "[RESOLVER]   Merging field: {} (template type: {}, override type: {})",
+        template_field.name,
+        template_field.node_type,
+        override_field.node_type
+    );
+
+    adopt_source_metadata(template_field, override_field);
+
+    // The override's own parameters win over the template's, as an instance's do at its root,
+    // and lose their template marker so that they persist.
+    for (key, value) in override_field.parameters.iter() {
+        if key == "value" || key == "entry" || key.starts_with('_') {
+            continue;
+        }
+        template_field.parameters.insert(key.clone(), value.clone());
+        template_field.parameters.remove(&format!("_template_{}", key));
+    }
+
+    // Override a simple value (e.g., name = "...")
+    if let Some(val) = override_field.parameters.get("value") {
+        debug_resolver!("[RESOLVER]     Setting value: {:?}", val);
+        // Always set the value from the explicit override
+        template_field
+            .parameters
+            .insert("value".to_string(), val.clone());
+        // Preserve original raw numeric/text literal formatting if present on override
+        if override_field.raw_value_literal.is_some() {
+            template_field.raw_value_literal = override_field.raw_value_literal.clone();
+        }
+        // Treat presence in source as an explicit override even if equal to template default
+        template_field.parameters.insert(
+            "_override_present".to_string(),
+            OverseerValue::Boolean(true),
+        );
+        template_field.parameters.insert(
+            "_explicit_child_override".to_string(),
+            OverseerValue::Boolean(true),
+        );
+        debug_resolver!(
+            "[RESOLVER] set explicit override (value) on '{}'",
+            template_field.name
+        );
+        // Remove template marker for value if present so serializers won't treat it as inherited
+        if template_field.parameters.contains_key("_template_value") {
+            template_field.parameters.remove("_template_value");
+        }
+        // Propagate authored dash provenance so serializer can retain concise form
+        if override_field.authored_dash {
+            template_field.authored_dash = true;
+        }
+        // Preserve original sibling ordering if override carried an index (use existing if already set)
+        if template_field.child_original_index.is_none()
+            && override_field.child_original_index.is_some()
+        {
+            template_field.child_original_index = override_field.child_original_index;
+        }
+    }
+
+    // If this field is a list, handle entry inheritance and recursive merge
+    if template_field.node_type == "list" {
+        // If override does not specify entry, inherit from template
+        if !override_field.parameters.contains_key("entry") {
+            if let Some(entry) = template_field.parameters.get("entry") {
+                template_field
+                    .parameters
+                    .insert("entry".to_string(), entry.clone());
+            }
+        } else if let Some(entry) = override_field.parameters.get("entry") {
+            // If override specifies entry, use it
+            template_field
+                .parameters
+                .insert("entry".to_string(), entry.clone());
+        }
+        // A list's entries are its data rather than its structure: the instance's replace the
+        // template's whole, and the walk does not go into them.
+        if !override_field.children.is_empty() {
+            template_field.children = override_field.children.clone();
+            template_field.parameters.insert(
+                "_override_present".to_string(),
+                OverseerValue::Boolean(true),
             );
+            template_field.parameters.insert(
+                "_explicit_child_override".to_string(),
+                OverseerValue::Boolean(true),
+            );
+            debug_resolver!(
+                "[RESOLVER] set explicit override (list children) on '{}'",
+                template_field.name
+            );
+        }
+        // Preserve dash-authored style from the override for list containers too,
+        // so the serializer can emit "- name { ... }" instead of "list name { ... }" when authored that way.
+        if override_field.authored_dash {
+            template_field.authored_dash = true;
+        }
+    } else if !override_field.children.is_empty() {
+        // For non-list container nodes, deep-merge override children rather than replacing the
+        // entire children array. This preserves defaults for siblings that are not overridden.
+        let override_order: Vec<String> = override_field
+            .children
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        // Mark the container as having explicit child overrides
+        template_field.parameters.insert(
+            "_override_present".to_string(),
+            OverseerValue::Boolean(true),
+        );
+        template_field.parameters.insert(
+            "_explicit_child_override".to_string(),
+            OverseerValue::Boolean(true),
+        );
+        debug_resolver!(
+            "[RESOLVER] deep-merging {} child override(s) into container '{}'",
+            override_field.children.len(),
+            template_field.name
+        );
+        // Recursively merge into this container field
+        merge_node(template_field, &override_field.children);
+        // If the override container itself was dash-authored, propagate to template_field
+        if override_field.authored_dash {
+            template_field.authored_dash = true;
+        }
+        if template_field.child_original_index.is_none()
+            && override_field.child_original_index.is_some()
+        {
+            template_field.child_original_index = override_field.child_original_index;
+        }
+        // Apply ordering & dash provenance to overridden children
+        for (seq, name) in override_order.iter().enumerate() {
+            if let Some(ch) = template_field.children.iter_mut().find(|c| c.name == *name) {
+                if override_field
+                    .children
+                    .iter()
+                    .any(|o| o.name == *name && o.authored_dash)
+                {
+                    ch.authored_dash = true;
+                }
+                ch.child_original_index = Some(seq);
+            }
+        }
+        // Push non-overridden children after overridden ones, preserving existing order among them
+        let mut next_idx = override_order.len();
+        for ch in template_field.children.iter_mut() {
+            if override_order.iter().any(|n| n == &ch.name) {
+                continue;
+            }
+            if ch.child_original_index.is_none() {
+                ch.child_original_index = Some(next_idx);
+                next_idx += 1;
+            } else {
+                ch.child_original_index = Some(ch.child_original_index.unwrap() + override_order.len());
+            }
         }
     }
 }

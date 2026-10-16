@@ -357,6 +357,56 @@ tab Tasks {
 }
 ```
 
+#### How an instance is matched onto its template
+
+An instance - `<Card> c { ... }`, or an entry of a list with `entry=` - starts as a copy of its
+template, and what it writes is matched onto that copy:
+
+- A **named** element finds the field of its name, in any order and through unnamed nodes, and
+  overrides its value, its parameters and, element by element, its block.
+- An **unnamed** element lands on the next unnamed node of the same type (`-` stands for any type),
+  walking the template in the order it is written and into unnamed nodes. It never lands on a named
+  node. An empty block, `tab { }`, matches a node and keeps all of it.
+- A **`+`** in the type's place marks an element new to the instance, put in where the walk has got
+  to: `+ subtitle = "s"` (its type inferred), `+int count = 0`, `+div { ... }`. It never combines
+  with `-`.
+- Every match moves the walk to just after what it matched, so a `+` written after `- name = ...`
+  lands right after `name`, and a `+` written first lands before everything.
+- An element that matches nothing, written without `+`, is kept after the inherited elements of
+  its own block.
+
+```overseer
+div (hidden=true) {
+    div Card {
+        string name = ""
+        tab (label="About") {
+            string description = ""
+        }
+        tab (label="Notes") {
+            div { string notes = "" }
+            div { string links = "" }
+        }
+    }
+}
+
+<Card> card {
+    - name = "Overseer"
+    +string subtitle = "a language for documents"
+    tab { }
+    tab {
+        div { }
+        div (background=#eee) { }
+    }
+    - owner = "me"
+}
+```
+
+`subtitle` goes right after `name`; the second tab's second div gets the background; `owner`,
+which the template does not have, comes last. Named elements are enough for most instances: the
+walk, and the template's unnamed layout it relies on, matter only for reaching an unnamed node or
+placing an element among the inherited ones. A list's entries are its data, not its structure: an
+instance that writes entries into a list replaces the template's.
+
 ### 4. Actions and Triggers
 
 Overseer supports interactive elements and automated actions:

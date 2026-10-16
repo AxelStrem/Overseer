@@ -484,7 +484,8 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
         }
         if any_dash {
             for c in nodes.iter_mut() {
-                if c.authored_dash {
+                // A `+` element keeps its own token: it was not written with a dash.
+                if c.authored_dash || c.authored_plus {
                     continue;
                 }
                 if !c.children.is_empty() {
@@ -582,11 +583,27 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
 
     // Parse template or type token
     let token_start_ptr = cur.as_ptr() as usize;
-    let (next, (template_val_opt, node_type_opt)) = match alt((
-        map(parse_template_value, |p| (Some(p), None)),
-        map(parse_node_type, |t| (None, Some(t.to_string()))),
-    ))(cur)
-    {
+    // A `+` in the type's place marks an element new to its template instance, put in where it is
+    // written rather than matched onto an inherited one: `+ name = 1`, `+int name`, `+div { }`.
+    // Alone it infers its type as `-` does; it never combines with `-`, which would ask for a type
+    // from a template field that a new element does not have.
+    let authored_plus = cur.starts_with('+');
+    let plus_inferred = authored_plus && cur[1..].starts_with(|c: char| c.is_whitespace());
+    if authored_plus && cur[1..].starts_with('-') {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            cur,
+            nom::error::ErrorKind::Tag,
+        )));
+    }
+    let typed = if authored_plus { &cur[1..] } else { cur };
+    let (next, (template_val_opt, node_type_opt)) = match if plus_inferred {
+        Ok((typed, (None, Some("-".to_string()))))
+    } else {
+        alt((
+            map(parse_template_value, |p| (Some(p), None)),
+            map(parse_node_type, |t| (None, Some(t.to_string()))),
+        ))(typed)
+    } {
         Ok(res) => res,
         Err(e) => {
             if !cur.trim().is_empty() {
@@ -775,7 +792,9 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     }
     node.children = children;
 
-    if final_node_type == "-" {
+    if authored_plus {
+        node.authored_plus = true;
+    } else if final_node_type == "-" {
         node.authored_dash = true;
     }
 

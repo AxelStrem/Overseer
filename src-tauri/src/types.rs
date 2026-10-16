@@ -32,6 +32,10 @@ pub struct OverseerNode {
     // Whether this node's value line was authored using dash shorthand (- name = value)
     #[serde(default, skip_serializing_if = "kept_from_the_page_or_not_so")]
     pub authored_dash: bool,
+    // Whether this node was authored with `+` in the type's place: an element new to the template
+    // instance it is in, placed where it is written rather than matched onto an inherited one.
+    #[serde(default, skip_serializing_if = "not_so")]
+    pub authored_plus: bool,
     // Original child order index relative to its siblings as parsed (used for stable round-trip ordering)
     #[serde(default, skip_serializing_if = "kept_from_the_page_or_none")]
     pub child_original_index: Option<usize>,
@@ -340,6 +344,7 @@ impl OverseerNode {
             param_order: Vec::new(),
             raw_value_literal: None,
             authored_dash: false,
+            authored_plus: false,
             child_original_index: None,
             leading_blank_lines: 0,
             source_snapshot: None,
@@ -384,6 +389,7 @@ impl OverseerNode {
             param_order: Vec::new(),
             raw_value_literal: None,
             authored_dash: false,
+            authored_plus: false,
             child_original_index: None,
             leading_blank_lines: 0,
             source_snapshot: None,
