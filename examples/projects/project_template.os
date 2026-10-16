@@ -37,12 +37,14 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
     text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A heading with a sort icon sorts the list by its column while the page is open, without changing the file; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones and reads how much of them is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
 
     div (hidden=true) {
-        div Label (layout="vertical", margin=0, spacing=2) {
-            div (layout="horizontal", margin=0, spacing=6, alignment="center") {
-                string tag (label="", width=25%) = ""
-                string name (label="", width=42%) = ""
-                string colour (label="", kind="color", width=27%) = "#6b7280"
-                button about (icon="note", margin=0, width=6%,
+        div Label (layout="vertical", width=360px, margin=0, spacing=0, padding=2, border-radius=8px,
+                   background-color=$(colour + "26")) {
+            div (layout="horizontal", margin=0, spacing=4, alignment="center") {
+                string name (label="", font-weight="bold", font-size=13px, padding=0, width=38%) = ""
+                string tag (label="", font-size=11px, font-color="#9ca3af", padding=0, width=24%) = ""
+                string colour (label="", kind="color", font-size=11px, font-color="#9ca3af", padding=0, width=28%) = "#6b7280"
+                button about (icon="note", margin=0, padding=0, width=10%, hover-text="What this tag is about",
+                              background-color="transparent", hover-color=#8882,
                               font-color=$(../About/about == "" ? "#6b7280" : "inherit")) {
                     on click {
                         toggle_fold (path="../About")
@@ -50,7 +52,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                 }
             }
             div About (foldable=true, folded=true, margin=0) {
-                text about (label="", markdown=true, font-size=12px) = ""
+                text about (label="", markdown=true, font-size=12px, padding=4) = ""
             }
         }
 
@@ -483,7 +485,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
 
         text labels_header (markdown=true) = "## Tags"
 
-        list Labels (entry=<Label>, key="tag", layout="vertical", spacing=1) {
+        list Labels (entry=<Label>, key="tag", layout="horizontal", spacing=6, border-style=none, padding=0) {
             - {
                 - tag = "bug"
                 - name = "bug"
@@ -506,11 +508,11 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
             }
         }
 
-        div NewTag (layout="horizontal", margin=0, spacing=6, alignment="center") {
-            textbox tag (label="", placeholder="tag", width=22%) = ""
-            textbox name (label="", placeholder="shown as", width=36%) = ""
-            textbox colour (label="", placeholder="#rrggbb", width=22%) = ""
-            button add (label="+ tag", margin=0, width=12%) {
+        div NewTag (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none, padding=0) {
+            textbox tag (label="", placeholder="tag", width=120px) = ""
+            textbox name (label="", placeholder="shown as", width=200px) = ""
+            textbox colour (label="", kind="color", width=56px) = "#6b7280"
+            button add (icon="plus", label="tag", margin=0) {
                 on click {
                     if (cond=$(../tag == "")) {
                         refuse = "say a tag"
