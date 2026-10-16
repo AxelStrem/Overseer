@@ -794,9 +794,16 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     outline-offset: 2px;
 }
 
-.overseer-drag-ghost {
+/* A lifted entry is carried in an empty copy of the list it was drawn in, so that it keeps the shape
+   that list gives it; the copy is what follows the pointer. */
+.overseer-drag-shell {
     position: fixed;
     z-index: 10000;
+    pointer-events: none;
+}
+
+.overseer-drag-ghost {
+    position: relative;
     pointer-events: none;
     opacity: 0.85;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);

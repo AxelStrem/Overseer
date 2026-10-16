@@ -45,7 +45,10 @@ const list = (name, parameters, entries) => base(name, 'list', {
 }, entries)
 
 const movable = { movable: { Boolean: true } }
-const table = { view: { String: 'table' } }
+const table = {
+  view: { String: 'table' },
+  _columns: { String: JSON.stringify([{ name: 'title', label: 'title', width: '30%', span: false }]) },
+}
 
 const theDocument = () => [base('s', 'tab', { mutable: { Boolean: true } }, [
   list('A', movable, [card('a1'), card('a2'), card('a3')]),
@@ -159,6 +162,33 @@ describe('a grip', () => {
     expect(moves()).toEqual([expect.objectContaining({
       entry_path: ['s', 'T', 't3'], before: ['s', 'T', 't1'],
     })])
+  })
+
+  it('lifts a table row inside its table, so it keeps its columns', () => {
+    render()
+    const table = listAt('T')
+    const t3 = entryAt('T', 't3')
+    pointer(gripOf(t3), 'pointerdown', 50, 245)
+    pointer(window, 'pointermove', 50, 230)
+
+    const ghost = document.querySelector('.overseer-drag-ghost')
+    expect(ghost).not.toBeNull()
+    expect(ghost.classList.contains('table-row')).toBe(true)
+    const shell = ghost.parentElement
+    expect(shell).not.toBe(document.body)
+    expect(shell.classList.contains('overseer-list')).toBe(true)
+    expect(shell.classList.contains('view-table')).toBe(true)
+    expect(shell.style.gridTemplateColumns).toBe(table.style.gridTemplateColumns)
+    expect(shell.children).toHaveLength(1)
+    // It is not a list a drop could go into, nor one the page would find as the table.
+    expect(shell.hasAttribute('data-path')).toBe(false)
+    expect(shell.hasAttribute('data-movable')).toBe(false)
+    expect(shell.classList.contains('accepts-drop')).toBe(false)
+    expect(document.querySelectorAll('.overseer-list[data-movable="1"]')).toHaveLength(2)
+
+    pointer(window, 'pointerup', 50, 205)
+    expect(document.querySelector('.overseer-drag-ghost')).toBeNull()
+    expect(shell.isConnected).toBe(false)
   })
 
   it('drags at once under a finger, where elsewhere a finger that moves is scrolling', () => {

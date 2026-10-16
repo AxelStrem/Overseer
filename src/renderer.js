@@ -3837,8 +3837,12 @@ export class OverseerRenderer {
         }
         ghost.classList.add('overseer-drag-ghost')
         ghost.style.width = `${rect.width}px`
-        document.body.appendChild(ghost)
+        ghost.style.margin = '0'
+        const shell = this.dragShellFor(drag.entry, rect)
+        shell.appendChild(ghost)
+        document.body.appendChild(shell)
         drag.ghost = ghost
+        drag.shell = shell
         const line = document.createElement('div')
         line.className = 'overseer-drop-line'
         line.hidden = true
@@ -3851,6 +3855,37 @@ export class OverseerRenderer {
         this.followEntryDrag()
     }
 
+    /// What a lifted entry is carried in: an empty copy of what it is drawn in, so that the rules
+    /// keyed on its parent - a table row's columns, a board's cards - still shape it under the
+    /// pointer. Its columns are frozen at the widths they have now, since one row alone would size
+    /// them differently, and it is stripped of everything that would make it a list to drop into.
+    dragShellFor(entry, rect) {
+        const parent = entry.parentElement
+        const shell = parent.cloneNode(false)
+        for (const name of ['id', 'data-path', 'data-uid', 'data-movable', 'data-board-drag', 'data-sorted']) {
+            shell.removeAttribute(name)
+        }
+        shell.classList.remove('accepts-drop', 'drop-here', 'is-dragged', 'filtered-out')
+        shell.classList.add('overseer-drag-shell')
+        shell.hidden = false
+        const computed = getComputedStyle(parent)
+        if (computed.display === 'grid' || computed.display === 'inline-grid' || parent.style.gridTemplateColumns) {
+            const columns = computed.gridTemplateColumns
+            shell.style.gridTemplateColumns = columns && columns !== 'none' ? columns : parent.style.gridTemplateColumns
+        }
+        for (const property of ['margin', 'padding', 'border', 'outline', 'box-shadow', 'background', 'height', 'min-height', 'max-height', 'max-width']) {
+            shell.style.removeProperty(property)
+        }
+        shell.style.setProperty('margin', '0', 'important')
+        shell.style.setProperty('padding', '0', 'important')
+        shell.style.setProperty('border', 'none', 'important')
+        shell.style.setProperty('outline', 'none', 'important')
+        shell.style.setProperty('box-shadow', 'none', 'important')
+        shell.style.setProperty('background', 'transparent', 'important')
+        shell.style.setProperty('width', `${rect.width}px`, 'important')
+        return shell
+    }
+
     /// The entries of a list a drop can go before, in the order they are drawn.
     droppableEntries(list, dragged) {
         return Array.from(list.children).filter((el) => el !== dragged
@@ -3858,12 +3893,12 @@ export class OverseerRenderer {
             && !el.hidden && !el.classList.contains('filtered-out'))
     }
 
-    /// Move the ghost with the pointer, and say where the entry would land.
+    /// Move the lifted entry with the pointer, and say where it would land.
     followEntryDrag() {
         const drag = this._entryDrag
         if (!drag || !drag.started) return
-        drag.ghost.style.left = `${drag.x - drag.offsetX}px`
-        drag.ghost.style.top = `${drag.y - drag.offsetY}px`
+        drag.shell.style.left = `${drag.x - drag.offsetX}px`
+        drag.shell.style.top = `${drag.y - drag.offsetY}px`
         const under = typeof document.elementFromPoint === 'function'
             ? document.elementFromPoint(drag.x, drag.y)
             : null
@@ -3928,7 +3963,7 @@ export class OverseerRenderer {
         clearTimeout(drag.timer)
         drag.off()
         if (!drag.started) return
-        drag.ghost?.remove()
+        drag.shell?.remove()
         drag.line?.remove()
         drag.entry.classList.remove('is-dragged')
         document.body.classList.remove('overseer-dragging')
