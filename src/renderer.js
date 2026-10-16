@@ -1790,11 +1790,23 @@ export class OverseerRenderer {
                     } catch (_) { /* no-op */ }
                 }
 
-                // Apply final decision: inherit explicitly for containers without own bg
-                if ((ownEffectiveBg === null || ownEffectiveBg === undefined) && !skipBgInherit) {
-                    element.style.backgroundColor = 'inherit'
-                }
-                if (effectiveBg !== null && effectiveBg !== undefined) {
+                // Painted only where the colour changes. A node that carries on the colour it was
+                // handed shows its parent through instead of painting it again: a translucent
+                // tint painted at every level compounds into a darker shade per level, where an
+                // opaque one only looked the same. `transparent` rather than nothing, so that a
+                // surface the stylesheet gives the element does not cover the parent either.
+                // `effectiveBg` still goes to the children and to the button shading below.
+                const handedBg = inheritedStyles.backgroundColor ?? null
+                const carriesItOn = effectiveBg === null || effectiveBg === undefined
+                    || (handedBg !== null && String(effectiveBg).trim() === String(handedBg).trim())
+                if (carriesItOn) {
+                    if (!skipBgInherit) element.style.backgroundColor = 'transparent'
+                    // A field keeps its native look, but `applyNodeStyles` has already painted
+                    // it with the colour it carries, which is its parent's.
+                    else if (handedBg !== null && ownEffectiveBg !== null && ownEffectiveBg !== undefined) {
+                        element.style.backgroundColor = ''
+                    }
+                } else {
                     try { element.style.backgroundColor = effectiveBg } catch (_) {}
                 }
 
@@ -6631,10 +6643,13 @@ export class OverseerRenderer {
         
         // Legacy background support (keep for compatibility) and computed background
         // Do not override background already set by renderNode's effectiveBg logic.
+        // Nor paint a colour that was only handed down: whatever handed it has painted it, and a
+        // translucent one painted again comes out darker.
+        const handedDown = params['_inherited_background-color'] !== undefined
         if (!element.style.backgroundColor) {
             if (params.background) {
                 element.style.backgroundColor = params.background
-            } else {
+            } else if (!handedDown) {
                 // New styling parameters (prefer computed values)
                 const bgColor = this.getParameterValue(node, 'background-color')
                 const hasComputedBg = !!(node?.parameters && node.parameters['_computed_background-color'] !== undefined)
