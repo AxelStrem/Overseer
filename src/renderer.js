@@ -1227,6 +1227,7 @@ export class OverseerRenderer {
         }
         // An entry repainted in a board stays in the column it was drawn in until asked again.
         try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
+        try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
         return true
     }
 
@@ -1582,6 +1583,7 @@ export class OverseerRenderer {
         // render would otherwise show every entry for a frame before hiding most of them again.
         try { this.applyFilters() } catch (_) { /* a filter must never break a render */ }
         try { this.reopenDraftIfDrawn() } catch (_) { /* the edit stays kept */ }
+        try { this.arrangeGrips() } catch (_) { /* never break a render over a grip */ }
         return rendered
     }
     _renderDocumentProfiled(overseerDocument) {
@@ -3658,8 +3660,9 @@ export class OverseerRenderer {
         let entry = target
         while (entry && !this.isEntryElementOf(entry, list)) entry = entry.parentElement
         if (!entry || !entry.dataset || !entry.dataset.uid || !entry.dataset.path) return
+        if (!this.entryCanBeDragged(entry, list)) return
 
-        const touch = event.pointerType === 'touch' || event.pointerType === 'pen'
+        const touch =event.pointerType === 'touch' || event.pointerType === 'pen'
         const drag = {
             list, entry, touch,
             pointerId: event.pointerId,
@@ -3706,6 +3709,48 @@ export class OverseerRenderer {
         // A finger on a grip means the drag: the hold only stands in for knowing that.
         if (touch && byGrip) this.beginEntryDrag()
         else if (touch) drag.timer = setTimeout(() => this.beginEntryDrag(), 350)
+    }
+
+    /**
+     * Whether an entry of a list that can be dragged in can be dragged now.
+     *
+     * Not when it says it stays where it is (`movable=false`, a pinned item's formula, say). Nor
+     * in a list the document keeps sorted, where it can only go to another list that takes its
+     * entries, when no such list is on the page.
+     */
+    entryCanBeDragged(entry, list) {
+        if (this.entryStays(this.nodeDrawnBy(entry))) return false
+        if (list.dataset.sorted !== '1') return true
+        const template = list.dataset.entryTemplate || ''
+        if (template === '') return false
+        return Array.from(document.querySelectorAll('.overseer-list[data-movable="1"]'))
+            .some((other) => other !== list && other.dataset.entryTemplate === template && !entry.contains(other))
+    }
+
+    /// Whether an entry says `movable=false` - usually from its template, often as a formula.
+    entryStays(node) {
+        if (!node) return false
+        const said = this.getParameterValue(node, 'movable')
+        return said === false || String(said ?? '').trim().toLowerCase() === 'false'
+    }
+
+    /// Mark each grip on the page as one that drags its entry now or not, which is how it is drawn:
+    /// faint where its list cannot be dragged, where its entry stays, or where it has nowhere to go.
+    /// After every drawing, since a value can change any of them.
+    arrangeGrips() {
+        for (const grip of document.querySelectorAll('.mark-grip')) {
+            grip.dataset.live = this.gripCanDrag(grip) ? '1' : '0'
+        }
+    }
+
+    gripCanDrag(grip) {
+        // The same list a press on it would drag in - see `armEntryDrag`.
+        const list = grip.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"]')
+        if (!list) return false
+        let entry = grip
+        while (entry && !this.isEntryElementOf(entry, list)) entry = entry.parentElement
+        if (!entry || !entry.dataset || !entry.dataset.uid || !entry.dataset.path) return false
+        return this.entryCanBeDragged(entry, list)
     }
 
     /// Whether an element is one of a list's entries: drawn in it, or in a column of it as a board.
@@ -4617,6 +4662,7 @@ export class OverseerRenderer {
         const anchor = this._anchorForPath(path)
         this.updateNodeValue(node, after)
         try { this.arrangeBoards() } catch (_) { /* never break a write over a view */ }
+        try { this.arrangeGrips() } catch (_) { /* never break a write over a view */ }
         if (this.declaresEvent(node, 'change') && window.app.currentFile) {
             try {
                 await this.emitEvent(node, { dataset: { path: JSON.stringify(path) } }, 'change', { String: after })
@@ -9692,6 +9738,7 @@ export class OverseerRenderer {
 
             // A value that decides which column of a board its entry stands in moves the entry.
             try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
+            try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
             if (DEBUG_MODE) console.log(`✅ Selective update completed: ${updateCount} elements updated`)
             return updateCount > 0
             
@@ -9750,6 +9797,7 @@ export class OverseerRenderer {
                 const done = this.repaintTab(node, el, pathArray, { backgroundColor: bg })
                 try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
                 try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
+                try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
                 try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return done
             }
@@ -9771,6 +9819,7 @@ export class OverseerRenderer {
                 // of its column.
                 try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
                 try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
+                try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
                 try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return true
             }

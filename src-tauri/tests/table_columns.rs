@@ -162,6 +162,8 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
     assert_eq!(
         names(&nodes, "Items"),
         vec![
+            // The grip each row is dragged by, in a column of its own with no heading.
+            "mark",
             "handle",
             "title",
             "stage",
@@ -182,11 +184,11 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
     );
 
     let columns = columns(&nodes, "Items");
-    // Bar the talk, work and drop buttons, which say what they are by their icons - as the note
-    // beside a task in the task manager does - and have no room for a word in their columns.
+    // Bar the grip and the talk, work and drop buttons, which say what they are by their icons - as
+    // the note beside a task in the task manager does - and have no room for a word in their columns.
     let headings: Vec<&str> = columns
         .iter()
-        .filter(|c| !c["span"].as_bool().unwrap_or(false) && !["talk", "work", "drop"].contains(&c["name"].as_str().unwrap_or("")))
+        .filter(|c| !c["span"].as_bool().unwrap_or(false) && !["mark", "talk", "work", "drop"].contains(&c["name"].as_str().unwrap_or("")))
         .map(|c| c["label"].as_str().unwrap_or(""))
         .collect();
     assert!(

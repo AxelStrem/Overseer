@@ -3441,6 +3441,12 @@ impl ActionExecutor {
             let item = source.children.get(from_pos).cloned().ok_or_else(|| {
                 OverseerError::ValidationError(format!("Nothing at: {}", entry_path))
             })?;
+            if Self::entry_stays(&item) {
+                return Err(OverseerError::ValidationError(format!(
+                    "{} says movable=false, so it stays where it is",
+                    item.name
+                )));
+            }
             if from != to {
                 let made_from = Self::entry_template_name(source);
                 if made_from.is_none() || made_from != Self::entry_template_name(target) {
@@ -3492,6 +3498,20 @@ impl ActionExecutor {
         match list.parameters.get("movable") {
             Some(OverseerValue::Boolean(b)) => *b,
             Some(OverseerValue::String(s)) => s.trim().eq_ignore_ascii_case("true"),
+            _ => false,
+        }
+    }
+
+    /// Whether an entry says it stays where it is - `movable=false` on the entry itself, usually
+    /// from its template and often a formula, such as a pinned item's. Unsaid, its list decides.
+    fn entry_stays(entry: &OverseerNode) -> bool {
+        let said = entry
+            .parameters
+            .get("_computed_movable")
+            .or_else(|| entry.parameters.get("movable"));
+        match said {
+            Some(OverseerValue::Boolean(b)) => !*b,
+            Some(OverseerValue::String(s)) => s.trim().eq_ignore_ascii_case("false"),
             _ => false,
         }
     }

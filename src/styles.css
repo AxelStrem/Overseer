@@ -715,15 +715,15 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     justify-content: center;
 }
 
-/* Faint where nothing can be dragged by it: a list that is not movable, or is sorted. */
+/* Faint where it drags nothing: its list is not movable or is sorted, or its entry stays where it
+   is. The page marks each grip that drags its entry now - see `arrangeGrips`. */
 .mark-grip {
     align-self: center;
     padding: 2px;
     opacity: 0.25;
 }
 
-.overseer-list[data-movable="1"] .mark-grip,
-.overseer-list[data-board-drag="1"] .mark-grip {
+.mark-grip[data-live="1"] {
     opacity: 0.5;
     cursor: grab;
     /* A finger on a grip drags at once, so it must not scroll the page as well. */
@@ -732,8 +732,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     -webkit-user-select: none;
 }
 
-.overseer-list[data-movable="1"] .mark-grip:hover,
-.overseer-list[data-board-drag="1"] .mark-grip:hover {
+.mark-grip[data-live="1"]:hover {
     opacity: 0.9;
 }
 

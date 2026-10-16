@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // `mark (type="grip")` in an entry is what the entry is always dragged by: a press on it lifts the
 // entry even where the press would otherwise select a value's text, and a finger on it drags at
-// once, with no hold first. Where the list cannot be dragged, the grip lifts nothing.
+// once, with no hold first. Where the list cannot be dragged, or the entry says it stays where it
+// is, the grip lifts nothing and is drawn faint.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -32,7 +33,7 @@ const wrapper = (name, node_type, parameters, children) => ({ ...base(name, node
 
 const grip = () => wrapper('mark', 'mark', { type: { String: 'grip' } })
 
-const card = (name) => base(name, 'div', {}, [
+const card = (name, parameters = {}) => base(name, 'div', parameters, [
   wrapper('div', 'div', { layout: { String: 'horizontal' } }, [
     grip(),
     base('title', 'string', { value: { String: name } }),
@@ -54,9 +55,9 @@ const theDocument = () => [base('s', 'tab', { mutable: { Boolean: true } }, [
 
 let app
 
-const render = () => {
+const render = (made = theDocument()) => {
   app = new OverseerApp()
-  app.currentDocument = theDocument()
+  app.currentDocument = made
   app.currentFile = 'd.os'
   app._currentText = 'TEXT'
   app.renderer._filters = new Map()
@@ -109,6 +110,8 @@ const pressAndMove = (target, top, pointerType = 'mouse') => {
   pointer(window, 'pointermove', 50, top + 5, pointerType)
   pointer(window, 'pointerup', 50, top + 5, pointerType)
 }
+
+const pinned = { movable: { Formula: 'pinned == false' }, _computed_movable: { Boolean: false } }
 
 const moves = () => invoke.mock.calls.filter(([cmd]) => cmd === 'move_overseer_entry').map(([, args]) => args)
 
@@ -179,5 +182,44 @@ describe('a grip', () => {
     pointer(window, 'pointerup', 50, 405)
     expect(document.querySelector('.overseer-drag-ghost')).toBeNull()
     expect(moves()).toEqual([])
+  })
+
+  it('is marked live where it drags its entry, and faint where its list cannot be dragged', () => {
+    render()
+    expect(gripOf(entryAt('A', 'a1')).dataset.live).toBe('1')
+    expect(gripOf(entryAt('T', 't1')).dataset.live).toBe('1')
+    expect(gripOf(entryAt('C', 'c1')).dataset.live).toBe('0')
+  })
+
+  it('lifts nothing, and is faint, on an entry that says it stays where it is', () => {
+    render([base('s', 'tab', { mutable: { Boolean: true } }, [
+      list('A', movable, [card('a1'), card('a2'), card('a3', pinned)]),
+      list('T', { ...movable, ...table }, []),
+      list('C', {}, []),
+    ])])
+    const a3 = entryAt('A', 'a3')
+    expect(gripOf(a3).dataset.live).toBe('0')
+    expect(gripOf(entryAt('A', 'a2')).dataset.live).toBe('1')
+    pressAndMove(gripOf(a3), 0)
+    pressAndMove(a3, 0)
+    expect(document.querySelector('.overseer-drag-ghost')).toBeNull()
+    expect(moves()).toEqual([])
+  })
+
+  it('is faint in a list the document keeps sorted, unless another list takes its entries', () => {
+    const sorted = { ...movable, sort_by: { String: 'title' } }
+    render([base('s', 'tab', { mutable: { Boolean: true } }, [
+      list('A', sorted, [card('a1'), card('a2')]),
+      list('T', { ...movable, ...table }, [card('t1')]),
+      list('C', {}, []),
+    ])])
+    expect(gripOf(entryAt('A', 'a1')).dataset.live).toBe('1')
+
+    render([base('s', 'tab', { mutable: { Boolean: true } }, [
+      list('A', sorted, [card('a1'), card('a2')]),
+      list('T', table, [card('t1')]),
+      list('C', {}, []),
+    ])])
+    expect(gripOf(entryAt('A', 'a1')).dataset.live).toBe('0')
   })
 })

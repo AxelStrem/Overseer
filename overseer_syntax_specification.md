@@ -285,6 +285,16 @@ of its own (`sort_by`) takes an entry dropped into it from elsewhere, but cannot
 hand. The entry moves in one change: it is never in both lists or in neither, and one undo puts
 it back.
 
+An entry can say it stays where it is with `movable=false` of its own, usually in its template and
+often as a formula, while the rest of its list moves around it:
+
+```overseer
+div Item (movable=$(pinned == false)) {
+    string title = ""
+    bool pinned = false
+}
+```
+
 ```overseer
 list Todo (entry=<Card>, movable=true) { }
 list Doing (entry=<Card>, movable=true) { }
@@ -581,8 +591,9 @@ no step of any address, so it can be added to or taken out of a document without
 formula. Its `type` says what it draws.
 
 `grip` is the place an entry of a movable list, or a card of a board, is dragged by: a press on it
-lifts the entry whatever lies around it, and a finger on it drags at once. Where the list cannot be
-dragged, it is drawn faint and lifts nothing.
+lifts the entry whatever lies around it, and a finger on it drags at once. Where the entry cannot be
+dragged - its list is not movable or is sorted with nowhere else to drop into, or the entry says
+`movable=false` - it is drawn faint and lifts nothing.
 
 ```overseer
 div Card (layout="vertical") {
@@ -1364,7 +1375,7 @@ div Tasks {
 - **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`)
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
-- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `lines`, `movable`, `sortable`
+- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `lines`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is)
 - **Mounts**: `source`, `lazy`, `mutable`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`

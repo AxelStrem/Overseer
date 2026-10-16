@@ -201,6 +201,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                                     (done >= 75 ? "#14321f" :
                                     (done >= 25 ? "#1c2a3a" : "inherit")))),
                   font-color=$(waiting > 0 ? "#6b7280" : "inherit")) {
+            mark (type="grip")
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=7%) = ""
             string title (label="title", font-size=14px, width=27%,
