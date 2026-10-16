@@ -8762,7 +8762,18 @@ export class OverseerRenderer {
                         try { element.removeAttribute('data-guarded-edit') } catch(_) {}
                     }
                 } catch(_) { /* best-effort */ }
-                
+
+                // With an `on change` and a file, the text travels with the handler and the two
+                // are written as one change, as an enum's pick is. Written first and the handler
+                // asked for after, the handler's write landed before the text's did, and the
+                // text was lost: a comment edited in a project tracker came back empty.
+                if (this.declaresEvent(node, 'change') && window.app && window.app.currentFile) {
+                    element.style.display = 'block'
+                    editorContainer.remove()
+                    try { await this.emitEvent(node, element, 'change', { String: newValue }) } catch(_) {}
+                    return
+                }
+
                 // Mark document as modified
                 if (window.app && window.app.markDocumentModified) {
                     window.app.markDocumentModified()

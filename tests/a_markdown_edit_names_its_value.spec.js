@@ -111,4 +111,32 @@ describe('editing a note', () => {
       vi.useRealTimers()
     }
   })
+
+  it('goes with its change handler, as one instruction, when it has one', async () => {
+    // Written first and the handler asked for after, the handler's write landed before the
+    // text's and the text was lost: a comment edited in a project tracker came back empty.
+    const app = new OverseerApp()
+    window.app = app
+    app.currentFile = '/documents/day.os'
+    app._currentText = 'TEXT'
+    app._originalText = 'TEXT'
+    const doc = aNote('as it was')
+    doc[0].children[0].children = [{
+      name: 'change', node_type: 'on', parameters: {}, is_hierarchy_transparent: false,
+      children: [{ name: 'set', node_type: 'set', parameters: {}, children: [], is_hierarchy_transparent: false }],
+    }]
+    app._adoptDocumentPreserveRoot(doc)
+    app.renderer._filters = new Map()
+    app.renderer.renderDocument(app.currentDocument)
+    rewriteTheNote('as it is now')
+    await settle()
+
+    const ran = callsTo('run_overseer_event')
+    expect(ran, 'the handler was not asked for').toHaveLength(1)
+    expect(ran[0][1].event_name).toBe('change')
+    expect(ran[0][1].node_path).toEqual(['day', 'note'])
+    expect(ran[0][1].writing).toEqual([{ node_path: ['day', 'note'], value: { String: 'as it is now' } }])
+    expect(callsTo('write_overseer_values'), 'the text went separately as well').toHaveLength(0)
+    expect(document.querySelector('.markdown-editor-container'), 'the editor stayed open').toBeNull()
+  })
 })

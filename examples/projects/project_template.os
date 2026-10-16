@@ -168,11 +168,16 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                 string author (font-size=11px, font-weight="bold", margin=0) = ""
                 button drop (icon="trash-2", margin=0, hover-text="Remove this comment") {
                     on click {
+                        set (path="../../../../touched_at", mode="value") = $(now())
                         remove (from="../../Comments", keyField="at", keyValue=$(../at))
                     }
                 }
             }
-            text body (markdown=true, font-size=12px, margin=0) = ""
+            text body (markdown=true, font-size=12px, margin=0) = "" {
+                on change {
+                    set (path="../../../../touched_at", mode="value") = $(now())
+                }
+            }
         }
 
         div Run (layout="horizontal", margin=0, spacing=6, alignment="center") {
@@ -206,6 +211,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                         hover-text="Where it is: filed, planning, ready, testing or later",
                         withhold=$(open_kids > 0 ? "finished, cancelled" : "")) = "filed" {
                 on change {
+                    set (path="../touched_at", mode="value") = $(now())
                     if (cond=$((../stage == "finished" || ../stage == "cancelled") && ../open_kids == 0)) {
                         append (list="/project/History", from="..") {
                             - finished_at = $(now())
@@ -247,11 +253,10 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                 }
             }
 
+            timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
             timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=6%,
-                               hover-text="Since it was filed, or a part of it last closed") =
-                $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
-                  /project/History.filter(|x| x/parent == ../handle)
-                                  .map(|x| x/finished_at).max())
+                               hover-text="Since its stage or its conversation last changed, or a part of it closed") =
+                $(../said_at > ../touched_at ? ../said_at : ../touched_at)
 
             button drop (icon="cross", margin=0, width=3%, hidden=$(open_kids > 0)) {
                 on click {
@@ -264,6 +269,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                 button add (label="add comment", icon="message-square-plus", margin-top=4, margin-bottom=8,
                             margin-left=0, margin-right=0) {
                     on click {
+                        set (path="../../touched_at", mode="value") = $(now())
                         append (list="../Comments") {
                             - at = $(now())
                             - author = "owner"
@@ -291,6 +297,13 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                 $(../after.filter(|h| /project/Items.filter(|x| x/handle == h).count() > 0).count())
             string colour (hidden=true) =
                 $(/project/Stages.filter(|s| s/tag == ../stage).map(|s| s/colour).first())
+            timestamp closed_at (hidden=true) =
+                $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
+                  /project/History.filter(|x| x/parent == ../handle)
+                                  .map(|x| x/finished_at).max())
+            timestamp said_at (hidden=true) =
+                $(../Talk/Comments.filter(|c| c/at > ../closed_at).count() == 0 ? ../closed_at :
+                  ../Talk/Comments.map(|c| c/at).max())
         }
 
         div Finished (layout="vertical", margin=0, spacing=2) {
@@ -307,6 +320,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                 tags flags (hidden=true) = ""
                 int points (label="", format="trim", width=5%) = 0
                 enum complexity (label="", vocabulary="/project/Complexities", width=6%) = "unassigned"
+                timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
 
                 button talk (icon="note", margin=0, width=3%,
                              font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
@@ -329,6 +343,7 @@ tab project (label="Project", mutable=true, vocabulary="/project/Items, /project
                         if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() == 0)) {
                             prepend (list="/project/Items", from="..") {
                                 - complexity = "unassigned"
+                                - touched_at = $(now())
                             }
                             remove (from="/project/History", keyField="handle", keyValue=$(../handle))
                         }
