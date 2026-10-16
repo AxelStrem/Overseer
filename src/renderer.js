@@ -1757,6 +1757,7 @@ export class OverseerRenderer {
 
             // After the fold header, so the header stays first - see `drawInheritError`.
             try { this.drawInheritError(element, node, container) } catch (_) { /* drawn as written */ }
+            try { this.drawInheritError(element, node, container, '_parse_error') } catch (_) { /* drawn as read */ }
 
             // Apply background-color with correct precedence:
             // 1) Own computed background-color when present
@@ -7428,11 +7429,13 @@ export class OverseerRenderer {
             return node.String
         }
 
-        // As a last resort, return the first string property that isn't a metadata field
+        // As a last resort, return the first string property that isn't a metadata field.
+        // What the page and the server keep on a node for themselves is not a value: a field
+        // with no value drew its `__uid` here, the id the page gives every node.
         if (typeof node === 'object' && node !== null) {
-            const skip = new Set(['name', 'type', 'node_type', 'parameters', 'children', 'label'])
+            const skip = new Set(['name', 'type', 'node_type', 'parameters', 'children', 'label', 'template', 'source_id'])
             for (const key in node) {
-                if (!skip.has(key) && typeof node[key] === 'string') {
+                if (!skip.has(key) && !key.startsWith('_') && typeof node[key] === 'string') {
                     if (DEBUG_MODE) console.log(`[DEBUG] getNodeValue: found string property '${key}' in node:`, node);
                     return node[key]
                 }
@@ -8041,8 +8044,11 @@ export class OverseerRenderer {
     /// Without a word on the page, a broken reference just looks like a thinner instance.
     /// Inside a container, at its top: its children are drawn after this, and a list's entries
     /// may already be in it. A field has no room inside it, so the line goes just before it.
-    drawInheritError(element, node, container) {
-        const why = this.getParameterValue(node, '_inherit_error')
+    ///
+    /// The parser's `_parse_error` is drawn the same way: text it could not read and passed over,
+    /// said on the node nearest to it, a line each.
+    drawInheritError(element, node, container, key = '_inherit_error') {
+        const why = this.getParameterValue(node, key)
         if (why === null || why === undefined || why === '') return
         const line = document.createElement('div')
         line.className = 'inherit-error'

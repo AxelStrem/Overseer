@@ -96,6 +96,8 @@ struct BlockCapture {
     children: Vec<OverseerNode>,
     open_span: (usize, usize),
     close_span: (usize, usize),
+    /// What was passed over with nothing read after it, said on the node the block is the body of.
+    unread: Vec<String>,
 }
 
 enum BodyKind {
@@ -152,6 +154,95 @@ fn shared_from_offsets(ctx: ParserInputContext, start: usize, end: usize) -> cra
 
 fn current_parser_context() -> Option<ParserInputContext> {
     PARSER_CONTEXT_STACK.with(|stack| stack.borrow().last().copied())
+}
+
+/// Where the parser keeps why it passed over text it could not read - see `unread_at`.
+pub const PARSE_ERROR: &str = "_parse_error";
+
+/// What to say about text the parser could not read and passed over, starting at `ptr`.
+///
+/// The parser recovers rather than failing, so that one stray line does not lose the rest of a
+/// document, and the text it passes over stays in the file. It used to pass over it without a
+/// word: a document with an unterminated string and an unclosed brace opened as a few empty
+/// fields, and nothing said why. What this says is left in `PARSE_ERROR` on the node nearest
+/// the text, where the page draws it.
+fn unread_at(ptr: usize) -> Option<(usize, String)> {
+    let ctx = current_parser_context()?;
+    let source = PARSER_SOURCE_STACK.with(|stack| stack.borrow().last().cloned())?;
+    if source.len() != ctx.len || ptr < ctx.base_ptr || ptr >= ctx.base_ptr + ctx.len {
+        return None;
+    }
+    let offset = ptr - ctx.base_ptr;
+    if !source.is_char_boundary(offset) {
+        return None;
+    }
+    let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_end = source[offset..].find('\n').map(|i| offset + i).unwrap_or(source.len());
+    let number = source[..offset].matches('\n').count() + 1;
+    let line = source[line_start..line_end].trim();
+    let shown: String = if line.chars().count() > 80 {
+        line.chars().take(80).chain("...".chars()).collect()
+    } else {
+        line.to_string()
+    };
+    let why = if source[offset..].starts_with('{') {
+        format!("The {{ on line {number} is never closed")
+    } else if line.matches('"').count() % 2 == 1 {
+        format!("The text on line {number} has no closing quote: {shown}")
+    } else {
+        format!("Could not read line {number}: {shown}")
+    };
+    Some((number, why))
+}
+
+/// Whether nothing but spaces stands between `from` and `to` on one line.
+fn on_one_line(from: usize, to: usize) -> bool {
+    let Some(ctx) = current_parser_context() else { return false };
+    if from > to || from < ctx.base_ptr || to > ctx.base_ptr + ctx.len {
+        return false;
+    }
+    !slice_from_offsets(ctx, from - ctx.base_ptr, to - ctx.base_ptr).contains('\n')
+}
+
+fn say_unread(node: &mut OverseerNode, why: String) {
+    let said = match node.parameters.get(PARSE_ERROR) {
+        Some(OverseerValue::String(before)) => format!("{before}\n{why}"),
+        _ => why,
+    };
+    node.parameters.insert(PARSE_ERROR.to_string(), OverseerValue::String(said));
+}
+
+/// Passages passed over among one run of siblings, said on the nearest of them: the one each
+/// follows on its own line, else the next one, else - with no next - whoever holds them.
+#[derive(Default)]
+struct Unread {
+    /// Where the last sibling's own text ended, and that it is the last in `nodes`.
+    last_end: Option<usize>,
+    waiting: Vec<String>,
+    /// Lines already said. Passing over a line a character at a time can read a word of it as a
+    /// node and then pass over the rest, and the line is still one line that could not be read.
+    said: Vec<usize>,
+}
+
+impl Unread {
+    fn passed_over(&mut self, nodes: &mut [OverseerNode], ptr: usize) {
+        let Some((line, why)) = unread_at(ptr) else { return };
+        if self.said.contains(&line) {
+            return;
+        }
+        self.said.push(line);
+        match (self.last_end, nodes.last_mut()) {
+            (Some(end), Some(last)) if on_one_line(end, ptr) => say_unread(last, why),
+            _ => self.waiting.push(why),
+        }
+    }
+
+    fn read(&mut self, node: &mut OverseerNode, end: usize) {
+        for why in self.waiting.drain(..) {
+            say_unread(node, why);
+        }
+        self.last_end = Some(end);
+    }
 }
 
 fn slice_from_offsets(ctx: ParserInputContext, start: usize, end: usize) -> String {
@@ -400,6 +491,10 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
     let mut nodes: Vec<OverseerNode> = Vec::new();
     let mut cur = input;
     let mut pending_whitespace_bytes: usize = 0;
+    let mut unread = Unread::default();
+    // A line passed over is passed over from where the cursor was, which may be lines of
+    // comments above it: the same text is then met again, and is said once.
+    let mut last_passed_over: Option<usize> = None;
     loop {
         // Skip EOF / pure whitespace remainder
         if cur.trim().is_empty() {
@@ -419,8 +514,10 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
         match parse_node_with_meta(after_comments) {
             Ok((rest, parsed)) => {
                 let trailing_whitespace_bytes = parsed.snapshot.trailing_whitespace_bytes;
+                let own_end = parsed.snapshot.trailing_start_ptr;
                 let node_start_ptr = after_comments.as_ptr() as usize;
                 let mut node = finalize_parsed_node(parsed, leading_ptr, node_start_ptr);
+                unread.read(&mut node, own_end);
                 let mut leading_trivia_blanks = node
                     .source_snapshot
                     .as_ref()
@@ -443,6 +540,11 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
                 if !consumed_trivia.is_empty() {
                     SourceRegistry::append_document_trailing(consumed_trivia);
                 }
+                let at = after_comments.as_ptr() as usize;
+                if !after_comments.trim().is_empty() && last_passed_over != Some(at) {
+                    last_passed_over = Some(at);
+                    unread.passed_over(&mut nodes, at);
+                }
                 // Failed to parse a node; consume one physical line from original cursor to avoid infinite loop
                 if let Some(pos) = cur.find('\n') {
                     cur = &cur[pos + 1..];
@@ -450,6 +552,13 @@ pub fn parse_document(input: &str) -> IResult<&str, Vec<OverseerNode>> {
                     break;
                 }
             }
+        }
+    }
+    // Nothing read after it: said on what came before. A document of which nothing at all could
+    // be read has nowhere to say it, and opens empty.
+    if let Some(last) = nodes.last_mut() {
+        for why in unread.waiting.drain(..) {
+            say_unread(last, why);
         }
     }
     // Post-parse enhancement: heuristic pass to improve authored_dash detection for nested dash override lines.
@@ -739,6 +848,7 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     let mut children: Vec<OverseerNode> = Vec::new();
     let mut raw_value_literal: Option<String> = None;
     let mut value_parameter: Option<OverseerValue> = None;
+    let mut unread_in_body: Vec<String> = Vec::new();
 
     match body_kind {
         BodyKind::ValueAssignment(capture) => {
@@ -755,6 +865,7 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
             block_open_span = Some(capture.open_span);
             block_close_span = Some(capture.close_span);
             children = capture.children;
+            unread_in_body = capture.unread;
         }
         BodyKind::ValueThenBlock(value, block) => {
             assignment_span = Some(value.assignment_span);
@@ -764,6 +875,7 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
             block_open_span = Some(block.open_span);
             block_close_span = Some(block.close_span);
             children = block.children;
+            unread_in_body = block.unread;
         }
         BodyKind::None => {}
     }
@@ -791,6 +903,9 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
         node.parameters = param_map;
     }
     node.children = children;
+    for why in unread_in_body {
+        say_unread(&mut node, why);
+    }
 
     if authored_plus {
         node.authored_plus = true;
@@ -1021,6 +1136,10 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
     let open_end_ptr = cursor.as_ptr() as usize;
     let mut children: Vec<OverseerNode> = Vec::new();
     let mut pending_whitespace_bytes: usize = 0;
+    let mut unread = Unread::default();
+    // Inside a block the parser passes over what it cannot read a character at a time, until
+    // something reads again; the run is said once, from where it began.
+    let mut passing_over: Option<usize> = None;
 
     loop {
         let (after_comments, _) = match skip_comments_and_whitespace(cursor) {
@@ -1033,6 +1152,9 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
         let node_start_ptr = after_comments.as_ptr() as usize;
 
         if let Some(rest) = after_comments.strip_prefix('}') {
+            if let Some(at) = passing_over.take() {
+                unread.passed_over(&mut children, at);
+            }
             for (idx, ch) in children.iter_mut().enumerate() {
                 ch.child_original_index = Some(idx);
             }
@@ -1044,6 +1166,7 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
                     children,
                     open_span: (open_start_ptr, open_end_ptr),
                     close_span: (close_start_ptr, close_end_ptr),
+                    unread: unread.waiting,
                 },
             ));
         }
@@ -1051,7 +1174,12 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
         match parse_node_with_meta(after_comments) {
             Ok((rest, parsed)) => {
                 let trailing_whitespace_bytes = parsed.snapshot.trailing_whitespace_bytes;
+                let own_end = parsed.snapshot.trailing_start_ptr;
+                if let Some(at) = passing_over.take() {
+                    unread.passed_over(&mut children, at);
+                }
                 let mut node = finalize_parsed_node(parsed, leading_ptr, node_start_ptr);
+                unread.read(&mut node, own_end);
                 let mut leading_trivia_blanks = node
                     .source_snapshot
                     .as_ref()
@@ -1073,6 +1201,9 @@ fn parse_block_capture(input: &str) -> IResult<&str, BlockCapture> {
             Err(_) => {
                 if cursor.is_empty() {
                     break;
+                }
+                if passing_over.is_none() && !after_comments.trim().is_empty() {
+                    passing_over = Some(node_start_ptr);
                 }
                 cursor = &cursor[1..];
             }

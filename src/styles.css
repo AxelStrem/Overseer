@@ -1686,6 +1686,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
   color: #b00020;
   font-size: 0.9em;
   margin: 4px 0;
+  white-space: pre-line;
 }
 
 /* Responsive Design */

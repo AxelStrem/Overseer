@@ -2042,6 +2042,8 @@ tab Main {
             // Update status bar with current file info
             if (this.isDocumentModified) {
                 this.setStatus(`Editing: ${fileName}`, 'Unsaved changes', 'warning')
+            } else if (this.hasUnreadText()) {
+                this.setStatus(`Editing: ${fileName}`, 'Parts of it could not be read - see the lines in red', 'warning')
             } else {
                 this.setStatus(`Editing: ${fileName}`, 'All changes saved', 'success')
             }
@@ -2083,6 +2085,15 @@ tab Main {
     }
 
 
+
+    /// Whether the parser passed over text of the open document it could not read - see
+    /// `drawInheritError`. Said in the status line too, which would otherwise call such a
+    /// document saved and well.
+    hasUnreadText() {
+        const walk = (nodes) => Array.isArray(nodes) && nodes.some((node) =>
+            (node.parameters && node.parameters._parse_error !== undefined) || walk(node.children))
+        return walk(this.currentDocument)
+    }
 
     setStatus(message, info = '', type = 'info') {
         const statusMessage = document.getElementById('status-message')

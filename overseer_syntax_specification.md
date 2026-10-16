@@ -85,6 +85,10 @@ list Items (entry=string) {
 }
 ```
 
+#### Text that cannot be read
+
+A line that cannot be read - a string without its closing quote, a `{` never closed, a stray word - does not stop the rest of the document from being read. It is passed over and left in the file as it stands, and the page says so in red on the nearest node, with its line: `The text on line 2 has no closing quote: string name = "A page`.
+
 ### 2. Data Types
 
 #### Primitive Types:
