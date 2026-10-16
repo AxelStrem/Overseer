@@ -1682,6 +1682,13 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
   margin-bottom: 8px;
 }
 
+/* Why a template could not be had - see `drawInheritError`. */
+.inherit-error {
+  color: #b00020;
+  font-size: 0.9em;
+  margin: 4px 0;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .toolbar {

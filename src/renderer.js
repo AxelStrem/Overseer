@@ -1753,6 +1753,9 @@ export class OverseerRenderer {
             // Before the children, so it is the first thing in the div - see `drawFoldHeader`.
             try { this.drawFoldHeader(element, node, path) } catch (_) { /* it still shows, unfoldable */ }
 
+            // After the fold header, so the header stays first - see `drawInheritError`.
+            try { this.drawInheritError(element, node, container) } catch (_) { /* drawn as written */ }
+
             // Apply background-color with correct precedence:
             // 1) Own computed background-color when present
             // 2) If no computed and raw is a literal color, use it
@@ -7983,6 +7986,31 @@ export class OverseerRenderer {
             if (e.key === 'Enter' || e.key === ' ') press(e)
         })
         element.appendChild(header)
+    }
+
+    /// Why the template an instance or a list names could not be had, said where it is drawn.
+    ///
+    /// The resolver leaves the reason in `_inherit_error` - a file missing or unparsable, a node
+    /// the file lacks, an instance that holds itself - and draws the node as it was written.
+    /// Without a word on the page, a broken reference just looks like a thinner instance.
+    /// Inside a container, at its top: its children are drawn after this, and a list's entries
+    /// may already be in it. A field has no room inside it, so the line goes just before it.
+    drawInheritError(element, node, container) {
+        const why = this.getParameterValue(node, '_inherit_error')
+        if (why === null || why === undefined || why === '') return
+        const line = document.createElement('div')
+        line.className = 'inherit-error'
+        line.textContent = String(why)
+        // An instance whose template is missing keeps the template's name as its kind, so it is
+        // told for a container by what it holds.
+        const kind = String(node.node_type || node.type || '').toLowerCase()
+        const holds = Array.isArray(node.children) && node.children.length > 0
+        if (holds || ['div', 'list', 'tab', 'table'].includes(kind)) {
+            const header = element.querySelector(':scope > .overseer-fold-header')
+            element.insertBefore(line, header ? header.nextSibling : element.firstChild)
+        } else if (element.parentNode === container) {
+            container.insertBefore(line, element)
+        }
     }
 
     /// The folds a press asked for - `fold`, `unfold`, `toggle_fold` - in the order it asked.
