@@ -2882,6 +2882,9 @@ impl ActionExecutor {
             node.source_fingerprint = None;
         }
         node.source_id = None;
+        // What the template's own instances wrote is the template's now, not this clone's.
+        node.parameters.remove("_written_at");
+        node.parameters.remove("_written_up");
         node.parameters
             .insert("_template_node".to_string(), OverseerValue::Boolean(true));
         let keys: Vec<String> = node

@@ -249,7 +249,14 @@ impl Serialize for Params {
 /// a node was declared as.
 fn only_for_writing_back(key: &str) -> bool {
     (key.starts_with("_template_") && key != "_template_type")
-        || matches!(key, "_explicit_child_override" | "_override_present" | "_explicit_overrides")
+        || matches!(
+            key,
+            "_explicit_child_override"
+                | "_override_present"
+                | "_explicit_overrides"
+                | "_written_at"
+                | "_written_up"
+        )
 }
 
 impl<'de> Deserialize<'de> for Params {

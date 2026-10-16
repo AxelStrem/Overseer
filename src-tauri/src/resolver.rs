@@ -1521,6 +1521,16 @@ fn resolve_node_templates(
                                         child.child_original_index = Some(c_idx);
                                     }
                                     merge_node(&mut resolved_item, &list_item.children);
+                                    // The entry's own text, rather than its template's: what it
+                                    // wrote is given back from it, as an instance's is - see
+                                    // `file_ops::rewrite_written`.
+                                    if let Some(snap) = list_item.source_snapshot.as_ref().filter(|snap| {
+                                        matches!(snap.origin, crate::types::SnapshotOrigin::Parsed)
+                                    }) {
+                                        resolved_item.source_snapshot = Some(snap.clone());
+                                        resolved_item.source_fingerprint = list_item.source_fingerprint;
+                                        resolved_item.source_id = list_item.source_id.clone();
+                                    }
                                     // After merging, recursively propagate authored_dash, explicit markers, and ordering from override tree
                                     fn propagate_override_metadata(
                                         src: &OverseerNode,
@@ -2398,7 +2408,7 @@ fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]) {
     let mut cursor: Vec<usize> = vec![0];
     let mut unmatched: Vec<OverseerNode> = Vec::new();
 
-    for override_field in overrides {
+    for (position, override_field) in overrides.iter().enumerate() {
         if override_field.authored_plus {
             let (index, parent_path) = cursor.split_last().expect("the cursor is never empty");
             let parent = if parent_path.is_empty() {
@@ -2408,7 +2418,9 @@ fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]) {
             };
             if let Some(parent) = parent {
                 let index = (*index).min(parent.children.len());
-                parent.children.insert(index, override_field.clone());
+                let mut added = override_field.clone();
+                mark_written(&mut added, position, parent_path.len());
+                parent.children.insert(index, added);
                 cursor = parent_path.to_vec();
                 cursor.push(index + 1);
             }
@@ -2437,6 +2449,7 @@ fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]) {
             Some(path) => {
                 if let Some(template_field) = get_child_mut_by_path(template, &path) {
                     merge_into_field(template_field, override_field);
+                    mark_written(template_field, position, path.len() - 1);
                 }
                 cursor = after(&path);
             }
@@ -2445,12 +2458,38 @@ fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]) {
                     "[RESOLVER]   Override '{}' had no matching field in template; kept after the inherited ones",
                     override_field.name
                 );
-                unmatched.push(override_field.clone());
+                let mut kept = override_field.clone();
+                mark_written(&mut kept, position, 0);
+                unmatched.push(kept);
             }
         }
     }
 
     template.children.extend(unmatched);
+}
+
+/// Records on a node that the instance's block wrote it: `_written_at` is where in the block,
+/// and `_written_up` how many unnamed nodes it sits below the block's own node, since a named
+/// element finds its field through them and a `+` lands wherever the cursor is. The writer reads
+/// both to give back the block as it was written, whatever the template put around it.
+fn mark_written(node: &mut OverseerNode, position: usize, up: usize) {
+    node.parameters.insert(
+        "_written_at".to_string(),
+        OverseerValue::Integer(position as i64),
+    );
+    node.parameters
+        .insert("_written_up".to_string(), OverseerValue::Integer(up as i64));
+}
+
+/// Whether a node was written into the block of the node it is a direct child of, and where.
+fn written_here(node: &OverseerNode) -> Option<usize> {
+    match (
+        node.parameters.get("_written_at"),
+        node.parameters.get("_written_up"),
+    ) {
+        (Some(OverseerValue::Integer(at)), Some(OverseerValue::Integer(0))) => Some(*at as usize),
+        _ => None,
+    }
 }
 
 /// Applies one override to the template field it matched: its value, its own parameters, and its
@@ -2555,11 +2594,6 @@ fn merge_into_field(template_field: &mut OverseerNode, override_field: &Overseer
     } else if !override_field.children.is_empty() {
         // For non-list container nodes, deep-merge override children rather than replacing the
         // entire children array. This preserves defaults for siblings that are not overridden.
-        let override_order: Vec<String> = override_field
-            .children
-            .iter()
-            .map(|c| c.name.clone())
-            .collect();
         // Mark the container as having explicit child overrides
         template_field.parameters.insert(
             "_override_present".to_string(),
@@ -2576,6 +2610,7 @@ fn merge_into_field(template_field: &mut OverseerNode, override_field: &Overseer
         );
         // Recursively merge into this container field
         merge_node(template_field, &override_field.children);
+        let overridden = override_field.children.len();
         // If the override container itself was dash-authored, propagate to template_field
         if override_field.authored_dash {
             template_field.authored_dash = true;
@@ -2585,30 +2620,23 @@ fn merge_into_field(template_field: &mut OverseerNode, override_field: &Overseer
         {
             template_field.child_original_index = override_field.child_original_index;
         }
-        // Apply ordering & dash provenance to overridden children
-        for (seq, name) in override_order.iter().enumerate() {
-            if let Some(ch) = template_field.children.iter_mut().find(|c| c.name == *name) {
-                if override_field
-                    .children
-                    .iter()
-                    .any(|o| o.name == *name && o.authored_dash)
-                {
+        // Each child the block wrote takes its place in the block. Found by what the walk
+        // marked rather than by name: unnamed nodes are named after their type, so every `div`
+        // of the block took the place of the first one.
+        let mut next_idx = overridden;
+        for ch in template_field.children.iter_mut() {
+            if let Some(seq) = written_here(ch) {
+                if override_field.children.get(seq).is_some_and(|o| o.authored_dash) {
                     ch.authored_dash = true;
                 }
                 ch.child_original_index = Some(seq);
-            }
-        }
-        // Push non-overridden children after overridden ones, preserving existing order among them
-        let mut next_idx = override_order.len();
-        for ch in template_field.children.iter_mut() {
-            if override_order.iter().any(|n| n == &ch.name) {
                 continue;
             }
             if ch.child_original_index.is_none() {
                 ch.child_original_index = Some(next_idx);
                 next_idx += 1;
             } else {
-                ch.child_original_index = Some(ch.child_original_index.unwrap() + override_order.len());
+                ch.child_original_index = Some(ch.child_original_index.unwrap() + overridden);
             }
         }
     }
@@ -2624,6 +2652,9 @@ fn mark_template_child_recursive(node: &mut OverseerNode) {
         node.source_fingerprint = None;
     }
     node.source_id = None;
+    // What the template's own instances wrote is the template's now, not this instance's.
+    node.parameters.remove("_written_at");
+    node.parameters.remove("_written_up");
     // Mark a simple flag to indicate this whole node is from a template
     node.parameters
         .insert("_template_node".to_string(), OverseerValue::Boolean(true));

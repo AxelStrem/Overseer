@@ -764,6 +764,59 @@ impl FileOperations {
             true
         };
 
+        // An instance someone has written into is given back as the instance wrote it, with what
+        // changed since spliced in: the merged node holds the whole template around what it wrote,
+        // and rebuilding the block from that lost every unnamed step, `+` and nested override in it.
+        if Self::is_a_written_instance(node) {
+            if let Some(snap) = snapshot.as_ref() {
+                let unchanged = node.source_fingerprint == Some(snap.fingerprint)
+                    && Self::children_match_snapshots(node);
+                let indent = fallback_indent_unit.repeat(indent_level);
+                let rewritten = if unchanged {
+                    Some(None)
+                } else {
+                    Self::rewrite_written(node, &indent, fallback_indent_unit)?
+                };
+                if let Some(rewritten) = rewritten {
+                    let emitted = !snap.leading_trivia.is_empty()
+                        && Self::emit_leading_trivia(
+                            output,
+                            &snap.leading_trivia,
+                            node,
+                            allow_snapshot_trivia,
+                            indent_level,
+                            in_list_body,
+                        );
+                    if !emitted {
+                        // Its own line, at the indent it was read at, as the trivia would
+                        // have put it.
+                        let line_start = output.rfind('\n').map(|at| at + 1).unwrap_or(0);
+                        if !output[line_start..].trim().is_empty() {
+                            while output.ends_with(' ') || output.ends_with('\t') {
+                                output.pop();
+                            }
+                            output.push('\n');
+                        } else {
+                            output.truncate(line_start);
+                        }
+                        let own = snap
+                            .leading_trivia
+                            .rsplit('\n')
+                            .next()
+                            .filter(|last| snap.leading_trivia.contains('\n') && last.trim().is_empty())
+                            .map(|last| last.trim_end_matches('\r').to_string());
+                        output.push_str(
+                            &own.unwrap_or_else(|| fallback_indent_unit.repeat(indent_level)),
+                        );
+                    }
+                    let text = rewritten
+                        .unwrap_or_else(|| snap.full_text.replace("\r\n", "\n"));
+                    output.push_str(&text);
+                    return Ok(());
+                }
+            }
+        }
+
         if force_emit_template_children {
             if let Some(snap) = snapshot.as_ref() {
                 if matches!(snap.origin, SnapshotOrigin::Parsed)
@@ -885,7 +938,7 @@ impl FileOperations {
         // Handle list-style items which start with '-'
     if in_list_body
             || node.node_type == "list_item"
-            || (indent_level > 0 && node.node_type == "-")
+            || (indent_level > 0 && node.node_type == "-" && !node.authored_plus)
         {
             // Special handling for real list bodies vs non-list contexts
             // Where the opening of this entry actually lands, which is not always the
@@ -1300,6 +1353,17 @@ impl FileOperations {
                     node.parameters.get("_template_origin")
                 {
                     output.push_str(&format!("<{}>", tpl));
+                } else if node.authored_plus {
+                    // `+` stands where the type does, and alone when the type is inferred.
+                    output.push('+');
+                    let inferred = node.node_type == "-"
+                        || matches!(
+                            node.parameters.get("_original_type"),
+                            Some(OverseerValue::String(t)) if t == "-"
+                        );
+                    if !inferred {
+                        output.push_str(&node.node_type);
+                    }
                 } else {
                     // Check if this node had its type resolved and restore original
                     if let Some(OverseerValue::String(original_type)) =
@@ -1335,26 +1399,9 @@ impl FileOperations {
         }
 
         // Handle parameters (excluding the special 'value' parameter for fields)
-        let regular_params = Self::collect_serializable_params(node);
-        if !regular_params.is_empty() {
-            output.push_str(" (");
-            let params_str: Vec<String> = regular_params
-                .iter()
-                .map(|(k, v)| {
-                    let value_str = if k.as_str() == "entry" {
-                        match v {
-                            OverseerValue::String(s) => s.clone(),
-                            OverseerValue::Template(t) => format!("<{}>", t),
-                            other => Self::serialize_value_with_node(node, other),
-                        }
-                    } else {
-                        Self::serialize_value_with_node(node, v)
-                    };
-                    format!("{}={}", k, value_str)
-                })
-                .collect();
-            output.push_str(&params_str.join(", "));
-            output.push(')');
+        if let Some(params) = Self::render_params(node) {
+            output.push(' ');
+            output.push_str(&params);
         }
 
         // Handle body (value assignment, block, both, or nothing)
@@ -1915,10 +1962,710 @@ impl FileOperations {
         Ok(())
     }
 
+    /// A node's own parameters as written in its header, `(k=v, ...)`, or nothing when it has none.
+    fn render_params(node: &OverseerNode) -> Option<String> {
+        let regular_params = Self::collect_serializable_params(node);
+        if regular_params.is_empty() {
+            return None;
+        }
+        let params_str: Vec<String> = regular_params
+            .iter()
+            .map(|(k, v)| {
+                let value_str = if k.as_str() == "entry" {
+                    match v {
+                        OverseerValue::String(s) => s.clone(),
+                        OverseerValue::Template(t) => format!("<{}>", t),
+                        other => Self::serialize_value_with_node(node, other),
+                    }
+                } else {
+                    Self::serialize_value_with_node(node, v)
+                };
+                format!("{}={}", k, value_str)
+            })
+            .collect();
+        Some(format!("({})", params_str.join(", ")))
+    }
+
+    /// A template instance, or a list entry made from one, whose block can be given back as it
+    /// was written: it was parsed from this document and has a block of its own to splice into.
+    fn is_a_written_instance(node: &OverseerNode) -> bool {
+        matches!(
+            node.parameters.get("_from_template"),
+            Some(OverseerValue::Boolean(true))
+        ) && !matches!(
+            node.parameters.get("_materialized_from_template"),
+            Some(OverseerValue::Boolean(true))
+        ) && Self::snapshot_for(node).is_some_and(|snap| {
+            matches!(snap.origin, SnapshotOrigin::Parsed)
+                && snap.body.child_envelope.open.is_some()
+                && snap.body.child_envelope.close.is_some()
+        })
+    }
+
+    /// Where in its block a node was written, and how many unnamed nodes below the block's own
+    /// node it landed - what the resolver's walk recorded when it merged the block.
+    fn written_mark(node: &OverseerNode) -> Option<(usize, usize)> {
+        match (
+            node.parameters.get("_written_at"),
+            node.parameters.get("_written_up"),
+        ) {
+            (Some(OverseerValue::Integer(at)), Some(OverseerValue::Integer(up))) => {
+                Some((*at as usize, *up as usize))
+            }
+            _ => None,
+        }
+    }
+
+    fn is_template_derived(node: &OverseerNode) -> bool {
+        matches!(
+            node.parameters.get("_template_node"),
+            Some(OverseerValue::Boolean(true))
+        ) || node.parameters.keys().any(|k| Self::marks_a_template_node(k))
+    }
+
+    /// Whether the walk goes through a node: an unnamed one, or one the address does not name.
+    /// The resolver's `walk_paths` answers the same question.
+    fn walked_through(node: &OverseerNode) -> bool {
+        node.node_type != "list"
+            && (node.is_hierarchy_transparent || node.name.is_empty() || node.name == node.node_type)
+    }
+
+    /// What was set on a node the template gave, rather than inherited with it: a value written
+    /// as an override, or a parameter that no longer carries its template's marker.
+    fn holds_an_edit_of_its_own(node: &OverseerNode) -> bool {
+        // Whatever writes to a node clears the fingerprint it was read with. One that still
+        // matches holds what it was given, override flags and all: a template's own instances
+        // set those too, and a copy of the template resolved after it was copied keeps them.
+        let untouched = Self::snapshot_for(node)
+            .is_some_and(|snap| node.source_fingerprint == Some(snap.fingerprint));
+        if untouched {
+            return false;
+        }
+        Self::value_set_since(node) || !Self::collect_serializable_params(node).is_empty()
+    }
+
+    /// Whether a node the template gave holds a value set on it since. The override flag alone
+    /// does not say so: a template's own overrides carry it too, into every copy of the template
+    /// below the copy's first level. A value set since also no longer is the template's - its
+    /// marker taken off by the action that set it, or differing from it when the page set it.
+    fn value_set_since(node: &OverseerNode) -> bool {
+        if !matches!(
+            node.parameters.get("_explicit_child_override"),
+            Some(OverseerValue::Boolean(true))
+        ) {
+            return false;
+        }
+        let Some(value) = node.parameters.get("value") else {
+            return false;
+        };
+        match node.parameters.get("_template_value") {
+            Some(given) => given != value,
+            None => true,
+        }
+    }
+
+    /// The pieces of a block: what it wrote itself, found wherever the walk put it, and what has
+    /// been set since on what the template gave, placed after the written element before it.
+    ///
+    /// `up` counts the unnamed nodes passed on the way down, so a written element is taken only by
+    /// the block that wrote it - a `- notes` written on the instance stays the instance's even
+    /// when the walk also matched the unnamed `div` it sits in. Edits are taken only by the
+    /// nearest written node above them (`take_edits`), so that none is written twice.
+    ///
+    /// Below a node no block of this document wrote, what the walk marked was written by the
+    /// template's own instances, and is the template's: `marks` is then false, and such a node is
+    /// read as any other the template gave.
+    fn gather_block<'a>(
+        children: &'a [OverseerNode],
+        up: usize,
+        take_edits: bool,
+        marks: bool,
+        anchor: &mut Option<usize>,
+        pieces: &mut Vec<BlockPiece<'a>>,
+    ) {
+        for child in children {
+            let mark = Self::written_mark(child);
+            if let (true, Some((at, child_up))) = (marks, mark) {
+                if child_up == up {
+                    pieces.push(BlockPiece::Written(at, child));
+                    *anchor = Some(at);
+                }
+                // Written by a block nearer to it, or by this one: either way what it holds is
+                // that block's, except what this block put through it on its way down.
+                if Self::walked_through(child) {
+                    Self::gather_block(&child.children, up + 1, false, marks, anchor, pieces);
+                }
+                continue;
+            }
+            let given = Self::is_template_derived(child) || mark.is_some();
+            if Self::walked_through(child)
+                && given
+                && !matches!(
+                    child.parameters.get("_from_template"),
+                    Some(OverseerValue::Boolean(true))
+                )
+            {
+                Self::gather_block(&child.children, up + 1, take_edits, marks, anchor, pieces);
+                continue;
+            }
+            if take_edits && Self::was_set_since(child, given) {
+                pieces.push(BlockPiece::Added(*anchor, child));
+            }
+        }
+    }
+
+    /// Whether a node no block wrote holds something that has to be written now: an edit of its
+    /// own or one inside it, a list given records, or a node made at runtime.
+    fn was_set_since(node: &OverseerNode, given: bool) -> bool {
+        if !given || Self::is_a_written_list(node) {
+            return true;
+        }
+        if node.node_type == "list" {
+            return false;
+        }
+        if Self::holds_an_edit_of_its_own(node) {
+            return true;
+        }
+        if Self::is_a_nested_instance(node) {
+            return false;
+        }
+        let mut anchor = None;
+        let mut inner = Vec::new();
+        Self::gather_block(&node.children, 0, true, false, &mut anchor, &mut inner);
+        !inner.is_empty()
+    }
+
+    /// An instance of another template, inside what a template gave. What is inside it is that
+    /// template's and its instance's own overrides, which carry every mark an edit would; walked
+    /// into, they were copied into every record that used it - `- input = $(../../amount)` on
+    /// each, saying something the entry never said.
+    fn is_a_nested_instance(node: &OverseerNode) -> bool {
+        matches!(
+            node.parameters.get("_from_template"),
+            Some(OverseerValue::Boolean(true))
+        )
+    }
+
+    fn line_indent_at(text: &str, at: usize) -> String {
+        let line_start = text[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        text[line_start..]
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect()
+    }
+
+    /// The text of a node a block wrote, with what changed in it since written in, or nothing
+    /// when it reads the same. `None` from the outer option means it cannot be said by splicing.
+    fn rewrite_written(
+        node: &OverseerNode,
+        indent: &str,
+        unit: &str,
+    ) -> Result<Option<Option<String>>> {
+        let Some(snap) = Self::snapshot_for(node) else {
+            return Ok(None);
+        };
+        if !matches!(snap.origin, SnapshotOrigin::Parsed) {
+            return Ok(None);
+        }
+        let unchanged_self = node.source_fingerprint == Some(snap.fingerprint);
+        // An override whose value has been taken back - a viewer's day, kept out of the file -
+        // says nothing any more, and goes.
+        if !unchanged_self
+            && snap.body.value.is_some()
+            && snap.body.child_envelope.open.is_none()
+            && !node.parameters.contains_key("value")
+        {
+            return Ok(Some(Some(String::new())));
+        }
+        // What is not the template's - a `+` element, one that matched nothing, a list and its
+        // records, another instance - is written as any other node is.
+        let own_kind = !Self::is_a_written_instance(node)
+            && (!Self::is_template_derived(node)
+                || node.node_type == "list"
+                || matches!(
+                    node.parameters.get("_from_template"),
+                    Some(OverseerValue::Boolean(true))
+                ));
+        if own_kind {
+            if unchanged_self && Self::children_match_snapshots(node) {
+                return Ok(Some(None));
+            }
+            if node.node_type == "list" {
+                if let Some(text) = Self::rewrite_list(node, &snap, indent, unit)? {
+                    return Ok(Some(text));
+                }
+            }
+            if node.children.is_empty() {
+                if let Some(text) = Self::rebuild_child_with_updated_value(node, &snap) {
+                    return Ok(Some(Some(text.replace("\r\n", "\n"))));
+                }
+            }
+            let mut text = String::from("\n");
+            let level = indent.len() / unit.len().max(1);
+            Self::serialize_node_context(node, &mut text, level, false, unit, None, false)?;
+            // The trivia around the node stays where it is in the block's text; only the node's
+            // own text is replaced.
+            let mut text = text.trim().to_string();
+            let leading = snap.leading_trivia.trim();
+            if !leading.is_empty() && text.starts_with(leading) {
+                text = text[leading.len()..].trim_start().to_string();
+            }
+            let trailing = snap.trailing_trivia.trim();
+            if !trailing.is_empty() && text.ends_with(trailing) {
+                text = text[..text.len() - trailing.len()].trim_end().to_string();
+            }
+            return Ok(Some(Some(text)));
+        }
+
+        // Spliced in the text as it was read, whose spans these are; line ends are evened out
+        // once the text is whole.
+        let full = snap.full_text.to_string();
+        let base = snap.span.0;
+        let rel = |abs: usize| abs.checked_sub(base).filter(|r| *r <= full.len());
+        let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+
+        if !unchanged_self {
+            match Self::own_line_changes(node, &snap, full.len()) {
+                Some(changes) => replacements.extend(changes),
+                None => return Ok(None),
+            }
+        }
+
+        // The block.
+        let mut anchor = None;
+        let mut pieces = Vec::new();
+        Self::gather_block(&node.children, 0, true, true, &mut anchor, &mut pieces);
+        let inner_indent = pieces
+            .iter()
+            .find_map(|piece| match piece {
+                BlockPiece::Written(_, child) => Self::snapshot_for(child)
+                    .and_then(|s| rel(s.span.0))
+                    .map(|at| Self::line_indent_at(&full, at)),
+                BlockPiece::Added(..) => None,
+            })
+            .unwrap_or_else(|| format!("{}{}", indent, unit));
+        let mut ends: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for piece in &pieces {
+            let BlockPiece::Written(at, child) = piece else { continue };
+            let Some(child_snap) = Self::snapshot_for(child) else {
+                return Ok(None);
+            };
+            let (Some(s), Some(e)) = (rel(child_snap.span.0), rel(child_snap.span.1)) else {
+                return Ok(None);
+            };
+            if s >= e || e > full.len() {
+                return Ok(None);
+            }
+            // A node's text runs on to where the next one starts; the layout after it is the
+            // block's, and stays where it is whatever replaces the node.
+            let e = s + full[s..e].trim_end().len();
+            ends.insert(*at, e);
+            match Self::rewrite_written(child, &inner_indent, unit)? {
+                None => return Ok(None),
+                Some(None) => {}
+                Some(Some(text)) => replacements.push(Self::replacing(&full, s, e, &text)),
+            }
+        }
+        let added: Vec<(Option<usize>, &OverseerNode)> = pieces
+            .iter()
+            .filter_map(|piece| match piece {
+                BlockPiece::Added(anchor, child) => Some((*anchor, *child)),
+                BlockPiece::Written(..) => None,
+            })
+            .collect();
+        if !added.is_empty() {
+            let (Some(open), Some(close)) = (
+                snap.body.child_envelope.open.as_ref(),
+                snap.body.child_envelope.close.as_ref(),
+            ) else {
+                return Ok(None);
+            };
+            let (Some(open_end), Some(close_start)) = (rel(open.span.1), rel(close.span.0)) else {
+                return Ok(None);
+            };
+            let mut by_place: Vec<(usize, String)> = Vec::new();
+            for (anchor, child) in &added {
+                let mut text = String::new();
+                Self::write_added(child, &mut text, &inner_indent, unit)?;
+                let at = match anchor {
+                    Some(a) => match ends.get(a) {
+                        Some(e) => *e,
+                        None => return Ok(None),
+                    },
+                    None => open_end,
+                };
+                by_place.push((at, text));
+            }
+            let body_is_empty = full[open_end..close_start].trim().is_empty();
+            if body_is_empty {
+                // `{ }` opened up: the additions on lines of their own, and the brace closed on the
+                // line its node began.
+                let mut body = String::from("{\n");
+                for (_, text) in &by_place {
+                    body.push_str(text);
+                }
+                body.push_str(indent);
+                body.push('}');
+                let Some(open_start) = rel(open.span.0) else {
+                    return Ok(None);
+                };
+                let Some(close_end) = rel(close.span.1) else {
+                    return Ok(None);
+                };
+                replacements.push((open_start, close_end, body.trim_end_matches('\n').to_string()));
+                // `}` ends the block's text; what follows in a close slice is not ours to keep.
+                let close_tail = &full[close_start..close_end];
+                if let Some(brace) = close_tail.find('}') {
+                    if brace + 1 < close_tail.len() {
+                        let last = replacements.last_mut().unwrap();
+                        last.2.push_str(&close_tail[brace + 1..]);
+                    }
+                }
+            } else {
+                for (at, text) in by_place {
+                    // Each on a line of its own, after the line of what it follows.
+                    let line = format!("\n{}", text.trim_end_matches('\n'));
+                    replacements.push((at, at, line));
+                }
+            }
+        }
+
+        if replacements.is_empty() {
+            return Ok(Some(None));
+        }
+        // Applied from the end, so the spans before each one stay where they were; insertions at
+        // one place keep the order they were made in.
+        let mut order: Vec<usize> = (0..replacements.len()).collect();
+        order.sort_by(|a, b| {
+            replacements[*b]
+                .0
+                .cmp(&replacements[*a].0)
+                .then_with(|| b.cmp(a))
+        });
+        let mut text = full.clone();
+        for i in order {
+            let (s, e, ref with) = replacements[i];
+            text.replace_range(s..e, with);
+        }
+        Ok(Some(Some(text.replace("\r\n", "\n"))))
+    }
+
+    /// What changed in a node's own line since it was written - its header's parameters and its
+    /// value - as replacements in its text. `None` when the text cannot say where.
+    fn own_line_changes(
+        node: &OverseerNode,
+        snap: &NodeSourceSnapshot,
+        len: usize,
+    ) -> Option<Vec<(usize, usize, String)>> {
+        let base = snap.span.0;
+        let rel = |abs: usize| abs.checked_sub(base).filter(|r| *r <= len);
+        let mut replacements = Vec::new();
+        // The header's parameters, when what they say has changed.
+        let now = Self::render_params(node);
+        let was = snap.header.parameters.as_ref();
+        let said = was.map(|slice| Self::params_said(&slice.text));
+        let current = Self::params_now(node);
+        if said.as_ref() != Some(&current) && !(said.is_none() && current.is_empty()) {
+            match (was, now) {
+                (Some(slice), now) => {
+                    let (Some(s), Some(e)) = (rel(slice.span.0), rel(slice.span.1)) else {
+                        return None;
+                    };
+                    replacements.push((s, e, now.unwrap_or_default()));
+                }
+                (None, Some(now)) => {
+                    let after = snap
+                        .header
+                        .name
+                        .as_ref()
+                        .or(snap.header.type_token.as_ref())
+                        .or(snap.header.template.as_ref());
+                    let Some(at) = after.and_then(|slice| rel(slice.span.1)) else {
+                        return None;
+                    };
+                    replacements.push((at, at, format!(" {}", now)));
+                }
+                (None, None) => {}
+            }
+        }
+        // The value, when it was written here and is no longer what was written.
+        if let (Some(slice), Some(value)) = (snap.body.value.as_ref(), node.parameters.get("value")) {
+            if !node.parameters.contains_key("_template_value") {
+                let text = Self::serialize_value_with_node(node, value);
+                if text != slice.text {
+                    let (Some(s), Some(e)) = (rel(slice.span.0), rel(slice.span.1)) else {
+                        return None;
+                    };
+                    replacements.push((s, e, text));
+                }
+            }
+        }
+        Some(replacements)
+    }
+
+    /// A list an instance wrote, with its entries given back from their own text: each one that
+    /// changed spliced in where it stands, and one added since put after the entry before it.
+    /// `None` when the entries no longer stand in the order they were written, or one was taken
+    /// out - the list is then written as any list is.
+    fn rewrite_list(
+        node: &OverseerNode,
+        snap: &NodeSourceSnapshot,
+        indent: &str,
+        unit: &str,
+    ) -> Result<Option<Option<String>>> {
+        // Spliced in the text as it was read, whose spans these are; line ends are evened out
+        // once the text is whole.
+        let full = snap.full_text.to_string();
+        let base = snap.span.0;
+        let rel = |abs: usize| abs.checked_sub(base).filter(|r| *r <= full.len());
+        let (Some(open), Some(close)) = (
+            snap.body.child_envelope.open.as_ref(),
+            snap.body.child_envelope.close.as_ref(),
+        ) else {
+            return Ok(None);
+        };
+        let (Some(open_end), Some(close_start)) = (rel(open.span.1), rel(close.span.0)) else {
+            return Ok(None);
+        };
+        let Some(mut replacements) = Self::own_line_changes(node, snap, full.len()) else {
+            return Ok(None);
+        };
+        let written_from = |child: &OverseerNode| {
+            Self::snapshot_for(child)
+                .filter(|s| matches!(s.origin, SnapshotOrigin::Parsed))
+                .and_then(|s| Some((rel(s.span.0)?, rel(s.span.1)?)))
+        };
+        let entry_indent = node
+            .children
+            .iter()
+            .find_map(|c| written_from(c))
+            .map(|(s, _)| Self::line_indent_at(&full, s))
+            .unwrap_or_else(|| format!("{}{}", indent, unit));
+        let Some(close_brace) = full[close_start..].find('}').map(|at| close_start + at) else {
+            return Ok(None);
+        };
+        // The text an entry has now: its own, with what changed spliced in, or one added since
+        // written as any entry is.
+        let entry_text = |child: &OverseerNode, span: Option<(usize, usize)>| -> Result<Option<String>> {
+            match span {
+                Some((s, e)) => Ok(match Self::rewrite_written(child, &entry_indent, unit)? {
+                    None => None,
+                    Some(None) => Some(full[s..e].trim_end().to_string()),
+                    Some(Some(text)) => Some(text.trim_end().to_string()),
+                }),
+                None => {
+                    let mut text = String::from("\n");
+                    let level = entry_indent.len() / unit.len().max(1);
+                    Self::serialize_node_context(child, &mut text, level, true, unit, None, false)?;
+                    Ok(Some(text.trim().to_string()))
+                }
+            }
+        };
+        let spans: Vec<Option<(usize, usize)>> = node.children.iter().map(|c| written_from(c)).collect();
+        let written: Vec<(usize, usize)> = spans.iter().flatten().copied().collect();
+        let in_order = written.windows(2).all(|pair| pair[0].1 <= pair[1].0);
+        if !in_order {
+            // Moved or sorted: the entries in their new order, each as its own text.
+            let mut body = String::new();
+            for (child, span) in node.children.iter().zip(spans.iter()) {
+                let Some(text) = entry_text(child, *span)? else {
+                    return Ok(None);
+                };
+                body.push_str(&format!("\n{}{}", entry_indent, text));
+            }
+            body.push_str(&format!("\n{}", indent));
+            replacements.push((open_end, close_brace, body));
+            let mut text = full.clone();
+            replacements.sort_by(|a, b| b.0.cmp(&a.0));
+            for (s, e, with) in replacements {
+                text.replace_range(s..e, &with);
+            }
+            return Ok(Some(Some(text.replace("\r\n", "\n"))));
+        }
+        // What lies between two entries is layout or a comment, unless an entry that stood there
+        // has been taken out: then only the layout before the next one stays.
+        let closing_gap = |from: usize, to: usize| -> Option<(usize, usize, String)> {
+            let gap = &full[from..to];
+            if Self::holds_only_trivia(gap) {
+                return None;
+            }
+            let kept = gap.rfind('\n').map(|at| gap[at..].to_string()).unwrap_or_else(|| " ".to_string());
+            Some((from, to, kept))
+        };
+        let mut previous_end = open_end;
+        for (child, span) in node.children.iter().zip(spans.iter()) {
+            match span {
+                Some((s, e)) => {
+                    let (s, e) = (*s, s + full[*s..*e].trim_end().len());
+                    if let Some(removed) = closing_gap(previous_end, s) {
+                        replacements.push(removed);
+                    }
+                    match Self::rewrite_written(child, &entry_indent, unit)? {
+                        None => return Ok(None),
+                        Some(None) => {}
+                        Some(Some(text)) => replacements.push(Self::replacing(&full, s, e, &text)),
+                    }
+                    previous_end = e;
+                }
+                None => {
+                    let Some(text) = entry_text(child, None)? else {
+                        return Ok(None);
+                    };
+                    replacements.push((previous_end, previous_end, format!("\n{}{}", entry_indent, text)));
+                }
+            }
+        }
+        if let Some(removed) = closing_gap(previous_end, close_brace) {
+            replacements.push(removed);
+        }
+        if previous_end == open_end && full[open_end..close_start].trim().is_empty() {
+            // `{ }` given its first entries: opened up, and closed on the line the list began.
+            let added: Vec<String> = replacements
+                .iter()
+                .filter(|(s, e, _)| *s == open_end && *e == open_end)
+                .map(|(_, _, line)| line.clone())
+                .collect();
+            if !added.is_empty() {
+                replacements.retain(|(s, e, _)| !(*s == open_end && *e == open_end));
+                let (Some(open_start), Some(close_end)) = (rel(open.span.0), rel(close.span.1)) else {
+                    return Ok(None);
+                };
+                let tail = full[close_start..close_end]
+                    .find('}')
+                    .map(|brace| full[close_start + brace + 1..close_end].to_string())
+                    .unwrap_or_default();
+                replacements.push((
+                    open_start,
+                    close_end,
+                    format!("{{{}\n{}}}{}", added.concat(), indent, tail),
+                ));
+            }
+        }
+        if replacements.is_empty() {
+            return Ok(Some(None));
+        }
+        let mut order: Vec<usize> = (0..replacements.len()).collect();
+        order.sort_by(|a, b| {
+            replacements[*b]
+                .0
+                .cmp(&replacements[*a].0)
+                .then_with(|| b.cmp(a))
+        });
+        let mut text = full.clone();
+        for i in order {
+            let (s, e, ref with) = replacements[i];
+            text.replace_range(s..e, with);
+        }
+        Ok(Some(Some(text.replace("\r\n", "\n"))))
+    }
+
+    /// `text` in place of what lies between `s` and `e`; nothing, with the line it stood on, when
+    /// the node has gone.
+    fn replacing(full: &str, s: usize, e: usize, text: &str) -> (usize, usize, String) {
+        let text = text.trim_end();
+        if !text.is_empty() {
+            return (s, e, text.to_string());
+        }
+        let line_start = full[..s].rfind('\n').map(|at| at + 1).unwrap_or(0);
+        if line_start > 0 && full[line_start..s].trim().is_empty() {
+            let from = if full[..line_start - 1].ends_with('\r') {
+                line_start - 2
+            } else {
+                line_start - 1
+            };
+            return (from, e, String::new());
+        }
+        (s, e, String::new())
+    }
+
+    /// A node no block wrote, as the override that says what was set on it since: `- name = value`
+    /// for a field, the container named with the same again inside for one that holds edits, and
+    /// a node made at runtime or a list given records written whole.
+    fn write_added(node: &OverseerNode, output: &mut String, indent: &str, unit: &str) -> Result<()> {
+        let given = Self::is_template_derived(node) || Self::written_mark(node).is_some();
+        if !given || node.node_type == "list" {
+            let mut text = String::from("\n");
+            Self::serialize_node_context(node, &mut text, indent.len() / unit.len().max(1), false, unit, None, false)?;
+            output.push_str(indent);
+            output.push_str(text.trim_start());
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            return Ok(());
+        }
+        let mut anchor = None;
+        let mut inner = Vec::new();
+        if !Self::is_a_nested_instance(node) {
+            Self::gather_block(&node.children, 0, true, false, &mut anchor, &mut inner);
+        }
+        output.push_str(indent);
+        // A div says what it is, as an entry already writes one; anything else is matched by name.
+        if node.node_type == "div" && !inner.is_empty() {
+            output.push_str(&format!("div {}", node.name));
+        } else {
+            output.push_str(&format!("- {}", node.name));
+        }
+        if let Some(params) = Self::render_params(node) {
+            output.push(' ');
+            output.push_str(&params);
+        }
+        if let (true, Some(value)) = (Self::value_set_since(node), node.parameters.get("value")) {
+            output.push_str(&format!(" = {}", Self::serialize_value_with_node(node, value)));
+        }
+        if inner.is_empty() {
+            output.push('\n');
+            return Ok(());
+        }
+        output.push_str(" {\n");
+        let deeper = format!("{}{}", indent, unit);
+        for piece in inner {
+            if let BlockPiece::Added(_, child) = piece {
+                Self::write_added(child, output, &deeper, unit)?;
+            }
+        }
+        output.push_str(indent);
+        output.push_str("}\n");
+        Ok(())
+    }
+
+    /// The parameters a header's text says, by name, as the parser reads them.
+    fn params_said(text: &str) -> Vec<(String, OverseerValue)> {
+        let probe = format!("div probe {} {{\n}}\n", text);
+        let Ok((_, nodes)) = crate::parser::parse_document(&probe) else {
+            return Vec::new();
+        };
+        let Some(node) = nodes.first() else {
+            return Vec::new();
+        };
+        let mut said: Vec<(String, OverseerValue)> = node
+            .parameters
+            .iter()
+            .filter(|(k, _)| !k.starts_with('_'))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        said.sort_by(|a, b| a.0.cmp(&b.0));
+        said
+    }
+
+    fn params_now(node: &OverseerNode) -> Vec<(String, OverseerValue)> {
+        let mut now: Vec<(String, OverseerValue)> = Self::collect_serializable_params(node)
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        now.sort_by(|a, b| a.0.cmp(&b.0));
+        now
+    }
+
     fn try_inline_patch_snapshot(
         node: &OverseerNode,
         snapshot: &NodeSourceSnapshot,
     ) -> Option<String> {
+        // A list's entries keep the text they were read from, and a list that has lost one since
+        // still holds it in its own: patched, the entry taken out came back. Its entries are
+        // written one by one instead, each from its own text.
+        if node.node_type == "list" && node.children.iter().any(Self::is_a_written_instance) {
+            return None;
+        }
         for (idx, child) in node.children.iter().enumerate() {
             if let Some(original_idx) = child.child_original_index {
                 if original_idx != idx {
@@ -2629,6 +3376,13 @@ impl OverseerFileHandler {
     pub fn serialize_nodes(nodes: &[OverseerNode]) -> Result<String> {
         FileOperations::serialize_nodes(nodes)
     }
+}
+
+/// One piece of an instance's block, as the writer gives the block back: an element the block
+/// wrote, at its place in the block, or a node set since, after the written element before it.
+enum BlockPiece<'a> {
+    Written(usize, &'a OverseerNode),
+    Added(Option<usize>, &'a OverseerNode),
 }
 
 #[cfg(test)]

@@ -409,6 +409,13 @@ walk, and the template's unnamed layout it relies on, matter only for reaching a
 placing an element among the inherited ones. A list's entries are its data, not its structure: an
 instance that writes entries into a list replaces the template's.
 
+Saving gives an instance back as it was written, with only what changed since: a value edited
+where the instance wrote it is changed there, and one edited on something only the template gave
+becomes an override in the nearest block the instance wrote around it - inside the unnamed step
+that reached it (`div (background=#eee) { - links = "..." }`), inside a named override
+(`- Deep (x=2) { - inner = "..." }`), or on the instance itself, after the element written before
+it. A parameter set on a named node the template gave is written as `- Deep (x=3)`.
+
 ### 4. Actions and Triggers
 
 Overseer supports interactive elements and automated actions:

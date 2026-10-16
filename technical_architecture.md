@@ -36,6 +36,13 @@ rules follow from how it writes: parameters go on one line, and an entry's field
 order its template declares them. A document written any other way reformats itself the first
 time anything writes to it.
 
+A template instance, or a list entry, resolves into the whole template with what it wrote merged
+in, so it is not written from that tree. The resolver's walk marks each node the instance's text
+wrote (`_written_at`, its place in the block, and `_written_up`, how many unnamed nodes below the
+block it landed), and the writer gives the instance back from its own text: each written element
+that changed spliced in where it stands, and what was set since on what only the template gave
+added as an override in the nearest written block around it.
+
 ## The modules
 
 | | |
