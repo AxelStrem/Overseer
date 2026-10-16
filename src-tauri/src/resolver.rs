@@ -2004,6 +2004,14 @@ fn resolve_node_templates(
                 missed.push(template_name.to_string());
             }
         }
+        // Whether the copy was made or not: a base missing now is to be read again once it
+        // is there.
+        if let Some(file) = &reference.file {
+            node.parameters.insert(
+                crate::bases::FROM.to_string(),
+                OverseerValue::String(crate::bases::path_of(file)),
+            );
+        }
     }
 
     // Recursively process children

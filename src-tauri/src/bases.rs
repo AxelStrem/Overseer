@@ -19,6 +19,11 @@ use std::sync::{Arc, LazyLock, Mutex};
 /// its file missing or unparsable, the node not in it, or an instance that holds itself.
 pub const ERROR: &str = "_inherit_error";
 
+/// The parameter an instance of another file's template is given: that file's full path. The
+/// resolver lets go of the reference once the copy is made, and a document held worked out has to
+/// know which files it was made from - see `held`.
+pub const FROM: &str = "_inherit_from";
+
 /// A template reference, split into the file it names, if any, and the node's name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference {
@@ -162,6 +167,68 @@ pub fn load(file: &str) -> Result<Arc<Vec<OverseerNode>>, String> {
         }
     }
     Ok(nodes)
+}
+
+/// The full path of the file a reference names, as `load` reads it.
+pub fn path_of(file: &str) -> String {
+    as_key(&locate(file, None))
+}
+
+/// Every base a worked-out document was made from, and how each file stood then - those its
+/// instances and lists name, and those each of these names in turn.
+///
+/// A document is held worked out under its own text, which an edit to its base does not change,
+/// so it is only handed out while every one of these still stands as it did - as with the files
+/// its mounts read, see `actions::mounts_held`.
+pub fn held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
+    fn named(path: &str, out: &mut Vec<String>) {
+        if let Some(file) = reference(path).file {
+            let file = path_of(&file);
+            if !out.contains(&file) {
+                out.push(file);
+            }
+        }
+    }
+    fn walk(nodes: &[OverseerNode], out: &mut Vec<String>) {
+        for node in nodes {
+            // What a mount brought in answers for its own bases, as for its own mounts.
+            if node.node_type == "mount" {
+                continue;
+            }
+            if let Some(OverseerValue::String(file)) = node.parameters.get(FROM) {
+                if !out.contains(file) {
+                    out.push(file.clone());
+                }
+            }
+            if let Some(path) = &node.template {
+                named(path, out);
+            }
+            for value in node.parameters.values() {
+                if let OverseerValue::Template(path) = value {
+                    named(path, out);
+                }
+            }
+            walk(&node.children, out);
+        }
+    }
+    let mut files = Vec::new();
+    walk(nodes, &mut files);
+    // A base's own references to other files were settled to full paths when it was read, so
+    // what it names is found the same way. Each file is looked at once, which also ends a cycle.
+    let mut next = 0;
+    while next < files.len() {
+        if let Ok(base) = load(&files[next]) {
+            walk(&base, &mut files);
+        }
+        next += 1;
+    }
+    files
+        .into_iter()
+        .map(|file| {
+            let stamp = crate::actions::mount_stamp(&file);
+            (file, stamp)
+        })
+        .collect()
 }
 
 fn names_in(nodes: &[OverseerNode], names: &mut std::collections::HashSet<String>) {

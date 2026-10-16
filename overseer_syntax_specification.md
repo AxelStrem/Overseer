@@ -452,7 +452,8 @@ what it means there - a bare `<Task>` that names a node of the base names that o
 names is looked for next to the base. A bare reference the base does not define is left for the
 deriving document to supply. A template that holds an instance of itself, in one file or across
 several, is refused, as is a reference to a file that is not there or a node it does not have;
-the instance is then kept as written.
+the instance is then kept as written. A document is worked out again once a base it was made from
+changes, or a file that base was made from, or a missing base appears.
 
 Unnamed instances need no block: `<project_base.os/tab1>` on three lines gives three tabs. Named
 ones keep their addresses apart, `a/note` and `b/note`.

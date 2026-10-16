@@ -170,17 +170,19 @@ struct Entry {
     bytes: usize,
     /// When this was last asked for, so the least useful entry is the one that goes.
     used: u64,
-    /// The files the tree's mounts were read from, and how each stood then - see
-    /// `actions::mounts_held`. The text is not all a tree was worked out from.
+    /// The files the tree's mounts were read from and the bases its templates came from, and how
+    /// each stood then - see `actions::mounts_held` and `bases::held`. The text is not all a tree
+    /// was worked out from.
     mounts: Vec<(String, String)>,
     /// The minute what reads the clock was last worked out in - see `clock_caught_up`.
     clock_minute: Option<i64>,
 }
 
 impl Entry {
-    /// Whether every file its mounts were read from still stands as it did. A food added to the
-    /// catalog changes the catalog's file and not the food tracker's text, and a tracker held from
-    /// before it was handed out as current until something else moved it.
+    /// Whether every file its mounts and bases were read from still stands as it did. A food added
+    /// to the catalog changes the catalog's file and not the food tracker's text, and a tracker
+    /// held from before it was handed out as current until something else moved it. A base a
+    /// tracker's templates come from is the same case, and is held the same way.
     fn mounts_unchanged(&self) -> bool {
         self.mounts
             .iter()
@@ -432,6 +434,18 @@ fn put(text: &str, work: impl FnOnce(&mut Entry)) {
     })
 }
 
+/// Every file a tree was worked out from besides its own text: what its mounts read, and the
+/// bases its templates came from.
+fn read_from(nodes: &[OverseerNode]) -> Vec<(String, String)> {
+    let mut files = crate::actions::mounts_held(nodes);
+    for held in crate::bases::held(nodes) {
+        if !files.contains(&held) {
+            files.push(held);
+        }
+    }
+    files
+}
+
 pub fn put_nodes(text: &str, nodes: &[OverseerNode]) {
     // Nothing is kept at all when the budget is nothing, rather than a copy being made and
     // immediately dropped.
@@ -439,7 +453,7 @@ pub fn put_nodes(text: &str, nodes: &[OverseerNode]) {
         return;
     }
     put(text, |entry| {
-        entry.mounts = crate::actions::mounts_held(nodes);
+        entry.mounts = read_from(nodes);
         entry.nodes = Some(nodes.to_vec());
         // How current what reads the clock is, is for whoever knows to say - see
         // `clock_worked_out_in`.
@@ -453,7 +467,7 @@ pub fn own_nodes(text: &str, nodes: Vec<OverseerNode>) {
         return;
     }
     put(text, |entry| {
-        entry.mounts = crate::actions::mounts_held(&nodes);
+        entry.mounts = read_from(&nodes);
         entry.nodes = Some(nodes);
         entry.clock_minute = None;
     });
