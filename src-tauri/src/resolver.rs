@@ -2505,6 +2505,13 @@ fn written_here(node: &OverseerNode) -> Option<usize> {
     }
 }
 
+/// Whether a node was written with a `{ }` block of its own, as it was read.
+fn writes_a_block(node: &OverseerNode) -> bool {
+    node.source_snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.body.child_envelope.open.is_some())
+}
+
 /// Applies one override to the template field it matched: its value, its own parameters, and its
 /// block, merged by the same walk.
 fn merge_into_field(template_field: &mut OverseerNode, override_field: &OverseerNode) {
@@ -2583,8 +2590,10 @@ fn merge_into_field(template_field: &mut OverseerNode, override_field: &Overseer
                 .insert("entry".to_string(), entry.clone());
         }
         // A list's entries are its data rather than its structure: the instance's replace the
-        // template's whole, and the walk does not go into them.
-        if !override_field.children.is_empty() {
+        // template's whole, and the walk does not go into them. A list the instance writes with
+        // an empty block has no entries; one it names only to set its parameters keeps the
+        // template's.
+        if !override_field.children.is_empty() || writes_a_block(override_field) {
             template_field.children = override_field.children.clone();
             template_field.parameters.insert(
                 "_override_present".to_string(),

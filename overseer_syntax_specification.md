@@ -446,7 +446,9 @@ div (hidden=true) {
 which the template does not have, comes last. Named elements are enough for most instances: the
 walk, and the template's unnamed layout it relies on, matter only for reaching an unnamed node or
 placing an element among the inherited ones. A list's entries are its data, not its structure: an
-instance that writes entries into a list replaces the template's.
+instance that writes a list's block - even an empty one, `- Items { }` - replaces the template's
+entries with its own. One that names the list only to set its parameters, `- Items (label="Mine")`,
+keeps the template's entries.
 
 Saving gives an instance back as it was written, with only what changed since: a value edited
 where the instance wrote it is changed there, and one edited on something only the template gave
