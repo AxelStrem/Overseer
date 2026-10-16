@@ -50,7 +50,7 @@ fn moved(path: &str, entry: &str) -> overseer::types::Result<app_api::ResolvedUp
     let nodes = app_api::load_document(std::fs::read_to_string(path).unwrap()).unwrap();
     let entry = overseer::addressing::name_path(&nodes, &format!("t/Items/[{}]", entry)).expect("the entry");
     let list = overseer::addressing::name_path(&nodes, "t/Items").expect("the list");
-    app_api::move_entry_at(path, "t.os", entry, list, None, "s")
+    app_api::move_entry_at(path, "t.os", entry, list, None, None, "s")
 }
 
 #[test]

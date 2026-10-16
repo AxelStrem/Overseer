@@ -50,7 +50,7 @@ const theDocument = ({ entries, mutable = true, board = {} } = {}) => [base('s',
     base('title', 'string', { value: { String: '' } }), stageField('filed'),
   ]),
   base('Items', 'list', {
-    entry: { Template: '<Card>' }, layout: { String: 'vertical' },
+    entry: { Template: '<Card>' },
     view: { String: 'board' }, by: { String: 'stage' }, ...board,
   }, entries ?? [card('one', 'ready'), card('two', 'filed'), card('three', 'ready'), card('four', 'shipped')]),
 ])]
@@ -199,9 +199,19 @@ describe('a list drawn as a board', () => {
     expect(board().dataset.boardDrag).toBeUndefined()
   })
 
-  it('ignores movable, since nothing is moved in the list', () => {
-    render({ board: { movable: { Boolean: true } } })
-    expect(board().dataset.movable).toBeUndefined()
+  it('runs its lanes side by side unless it says otherwise', () => {
+    render()
+    expect(board().querySelector('.overseer-board').classList.contains('board-columns')).toBe(true)
+    expect(columnOf('ready').querySelector('.board-column-head').style.backgroundColor).toBe('')
+  })
+
+  it('stacks its lanes as rows when it says layout vertical, each headed in its colour', () => {
+    render({ board: { layout: { String: 'vertical' } } })
+    const drawn = board().querySelector('.overseer-board')
+    expect(drawn.classList.contains('board-rows')).toBe(true)
+    expect(columns().map((c) => c.dataset.value)).toEqual(['filed', 'ready', 'testing', ''])
+    expect(columnOf('ready').querySelector('.board-column-head').style.backgroundColor).toBe('rgb(29, 78, 216)')
+    expect(titlesIn('ready')).toEqual(['one', 'three'])
   })
 
   it('moves an entry whose value is picked from its own chip', async () => {

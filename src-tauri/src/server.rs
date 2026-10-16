@@ -536,6 +536,11 @@ impl DocumentRoot {
                     .get("before")
                     .and_then(|v| v.as_array())
                     .map(|_| arg_strings(args, &["before"]));
+                // A field of the entry to write where it lands - see `app_api::move_entry_at`.
+                let setting: Option<app_api::ValueWrite> = match args.get("setting") {
+                    Some(v) if !v.is_null() => Some(from_value(args, "setting")?),
+                    _ => None,
+                };
                 as_json(
                     app_api::for_the_page(app_api::move_entry_at(
                         at.to_string_lossy().as_ref(),
@@ -543,6 +548,7 @@ impl DocumentRoot {
                         entry,
                         to_list,
                         before,
+                        setting,
                         session,
                     )
                     .map_err(|e| RequestError::Failed(format!("could not move: {:?}", e)))?),

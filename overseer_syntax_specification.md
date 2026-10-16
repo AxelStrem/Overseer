@@ -284,7 +284,8 @@ the list says how many entries that was.
 
 `movable=true` lets a list's entries be dragged: to another place in the list, or into another
 movable list whose entries are made from the same template, which is how a board of columns is
-built. A drag is a write, so it needs writes allowed there (`mutable`). A list drawn in an order
+built - or into a lane of a movable board, which also gives it the lane's value (see "Drawing a
+list as a board"). A drag is a write, so it needs writes allowed there (`mutable`). A list drawn in an order
 of its own (`sort_by`) takes an entry dropped into it from elsewhere, but cannot be reordered by
 hand. The entry moves in one change: it is never in both lists or in neither, and one undo puts
 it back.
@@ -347,6 +348,21 @@ respected, and a value the field `withhold`s takes no drop. Nothing moves in the
 an entry stands in its column where it stands in the list - so a filter, `sort_by` and `window`
 work on a board as on any list. Unlike `movable=true`, which moves entries between lists, this
 keeps every entry in one list and moves it by what it says.
+
+The lanes stand side by side as columns. `layout="vertical"` stacks them as rows instead, each
+headed by a band in its value's colour, with its entries running across and wrapping - the shape
+of a tier list.
+
+A board that also says `movable=true` keeps an order within its lanes, and trades entries with
+the movable lists made from the same template. An entry dropped among a lane's entries is moved
+there and takes the lane's value, in one change: the field's `on change` runs with it, and one
+undo takes all of it back. An entry dragged out of the board into a plain list is only moved,
+and keeps its value.
+
+```overseer
+list Ranked (entry=<Food>, view="board", by="tier", layout="vertical", movable=true) { }
+list Unranked (entry=<Food>, layout="horizontal", movable=true) { }
+```
 
 ## Advanced Features
 

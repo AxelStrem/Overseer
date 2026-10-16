@@ -3380,12 +3380,14 @@ impl ActionExecutor {
     /// refused before anything moves. The document decides where it is allowed - both lists say
     /// `movable=true`, and two lists only trade entries made from the same template, so an
     /// entry never arrives somewhere its fields mean nothing.
+    ///
+    /// Answers where the entry now is, as indices, for whatever the same change does to it next.
     pub fn move_entry(
         nodes: &mut Vec<OverseerNode>,
         entry_path: &str,
         to_list_path: &str,
         before: Option<&str>,
-    ) -> Result<(), OverseerError> {
+    ) -> Result<Vec<usize>, OverseerError> {
         let find = |nodes: &Vec<OverseerNode>, path: &str| {
             let (segments, _explicit_param, anchored) = Self::split_path_and_param(path);
             Self::resolve_target_indices(nodes, &[], anchored, &segments)
@@ -3462,7 +3464,7 @@ impl ActionExecutor {
         // Dropped where it already was: nothing ran, so nothing is written and there is no step
         // to take back.
         if from == to && (before_pos == Some(from_pos) || before_pos == Some(from_pos + 1)) {
-            return Ok(());
+            return Ok(entry);
         }
         // Where the entry lands is said in the list as it stands now, and taking the entry out
         // first moves everything after it up by one - the target list itself, when it sits in a
@@ -3490,6 +3492,42 @@ impl ActionExecutor {
         target.source_fingerprint = None;
         Self::mark_field_explicit_override(nodes, &from);
         Self::mark_field_explicit_override(nodes, &to);
+        let mut landed = to;
+        landed.push(at);
+        Ok(landed)
+    }
+
+    /// Write a field of an entry, named from the entry, and run the field's `on change`.
+    ///
+    /// What a drop onto a board's lane does after the move: the entry takes the lane's value.
+    /// The page cannot name the entry where it has landed - its place in the list, and so its
+    /// name, is the move's to decide - so the field is named from the entry instead. Run as the
+    /// field's own picker would run it: the value settled first, so the handler reads it.
+    pub fn set_in_entry(
+        nodes: &mut Vec<OverseerNode>,
+        entry: &[usize],
+        field: &[String],
+        value: OverseerValue,
+    ) -> Result<(), OverseerError> {
+        let mut path = Self::build_disambiguated_path(nodes, entry);
+        path.extend(field.iter().cloned());
+        let target = format!("/{}", path.join("/"));
+        let (segments, _, anchored) = Self::split_path_and_param(&target);
+        let at = Self::resolve_target_indices(nodes, &[], anchored, &segments)
+            .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+        // Reordered within its own lane: the value is what it was, and nothing changed it.
+        let held = Self::get_node_ref_by_indices(nodes, &at).and_then(|n| n.parameters.get("value"));
+        if held == Some(&value) {
+            return Ok(());
+        }
+        Self::assign_value(nodes, &target, value)?;
+        let handles = Self::get_node_ref_by_indices(nodes, &at)
+            .map_or(false, |n| n.children.iter().any(|c| c.node_type == "on" && c.name == "change"));
+        if handles {
+            Self::settle_for_what_comes_next(nodes);
+            let named = Self::build_disambiguated_path(nodes, &at);
+            Self::execute_event(nodes, &named, "change")?;
+        }
         Ok(())
     }
 

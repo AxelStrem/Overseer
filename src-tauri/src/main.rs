@@ -224,8 +224,9 @@ async fn move_overseer_entry(
     entry_path: Vec<String>,
     to_list_path: Vec<String>,
     before: Option<Vec<String>>,
+    setting: Option<app_api::ValueWrite>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    app_api::move_entry_at(&path, &path, entry_path, to_list_path, before, THE_WINDOW)
+    app_api::move_entry_at(&path, &path, entry_path, to_list_path, before, setting, THE_WINDOW)
         .map(app_api::for_the_page).map(ForThePage)
 }
 

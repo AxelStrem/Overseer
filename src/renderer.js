@@ -3263,7 +3263,12 @@ export class OverseerRenderer {
         const field = this.boardFieldOf(node, by)
         if (!field || this.tagVocabulary(field).size === 0) return
         element.dataset.board = by
-        // The columns lay the board out; the list's own direction would only fight them.
+        // `layout` says which way the lanes run, as said in the file: stacked as rows when it
+        // says `vertical`, side by side as columns otherwise - unsaid included, which is what a
+        // board is first thought of as.
+        const layout = String(this.getParameterValue(node, 'layout') ?? '').trim().toLowerCase()
+        element.dataset.boardLanes = layout === 'vertical' ? 'rows' : 'columns'
+        // The lanes lay the board out; the list's own direction would only fight them.
         element.classList.add('view-board')
         element.classList.remove('layout-vertical', 'layout-horizontal', 'layout-flow')
         this.arrangeBoard(element, node)
@@ -3340,7 +3345,8 @@ export class OverseerRenderer {
         element.querySelector(':scope > .overseer-board')?.remove()
 
         const board = document.createElement('div')
-        board.className = 'overseer-board'
+        const rows = element.dataset.boardLanes === 'rows'
+        board.className = `overseer-board ${rows ? 'board-rows' : 'board-columns'}`
         const columns = new Map()
         const column = (value, known, unlisted) => {
             const el = document.createElement('div')
@@ -3357,6 +3363,11 @@ export class OverseerRenderer {
                 chip.title = 'not one of the values this field lists'
             } else {
                 chip = this.tagChip(value, known, null)
+                // A row's head is a band of the value's colour, as a tier list draws it.
+                if (rows && known && known.colour) {
+                    head.style.backgroundColor = known.colour
+                    head.style.color = this.readableOn(known.colour)
+                }
             }
             const chips = document.createElement('span')
             chips.className = `tag-chips chip-${this.chipShape(field)}`
@@ -3406,23 +3417,53 @@ export class OverseerRenderer {
         }
     }
 
-    /// The columns of a board a dragged entry can be dropped in: the values its field would offer.
-    boardColumnsTaking(drag) {
-        const entryNode = this.nodeDrawnBy(drag.entry)
-        const field = entryNode ? this.entryField(entryNode, drag.list.dataset.board) : null
-        if (!field || this.getEffectiveMutableMode(field, drag.entry) === 'false') return null
+    /**
+     * The lanes of a board a dragged entry can be dropped in: the values its field would offer.
+     *
+     * Its own lane only where a drop there means something - a board that says `movable=true`
+     * and is not sorted, where it puts the entry in another place among its neighbours.
+     */
+    lanesTaking(board, entry, own) {
+        const entryNode = this.nodeDrawnBy(entry)
+        const field = entryNode ? this.entryField(entryNode, board.dataset.board) : null
+        if (!field || !this.isEnum(field) || this.getEffectiveMutableMode(field, entry) === 'false') return []
         const vocabulary = this.tagVocabulary(field)
         const held = String(this.getNodeValue(field) ?? '').trim()
+        const reorders = board.dataset.movable === '1' && board.dataset.sorted !== '1'
         // The same values the field's own picker leaves out - see `createEnumElement`.
         const withheld = new Set(String(this.getParameterValue(field, 'withhold') ?? '')
             .split(',').map(s => s.trim()).filter(Boolean))
-        const columns = Array.from(drag.list.querySelectorAll(':scope > .overseer-board > .board-column'))
+        return Array.from(board.querySelectorAll(':scope > .overseer-board > .board-column'))
             .filter((c) => c.dataset.unlisted !== '1'
-                && c.dataset.value !== held
+                && (!own || reorders || c.dataset.value !== held)
                 && !withheld.has(c.dataset.value)
                 && vocabulary.get(c.dataset.value)?.offered !== false)
-        const entryPath = JSON.parse(drag.entry.dataset.path)
-        return { field, held, columns, path: this.fieldPathIn(entryNode, entryPath, field) }
+    }
+
+    /**
+     * Everywhere a dragged entry can be dropped: lists, and lanes of boards.
+     *
+     * A board's own lanes always, since a drop there is a value picked. Anything else only from
+     * a movable list or board, into a movable one made from the same template - the backend
+     * moves nothing else.
+     */
+    dropTargetsFor(drag) {
+        const out = []
+        const template = drag.list.dataset.movable === '1' ? (drag.list.dataset.entryTemplate || '') : null
+        for (const list of template === null ? [] : document.querySelectorAll('.overseer-list[data-movable="1"]')) {
+            if (list.dataset.board) continue
+            const accepts = list === drag.list
+                ? list.dataset.sorted !== '1'
+                : (template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
+            if (accepts) out.push(list)
+        }
+        for (const board of document.querySelectorAll('.overseer-list.view-board')) {
+            const own = board === drag.list
+            if (!own && (!template || board.dataset.movable !== '1'
+                || board.dataset.entryTemplate !== template || drag.entry.contains(board))) continue
+            out.push(...this.lanesTaking(board, drag.entry, own))
+        }
+        return out
     }
 
     coerceSortKey(key) {
@@ -3590,8 +3631,6 @@ export class OverseerRenderer {
         if (said !== true && String(said).toLowerCase() !== 'true') return
         if (this.getEffectiveMutableMode(node, element) !== 'true') return
         if (this.entriesAreTabs(node)) return
-        // A board places its entries by a field, not by where they stand in the list.
-        if (element.dataset.board) return
         // Nor is there anywhere to drag to while a reader has it sorted: the order on screen is
         // not the list's, and a drag in it would write an order nobody can see.
         if (this.isColumnSorted(node)) {
@@ -3721,6 +3760,8 @@ export class OverseerRenderer {
      */
     entryCanBeDragged(entry, list) {
         if (this.entryStays(this.nodeDrawnBy(entry))) return false
+        // A board's entry is a value to pick, sorted or not.
+        if (list.dataset.board) return true
         if (list.dataset.sorted !== '1') return true
         const template = list.dataset.entryTemplate || ''
         if (template === '') return false
@@ -3766,11 +3807,10 @@ export class OverseerRenderer {
     beginEntryDrag() {
         const drag = this._entryDrag
         if (!drag || drag.started) return
-        // On a board, a drag is a value picked: nothing to lift when there is nothing to pick.
-        if (drag.list.dataset.board) {
-            drag.board = this.boardColumnsTaking(drag)
-            if (!drag.board || drag.board.columns.length === 0) { this.endEntryDrag(false); return }
-        }
+        // Nothing to lift when there is nowhere to put it: a board's entry whose value cannot be
+        // picked, say.
+        const targets = this.dropTargetsFor(drag)
+        if (targets.length === 0) { this.endEntryDrag(false); return }
         drag.started = true
         clearTimeout(drag.timer)
         const rect = drag.entry.getBoundingClientRect()
@@ -3795,14 +3835,7 @@ export class OverseerRenderer {
         drag.entry.classList.add('is-dragged')
         document.body.classList.add('overseer-dragging')
         try { window.getSelection()?.removeAllRanges() } catch (_) { /* nothing selected */ }
-        for (const column of drag.board ? drag.board.columns : []) column.classList.add('accepts-drop')
-        const template = drag.board ? null : (drag.list.dataset.entryTemplate || '')
-        for (const list of drag.board ? [] : document.querySelectorAll('.overseer-list[data-movable="1"]')) {
-            const accepts = list === drag.list
-                ? list.dataset.sorted !== '1'
-                : (template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
-            if (accepts) list.classList.add('accepts-drop')
-        }
+        for (const target of targets) target.classList.add('accepts-drop')
         this.followEntryDrag()
     }
 
@@ -3822,20 +3855,29 @@ export class OverseerRenderer {
         const under = typeof document.elementFromPoint === 'function'
             ? document.elementFromPoint(drag.x, drag.y)
             : null
-        const wanted = drag.board ? '.board-column.accepts-drop' : '.overseer-list.accepts-drop'
-        const list = under && under.closest ? under.closest(wanted) : null
+        const wanted = '.board-column.accepts-drop, .overseer-list.accepts-drop'
+        const target = under && under.closest ? under.closest(wanted) : null
         for (const shown of document.querySelectorAll('.drop-here')) {
-            if (shown !== list) shown.classList.remove('drop-here')
+            if (shown !== target) shown.classList.remove('drop-here')
         }
-        drag.target = list
+        drag.target = target
         drag.before = null
         const line = drag.line
-        if (!list) { line.hidden = true; return }
-        list.classList.add('drop-here')
-        // A column has no order of its own to drop into: the entry stands where the list has it.
-        if (drag.board) { line.hidden = true; return }
-        if (list.dataset.sorted === '1') { line.hidden = true; return }
-        const across = list.classList.contains('layout-horizontal') || list.classList.contains('layout-flow')
+        if (!target) { line.hidden = true; return }
+        target.classList.add('drop-here')
+        let list = target
+        let across
+        if (target.classList.contains('board-column')) {
+            // A lane has a place to drop into only on a board that keeps an order of its own: on
+            // any other, the entry stands in its lane where the list has it.
+            const board = target.closest('.overseer-list')
+            if (board.dataset.movable !== '1' || board.dataset.sorted === '1') { line.hidden = true; return }
+            list = target.querySelector(':scope > .board-column-body')
+            across = board.dataset.boardLanes === 'rows'
+        } else {
+            if (list.dataset.sorted === '1') { line.hidden = true; return }
+            across = list.classList.contains('layout-horizontal') || list.classList.contains('layout-flow')
+        }
         const entries = this.droppableEntries(list, drag.entry)
         for (const el of entries) {
             const r = el.getBoundingClientRect()
@@ -3884,11 +3926,8 @@ export class OverseerRenderer {
         this._dragJustEnded = true
         setTimeout(() => { this._dragJustEnded = false }, 0)
         if (!dropped || !drag.target) return
-        if (drag.board) {
-            const { field, path, held } = drag.board
-            if (!path) return
-            this.writeEnumValue(field, path, held, drag.target.dataset.value)
-                .catch((err) => console.warn('The write failed:', err))
+        if (drag.target.classList.contains('board-column')) {
+            this.dropInLane(drag)
             return
         }
         const sorted = drag.target.dataset.sorted === '1'
@@ -3905,12 +3944,79 @@ export class OverseerRenderer {
     }
 
     /**
+     * An entry let go over a lane of a board: it takes the lane's value.
+     *
+     * On a board that does not say `movable=true` that is all - the value written as its picker
+     * would write it, the entry staying where it is in the list. On one that does, the entry is
+     * also moved: into the board from another list, or to its place among the lane's entries,
+     * and the move and the value are one change, with the field's `on change` run in it.
+     */
+    dropInLane(drag) {
+        const lane = drag.target
+        const board = lane.closest('.overseer-list')
+        const value = lane.dataset.value
+        const entryNode = this.nodeDrawnBy(drag.entry)
+        const field = entryNode ? this.entryField(entryNode, board.dataset.board) : null
+        if (!field) return
+        const held = String(this.getNodeValue(field) ?? '').trim()
+        const read = (el) => JSON.parse(el.dataset.path)
+        const entryPath = read(drag.entry)
+        const fieldPath = this.fieldPathIn(entryNode, entryPath, field)
+        if (!fieldPath) return
+        if (board.dataset.movable !== '1') {
+            this.writeEnumValue(field, fieldPath, held, value)
+                .catch((err) => console.warn('The write failed:', err))
+            return
+        }
+        const body = lane.querySelector(':scope > .board-column-body')
+        if (board === drag.list && value === held) {
+            // Dropped where it was drawn already: nothing to write.
+            const entries = this.droppableEntries(body, null)
+            const next = entries[entries.indexOf(drag.entry) + 1] || null
+            if (drag.before === next) return
+        }
+        let before = null
+        if (board.dataset.sorted !== '1') {
+            before = drag.before ? read(drag.before) : this.entryAfterLane(board, body, drag.entry)
+        }
+        // Named from the entry: where it lands, and so what it is called, is the move's to say.
+        const named = fieldPath.slice(0, entryPath.length).every((s, i) => s === entryPath[i])
+            ? fieldPath.slice(entryPath.length)
+            : [field.name]
+        this.moveEntry(drag.entry, entryPath, read(board), before, { node_path: named, value: { String: value } })
+            .catch((err) => console.warn('The move failed:', err))
+    }
+
+    /// Where an entry dropped after the last one of a lane goes in its list: before whichever
+    /// entry the list has next, in any lane - or last, when nothing follows.
+    entryAfterLane(board, body, dragged) {
+        const inLane = Array.from(body.children).filter((el) => el !== dragged && el.dataset && el.dataset.uid)
+        const last = inLane[inLane.length - 1]
+        if (!last) return null
+        const doc = window.app && window.app.currentDocument
+        let node = null
+        try { node = this.findNodeByPath(doc, JSON.parse(board.dataset.path || '[]')) } catch (_) { node = null }
+        if (!node) return null
+        const order = this.inDisplayOrder(node)
+        const at = order.findIndex((entry) => entry && entry.__uid === last.dataset.uid)
+        for (const entry of at < 0 ? [] : order.slice(at + 1)) {
+            const el = entry && entry.__uid
+                ? Array.from(board.querySelectorAll('.board-column-body > [data-uid]'))
+                    .find((e) => e.dataset.uid === entry.__uid)
+                : null
+            if (el && el !== dragged && el.dataset.path) return JSON.parse(el.dataset.path)
+        }
+        return null
+    }
+
+    /**
      * Ask for an entry to be moved, and show what the file then says.
      *
      * Nothing is moved on the page first: the backend decides, and the answer is the document as
-     * it is after the move - the same answer a press gets, taken on the same way.
+     * it is after the move - the same answer a press gets, taken on the same way. `setting` is a
+     * field of the entry, named from it, to write where it lands - see `dropInLane`.
      */
-    async moveEntry(element, entryPath, toListPath, beforePath) {
+    async moveEntry(element, entryPath, toListPath, beforePath, setting) {
         const app = window.app
         if (!app || !app.currentFile) return
         let update = null
@@ -3923,6 +4029,7 @@ export class OverseerRenderer {
                 to_list_path: toListPath,
                 toListPath,
                 before: beforePath,
+                ...(setting ? { setting } : {}),
             })
         } catch (e) {
             const said = refusalIn(e)

@@ -1655,22 +1655,31 @@ pub fn remove_entry_at(
 /// One change, so the entry is never in both lists or in neither, and one step to take back.
 /// `before` names the entry it lands in front of; none puts it last. See
 /// `ActionExecutor::move_entry`.
+///
+/// `setting` is a field of the entry to write where it lands, named from the entry - a drop on a
+/// board's lane, which moves the entry and gives it the lane's value. Its `on change` runs too,
+/// all in the same change, so one undo takes back the move, the value and what the handler did.
 pub fn move_entry_at(
     path: &str,
     document: &str,
     entry_path: Vec<String>,
     to_list_path: Vec<String>,
     before: Option<Vec<String>>,
+    setting: Option<ValueWrite>,
     session: &str,
 ) -> Result<ResolvedUpdate> {
     change_document(path, document, session, move |nodes| {
         let before = before.map(|b| format!("/{}", b.join("/")));
-        crate::actions::ActionExecutor::move_entry(
+        let landed = crate::actions::ActionExecutor::move_entry(
             nodes,
             &format!("/{}", entry_path.join("/")),
             &format!("/{}", to_list_path.join("/")),
             before.as_deref(),
-        )
+        )?;
+        if let Some(set) = setting {
+            crate::actions::ActionExecutor::set_in_entry(nodes, &landed, &set.node_path, set.value)?;
+        }
+        Ok(())
     })
 }
 
