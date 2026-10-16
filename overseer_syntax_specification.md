@@ -508,7 +508,7 @@ tab project (vocabulary="/project/Items, /project/History") {
 
 A key no vocabulary holds is drawn as a plain chip of the word. As with icons, the text is kept as
 written - in the file, in formulas, in the editor - and a filter matches the key inside it. Inside
-markdown code, `` `<#key>` `` stays text.
+markdown code, `` `<#key>` `` stays text, and so does `` `<icon=name>` ``.
 
 Pressing a chip that stands for an entry - in text, in a `tags` field, or an `enum` with nothing to
 pick - shows the entry: the folds and tabs around it open, it is scrolled into view and marked for
@@ -1080,6 +1080,11 @@ text MarkdownContent (markdown=true) = "# Heading
 
 text PlainContent = "This is plain text without markdown formatting"
 ```
+
+A fenced block - between lines of three backticks - is drawn as a box of code, coloured as the
+language named after the opening fence (```` ```rust ````, ```` ```python ````), or as the one it
+looks most like when none is named. ```` ```text ```` keeps it plain, as does a language the page
+does not know.
 
 Markdown is the only markup a text field has. HTML written in one is shown as the text it is, never
 drawn - a field may hold what an agent quoted from a page, and the page holds the server's token. A

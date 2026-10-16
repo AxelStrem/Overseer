@@ -9,6 +9,27 @@ const DEBUG_MODE = (() => {
 
 // Import marked for markdown rendering
 import { Marked } from 'marked';
+import { markedHighlight } from 'marked-highlight'
+import hljs from 'highlight.js/lib/core'
+import bashLanguage from 'highlight.js/lib/languages/bash'
+import cLanguage from 'highlight.js/lib/languages/c'
+import cppLanguage from 'highlight.js/lib/languages/cpp'
+import csharpLanguage from 'highlight.js/lib/languages/csharp'
+import cssLanguage from 'highlight.js/lib/languages/css'
+import diffLanguage from 'highlight.js/lib/languages/diff'
+import glslLanguage from 'highlight.js/lib/languages/glsl'
+import iniLanguage from 'highlight.js/lib/languages/ini'
+import javascriptLanguage from 'highlight.js/lib/languages/javascript'
+import jsonLanguage from 'highlight.js/lib/languages/json'
+import markdownLanguage from 'highlight.js/lib/languages/markdown'
+import plaintextLanguage from 'highlight.js/lib/languages/plaintext'
+import powershellLanguage from 'highlight.js/lib/languages/powershell'
+import pythonLanguage from 'highlight.js/lib/languages/python'
+import rustLanguage from 'highlight.js/lib/languages/rust'
+import sqlLanguage from 'highlight.js/lib/languages/sql'
+import typescriptLanguage from 'highlight.js/lib/languages/typescript'
+import xmlLanguage from 'highlight.js/lib/languages/xml'
+import yamlLanguage from 'highlight.js/lib/languages/yaml'
 import { invoke } from '@tauri-apps/api/core'
 
 // The sentence a press the document refused gave - see `refuse` - or null for anything else that
@@ -179,6 +200,13 @@ const drawIconMarks = (html) => html.replace(ICON_MARK, (_, said) => {
         .map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join('')
     return `<span class="icon" aria-hidden="true"${attrs}></span>`
 })
+// A mark inside code goes back to the `<icon=...>` that was written: code is where the marker is
+// written about, as it is for `<#key>`, and a highlighter would otherwise split the mark apart.
+const writtenIcons = (text) => text.replace(ICON_MARK, (_, said) => {
+    let raw = ''
+    try { raw = decodeURIComponent(said) } catch (_) {}
+    return `<icon=${raw}>`
+})
 
 // A scheme the page may follow, or none at all - a path on this server. Read with the whitespace and
 // control characters a browser drops from a URL taken out, so `java\tscript:` is seen for what it is.
@@ -216,8 +244,37 @@ const markdown = new Marked({
             // An image from elsewhere tells its server the page was opened; not where from.
             return `<img src="${escapeHtml(href)}" ${titled} referrerpolicy="no-referrer" loading="lazy">`
         },
+        codespan(text) {
+            return `<code>${text.replace(ICON_MARK, (said) => escapeHtml(writtenIcons(said)))}</code>`
+        },
     },
 })
+
+// A fenced block is coloured as the language named after its fence, or as the one it looks most
+// like when none is named; ```text keeps it plain. Only the languages below are bundled, to keep
+// the page small, and a name none of them answers to draws the block plain.
+for (const [name, language] of Object.entries({
+    bash: bashLanguage, c: cLanguage, cpp: cppLanguage, csharp: csharpLanguage, css: cssLanguage,
+    diff: diffLanguage, glsl: glslLanguage, ini: iniLanguage, javascript: javascriptLanguage,
+    json: jsonLanguage, markdown: markdownLanguage, plaintext: plaintextLanguage,
+    powershell: powershellLanguage, python: pythonLanguage, rust: rustLanguage, sql: sqlLanguage,
+    typescript: typescriptLanguage, xml: xmlLanguage, yaml: yamlLanguage,
+})) hljs.registerLanguage(name, language)
+// Guessing reads the block once per language, so a long one is left plain rather than slow the page.
+const GUESSED_CODE_LIMIT = 20000
+markdown.use(markedHighlight({
+    langPrefix: 'hljs language-',
+    emptyLangClass: 'hljs',
+    highlight(code, lang) {
+        const text = writtenIcons(code)
+        if (lang) {
+            return hljs.getLanguage(lang)
+                ? hljs.highlight(text, { language: lang, ignoreIllegals: true }).value
+                : escapeHtml(text)
+        }
+        return text.length > GUESSED_CODE_LIMIT ? escapeHtml(text) : hljs.highlightAuto(text).value
+    },
+}))
 
 // Import Chart.js for chart visualization
 import {

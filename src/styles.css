@@ -1817,20 +1817,89 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     margin-bottom: 0;
 }
 
-.markdown-enabled code {
-    background: var(--field-bg-color);
-    padding: 2px 4px;
-    border-radius: 3px;
-    font-family: 'Courier New', monospace;
+/* Code, inline and fenced. A fenced block is a box of its own, tinted and bordered, and coloured
+   by highlight.js (see renderer.js): the token colours are kept here, beside the page's own, so
+   they follow its dark mode rather than bring a theme's background of their own. The editor's
+   preview draws the same markdown and takes the same look. */
+:root {
+    --code-bg: #eff2f5;
+    --code-border: #d8dee4;
+    --code-text: #1f2328;
+    --code-font: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    --code-keyword: #cf222e;
+    --code-string: #0a3069;
+    --code-comment: #6e7781;
+    --code-number: #0550ae;
+    --code-title: #8250df;
+    --code-type: #953800;
+    --code-meta: #116329;
 }
 
-.markdown-enabled pre {
-    background: var(--field-bg-color);
-    padding: 12px;
+@media (prefers-color-scheme: dark) {
+    :root {
+        --code-bg: #0d1117;
+        --code-border: #30363d;
+        --code-text: #e6edf3;
+        --code-keyword: #ff7b72;
+        --code-string: #a5d6ff;
+        --code-comment: #8b949e;
+        --code-number: #79c0ff;
+        --code-title: #d2a8ff;
+        --code-type: #ffa657;
+        --code-meta: #7ee787;
+    }
+}
+
+:is(.markdown-enabled, .markdown-preview) code {
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    font-family: var(--code-font);
+    font-size: 0.9em;
+}
+
+:is(.markdown-enabled, .markdown-preview) pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    border: 1px solid var(--code-border);
+    padding: 10px 12px;
     border-radius: 6px;
     overflow-x: auto;
-    margin-bottom: 16px;
+    margin: 0.4em 0;
+    line-height: 1.45;
+    white-space: pre;
+    tab-size: 4;
 }
+
+.markdown-enabled > pre:first-child {
+    margin-top: 0;
+}
+
+.markdown-enabled > pre:last-child {
+    margin-bottom: 0;
+}
+
+:is(.markdown-enabled, .markdown-preview) pre code {
+    display: block;
+    background: none;
+    border: none;
+    padding: 0;
+    border-radius: 0;
+    color: inherit;
+}
+
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-template-tag,
+.hljs-template-variable, .hljs-deletion { color: var(--code-keyword); }
+.hljs-string, .hljs-regexp, .hljs-char.escape_, .hljs-addition, .hljs-symbol { color: var(--code-string); }
+.hljs-comment, .hljs-quote { color: var(--code-comment); font-style: italic; }
+.hljs-number, .hljs-variable, .hljs-attr, .hljs-attribute, .hljs-property, .hljs-operator,
+.hljs-selector-attr, .hljs-selector-pseudo, .hljs-link { color: var(--code-number); }
+.hljs-title, .hljs-title.function_, .hljs-section, .hljs-selector-id, .hljs-selector-class { color: var(--code-title); }
+.hljs-type, .hljs-built_in, .hljs-title.class_ { color: var(--code-type); }
+.hljs-meta, .hljs-name, .hljs-tag, .hljs-bullet { color: var(--code-meta); }
+.hljs-strong { font-weight: bold; }
+.hljs-emphasis { font-style: italic; }
 
 .markdown-enabled blockquote {
     border-left: 4px solid var(--primary-color);
