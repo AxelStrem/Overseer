@@ -76,6 +76,12 @@ by deleting one line. See `src-tauri/tests/comment_trivia.rs`.
 On the JS side the equivalent is `it.skip` with a description of the expected
 outcome — see `tests/weight_tracker_amount_calories_total_ui_bug.spec.js`.
 
+## In the real page
+
+The specs draw with jsdom against a fake backend, which has no layout and no real server. What a
+person will see - a layout, a press and what it writes - is checked in the real page as well,
+with `scripts/preview.mjs` (see "Seeing a document" in `DEVELOPMENT.md`).
+
 ## Notes
 
 - Serializer tests assert on exact bytes, including newline style. The golden

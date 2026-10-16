@@ -26,6 +26,31 @@ The two halves are separate cargo features, and neither is on by default: `deskt
 Tauri, `server` pulls in axum. `cargo build` with neither builds the library and is what the
 tests use.
 
+## Seeing a document
+
+`scripts/preview.mjs` shows a document as the page draws it, for whoever is designing one
+without a window to look at - an agent, or a script. It copies the document's folder to a
+temporary directory, serves the copy with the release server and the built page, opens it in
+a headless Chrome or Edge, and deletes the copy afterwards, so nothing it presses reaches the
+real file. It needs both built first:
+
+```bash
+npm run build
+cd src-tauri && cargo build --release --features server --bin overseer-server && cd ..
+node scripts/preview.mjs examples/projects/project_template.os            # a screenshot of the whole document
+node scripts/preview.mjs examples/projects/project_template.os --mobile   # the same, at a phone's width
+node scripts/preview.mjs examples/projects/project_template.os --script scripts/preview_example.mjs
+```
+
+On its own it saves a screenshot and prints what went wrong while drawing - a template or mount
+that could not be had, a formula that failed, what the page threw. With `--script` it runs a
+file of steps: screenshots of the whole page or of one node, presses, typing, picks and tabs,
+each named by the node's address as a formula names it, and then what the file gained and lost
+- what a press really wrote, which is not always what the page shows. `--help` lists the steps;
+`scripts/preview_example.mjs` uses most of them. `--root` copies a folder above the document's
+own, for a document that reaches files outside it; `--keep` leaves the server running for a
+person to open the copy.
+
 ## Building for release
 
 ```bash
