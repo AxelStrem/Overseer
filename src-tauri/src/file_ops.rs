@@ -129,10 +129,12 @@ impl FileOperations {
     pub fn serialize_nodes(nodes: &[OverseerNode]) -> Result<String> {
         // A list entry the template gave is the template's text, not this document's: taken out
         // before anything is written, so that no way of writing a list can put it in the file.
+        // Nor a context's copy, which the resolver works out from the declarations the file holds.
         let without_given;
-        let nodes = if Self::holds_a_given_entry(nodes) {
+        let nodes = if Self::holds_a_given_entry(nodes) || crate::contexts::holds_a_copy(nodes) {
             let mut copy = nodes.to_vec();
             Self::leave_out_given_entries(&mut copy);
+            crate::contexts::leave_out_copies(&mut copy);
             without_given = copy;
             without_given.as_slice()
         } else {

@@ -2997,6 +2997,11 @@ impl FormulaEvaluator {
         trail: &mut Vec<String>,
     ) -> Option<OverseerValue> {
         for child in &node.children {
+            // Not into a context: a search going down meets the contexts of containers the
+            // reader is not in, and a context is found by climbing - see `contexts`.
+            if crate::contexts::is_context(child) {
+                continue;
+            }
             // A wrapper adds no step to the trail, as it adds none to a path.
             let wrapper = crate::addressing::is_wrapper(child);
             if !wrapper {
@@ -3022,12 +3027,27 @@ impl FormulaEvaluator {
         None
     }
 
+    /// The first node anywhere in the document with this name. A context counts only at the top,
+    /// where it is the document's own and every reader is inside it.
     fn find_node_by_name<'a>(roots: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
-        for n in roots {
+        if let Some(copy) = roots
+            .iter()
+            .find(|n| crate::contexts::is_copy(n) && n.name == name)
+        {
+            return Some(copy);
+        }
+        Self::find_outside_contexts(roots, name)
+    }
+
+    fn find_outside_contexts<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+        for n in nodes {
+            if crate::contexts::is_context(n) {
+                continue;
+            }
             if n.name == name {
                 return Some(n);
             }
-            if let Some(found) = Self::find_node_by_name(&n.children, name) {
+            if let Some(found) = Self::find_outside_contexts(&n.children, name) {
                 return Some(found);
             }
         }
@@ -3036,6 +3056,9 @@ impl FormulaEvaluator {
 
     fn find_node_by_name_deep<'a>(node: &'a OverseerNode, name: &str) -> Option<&'a OverseerNode> {
         for child in &node.children {
+            if crate::contexts::is_context(child) {
+                continue;
+            }
             if child.name == name {
                 return Some(child);
             }
@@ -3540,8 +3563,10 @@ impl FormulaEvaluator {
                 .map(|tag| ListItem::Value(OverseerValue::String(tag.to_string())))
                 .collect();
         }
+        // Not its contexts: they are what the node sees, not what it holds.
         node.get_accessible_children()
             .into_iter()
+            .filter(|child| !crate::contexts::is_context(child))
             .map(ListItem::Node)
             .collect()
     }

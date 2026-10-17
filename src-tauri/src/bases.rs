@@ -72,6 +72,7 @@ pub fn find(document: &[OverseerNode], path: &str) -> Option<OverseerNode> {
 pub const TYPES: &[&str] = &[
     "tab", "div", "list", "list_item", "string", "textbox", "text", "tags", "enum", "filter", "int",
     "float", "date", "timestamp", "bool", "button", "checkbox", "chart", "image", "mark", "mount",
+    "context",
 ];
 
 /// Whether a name is one of `TYPES`, and so cannot name a template.

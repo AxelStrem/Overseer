@@ -1701,6 +1701,10 @@ export class OverseerRenderer {
             return
         }
 
+        // A context is what the nodes inside its container see - a theme, a mode - and not one of
+        // them: it is read, never drawn.
+        if ((node.node_type || node.type) === 'context') return
+
         // Record a stable render path on the node for downstream components (charts, events)
         try { node.__overseer_path = Array.isArray(path) ? path.slice() : [] } catch (_) {}
 

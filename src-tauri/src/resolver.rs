@@ -510,6 +510,12 @@ pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
     if profiling {
         eprintln!("[PHASE]   templates {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
+    // After the templates, so that a context an entry's template declares is in every entry.
+    let t = std::time::Instant::now();
+    crate::contexts::resolve_contexts(nodes);
+    if profiling {
+        eprintln!("[PHASE]   contexts {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
     let t = std::time::Instant::now();
     resolve_layout_parameters(nodes, None);
     if profiling {
@@ -1290,7 +1296,10 @@ fn css_size_text(value: &OverseerValue) -> Option<String> {
 fn table_columns(template: &OverseerNode) -> String {
     let mut columns = Vec::new();
     for child in &template.children {
-        if is_event_or_action_name(&child.name) || is_always_hidden(child) {
+        if is_event_or_action_name(&child.name)
+            || is_always_hidden(child)
+            || crate::contexts::is_context(child)
+        {
             continue;
         }
         let label = match child.parameters.get("label") {
@@ -2438,7 +2447,7 @@ fn after(path: &[usize]) -> Vec<usize> {
 /// reaches the second tab's div, and a `+` after `- name = ...` lands right after `name`. An element
 /// that matches nothing is kept, after the inherited elements of its own block, and does not move
 /// the cursor.
-fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]) {
+pub(crate) fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]) {
     debug_resolver!(
         "[RESOLVER] Merging overrides into template with {} fields (transparent-aware)",
         template.children.len()
@@ -3699,6 +3708,10 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         let node: &OverseerNode = &*node_ptr;
         // Out of view, so not worked out. Nothing under it either - see `apply_list_windows`.
         if out_of_view(node) {
+            return false;
+        }
+        // A context as written is worked out in its copies, where it is used - see `contexts`.
+        if crate::contexts::is_declaration(node) {
             return false;
         }
         // Skip evaluating formulas for nodes inside action handler blocks

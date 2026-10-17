@@ -43,6 +43,15 @@ block it landed), and the writer gives the instance back from its own text: each
 that changed spliced in where it stands, and what was set since on what only the template gave
 added as an override in the nearest written block around it.
 
+A context (`context theme { ... }`) is the other thing the writer gives back from text rather than
+from the tree. Once templates are instantiated, `contexts.rs` works out what each container that
+declares one sees - the context from above with the container's declarations merged onto it by the
+same merge an instance uses - and puts a copy of each in front of that container's children,
+marked `_context_copy`. Being first, a copy is what the ordinary climb of a formula's lookup meets;
+searches that go down into other containers, method chains, and the page leave contexts out. The
+declarations themselves are left as they were read, and are not worked out where they stand, so
+the writer takes the copies out and writes the rest as it would any node.
+
 ## The modules
 
 | | |
@@ -50,6 +59,7 @@ added as an override in the nearest written block around it.
 | `parser.rs` | text to nodes |
 | `types.rs` | `OverseerNode`, `OverseerValue` — what everything else passes around |
 | `resolver.rs` | templates, inheritance, multipass, and which slice of a list is in view |
+| `contexts.rs` | what each container sees of the contexts declared above it |
 | `formula_evaluator.rs` | `$(...)`: arithmetic, comparisons, and the `filter`/`map`/`sum` chains |
 | `actions.rs` | what a button does: append, remove, set |
 | `addressing.rs` | stable addresses, so a thing read can be written afterwards |

@@ -511,6 +511,56 @@ wrappers, they put what they hold at their parent's address, so a `<tags.os/tag_
 A base's absolute paths (`/project/Items`) assume the name of its root node, so an instance that
 uses them keeps that name, or the base uses relative paths (`../Items`).
 
+### 2. Contexts
+
+A context is a name whose value is handed down the hierarchy. `context <name>` declares it for
+everything inside the container it is written in, and a declaration nearer down overrides it for
+everything inside *that* container:
+
+```overseer
+context accent = "#2563eb"
+context theme {
+    - surface = "#ffffff"
+    - text = "#1e293b"
+    - line = $(text + "33")
+}
+
+tab project (label="Project") {
+    div Sidebar {
+        context theme {
+            - surface = "#16203a"
+            - text = "#f1f5f9"
+        }
+        string title (background-color=$(theme/surface)) = "Inbox"
+    }
+    string colour = "#e11d48"
+    context accent = $(colour)
+}
+```
+
+- **It is read like any other name**: `$(accent)`, `$(theme/surface)`. A formula finds the nearest
+  context of that name above it, as it finds any name, by climbing. A context is not one of the
+  things its container holds: a method chain over the container does not count it, and the page
+  does not draw it.
+- **It covers its whole container**, wherever the line sits among the container's children. A
+  context written in an unnamed div or tab belongs to the container around it, as everything else
+  written there does. The ones written at the top of a document cover the whole document.
+- **An override changes only what it names**, the way an instance changes its template: a named
+  element replaces the one it matches, `+` adds one, a value replaces the value, and `base=<node>`
+  starts from another node rather than from the context above. Two declarations of one name in the
+  same container merge in the order they are written.
+- **Its formulas are worked out where it is used.** In the example the sidebar's `line` is worked
+  out from the sidebar's `text`, though only the outer theme says how. A container that declares
+  any context has every context visible there worked out again, so a theme that reads
+  `$(mode == "dark" ? ... : ...)` follows a `context mode = "dark"` written below it.
+- **Templates and mounts** see the contexts of where they are used: an instance's body, or an entry
+  of a list, sees those around the instance; a mounted document sees those of the document that
+  mounts it. A context a template declares is declared again in every instance.
+- **A name is one thing in its scope.** Any name can be a context, and inside a container that sees
+  one, a node of the same name is refused, saying why.
+- **It is saved as written**: the declarations are the document's text, and what a container sees
+  is worked out from them each time the document is.
+
 ### 4. Actions and Triggers
 
 Overseer supports interactive elements and automated actions:
@@ -1442,7 +1492,8 @@ div Tasks {
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`
 - **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
-- **Types** (not to be a template's name): `tab`, `div`, `list`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`
+- **Types** (not to be a template's name): `tab`, `div`, `list`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
+- **Contexts**: `context` (in a type's place), `base` (on a context)
 
 ---
 
