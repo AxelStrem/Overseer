@@ -1423,7 +1423,15 @@ impl FileOperations {
         }
 
         // Handle parameters (excluding the special 'value' parameter for fields)
-        if let Some(params) = Self::render_params(node) {
+        //
+        // Parameters that still say what the header said keep its text - line breaks, spacing
+        // and all - since a change to the node's entries is no reason to reformat its header.
+        let kept_params = snapshot
+            .as_ref()
+            .and_then(|snap| snap.header.parameters.as_ref())
+            .filter(|slice| Self::params_said(&slice.text) == Self::params_now(node))
+            .map(|slice| slice.text.replace("\r\n", "\n"));
+        if let Some(params) = kept_params.or_else(|| Self::render_params(node)) {
             output.push(' ');
             output.push_str(&params);
         }
