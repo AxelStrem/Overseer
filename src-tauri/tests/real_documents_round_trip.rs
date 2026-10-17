@@ -101,16 +101,20 @@ const ALREADY_BROKEN: &[&str] = &[];
 #[test]
 fn the_examples_survive_a_round_trip() {
     let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let examples = here.join("../examples");
 
     let mut checked = 0;
     let mut broken = Vec::new();
-    // The examples sit in a directory per document, plus a few loose at the top.
-    let mut places = vec![examples.clone()];
-    if let Ok(entries) = std::fs::read_dir(&examples) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                places.push(entry.path());
+    // The examples and the library's templates sit in a directory per document, plus a few loose
+    // at the top.
+    let mut places = Vec::new();
+    for folder in ["../examples", "../library"] {
+        let top = here.join(folder);
+        places.push(top.clone());
+        if let Ok(entries) = std::fs::read_dir(&top) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    places.push(entry.path());
+                }
             }
         }
     }

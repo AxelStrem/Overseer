@@ -4,13 +4,13 @@
 //! open or closed, holds as its handle. It is worked out from the handles already used rather
 //! than at random, so it stays the same while the lists do - a formula is resolved again and
 //! again, and a random code would change under the cursor - and moves on once an add changes
-//! them. Checked against the template every project copies.
+//! them. Checked against the example project, made from the template every project is.
 
 use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -85,7 +85,7 @@ fn add(file: &str, nodes: &[OverseerNode], typed: &[(&str, &str)]) {
 #[test]
 fn the_box_offers_a_short_code_no_item_holds() {
     serialised(|| {
-        let nodes = opened(TEMPLATE.to_string());
+        let nodes = opened(EXAMPLE.to_string());
         let code = suggestion(&nodes);
         assert_eq!(code.len(), 4, "{:?}", code);
         assert!(
@@ -100,8 +100,8 @@ fn the_box_offers_a_short_code_no_item_holds() {
 #[test]
 fn the_same_lists_offer_the_same_code() {
     serialised(|| {
-        let first = suggestion(&opened(TEMPLATE.to_string()));
-        let again = suggestion(&opened(TEMPLATE.to_string()));
+        let first = suggestion(&opened(EXAMPLE.to_string()));
+        let again = suggestion(&opened(EXAMPLE.to_string()));
         assert_eq!(first, again);
     });
 }
@@ -109,17 +109,16 @@ fn the_same_lists_offer_the_same_code() {
 #[test]
 fn an_add_takes_the_code_and_the_box_offers_another() {
     serialised(|| {
-        let file = a_file("takes", TEMPLATE);
+        let file = a_file("takes", EXAMPLE);
         let nodes = opened(std::fs::read_to_string(&file).unwrap());
         let code = suggestion(&nodes);
         add(&file, &nodes, &[("title", "Something to do")]);
 
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains(&format!("- handle = \"{}\"", code)), "the item was not given {}", code);
-        assert!(
-            text.contains("$(fresh_key(/project/Items, /project/History))"),
-            "the box lost its formula"
-        );
+        // The form is the template's, and a value written for its box would stand in for the
+        // formula from then on.
+        assert!(!text.contains("NewTask") && !text.contains("fresh_key"), "the box's value was written:\n{}", text);
         let now = opened(text);
         let next = suggestion(&now);
         assert_ne!(next, code, "the box still offers the id just taken");
@@ -130,7 +129,7 @@ fn an_add_takes_the_code_and_the_box_offers_another() {
 #[test]
 fn a_typed_id_wins_over_the_suggestion() {
     serialised(|| {
-        let file = a_file("typed", TEMPLATE);
+        let file = a_file("typed", EXAMPLE);
         let nodes = opened(std::fs::read_to_string(&file).unwrap());
         let code = suggestion(&nodes);
         add(&file, &nodes, &[("handle", "mine"), ("title", "Something to do")]);
@@ -186,7 +185,7 @@ fn a_code_either_list_holds_is_passed_over() {
 
 /// What a press of a form's button is refused with, if anything, and whether the file moved.
 fn refused_with(form: &str, typed: &[(&str, &str)]) -> (Option<String>, bool) {
-    let file = a_file(&format!("refused_{}", form), TEMPLATE);
+    let file = a_file(&format!("refused_{}", form), EXAMPLE);
     let nodes = opened(std::fs::read_to_string(&file).unwrap());
     let button = overseer::addressing::name_path(&nodes, &format!("project/{}/add", form)).expect("the add button");
     let typed = typed
@@ -201,7 +200,7 @@ fn refused_with(form: &str, typed: &[(&str, &str)]) -> (Option<String>, bool) {
         Err(other) => panic!("the press failed: {:?}", other),
         Ok(_) => None,
     };
-    (said, std::fs::read_to_string(&file).unwrap() != TEMPLATE)
+    (said, std::fs::read_to_string(&file).unwrap() != EXAMPLE)
 }
 
 #[test]

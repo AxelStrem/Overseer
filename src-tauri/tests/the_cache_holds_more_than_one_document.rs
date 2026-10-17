@@ -216,7 +216,7 @@ fn the_size_of_a_document_is_never_underestimated() {
         "../examples/tasks/tasks.os",
         "../examples/shopping/shopping.os",
         "../examples/blood_pressure/blood_pressure.os",
-        "../examples/projects/project_template.os",
+        "../examples/projects/project.os",
         "../examples/diary/diary.os",
     ] {
         let Ok(source) = std::fs::read_to_string(here.join(name)) else {

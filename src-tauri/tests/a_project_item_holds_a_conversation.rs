@@ -10,7 +10,7 @@ use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -104,7 +104,7 @@ fn param(file: &str, address: &str, name: &str) -> Option<OverseerValue> {
 #[test]
 fn each_button_folds_its_own_part_of_the_item() {
     serialised(|| {
-        let file = a_project("buttons", TEMPLATE);
+        let file = a_project("buttons", EXAMPLE);
         for (item, button, part) in [
             ("project/Items/[brace]", "talk", "Talk"),
             ("project/Items/[brace]", "work", "Agents"),
@@ -129,7 +129,7 @@ fn each_button_folds_its_own_part_of_the_item() {
 #[test]
 fn the_buttons_say_whether_there_is_anything_behind_them() {
     serialised(|| {
-        let file = a_project("shown", TEMPLATE);
+        let file = a_project("shown", EXAMPLE);
         let grey = Some(OverseerValue::String("#6b7280".into()));
         assert_eq!(param(&file, "project/Items/[editor]/talk", "font-color"), grey, "nothing said reads grey");
         assert_ne!(param(&file, "project/Items/[brace]/talk", "font-color"), grey, "something said reads grey");
@@ -151,7 +151,7 @@ fn comment(file: &str, item: &str, text: &str) {
 #[test]
 fn a_comment_is_added_dated_and_signed_under_the_ones_before() {
     serialised(|| {
-        let file = a_project("add", TEMPLATE);
+        let file = a_project("add", EXAMPLE);
         // editor has nothing said about it, so its whole conversation is new to the file.
         comment(&file, "project/Items/[editor]", "split it in **two**
 first the model");
@@ -174,7 +174,7 @@ first the model");
 #[test]
 fn adding_a_comment_opens_the_new_one_for_typing() {
     serialised(|| {
-        let file = a_project("opens", TEMPLATE);
+        let file = a_project("opens", EXAMPLE);
         let before = overseer::addressing::addresses(&opened(&file));
         let answer = press(&file, "project/Items/[brace]/Talk/add", &[]);
         let said = said_on(&file, "project/Items/[brace]");
@@ -189,7 +189,7 @@ fn adding_a_comment_opens_the_new_one_for_typing() {
 #[test]
 fn a_comment_can_be_removed_and_only_that_one_goes() {
     serialised(|| {
-        let file = a_project("remove", TEMPLATE);
+        let file = a_project("remove", EXAMPLE);
         comment(&file, "project/Items/[brace]", "a second thought");
         comment(&file, "project/Items/[editor]", "said elsewhere");
         let said = said_on(&file, "project/Items/[brace]");
@@ -212,12 +212,12 @@ fn a_comment_can_be_removed_and_only_that_one_goes() {
 fn finishing_carries_the_conversation_and_the_work_into_history() {
     serialised(|| {
         // brace, with a session of work recorded on it the way the loop records one.
-        let worked = TEMPLATE.replacen(
-            "                - points = 2\r\n                div Talk {",
-            "                - points = 2\r\n                div Agents {\r\n                    list Work {\r\n                        - {\r\n                            - at = \"2026-09-30T12:00:00+00:00\"\r\n                            - kind = \"build\"\r\n                            - model = \"claude-sonnet (high)\"\r\n                            - moved = \"ready > testing\"\r\n                            - cost = 0.75\r\n                            - lines = 12\r\n                        }\r\n                    }\r\n                }\r\n                div Talk {",
+        let worked = EXAMPLE.replacen(
+            "            - points = 2\r\n            div Talk {",
+            "            - points = 2\r\n            div Agents {\r\n                list Work {\r\n                    - {\r\n                        - at = \"2026-09-30T12:00:00+00:00\"\r\n                        - kind = \"build\"\r\n                        - model = \"claude-sonnet (high)\"\r\n                        - moved = \"ready > testing\"\r\n                        - cost = 0.75\r\n                        - lines = 12\r\n                    }\r\n                }\r\n            }\r\n            div Talk {",
             1,
         );
-        assert_ne!(worked, TEMPLATE, "the template's brace is not where this expects it");
+        assert_ne!(worked, EXAMPLE, "the example's brace is not where this expects it");
         let file = a_project("finish", &worked);
         let work = |item: &str| entries(&file, &format!("{}/Agents/Work", item), &["kind", "model", "moved", "cost", "lines", "turns"]);
         let did = work("project/Items/[brace]");
@@ -228,7 +228,7 @@ fn finishing_carries_the_conversation_and_the_work_into_history() {
         assert_eq!(said_on(&file, "project/History/[brace]"), said, "the conversation changed");
         assert_eq!(work("project/History/[brace]"), did, "the work changed");
         let written = std::fs::read_to_string(&file).unwrap();
-        let history = &written[written.find("list History").unwrap()..];
+        let history = &written[written.find("- History {").unwrap()..];
         let record = &history[history.find("- handle = \"brace\"").expect("no record of brace")..];
         assert!(!record.contains("- turns = ") && !record.contains("- read = "), "a default was restated:\n{}", record);
     });

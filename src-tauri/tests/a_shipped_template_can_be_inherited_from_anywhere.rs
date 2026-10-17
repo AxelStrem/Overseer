@@ -1,4 +1,4 @@
-//! The templates that ship with Overseer - its `examples` folder - can be inherited from any
+//! The templates that ship with Overseer - its `library` folder - can be inherited from any
 //! document, wherever it is: a file a reference names that is not beside the document is looked
 //! for there. A file of the same name beside the document comes first, and the library is only
 //! ever read.
@@ -79,7 +79,7 @@ fn text(value: &str) -> Option<OverseerValue> {
 }
 
 fn shipped() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/projects/project_template.os")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../library/projects/project_template.os")
 }
 
 #[test]

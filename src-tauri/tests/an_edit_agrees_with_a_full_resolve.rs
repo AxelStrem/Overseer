@@ -158,7 +158,7 @@ fn the_real_documents_agree() {
     let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for (doc, field, to) in [
         (
-            "../examples/projects/project_template.os",
+            "../examples/projects/project.os",
             "project/Items/Item__1/points",
             OverseerValue::Float(9.0),
         ),

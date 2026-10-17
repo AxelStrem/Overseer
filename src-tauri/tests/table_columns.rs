@@ -158,7 +158,7 @@ fn the_columns_never_reach_the_file() {
 fn the_project_tracker_draws_the_columns_it_means_to() {
     // The real one, so a field added to the template without a thought for the table shows up
     // here rather than as a column with no heading.
-    let nodes = resolved(include_str!("../../examples/projects/project_template.os"));
+    let nodes = resolved(include_str!("../../examples/projects/project.os"));
     assert_eq!(
         names(&nodes, "Items"),
         vec![

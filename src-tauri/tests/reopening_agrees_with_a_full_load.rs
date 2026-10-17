@@ -170,7 +170,7 @@ fn the_real_documents_agree() {
         "../examples/tasks/tasks.os",
         "../examples/shopping/shopping.os",
         "../examples/blood_pressure/blood_pressure.os",
-        "../examples/projects/project_template.os",
+        "../examples/projects/project.os",
     ] {
         let Ok(source) = std::fs::read_to_string(here.join(name)) else {
             continue;

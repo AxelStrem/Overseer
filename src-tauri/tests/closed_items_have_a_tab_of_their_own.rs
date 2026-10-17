@@ -10,7 +10,7 @@ use overseer::addressing;
 use overseer::app_api;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 fn label(node: &OverseerNode) -> String {
     match node.parameters.get("label") {
@@ -43,14 +43,14 @@ fn tab_around(nodes: &[OverseerNode], list: &str) -> (String, bool) {
 
 #[test]
 fn the_open_list_and_the_closed_one_are_on_tabs_of_their_own() {
-    let nodes = app_api::load_document(TEMPLATE.to_string()).expect("the template loads");
+    let nodes = app_api::load_document(EXAMPLE.to_string()).expect("the example loads");
     assert_eq!(tab_around(&nodes, "Items"), ("Open".to_string(), false));
     assert_eq!(tab_around(&nodes, "History"), ("Closed".to_string(), false));
 }
 
 #[test]
 fn the_lists_keep_their_addresses() {
-    let nodes = app_api::load_document(TEMPLATE.to_string()).expect("the template loads");
+    let nodes = app_api::load_document(EXAMPLE.to_string()).expect("the example loads");
     for address in ["project/Items", "project/History", "project/Labels", "project/NewTask"] {
         assert!(addressing::find(&nodes, address).is_some(), "nothing at {}", address);
     }

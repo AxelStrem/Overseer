@@ -254,7 +254,7 @@ fn the_real_documents_hold_up() {
     for name in [
         "../examples/weight_tracker/tracker_v2.os",
         "../examples/tasks/tasks.os",
-        "../examples/projects/project_template.os",
+        "../examples/projects/project.os",
         "../examples/blood_pressure/blood_pressure.os",
     ] {
         let Ok(source) = std::fs::read_to_string(here.join(name)) else {

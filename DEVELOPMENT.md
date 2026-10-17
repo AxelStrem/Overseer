@@ -37,9 +37,9 @@ real file. It needs both built first:
 ```bash
 npm run build
 cd src-tauri && cargo build --release --features server --bin overseer-server && cd ..
-node scripts/preview.mjs examples/projects/project_template.os            # a screenshot of the whole document
-node scripts/preview.mjs examples/projects/project_template.os --mobile   # the same, at a phone's width
-node scripts/preview.mjs examples/projects/project_template.os --script scripts/preview_example.mjs
+node scripts/preview.mjs examples/projects/project.os            # a screenshot of the whole document
+node scripts/preview.mjs examples/projects/project.os --mobile   # the same, at a phone's width
+node scripts/preview.mjs examples/projects/project.os --script scripts/preview_example.mjs
 ```
 
 On its own it saves a screenshot and prints what went wrong while drawing - a template or mount

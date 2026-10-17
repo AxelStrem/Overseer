@@ -5,7 +5,7 @@
 //! takes it off the list, which is what a finish button used to do. `cancelled` closes it the
 //! same way, with the record's status saying so, and a cancelled part counts towards nothing.
 //! How hard an item is to think through - its complexity - goes with it onto the record.
-//! Checked against the template every project is a copy of.
+//! Checked against the example project, made from the template every project is.
 //!
 //! The page sends the value and the field's `on change` as one change. As two, taking back the
 //! second left the first standing, and a task picked as finished came back on the list saying
@@ -15,7 +15,7 @@ use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -27,13 +27,13 @@ fn serialised<T>(body: impl FnOnce() -> T) -> T {
     out
 }
 
-/// The template in a file of its own, and the folder it is in.
+/// The example project in a file of its own, and the folder it is in.
 fn a_project(tag: &str) -> (std::path::PathBuf, String) {
     let root = std::env::temp_dir().join(format!("overseer_stages_{}_{}", tag, std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let file = root.join("p.os");
-    std::fs::write(&file, TEMPLATE).unwrap();
+    std::fs::write(&file, EXAMPLE).unwrap();
     app_api::forget_baseline();
     app_api::forget_dependencies();
     overseer::viewstate::forget_all();
@@ -46,11 +46,11 @@ fn on_disk(file: &str) -> String {
     std::fs::read_to_string(file).unwrap()
 }
 
-/// The handles in a list, in the order the file has them. Found at whatever depth the template
-/// puts the list - Items and History each sit in a tab of their own - and ended by the brace at
-/// the list's own indent.
+/// The handles in a list, in the order the file has them. The example writes each list as a field
+/// of its instance of the template, `- Items {`, and the list is ended by the brace at its own
+/// indent.
 fn handles_in(text: &str, list: &str) -> Vec<String> {
-    let start = text.find(&format!("list {} (", list)).expect(list);
+    let start = text.find(&format!("- {} {{", list)).expect(list);
     let line = text[..start].rfind('\n').map_or(0, |n| n + 1);
     let close = format!("\n{}}}", &text[line..start]);
     let body = &text[start..];
@@ -221,7 +221,7 @@ fn a_task_with_children_open_is_not_cancelled() {
 
 #[test]
 fn every_project_offers_the_same_stages_in_order() {
-    let nodes = app_api::load_document(TEMPLATE.to_string()).expect("open");
+    let nodes = app_api::load_document(EXAMPLE.to_string()).expect("open");
     let stages = overseer::addressing::find(&nodes, "project/Stages").expect("a Stages list");
     let tags: Vec<String> = stages
         .children
@@ -272,7 +272,7 @@ fn an_items_complexity_is_written_after_its_points_and_kept_on_the_record() {
 
 #[test]
 fn every_project_has_the_same_complexity_scale() {
-    let nodes = app_api::load_document(TEMPLATE.to_string()).expect("open");
+    let nodes = app_api::load_document(EXAMPLE.to_string()).expect("open");
     let scale = overseer::addressing::find(&nodes, "project/Complexities").expect("a Complexities list");
     let tags: Vec<String> = scale
         .children

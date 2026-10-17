@@ -4,13 +4,14 @@
 //! item still waits is worked out - how many of those handles are still on the open list - so
 //! finishing or dropping what it waited on frees it with nothing edited, and `after` keeps the
 //! record of what it waited on. Each item also works out its colour from its stage, which is what
-//! a handle in someone's `after` is drawn in. Checked against the template every project copies.
+//! a handle in someone's `after` is drawn in. Checked against the example project, made from the
+//! template every project is.
 
 use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -27,7 +28,7 @@ fn a_project(tag: &str) -> String {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let file = root.join("p.os");
-    std::fs::write(&file, TEMPLATE).unwrap();
+    std::fs::write(&file, EXAMPLE).unwrap();
     app_api::forget_baseline();
     app_api::forget_dependencies();
     overseer::viewstate::forget_all();
@@ -60,7 +61,7 @@ fn opened(text: String) -> Vec<OverseerNode> {
 #[test]
 fn an_item_waits_while_what_it_names_is_open() {
     serialised(|| {
-        let nodes = opened(TEMPLATE.to_string());
+        let nodes = opened(EXAMPLE.to_string());
         // `favicon` waits on `rows`, which is open.
         assert_eq!(read(&nodes, "Items", "favicon", "waiting"), Some(OverseerValue::Integer(1)));
         // `rows` waits on `escape`, which is finished.
@@ -73,7 +74,7 @@ fn an_item_waits_while_what_it_names_is_open() {
 #[test]
 fn an_item_takes_its_stages_colour() {
     serialised(|| {
-        let nodes = opened(TEMPLATE.to_string());
+        let nodes = opened(EXAMPLE.to_string());
         let colour = |list: &str, handle: &str| read(&nodes, list, handle, "colour");
         assert_eq!(colour("Items", "rows"), Some(OverseerValue::String("#6b7280".into())), "filed, by default");
         assert_eq!(colour("Items", "undo"), Some(OverseerValue::String("#eab308".into())), "later");

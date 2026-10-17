@@ -148,7 +148,7 @@ fn in_library(file: &str) -> Option<PathBuf> {
     found.exists().then_some(found)
 }
 
-/// The templates that ship with Overseer - its `examples` folder - which any document can
+/// The templates that ship with Overseer - its `library` folder - which any document can
 /// inherit from wherever it is. `OVERSEER_LIBRARY` names the folder where it is put somewhere of
 /// its own, as the server image does. Without it, the checkout the program was built from is
 /// used while it is there, so an edit to a template is seen at once; and then the copy the
@@ -160,7 +160,7 @@ pub fn library() -> Option<PathBuf> {
         return Some(PathBuf::from(dir));
     }
     static DEFAULT: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../library");
         let exe = std::env::current_exe().ok();
         let dir = exe.as_deref().and_then(Path::parent);
         let bundled = dir.map(|d| d.join("library"));

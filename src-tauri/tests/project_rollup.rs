@@ -17,7 +17,8 @@ use overseer::parser;
 use overseer::resolver;
 use overseer::types::{OverseerNode, OverseerValue};
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const TEMPLATE: &str = include_str!("../../library/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
     for node in nodes {
@@ -87,6 +88,16 @@ fn resolved(source: &str) -> Vec<OverseerNode> {
     nodes
 }
 
+/// A document worked out with its own copy of the project template beside it, which comes before
+/// the library's.
+fn resolved_beside(source: &str, template: &str) -> Vec<OverseerNode> {
+    let root = std::env::temp_dir().join(format!("overseer_rollup_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+    std::fs::write(root.join("projects/project_template.os"), template).unwrap();
+    overseer::docmgr::manager::DocumentManager::with_document(Some(root), || resolved(source))
+}
+
 /// The open items, by handle.
 fn items(nodes: &[OverseerNode]) -> Vec<(String, &OverseerNode)> {
     find(nodes, "Items")
@@ -107,7 +118,7 @@ fn by_handle<'a>(nodes: &'a [OverseerNode], handle: &str) -> &'a OverseerNode {
 
 #[test]
 fn the_percentages_are_worked_out_from_the_tree() {
-    let nodes = resolved(TEMPLATE);
+    let nodes = resolved(EXAMPLE);
 
     for (handle, expected) in [("parser", 75.0), ("editor", 50.0), ("docs", 100.0)] {
         let entry = by_handle(&nodes, handle);
@@ -130,7 +141,7 @@ fn an_open_leaf_reads_nothing() {
     // Not a rounding accident: a leaf on the open list has not been begun, because a leaf that
     // had been begun would have been split and one that was finished would be in History. This
     // is what makes the figure above it meaningful, so it is worth pinning.
-    let nodes = resolved(TEMPLATE);
+    let nodes = resolved(EXAMPLE);
 
     for (handle, entry) in items(&nodes) {
         if number(entry, "kids") > 0.0 {
@@ -162,7 +173,7 @@ fn finishing_withheld(entry: &OverseerNode) -> bool {
 
 #[test]
 fn finishing_waits_for_the_children_and_not_for_the_percentage() {
-    let nodes = resolved(TEMPLATE);
+    let nodes = resolved(EXAMPLE);
 
     // Outstanding work beneath them, so finishing would orphan it.
     for handle in ["editor", "parser"] {
@@ -196,7 +207,7 @@ fn the_last_movement_is_read_rather_than_stamped() {
     // It used to be written by a button, which made it true only when the button was remembered.
     // For a task with finished children it is the most recent of those finishes; for a leaf, when
     // it was added, which answers the same question about something that has not moved at all.
-    let nodes = resolved(TEMPLATE);
+    let nodes = resolved(EXAMPLE);
 
     for (handle, expected) in [
         ("docs", "2026-09-10T15:10:00+04:00"),
@@ -238,23 +249,26 @@ fn a_tree_worth_nothing_reads_nought_rather_than_failing() {
     //
     // Anchored on the declaration rather than on the text of its parameters, which have changed
     // twice - the guard below caught it the second time, when the label became a table heading.
-    let zeroed: String = TEMPLATE
-        .replace("- points = ", "- points_unused = ")
+    let mut declared = false;
+    let template: String = TEMPLATE
         .lines()
         .map(|line| {
-            if line.trim_start().starts_with("int points (") {
+            if line.trim_start().starts_with("int points (") && line.contains("= 1") {
+                declared = true;
                 line.replace("= 1", "= 0")
             } else {
                 line.to_string()
             }
         })
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("
+");
+    let example = EXAMPLE.replace("- points = ", "- points_unused = ");
     assert!(
-        zeroed.contains("= 0") && !zeroed.contains("\n            - points = "),
+        declared && example != EXAMPLE,
         "the template moved; this test is no longer zeroing anything",
     );
-    let nodes = resolved(&zeroed);
+    let nodes = resolved_beside(&example, &template);
 
     for (handle, entry) in items(&nodes) {
         let node = child(entry, "done").expect("no done field");

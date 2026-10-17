@@ -10,7 +10,7 @@ use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -78,7 +78,7 @@ fn first_comment(file: &str, handle: &str, field: &str) -> String {
 #[test]
 fn an_item_untouched_since_it_was_filed_moved_when_it_was_filed() {
     serialised(|| {
-        let file = a_project("filed", TEMPLATE);
+        let file = a_project("filed", EXAMPLE);
         assert_eq!(moved(&file, "rows"), at("2026-09-02T10:00:00+04:00"));
         // brace's one comment was said as it was filed; editor's last part closed after it was.
         assert_eq!(moved(&file, "brace"), at("2026-09-01T09:10:00+04:00"));
@@ -89,7 +89,7 @@ fn an_item_untouched_since_it_was_filed_moved_when_it_was_filed() {
 #[test]
 fn a_stage_change_moves_the_item() {
     serialised(|| {
-        let file = a_project("stage", TEMPLATE);
+        let file = a_project("stage", EXAMPLE);
         clock("2026-10-02T08:00:00Z");
         let path = names_of(&file, "project/Items/[rows]/stage");
         let value = app_api::ValueWrite { node_path: path, value: OverseerValue::String("planning".into()) };
@@ -101,7 +101,7 @@ fn a_stage_change_moves_the_item() {
 #[test]
 fn adding_editing_and_removing_a_comment_each_move_the_item() {
     serialised(|| {
-        let file = a_project("talk", TEMPLATE);
+        let file = a_project("talk", EXAMPLE);
 
         clock("2026-10-03T08:00:00Z");
         let answer = event(&file, "project/Items/[rows]/Talk/add", "click", Vec::new());
@@ -128,12 +128,12 @@ fn adding_editing_and_removing_a_comment_each_move_the_item() {
 fn a_comment_written_into_the_file_moves_the_item() {
     serialised(|| {
         // favicon's comment, as a script adding one later would leave it.
-        let later = TEMPLATE.replacen(
+        let later = EXAMPLE.replacen(
             "- at = \"2026-09-04T16:00:00+04:00\"",
             "- at = \"2026-09-20T12:00:00+04:00\"",
             1,
         );
-        assert_ne!(later, TEMPLATE, "the template's favicon comment is not where this expects it");
+        assert_ne!(later, EXAMPLE, "the example's favicon comment is not where this expects it");
         let file = a_project("written", &later);
         assert_eq!(moved(&file, "favicon"), at("2026-09-20T12:00:00+04:00"));
     });
@@ -142,15 +142,15 @@ fn a_comment_written_into_the_file_moves_the_item() {
 #[test]
 fn a_closed_item_keeps_its_stamp_and_reopening_moves_it() {
     serialised(|| {
-        let file = a_project("reopen", TEMPLATE);
+        let file = a_project("reopen", EXAMPLE);
         clock("2026-10-06T08:00:00Z");
         let path = names_of(&file, "project/Items/[rows]/stage");
         let value = app_api::ValueWrite { node_path: path, value: OverseerValue::String("finished".into()) };
         assert!(event(&file, "project/Items/[rows]/stage", "change", vec![value]).wrote);
         let written = std::fs::read_to_string(&file).unwrap();
-        let history = &written[written.find("list History").unwrap()..];
+        let history = &written[written.find("- History {").unwrap()..];
         let record = &history[history.find("- handle = \"rows\"").expect("no record of rows")..];
-        let record = &record[..record.find("\n            }").unwrap_or(record.len())];
+        let record = &record[..record.find("\n        }").unwrap_or(record.len())];
         assert!(record.contains("- touched_at = \"2026-10-06T08:00:00"), "the stamp did not go with it:\n{}", record);
 
         clock("2026-10-07T08:00:00Z");

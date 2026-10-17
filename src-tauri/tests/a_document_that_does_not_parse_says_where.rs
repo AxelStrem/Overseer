@@ -85,7 +85,9 @@ fn os_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 #[test]
 fn the_example_documents_read_whole() {
     let mut files = Vec::new();
-    os_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples"), &mut files);
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    os_files(&repo.join("examples"), &mut files);
+    os_files(&repo.join("library"), &mut files);
     assert!(!files.is_empty());
     for file in files {
         let text = std::fs::read_to_string(&file).unwrap();

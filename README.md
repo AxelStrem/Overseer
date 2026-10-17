@@ -64,7 +64,8 @@ Four ideas carry most of the weight:
 | `src/` | the renderer: DOM, charts, styling |
 | `src-tauri/src/` | the language: parser, resolver, formula evaluator, actions, serializer |
 | `src-tauri/src/bin/server.rs` | the HTTP server |
-| `examples/` | real documents, several of which the tests resolve |
+| `library/` | templates that ship with Overseer, which any document can inherit |
+| `examples/` | sample documents to read and copy, several of which the tests resolve |
 | `tests/`, `src-tauri/tests/` | the two suites |
 
 ## Testing

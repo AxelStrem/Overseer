@@ -10,7 +10,7 @@ use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -22,19 +22,19 @@ fn serialised<T>(body: impl FnOnce() -> T) -> T {
     out
 }
 
-/// The template in a file, opened the way the page opens it.
+/// The example project in a file, opened the way the page opens it.
 fn opened(tag: &str) -> (String, Vec<OverseerNode>) {
     let root = std::env::temp_dir().join(format!("overseer_project_drop_{}_{}", tag, std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let file = root.join("p.os");
-    std::fs::write(&file, TEMPLATE).unwrap();
+    std::fs::write(&file, EXAMPLE).unwrap();
     app_api::forget_baseline();
     app_api::forget_dependencies();
     overseer::viewstate::forget_all();
     let instant = chrono::DateTime::parse_from_rfc3339("2026-10-03T09:00:00Z").unwrap().with_timezone(&chrono::Utc);
     FormulaEvaluator::set_time_override(Some(instant));
-    let nodes = app_api::load_document(TEMPLATE.to_string()).expect("open");
+    let nodes = app_api::load_document(EXAMPLE.to_string()).expect("open");
     (file.to_string_lossy().to_string(), nodes)
 }
 

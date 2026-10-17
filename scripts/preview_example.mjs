@@ -1,7 +1,7 @@
 // Steps for preview.mjs: look at a project tracker, file a task through its form, move an item
 // along, and read back what reached the file.
 //
-//   node scripts/preview.mjs examples/projects/project_template.os --script scripts/preview_example.mjs
+//   node scripts/preview.mjs examples/projects/project.os --script scripts/preview_example.mjs
 
 await shot('whole')
 

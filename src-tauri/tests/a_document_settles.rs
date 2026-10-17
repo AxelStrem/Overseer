@@ -181,7 +181,7 @@ fn the_documents_in_use_settle() {
     // settling has somewhere to be recorded, and so the number can only go down.
     const KNOWN_UNSETTLED: &[&str] = &[];
 
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut checked = 0;
     let mut unsettled = Vec::new();
     let mut still_known = Vec::new();
@@ -200,7 +200,8 @@ fn the_documents_in_use_settle() {
     }
 
     let mut files = Vec::new();
-    collect(&root, &mut files);
+    collect(&repo.join("examples"), &mut files);
+    collect(&repo.join("library"), &mut files);
     files.sort();
 
     for file in files {

@@ -10,7 +10,7 @@ use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -22,13 +22,13 @@ fn serialised<T>(body: impl FnOnce() -> T) -> T {
     out
 }
 
-/// The template in a file of its own.
+/// The example project in a file of its own.
 fn a_project(tag: &str) -> String {
     let root = std::env::temp_dir().join(format!("overseer_reopen_{}_{}", tag, std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let file = root.join("p.os");
-    std::fs::write(&file, TEMPLATE).unwrap();
+    std::fs::write(&file, EXAMPLE).unwrap();
     app_api::forget_baseline();
     app_api::forget_dependencies();
     overseer::viewstate::forget_all();
@@ -157,7 +157,7 @@ fn a_reopened_item_goes_on_top_of_the_open_list() {
         let file = a_project("ontop");
         let first_open = |file: &str| {
             let text = std::fs::read_to_string(file).unwrap();
-            let items = &text[text.find("list Items (").unwrap()..];
+            let items = &text[text.find("- Items {").unwrap()..];
             items.lines().find_map(|l| l.trim().strip_prefix("- handle = \"").map(|h| h.trim_end_matches('"').to_string())).unwrap()
         };
         assert_ne!(first_open(&file), "roundtrip");

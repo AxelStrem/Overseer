@@ -4,13 +4,13 @@
 //! every project, like the stages: manual, auto, first, asked, discuss. They say how an item is to
 //! be worked rather than what it is - who it waits on, whether an agent may take it - so they
 //! stay with it wherever it goes: onto the record when it is closed, and back when it is reopened.
-//! Checked against the template every project is a copy of.
+//! Checked against the example project, made from the template every project is.
 
 use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
 use overseer::types::*;
 
-const TEMPLATE: &str = include_str!("../../examples/projects/project_template.os");
+const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -22,13 +22,13 @@ fn serialised<T>(body: impl FnOnce() -> T) -> T {
     out
 }
 
-/// The template in a file of its own.
+/// The example project in a file of its own.
 fn a_project(tag: &str) -> String {
     let root = std::env::temp_dir().join(format!("overseer_flags_{}_{}", tag, std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let file = root.join("p.os");
-    std::fs::write(&file, TEMPLATE).unwrap();
+    std::fs::write(&file, EXAMPLE).unwrap();
     app_api::forget_baseline();
     app_api::forget_dependencies();
     overseer::viewstate::forget_all();
@@ -85,7 +85,7 @@ fn press(file: &str, address: &str) {
 
 #[test]
 fn every_project_offers_the_same_flags_in_order() {
-    let nodes = app_api::load_document(TEMPLATE.to_string()).expect("open");
+    let nodes = app_api::load_document(EXAMPLE.to_string()).expect("open");
     let flags = overseer::addressing::find(&nodes, "project/Flags").expect("a Flags list");
     let tags: Vec<String> = flags
         .children

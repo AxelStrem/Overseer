@@ -209,27 +209,25 @@ fn repeated_reevaluation_and_save_is_stable() {
 /// is pressed - a large diff for no change, on a document meant to be pressed. This catches it
 /// while `drift` on that very list is still open.
 ///
-/// The template rather than a filled-in copy of it, and deliberately: a real project tracker now
+/// The example project rather than a real tracker, and deliberately: a real project tracker now
 /// lives with the deployed documents, where this suite cannot reach it, and the machinery is the
-/// same machinery either way. What the guard needs is entries - fifteen of them here, across both
-/// lists - because a document with none cannot reformat one.
+/// same machinery either way. What the guard needs is entries - the example's, across both lists -
+/// because a document with none cannot reformat one. The template it inherits, which holds none,
+/// is saved too.
 #[test]
-fn the_project_template_survives_repeated_saves() {
+fn the_project_example_and_its_template_survive_repeated_saves() {
     serialised(|| {
-        let examples =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/projects");
-        let host_path = examples.join("project_template.os");
-        let original = std::fs::read_to_string(&host_path).expect("project_template.os");
-        DocumentManager::set_current_document(Some(host_path.to_string_lossy().as_ref()));
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        for file in ["examples/projects/project.os", "library/projects/project_template.os"] {
+            let host_path = repo.join(file);
+            let original = std::fs::read_to_string(&host_path).expect(file);
+            DocumentManager::set_current_document(Some(host_path.to_string_lossy().as_ref()));
 
-        let mut text = original.clone();
-        for pass in 1..=3 {
-            text = load_and_save(&text);
-            assert_eq!(
-                text, original,
-                "project_template.os drifted on save number {}",
-                pass
-            );
+            let mut text = original.clone();
+            for pass in 1..=3 {
+                text = load_and_save(&text);
+                assert_eq!(text, original, "{} drifted on save number {}", file, pass);
+            }
         }
         DocumentManager::set_current_document(None);
     });
