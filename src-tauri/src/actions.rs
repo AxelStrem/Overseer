@@ -738,6 +738,9 @@ impl ActionExecutor {
         // One reading of the clock for every action in the press and whatever it works out -
         // see `FormulaEvaluator::pin_the_clock`.
         let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
+        // What an action of the press takes away of the entry its button is in is kept until the
+        // press is over - see `keep_if_pressed`.
+        let _press = crate::formula_evaluator::FormulaEvaluator::press_scope();
         debug_actions!(
             "[ACTIONS] execute_event at {:?} on '{}'",
             node_path,
@@ -891,6 +894,10 @@ impl ActionExecutor {
             action.node_type,
             action.parameters
         );
+        // Once an action before this one took away the entry the button is in, the button is read
+        // where the press keeps it - see `keep_if_pressed`.
+        let kept_at = FormulaEvaluator::pressed_address(owner_path);
+        let owner_path: &[String] = kept_at.as_deref().unwrap_or(owner_path);
         // Everything but these may change the document. An `if` says so through whatever it
         // lets run, and opening a field changes nothing until somebody types.
         if !matches!(action.node_type.as_str(), "if" | "refuse" | "start_editing" | "fold" | "unfold" | "toggle_fold") {
@@ -3297,6 +3304,22 @@ impl ActionExecutor {
         Ok(())
     }
 
+    /// Keeps the entry at `entry`, about to be taken out of its list, for the rest of the press
+    /// when the press's button is in it.
+    ///
+    /// The press's later actions read the button's fields and its entry's from the button's
+    /// address, and with the entry gone that address names nothing - or the entry that moves up
+    /// into its place. See `FormulaEvaluator::keep_the_pressed_entry`.
+    fn keep_if_pressed(nodes: &Vec<OverseerNode>, owner_path: &[String], entry: &[usize]) {
+        let stood = Self::build_disambiguated_path(nodes, entry);
+        if stood.is_empty() || !owner_path.starts_with(&stood) {
+            return;
+        }
+        if let Some(node) = Self::node_by_indices(nodes, entry) {
+            FormulaEvaluator::keep_the_pressed_entry(stood, node.clone());
+        }
+    }
+
     fn remove_from_list(
         nodes: &mut Vec<OverseerNode>,
         owner_path: &[String],
@@ -3336,6 +3359,11 @@ impl ActionExecutor {
         })?;
         if let Some(pos) = holding {
             refuse_a_given_entry(&list_node.children[pos], "be removed")?;
+            let entry: Vec<usize> = indices.iter().copied().chain([pos]).collect();
+            Self::keep_if_pressed(nodes, owner_path, &entry);
+            let list_node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
+                OverseerError::ValidationError(format!("List not found: {}", list_path))
+            })?;
             let gone = list_node.children.remove(pos);
             // Shape, not value - and only when something was taken out.
             note_shape(Shape::Removed { list: list_address, entry: gone.name });
@@ -4582,6 +4610,8 @@ impl ActionExecutor {
                 Self::value_equals(v, key_value)
             })? {
                 refuse_a_given_entry(&list_node.children[pos], "be moved")?;
+                let entry: Vec<usize> = from_indices.iter().copied().chain([pos]).collect();
+                Self::keep_if_pressed(&snapshot, owner_path, &entry);
                 let item = list_node.children.remove(pos);
                 let insert_at = at_index.unwrap_or(list_node.children.len());
                 let idx = if insert_at > list_node.children.len() {
@@ -4626,6 +4656,8 @@ impl ActionExecutor {
                     Self::value_equals(v, key_value)
                 })? {
                     refuse_a_given_entry(&from_node.children[pos], "be moved")?;
+                    let entry: Vec<usize> = from_indices.iter().copied().chain([pos]).collect();
+                    Self::keep_if_pressed(&snapshot, owner_path, &entry);
                     Some(from_node.children.remove(pos))
                 } else {
                     None

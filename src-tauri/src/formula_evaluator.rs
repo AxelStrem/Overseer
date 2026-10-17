@@ -12,6 +12,9 @@ use nom::{
 };
 /// What the clock is called in the dependency graph. Not a name any node can carry.
 pub const CLOCK: &str = "@clock";
+/// Where a press reads the entry it has taken away - see `FormulaEvaluator::keep_the_pressed_entry`.
+/// Not a name any node can carry either, so no path the resolver builds starts with it.
+pub const PRESSED_ENTRY: &str = "@pressed";
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -48,6 +51,21 @@ thread_local! {
     /// See `FormulaEvaluator::doubts`.
     static DOUBTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static DOUBTS_SAID: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// See `FormulaEvaluator::keep_the_pressed_entry`: where the entry stood, and the entry.
+    static PRESSED_TAKEN: RefCell<Option<(Vec<String>, Box<OverseerNode>)>> = const { RefCell::new(None) };
+}
+
+/// The press an entry taken away is kept for - see `FormulaEvaluator::keep_the_pressed_entry`.
+/// Gives back what an outer press kept, if there is one, when it goes.
+pub struct PressScope {
+    outer: Option<(Vec<String>, Box<OverseerNode>)>,
+}
+
+impl Drop for PressScope {
+    fn drop(&mut self) {
+        let outer = self.outer.take();
+        PRESSED_TAKEN.with(|cell| *cell.borrow_mut() = outer);
+    }
 }
 
 /// The clock held still - see `FormulaEvaluator::pin_the_clock`. Let go when dropped, by the pin
@@ -169,6 +187,52 @@ impl FormulaEvaluator {
 
     pub fn get_time_override() -> Option<DateTime<Utc>> {
         Self::TIME_OVERRIDE_UTC.with(|cell| cell.borrow().clone())
+    }
+
+    /// Opens a press, for `keep_the_pressed_entry` to keep an entry for until it is over.
+    pub fn press_scope() -> PressScope {
+        PressScope { outer: PRESSED_TAKEN.with(|cell| cell.borrow_mut().take()) }
+    }
+
+    /// Keeps the entry a press's button is in, as it was, when an action of the press takes it
+    /// away - `path` is where it stood.
+    ///
+    /// Each action of a press works out its arguments when its turn comes, from the button's
+    /// address, and that address runs through the entry. Once the entry was gone, `../added` in
+    /// the bucket lists' trash button - three removes, one per list - found nothing, and the whole
+    /// press was refused; with an entry after it, that one stood at the address in its place and
+    /// was read instead. The rest of the press reads the entry from here, through the address
+    /// `pressed_address` gives; writes and absolute paths go on to the document as before. The
+    /// first entry kept stays for the press: nothing after it can take away the button again.
+    pub fn keep_the_pressed_entry(path: Vec<String>, entry: OverseerNode) {
+        PRESSED_TAKEN.with(|cell| {
+            let mut kept = cell.borrow_mut();
+            if kept.is_none() {
+                *kept = Some((path, Box::new(entry)));
+            }
+        });
+    }
+
+    /// Where the press reads a node at `path`, when `path` runs through the entry it took away.
+    pub fn pressed_address(path: &[String]) -> Option<Vec<String>> {
+        PRESSED_TAKEN.with(|cell| {
+            let kept = cell.borrow();
+            let (stood, _) = kept.as_ref()?;
+            if !path.starts_with(stood) {
+                return None;
+            }
+            let mut address = vec![PRESSED_ENTRY.to_string()];
+            address.extend_from_slice(&path[stood.len()..]);
+            Some(address)
+        })
+    }
+
+    /// The entry the press took away, for a path starting at `PRESSED_ENTRY`.
+    fn the_pressed_entry<'a>() -> Option<&'a OverseerNode> {
+        // The entry is boxed and stays where it is until the press is over, and nothing outside
+        // a press is given an address starting at `PRESSED_ENTRY`, so what is read from it is
+        // done with before it goes.
+        PRESSED_TAKEN.with(|cell| cell.borrow().as_ref().map(|(_, entry)| unsafe { &*(entry.as_ref() as *const OverseerNode) }))
     }
 
     /// Read the clock once, and have every `now()` answer with that reading until the pin goes.
@@ -2882,7 +2946,11 @@ impl FormulaEvaluator {
         // A step at a time, looking through wrappers the way the path was built - see
         // `addressing::Level`. This followed raw children once, which is what made a wrapper a
         // step of every path and a `..` inside one land on it.
-        let mut current = crate::addressing::step_among(root, &segments[0])?;
+        let mut current = if segments[0] == PRESSED_ENTRY {
+            Self::the_pressed_entry()?
+        } else {
+            crate::addressing::step_among(root, &segments[0])?
+        };
         for seg in &segments[1..] {
             current = crate::addressing::step_among(&current.children, seg)?;
         }

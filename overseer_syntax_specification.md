@@ -799,6 +799,13 @@ The actions run from the div's own place, one level down from where a button ins
 stand - so `$(./amount)` is the entry's own field, where a button would say `$(../amount)`. A bare
 `$(amount)` finds it too, but would go on to an ancestor's `amount` if the entry had none.
 
+The actions of a press run one after another, and each reads the document as the ones before it
+left it. An action that takes away the entry being pressed - a `remove`, or a `move` to another
+place - does not stop the ones after it: they go on reading the entry's fields as they were when
+it left, so a trash button can remove an entry from every list that might hold it, in any order.
+What they write still goes to the document, so writing to a field of the entry taken away refuses
+the press: that entry is no longer in it.
+
 Something inside the div that can be changed keeps its own taps, and nothing reaches the div: a
 field that can be edited, a checkbox that can be ticked, a button with an `on click` of its own, a
 link. Anything that cannot be changed lets the tap through to the div - a worked-out value, a
