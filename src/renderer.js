@@ -1351,8 +1351,10 @@ export class OverseerRenderer {
         return true
     }
 
-    /// A list's entries in the order it shows them: by the columns the reader sorted it by, then
-    /// by `_ui_sort_key`, and where neither says anything, by where they stand.
+    /// A list's entries in the order it shows them: by the list's own order (`_ui_sort_key`, from
+    /// `sort_by`), then by the columns the reader sorted it by, and where neither says anything,
+    /// by where they stand. The list's own order comes first so that what it keeps on top - a
+    /// pinned item, say - stays there however a reader sorts the rest.
     inDisplayOrder(list) {
         const sorts = this.columnSortsOf(list)
         const byColumns = sorts.map(({ field, way }) => {
@@ -1365,19 +1367,31 @@ export class OverseerRenderer {
                 keys: byColumns.map(({ field, vocabulary }) => this.columnSortValue(ch, field, vocabulary)),
             }))
             .sort((a, b) => {
+                const order = this.compareSortKeys(this.sortKeyOf(a.ch), this.sortKeyOf(b.ch))
+                if (order !== 0) return order
                 for (let i = 0; i < byColumns.length; i++) {
                     const order = this.compareColumnValues(a.keys[i], b.keys[i], byColumns[i].way)
                     if (order !== 0) return order
                 }
-                const ka = (a.ch?.parameters && a.ch.parameters['_ui_sort_key'] !== undefined) ? a.ch.parameters['_ui_sort_key'] : a.idx
-                const kb = (b.ch?.parameters && b.ch.parameters['_ui_sort_key'] !== undefined) ? b.ch.parameters['_ui_sort_key'] : b.idx
-                const va = this.coerceSortKey(ka)
-                const vb = this.coerceSortKey(kb)
-                if (va < vb) return -1
-                if (va > vb) return 1
                 return a.idx - b.idx
             })
             .map((x) => x.ch)
+    }
+
+    /// An entry's place in its list's own order - what `sort_by` worked out for it - if it has one.
+    sortKeyOf(node) {
+        return node?.parameters ? node.parameters['_ui_sort_key'] : undefined
+    }
+
+    /// How two entries' sort keys order them. An entry without one goes after those with one, and
+    /// two without one are left to whatever decides next.
+    compareSortKeys(ka, kb) {
+        if (ka === undefined && kb === undefined) return 0
+        const va = this.coerceSortKey(ka)
+        const vb = this.coerceSortKey(kb)
+        if (va < vb) return -1
+        if (va > vb) return 1
+        return 0
     }
 
     /**
@@ -3084,9 +3098,8 @@ export class OverseerRenderer {
         list.style.gridTemplateColumns = across.map((c) => c.width || '1fr').join(' ')
 
         const column = new Map(across.map((c, i) => [c.name, i + 1]))
-        // The column right after a grip. A grip is the handle on the row's edge, not data, so no
-        // rule is drawn between it and the column beside it - see `.table-after-grip`.
-        const afterGrip = this.columnsAfterGrip(across)
+        // The columns drawn without a rule at their left - see `columnsWithoutRule`.
+        const noRule = this.columnsWithoutRule(across)
 
         for (const row of Array.from(list.children)) {
             if (row.classList.contains('table-header')) continue
@@ -3117,7 +3130,7 @@ export class OverseerRenderer {
                     cell.style.gridColumn = '1 / -1'
                     cell.classList.add('table-own-line')
                 }
-                cell.classList.toggle('table-after-grip', afterGrip.has(Number(cell.style.gridColumn)))
+                cell.classList.toggle('table-no-rule', noRule.has(Number(cell.style.gridColumn)))
                 // The heading says what the column holds, so the cell need not repeat it.
                 const label = cell.querySelector(':scope > label')
                 if (label) label.remove()
@@ -3142,11 +3155,19 @@ export class OverseerRenderer {
         this.drawTableHeading(list, across)
     }
 
-    /** The numbers of the columns that sit right after a grip's column. */
-    columnsAfterGrip(across) {
-        const after = new Set()
-        across.forEach((c, i) => { if (c.grip) after.add(i + 2) })
-        return after
+    /**
+     * The numbers of the columns drawn with no rule between them and the column before: the one
+     * right after a grip, which is the handle on the row's edge and divides nothing, and a button
+     * right after a button, since the buttons standing together are one row's controls.
+     */
+    columnsWithoutRule(across) {
+        const without = new Set()
+        across.forEach((c, i) => {
+            if (i === 0) return
+            const before = across[i - 1]
+            if (before.grip || (before.button && c.button)) without.add(i + 1)
+        })
+        return without
     }
 
     /**
@@ -3174,11 +3195,11 @@ export class OverseerRenderer {
             sortable = JSON.parse(list.dataset.sortable || '[]')
             sorts = JSON.parse(list.dataset.columnSorts || '[]')
         } catch (_) { /* not sortable */ }
-        const afterGrip = this.columnsAfterGrip(across)
+        const noRule = this.columnsWithoutRule(across)
         across.forEach((c, i) => {
             const cell = document.createElement('span')
             cell.className = 'table-heading'
-            if (afterGrip.has(i + 1)) cell.classList.add('table-after-grip')
+            if (noRule.has(i + 1)) cell.classList.add('table-no-rule')
             this.setTextWithIcons(cell, c.label || '')
             cell.style.gridColumn = String(i + 1)
             if (sortable.includes(c.name)) this.makeHeadingSort(list, cell, c.name, sorts)
@@ -3475,8 +3496,8 @@ export class OverseerRenderer {
         for (const list of template === null ? [] : document.querySelectorAll('.overseer-list[data-movable="1"]')) {
             if (list.dataset.board) continue
             const accepts = list === drag.list
-                ? list.dataset.sorted !== '1'
-                : (template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
+                ? list.dataset.sorted !== '1' || this.entriesTiedWith(list, drag.entry).length > 1
+                :(template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
             if (accepts) out.push(list)
         }
         for (const board of document.querySelectorAll('.overseer-list.view-board')) {
@@ -3661,8 +3682,9 @@ export class OverseerRenderer {
         }
         element.dataset.movable = '1'
         element.dataset.entryTemplate = this.entryTemplateOf(node)
-        // A list drawn in an order worked out from its entries has no order to drag into: an
-        // entry dropped in it from elsewhere lands where the order puts it.
+        // A list drawn in an order worked out from its entries has an order to drag into only
+        // among the entries it ties, which it draws in the file's order: an entry dropped in it
+        // from elsewhere lands where the order puts it.
         const sorted = this.getParameterValue(node, 'sort_by') != null
             || this.getParameterValue(node, 'sort') != null
             || (node.children || []).some((c) => c?.parameters?._ui_sort_key !== undefined)
@@ -3777,14 +3799,15 @@ export class OverseerRenderer {
      * Whether an entry of a list that can be dragged in can be dragged now.
      *
      * Not when it says it stays where it is (`movable=false`, a pinned item's formula, say). Nor
-     * in a list the document keeps sorted, where it can only go to another list that takes its
-     * entries, when no such list is on the page.
+     * in a list the document keeps sorted, when its order ties it with no other entry there and
+     * there is no other list on the page that takes its entries.
      */
     entryCanBeDragged(entry, list) {
         if (this.entryStays(this.nodeDrawnBy(entry))) return false
         // A board's entry is a value to pick, sorted or not.
         if (list.dataset.board) return true
         if (list.dataset.sorted !== '1') return true
+        if (this.entriesTiedWith(list, entry).length > 1) return true
         const template = list.dataset.entryTemplate || ''
         if (template === '') return false
         return Array.from(document.querySelectorAll('.overseer-list[data-movable="1"]'))
@@ -3911,6 +3934,37 @@ export class OverseerRenderer {
             && !el.hidden && !el.classList.contains('filtered-out'))
     }
 
+    /// The entries drawn in a sorted list that its order ties with `entry`, the entry among them,
+    /// in the order they are drawn. Ties are drawn in the order the file has them, so these are
+    /// the entries it can be dragged among: the drag writes that order, and nothing else.
+    entriesTiedWith(list, entry) {
+        const key = this.sortKeyOf(this.nodeDrawnBy(entry))
+        return this.droppableEntries(list, null).filter((el) => el === entry
+            || this.compareSortKeys(this.sortKeyOf(this.nodeDrawnBy(el)), key) === 0)
+    }
+
+    /// Where in the file an entry dropped among its ties goes: before the tie it was dropped
+    /// before, or - dropped after the last of them - before whatever the file has after that one,
+    /// so it ends up after every tie.
+    beforeAmongTies(drag) {
+        const read = (el) => JSON.parse(el.dataset.path)
+        if (drag.before) return read(drag.before)
+        const ties = this.entriesTiedWith(drag.list, drag.entry).filter((el) => el !== drag.entry)
+        const last = ties[ties.length - 1]
+        const entries = this.nodeDrawnBy(drag.list)?.children || []
+        const at = last ? entries.indexOf(this.nodeDrawnBy(last)) : -1
+        if (at < 0) return null
+        const drawn = new Map()
+        for (const el of drag.list.children) {
+            if (el !== drag.entry && el.dataset && el.dataset.uid && el.dataset.path) drawn.set(this.nodeDrawnBy(el), el)
+        }
+        for (const node of entries.slice(at + 1)) {
+            const el = drawn.get(node)
+            if (el) return read(el)
+        }
+        return null
+    }
+
     /// Move the lifted entry with the pointer, and say where it would land.
     followEntryDrag() {
         const drag = this._entryDrag
@@ -3940,10 +3994,14 @@ export class OverseerRenderer {
             list = target.querySelector(':scope > .board-column-body')
             across = board.dataset.boardLanes === 'rows'
         } else {
-            if (list.dataset.sorted === '1') { line.hidden = true; return }
+            // A list kept sorted orders what comes from elsewhere itself, and what is moved
+            // within it only among the entries its order ties with it.
+            if (list.dataset.sorted === '1' && list !== drag.list) { line.hidden = true; return }
             across = list.classList.contains('layout-horizontal') || list.classList.contains('layout-flow')
         }
-        const entries = this.droppableEntries(list, drag.entry)
+        const entries = list.dataset.sorted === '1' && list === drag.list
+            ? this.entriesTiedWith(list, drag.entry).filter((el) => el !== drag.entry)
+            : this.droppableEntries(list, drag.entry)
         for (const el of entries) {
             const r = el.getBoundingClientRect()
             const goesBefore = across
@@ -3998,13 +4056,16 @@ export class OverseerRenderer {
         const sorted = drag.target.dataset.sorted === '1'
         if (drag.target === drag.list) {
             // Dropped where it was drawn already: nothing to write.
-            const entries = this.droppableEntries(drag.list, null)
+            const entries = sorted
+                ? this.entriesTiedWith(drag.list, drag.entry)
+                : this.droppableEntries(drag.list, null)
             const next = entries[entries.indexOf(drag.entry) + 1] || null
             if (drag.before === next) return
         }
         const read = (el) => JSON.parse(el.dataset.path)
-        this.moveEntry(drag.entry, read(drag.entry), read(drag.target),
-            drag.before && !sorted ? read(drag.before) : null)
+        let before = drag.before && !sorted ? read(drag.before) : null
+        if (sorted && drag.target === drag.list) before = this.beforeAmongTies(drag)
+        this.moveEntry(drag.entry, read(drag.entry), read(drag.target), before)
             .catch((err) => console.warn('The move failed:', err))
     }
 

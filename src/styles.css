@@ -1122,12 +1122,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 /* No rule down the outside edge of the table, and none beside a note: it sits below the columns
-   rather than in one, so a line at its left would point at nothing. Nor one between a grip and
-   the column after it: a grip is the handle on the row's edge, and divides nothing. */
+   rather than in one, so a line at its left would point at nothing. Nor one where the page says
+   a column divides nothing from the one before - after a grip, between buttons side by side. */
 .overseer-list.view-table.table-lines-columns > .table-row > *:first-child,
 .overseer-list.view-table.table-lines-columns > .table-header > .table-heading:first-child,
-.overseer-list.view-table.table-lines-columns > .table-header > .table-heading.table-after-grip,
-.overseer-list.view-table.table-lines-columns > .table-row > .table-after-grip,
+.overseer-list.view-table.table-lines-columns > .table-header > .table-heading.table-no-rule,
+.overseer-list.view-table.table-lines-columns > .table-row > .table-no-rule,
 .overseer-list.view-table.table-lines-columns > .table-row > .table-own-line {
     border-left: none;
 }

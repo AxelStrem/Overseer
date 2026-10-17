@@ -147,6 +147,23 @@ fn a_grip_is_marked_as_one_so_no_rule_is_drawn_beside_it() {
 }
 
 #[test]
+fn a_button_is_marked_as_one_so_no_rule_is_drawn_between_buttons() {
+    let nodes = resolved(include_str!("../../examples/projects/project.os"));
+    let columns = columns(&nodes, "Items");
+    let buttons: Vec<&str> = columns
+        .iter()
+        .filter(|c| c["button"] == true)
+        .map(|c| c["name"].as_str().unwrap_or(""))
+        .collect();
+    assert!(buttons.contains(&"talk") && buttons.contains(&"drop"), "the buttons: {:?}", columns);
+    assert!(
+        columns.iter().filter(|c| c["name"] == "title").all(|c| c["button"] == false),
+        "a field is no button: {:?}",
+        columns,
+    );
+}
+
+#[test]
 fn a_list_that_did_not_ask_gets_nothing() {
     // Every list is templated; only the ones drawn as tables should carry the extra parameter,
     // which travels in every delta for as long as it exists.
@@ -187,9 +204,11 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
             "done",
             "points",
             "complexity",
+            "moved_at",
+            // The row's controls, together at its end.
             "talk",
             "work",
-            "moved_at",
+            "pin",
             "drop",
             "Talk",
             "Agents",
@@ -197,11 +216,11 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
     );
 
     let columns = columns(&nodes, "Items");
-    // Bar the grip and the talk, work and drop buttons, which say what they are by their icons - as
+    // Bar the grip and the talk, work, pin and drop buttons, which say what they are by their icons - as
     // the note beside a task in the task manager does - and have no room for a word in their columns.
     let headings: Vec<&str> = columns
         .iter()
-        .filter(|c| !c["span"].as_bool().unwrap_or(false) && !["mark", "talk", "work", "drop"].contains(&c["name"].as_str().unwrap_or("")))
+        .filter(|c| !c["span"].as_bool().unwrap_or(false) && !["mark", "talk", "work", "pin", "drop"].contains(&c["name"].as_str().unwrap_or("")))
         .map(|c| c["label"].as_str().unwrap_or(""))
         .collect();
     assert!(

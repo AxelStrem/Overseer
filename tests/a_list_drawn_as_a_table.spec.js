@@ -244,16 +244,16 @@ describe('a grip in a table', () => {
       _columns: { String: WITH_GRIP }, lines: { String: 'vertical' }, header: { Boolean: true },
     })
     const cells = Array.from(rowsOf()[0].children)
-    const flagged = cells.map((c) => c.classList.contains('table-after-grip'))
+    const flagged = cells.map((c) => c.classList.contains('table-no-rule'))
     expect(flagged).toEqual([false, true, false])
     const headings = Array.from(table().querySelectorAll('.table-heading'))
-    expect(headings.map((h) => h.classList.contains('table-after-grip')))
+    expect(headings.map((h) => h.classList.contains('table-no-rule')))
       .toEqual([false, true, false])
   })
 
   it('leaves a table without one alone', () => {
     render([withDone(1)], { lines: { String: 'vertical' } })
-    expect(table().querySelector('.table-after-grip')).toBeNull()
+    expect(table().querySelector('.table-no-rule')).toBeNull()
   })
 })
 
@@ -289,6 +289,24 @@ describe('a button in a table', () => {
     app.renderer.arrangeTables()
     expect(document.querySelectorAll('.table-cell').length).toBe(1)
     expect(document.querySelectorAll('.table-cell .table-cell').length).toBe(0)
+  })
+
+  it('has no rule between it and a button beside it, but one before the first', () => {
+    const BUTTONS = JSON.stringify([
+      { name: 'handle', label: 'id', width: '20%', span: false },
+      { name: 'talk', label: '', width: '10%', span: false, button: true },
+      { name: 'pin', label: '', width: '10%', span: false, button: true },
+      { name: 'drop', label: '', width: '10%', span: false, button: true },
+    ])
+    const button = (name) => Object.assign(base(name, 'button'), {
+      parameters: { label: { String: name }, width: { CssSize: { Percentage: 10 } } },
+    })
+    render([row(1, [field('handle', 'h1', { label: 'id', width: 20 }), button('talk'), button('pin'), button('drop')])],
+      { _columns: { String: BUTTONS }, lines: { String: 'vertical' }, header: { Boolean: true } })
+    const cells = Array.from(rowsOf()[0].children)
+    expect(cells.map((c) => c.classList.contains('table-no-rule'))).toEqual([false, false, true, true])
+    const headings = Array.from(table().querySelectorAll('.table-heading'))
+    expect(headings.map((h) => h.classList.contains('table-no-rule'))).toEqual([false, false, true, true])
   })
 
   it('takes its cell with it when it is gone', () => {

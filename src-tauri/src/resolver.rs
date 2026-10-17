@@ -1284,8 +1284,9 @@ fn css_size_text(value: &OverseerValue) -> Option<String> {
 /// Each column carries what the renderer needs and nothing else: the field's name, to match a
 /// cell to a column; its label, which becomes the heading; its width, which moves from the cell
 /// to the column because a percentage on a grid item is a percentage of its own column; and
-/// whether it takes a line of its own below the rest, and whether it is a grip - which is no
-/// data, so the page draws no rule between it and the column after it.
+/// whether it takes a line of its own below the rest, whether it is a grip - which is no data, so
+/// the page draws no rule between it and the column after it - and whether it is a button, since
+/// the buttons standing together at a row's end are its controls, with no rule between them.
 fn table_columns(template: &OverseerNode) -> String {
     let mut columns = Vec::new();
     for child in &template.children {
@@ -1316,6 +1317,7 @@ fn table_columns(template: &OverseerNode) -> String {
             "width": width,
             "span": spans_the_row,
             "grip": is_grip,
+            "button": child.node_type == "button",
         }));
     }
     serde_json::to_string(&columns).unwrap_or_else(|_| "[]".to_string())

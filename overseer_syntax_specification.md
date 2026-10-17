@@ -286,9 +286,10 @@ the list says how many entries that was.
 movable list whose entries are made from the same template, which is how a board of columns is
 built - or into a lane of a movable board, which also gives it the lane's value (see "Drawing a
 list as a board"). A drag is a write, so it needs writes allowed there (`mutable`). A list drawn in an order
-of its own (`sort_by`) takes an entry dropped into it from elsewhere, but cannot be reordered by
-hand. The entry moves in one change: it is never in both lists or in neither, and one undo puts
-it back.
+of its own (`sort_by`) takes an entry dropped into it from elsewhere and puts it where its order
+says. By hand, its entries are reordered only among those its order ties: those it draws in the
+order the file has them, so that is the order a drag writes. The entry moves in one change: it is
+never in both lists or in neither, and one undo puts it back.
 
 An entry can say it stays where it is with `movable=false` of its own, usually in its template and
 often as a formula, while the rest of its list moves around it:
@@ -298,6 +299,12 @@ div Item (movable=$(pinned == false)) {
     string title = ""
     bool pinned = false
 }
+```
+
+Together the two keep pinned entries on top while the rest are dragged around below them:
+
+```overseer
+list Items (entry=<Item>, movable=true, sort_by=$(|x| x/pinned == true ? 0 : 1)) { }
 ```
 
 ```overseer
@@ -317,7 +324,9 @@ from anywhere, and at once under a finger.
 `sortable` names the fields a reader may sort a table by. Each of their headings shows a sort
 icon, and a click on it turns the column's sort from none to descending, to ascending, and back
 to none. The column clicked last decides first, and the ones sorted before it break its ties.
-With no column sorted, the list is in the order of the document again.
+With no column sorted, the list is in the order of the document again. A list with an order of its
+own (`sort_by`) keeps it first, and a column sort orders the entries it ties: what it keeps on top
+stays on top.
 
 ```overseer
 list Items (entry=<Item>, view="table", header=true, movable=true,
@@ -648,7 +657,8 @@ div Card (layout="vertical") {
 ```
 
 In a list drawn as a table a grip has a column of its own, and no rule is drawn between it and the
-column after it, since it divides nothing.
+column after it, since it divides nothing. Nor is one drawn between two buttons side by side: the
+buttons standing together are the row's controls.
 
 A `mark` of a type the page does not know draws nothing.
 

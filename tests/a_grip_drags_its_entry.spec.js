@@ -238,18 +238,29 @@ describe('a grip', () => {
 
   it('is faint in a list the document keeps sorted, unless another list takes its entries', () => {
     const sorted = { ...movable, sort_by: { String: 'title' } }
+    const keyed = (name, key = name) => card(name, { _ui_sort_key: { String: key } })
     render([base('s', 'tab', { mutable: { Boolean: true } }, [
-      list('A', sorted, [card('a1'), card('a2')]),
+      list('A', sorted, [keyed('a1'), keyed('a2')]),
       list('T', { ...movable, ...table }, [card('t1')]),
       list('C', {}, []),
     ])])
     expect(gripOf(entryAt('A', 'a1')).dataset.live).toBe('1')
 
     render([base('s', 'tab', { mutable: { Boolean: true } }, [
-      list('A', sorted, [card('a1'), card('a2')]),
+      list('A', sorted, [keyed('a1'), keyed('a2')]),
       list('T', table, [card('t1')]),
       list('C', {}, []),
     ])])
     expect(gripOf(entryAt('A', 'a1')).dataset.live).toBe('0')
+  })
+
+  it('is live in a list the document keeps sorted, where its order ties it with another entry', () => {
+    render([base('s', 'tab', { mutable: { Boolean: true } }, [
+      list('A', { ...movable, sort_by: { String: 'title' } },
+        [card('a1', { _ui_sort_key: { String: 'x' } }), card('a2', { _ui_sort_key: { String: 'x' } })]),
+      list('T', table, [card('t1')]),
+      list('C', {}, []),
+    ])])
+    expect(gripOf(entryAt('A', 'a1')).dataset.live).toBe('1')
   })
 })

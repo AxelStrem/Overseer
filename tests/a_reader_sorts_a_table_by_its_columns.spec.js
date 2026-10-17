@@ -162,6 +162,25 @@ describe('a reader sorts a table by its columns', () => {
     expect(order()).toEqual(['d', 'b', 'e', 'a', 'c'])
   })
 
+  it('sorts within the order the list keeps of its own, so what it keeps on top stays there', () => {
+    // As `sort_by=$(|x| x/pinned ? 0 : 1)` hands it over: d pinned, the rest not.
+    app = new OverseerApp()
+    window.app = app
+    app.currentFile = 'project.os'
+    app.currentDocument = docOf({ sort_by: { String: '|x| x/pinned ? 0 : 1' } })
+    for (const entry of app.currentDocument[0].children[2].children) {
+      entry.parameters._ui_sort_key = { Integer: entry.name === 'Item__d' ? 0 : 1 }
+    }
+    app._currentText = 'TEXT'
+    app.renderer._filters = new Map()
+    app.renderer.renderDocument(app.currentDocument)
+    expect(order()).toEqual(['d', 'a', 'b', 'c', 'e'])
+    click('pts')
+    expect(order()).toEqual(['d', 'e', 'c', 'a', 'b'])
+    click('pts')
+    expect(order()).toEqual(['d', 'b', 'a', 'c', 'e'])
+  })
+
   it('keeps the sort for the tab, and sends nothing to the backend', () => {
     render()
     click('pts')
