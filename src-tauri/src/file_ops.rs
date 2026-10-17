@@ -127,6 +127,17 @@ impl FileOperations {
     }
 
     pub fn serialize_nodes(nodes: &[OverseerNode]) -> Result<String> {
+        // A list entry the template gave is the template's text, not this document's: taken out
+        // before anything is written, so that no way of writing a list can put it in the file.
+        let without_given;
+        let nodes = if Self::holds_a_given_entry(nodes) {
+            let mut copy = nodes.to_vec();
+            Self::leave_out_given_entries(&mut copy);
+            without_given = copy;
+            without_given.as_slice()
+        } else {
+            nodes
+        };
         let mut output = String::new();
         #[cfg(test)]
         let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
@@ -157,6 +168,19 @@ impl FileOperations {
         }
 
         Ok(output)
+    }
+
+    fn holds_a_given_entry(nodes: &[OverseerNode]) -> bool {
+        nodes.iter().any(|node| {
+            crate::resolver::is_a_given_entry(node) || Self::holds_a_given_entry(&node.children)
+        })
+    }
+
+    fn leave_out_given_entries(nodes: &mut Vec<OverseerNode>) {
+        nodes.retain(|node| !crate::resolver::is_a_given_entry(node));
+        for node in nodes.iter_mut() {
+            Self::leave_out_given_entries(&mut node.children);
+        }
     }
 
     /// Whether a marker says the *node* came from a template, rather than saying where one of

@@ -47,6 +47,10 @@ impl Mutability {
 /// rest of the document sees. Anything unrecognised is read as saying nothing rather than as
 /// saying no - a typo should inherit, not silently freeze a subtree.
 fn stated(node: &OverseerNode) -> Option<Mutability> {
+    // An entry the template gives is the template's to change - see `resolver::GIVEN_ENTRY`.
+    if crate::resolver::is_a_given_entry(node) {
+        return Some(Mutability::Fixed);
+    }
     let held = node
         .parameters
         .get("_computed_mutable")

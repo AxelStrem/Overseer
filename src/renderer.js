@@ -346,13 +346,7 @@ export class OverseerRenderer {
             if (s === 'inherit' || s === 'inherited') return 'inherited'
             return 'inherited'
         }
-        const readMutableParam = (n) => {
-            try {
-                const comp = this.getParameterValue(n, '_computed_mutable')
-                if (comp !== null && comp !== undefined) return comp
-            } catch(_) {}
-            try { return this.getParameterValue(n, 'mutable') } catch(_) { return null }
-        }
+        const readMutableParam = (n) => this._readMutableParam(n)
         try {
             if (!doc || !Array.isArray(pathArr) || pathArr.length === 0) {
                 return this._defaultTopLevelMutable ? 'true' : 'false'
@@ -469,6 +463,9 @@ export class OverseerRenderer {
     }
 
     _readMutableParam(n) {
+        // An entry the template gives is the template's to change: it reads as `mutable=false`,
+        // as the server refuses any write into it.
+        if (this.isGivenEntry(n)) return false
         try {
             // Prefer computed if available, else raw
             const comp = this.getParameterValue(n, '_computed_mutable')
@@ -3781,9 +3778,11 @@ export class OverseerRenderer {
             .some((other) => other !== list && other.dataset.entryTemplate === template && !entry.contains(other))
     }
 
-    /// Whether an entry says `movable=false` - usually from its template, often as a formula.
+    /// Whether an entry says `movable=false` - usually from its template, often as a formula. An
+    /// entry the template gives always stays: it is the template's, and stands first.
     entryStays(node) {
         if (!node) return false
+        if (this.isGivenEntry(node)) return true
         const said = this.getParameterValue(node, 'movable')
         return said === false || String(said ?? '').trim().toLowerCase() === 'false'
     }
@@ -3795,6 +3794,12 @@ export class OverseerRenderer {
         for (const grip of document.querySelectorAll('.mark-grip')) {
             grip.dataset.live = this.gripCanDrag(grip) ? '1' : '0'
         }
+    }
+
+    /// Whether a list entry is one its list's template gives, rather than one the document wrote.
+    isGivenEntry(node) {
+        const said = node && node.parameters ? node.parameters._entry_from_template : undefined
+        return said === true || (said !== null && typeof said === 'object' && said.Boolean === true)
     }
 
     gripCanDrag(grip) {

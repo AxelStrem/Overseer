@@ -445,10 +445,13 @@ div (hidden=true) {
 `subtitle` goes right after `name`; the second tab's second div gets the background; `owner`,
 which the template does not have, comes last. Named elements are enough for most instances: the
 walk, and the template's unnamed layout it relies on, matter only for reaching an unnamed node or
-placing an element among the inherited ones. A list's entries are its data, not its structure: an
-instance that writes a list's block - even an empty one, `- Items { }` - replaces the template's
-entries with its own. One that names the list only to set its parameters, `- Items (label="Mine")`,
-keeps the template's entries.
+placing an element among the inherited ones. A list's entries inherit as a div's children do: the
+template's come first, and the entries an instance writes in the list's block come after them -
+`- Items { }`, or `- Items (label="Mine")` with no block, adds none. The walk does not go into the
+entries: an entry the instance writes is a new one, never an edit of one the template gave. The
+template's entries are the template's to change: they are not written into the instance's file,
+and in the instance they cannot be edited, moved or removed. An entry added in the instance -
+appended, prepended, moved or sorted - always stays after them.
 
 Saving gives an instance back as it was written, with only what changed since: a value edited
 where the instance wrote it is changed there, and one edited on something only the template gave

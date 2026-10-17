@@ -91,6 +91,23 @@ pub const OUT_OF_VIEW: &str = "_out_of_view";
 /// How many of a list's entries were left out of view.
 pub const LEFT_OUT: &str = "_left_out_of_view";
 
+/// The parameter marking a list entry the template gave, rather than one the instance wrote.
+///
+/// A list's entries inherit as a div's children do: the template's come first, and the
+/// instance's after them. The template's are the template's to change - the writer leaves them
+/// out of the instance's file, and nothing done in the instance edits, moves or removes them.
+pub const GIVEN_ENTRY: &str = "_entry_from_template";
+
+/// Whether an entry is one its list's template gave - see `GIVEN_ENTRY`.
+pub fn is_a_given_entry(entry: &OverseerNode) -> bool {
+    matches!(entry.parameters.get(GIVEN_ENTRY), Some(OverseerValue::Boolean(true)))
+}
+
+/// How many of a list's entries the template gave. They stand first, and nothing goes above them.
+pub fn given_entries(list: &OverseerNode) -> usize {
+    list.children.iter().take_while(|entry| is_a_given_entry(entry)).count()
+}
+
 /// Decide what each windowed list is showing, before anything is instantiated or evaluated.
 ///
 /// A history grows without end and is read three days at a time. Everything below it - a template
@@ -2589,12 +2606,18 @@ fn merge_into_field(template_field: &mut OverseerNode, override_field: &Overseer
                 .parameters
                 .insert("entry".to_string(), entry.clone());
         }
-        // A list's entries are its data rather than its structure: the instance's replace the
-        // template's whole, and the walk does not go into them. A list the instance writes with
-        // an empty block has no entries; one it names only to set its parameters keeps the
-        // template's.
+        // A list's entries inherit as a div's children do: the template's stay, marked as given
+        // (see `GIVEN_ENTRY`), and the instance's come after them. The walk does not go into
+        // them, since an entry the instance writes is its own and never edits one the template
+        // gave. A list written with an empty block, or named only to set its parameters, adds
+        // nothing.
         if !override_field.children.is_empty() || writes_a_block(override_field) {
-            template_field.children = override_field.children.clone();
+            template_field
+                .children
+                .retain(|entry| is_a_given_entry(entry));
+            template_field
+                .children
+                .extend(override_field.children.iter().cloned());
             template_field.parameters.insert(
                 "_override_present".to_string(),
                 OverseerValue::Boolean(true),
@@ -2691,8 +2714,14 @@ fn mark_template_child_recursive(node: &mut OverseerNode) {
             }
         }
     }
+    let is_a_list = node.node_type == "list";
     for child in node.children.iter_mut() {
         mark_template_child_recursive(child);
+        if is_a_list {
+            child
+                .parameters
+                .insert(GIVEN_ENTRY.to_string(), OverseerValue::Boolean(true));
+        }
     }
 }
 

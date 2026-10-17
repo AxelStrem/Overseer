@@ -326,6 +326,36 @@ fn is_the_viewers(nodes: &[OverseerNode], indices: &[usize]) -> bool {
     crate::mutability::along(nodes, indices).is_guarded()
 }
 
+/// Refuses an entry the template gave - see `resolver::GIVEN_ENTRY`. It is the template's, so
+/// nothing done in the instance takes it out, moves it or writes into it.
+fn refuse_a_given_entry(entry: &OverseerNode, doing: &str) -> Result<(), OverseerError> {
+    if crate::resolver::is_a_given_entry(entry) {
+        return Err(OverseerError::ValidationError(format!(
+            "{} is an entry the template gives, so it cannot {} here; change it in the template",
+            entry.name, doing
+        )));
+    }
+    Ok(())
+}
+
+/// Refuses a write to anything inside an entry the template gave, unless the write is the
+/// viewer's, which is never written to the file anyway.
+fn refuse_writing_into_a_given_entry(nodes: &[OverseerNode], indices: &[usize]) -> Result<(), OverseerError> {
+    let mut level = nodes;
+    let mut inside = None;
+    for &index in indices {
+        let Some(node) = level.get(index) else { break };
+        if crate::resolver::is_a_given_entry(node) {
+            inside = Some(node);
+        }
+        level = &node.children;
+    }
+    match inside {
+        Some(entry) if !is_the_viewers(nodes, indices) => refuse_a_given_entry(entry, "be written to"),
+        _ => Ok(()),
+    }
+}
+
 /// The same, for a caller that will work the document out once the event is done.
 ///
 /// Saying so is what lets the event skip the resolve at its end. Say it only if you resolve
@@ -2029,6 +2059,7 @@ impl ActionExecutor {
                 )));
             }
         };
+        refuse_writing_into_a_given_entry(nodes, &indices)?;
         // Named before the borrow, in the form the dependency graph uses, so whatever reads
         // this value can be found without working the document out again.
         let address = Self::build_disambiguated_path(nodes, &indices).join("/");
@@ -2527,6 +2558,7 @@ impl ActionExecutor {
                 )));
             }
         };
+        refuse_writing_into_a_given_entry(nodes, &indices)?;
         let address = Self::build_disambiguated_path(nodes, &indices).join("/");
         let viewers = is_the_viewers(nodes, &indices);
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
@@ -2617,6 +2649,7 @@ impl ActionExecutor {
                 )));
             }
         };
+        refuse_writing_into_a_given_entry(nodes, &indices)?;
         Self::invalidate_source_fingerprints(nodes, &indices);
         let address = Self::build_disambiguated_path(nodes, &indices).join("/");
         let viewers = is_the_viewers(nodes, &indices);
@@ -2719,6 +2752,7 @@ impl ActionExecutor {
                 )));
             }
         };
+        refuse_writing_into_a_given_entry(nodes, &indices)?;
         let address = Self::build_disambiguated_path(nodes, &indices).join("/");
         let viewers = is_the_viewers(nodes, &indices);
         let node = Self::get_node_mut_by_indices(nodes, &indices).ok_or_else(|| {
@@ -2852,8 +2886,16 @@ impl ActionExecutor {
                 node.parameters.insert(format!("_template_{}", k), v);
             }
         }
+        // A list's entries are given, as the resolver marks them - see `resolver::GIVEN_ENTRY`.
+        let is_a_list = node.node_type == "list";
         for ch in node.children.iter_mut() {
             Self::mark_template_child_recursive_action(ch);
+            if is_a_list {
+                ch.parameters.insert(
+                    crate::resolver::GIVEN_ENTRY.to_string(),
+                    OverseerValue::Boolean(true),
+                );
+            }
         }
     }
 
@@ -3121,7 +3163,11 @@ impl ActionExecutor {
             OverseerError::ValidationError(format!("List not found: {}", list_path))
         })?;
         match goes {
-            WhereItGoes::First => list_node.children.insert(0, new_item),
+            // First after what the template gave, which stands first.
+            WhereItGoes::First => {
+                let at = crate::resolver::given_entries(list_node);
+                list_node.children.insert(at, new_item)
+            }
             WhereItGoes::Last => list_node.children.push(new_item),
         }
         // The list's text no longer matches what was parsed from it, so it has to be written out
@@ -3289,6 +3335,7 @@ impl ActionExecutor {
             Self::value_equals_with_key_precision(list_node, v, key_value)
         })?;
         if let Some(pos) = holding {
+            refuse_a_given_entry(&list_node.children[pos], "be removed")?;
             let gone = list_node.children.remove(pos);
             // Shape, not value - and only when something was taken out.
             note_shape(Shape::Removed { list: list_address, entry: gone.name });
@@ -3358,6 +3405,7 @@ impl ActionExecutor {
             )));
         }
 
+        refuse_a_given_entry(&parent.children[*last], "be removed")?;
         let gone = parent.children.remove(*last);
         // Shape, not value - see `Shape`. Unsaid, what reached the resolver looked like a change
         // to values: the graph was asked about a document whose entries had moved, and the
@@ -3443,6 +3491,7 @@ impl ActionExecutor {
             let item = source.children.get(from_pos).cloned().ok_or_else(|| {
                 OverseerError::ValidationError(format!("Nothing at: {}", entry_path))
             })?;
+            refuse_a_given_entry(&item, "be moved")?;
             if Self::entry_stays(&item) {
                 return Err(OverseerError::ValidationError(format!(
                     "{} says movable=false, so it stays where it is",
@@ -3487,7 +3536,11 @@ impl ActionExecutor {
         source.source_fingerprint = None;
         let target = Self::get_node_mut_by_indices(nodes, &to)
             .ok_or_else(|| OverseerError::ValidationError(format!("{} is not a list", to_list_path)))?;
-        let at = before_pos.unwrap_or(target.children.len()).min(target.children.len());
+        // Never above what the template gave, which stands first.
+        let at = before_pos
+            .unwrap_or(target.children.len())
+            .min(target.children.len())
+            .max(crate::resolver::given_entries(target));
         target.children.insert(at, item);
         target.source_fingerprint = None;
         Self::mark_field_explicit_override(nodes, &from);
@@ -3944,8 +3997,10 @@ impl ActionExecutor {
         })?;
         let at = match goes {
             WhereItGoes::First => {
-                list_node.children.insert(0, new_item);
-                0
+                // First after what the template gave, which stands first.
+                let at = crate::resolver::given_entries(list_node);
+                list_node.children.insert(at, new_item);
+                at
             }
             WhereItGoes::Last => {
                 list_node.children.push(new_item);
@@ -3965,7 +4020,8 @@ impl ActionExecutor {
         for (path, list) in lists_to_copy {
             let Some(into) = Self::list_in_entry(nodes, &entry, &path) else { continue };
             let into_path = format!("{}/{}", list_path, path);
-            for copied in &list.children {
+            // What the template gave the copied list, the new entry's template gives it too.
+            for copied in list.children.iter().filter(|c| !crate::resolver::is_a_given_entry(c)) {
                 // A list of plain values copies the values; one of entries copies each entry.
                 let (value, from) = if copied.children.is_empty() && copied.parameters.contains_key("value") {
                     (copied.parameters.get("value").cloned(), None)
@@ -4525,6 +4581,7 @@ impl ActionExecutor {
             if let Some(pos) = Self::the_one_holding(list_node, &effective_key_field, key_value, from_path, "move", |v| {
                 Self::value_equals(v, key_value)
             })? {
+                refuse_a_given_entry(&list_node.children[pos], "be moved")?;
                 let item = list_node.children.remove(pos);
                 let insert_at = at_index.unwrap_or(list_node.children.len());
                 let idx = if insert_at > list_node.children.len() {
@@ -4532,6 +4589,8 @@ impl ActionExecutor {
                 } else {
                     insert_at
                 };
+                // Never above what the template gave, which stands first.
+                let idx = idx.max(crate::resolver::given_entries(list_node));
                 list_node.children.insert(idx, item);
                 // As in `remove_from_list`: every entry still matches the text it was read
                 // from, so unless the list says it no longer does, the serializer replays it
@@ -4566,6 +4625,7 @@ impl ActionExecutor {
                 if let Some(pos) = Self::the_one_holding(from_node, &effective_key_field, key_value, from_path, "move", |v| {
                     Self::value_equals(v, key_value)
                 })? {
+                    refuse_a_given_entry(&from_node.children[pos], "be moved")?;
                     Some(from_node.children.remove(pos))
                 } else {
                     None
@@ -4590,6 +4650,7 @@ impl ActionExecutor {
                 } else {
                     insert_at
                 };
+                let idx = idx.max(crate::resolver::given_entries(to_node));
                 to_node.children.insert(idx, item);
                 // Neither list matches its text any more - see the reorder above. The one
                 // the entry left would otherwise be written back with it still inside.
@@ -4663,10 +4724,15 @@ impl ActionExecutor {
             keys.push(key);
         }
 
-        let taken = std::mem::take(&mut list_node.children);
+        // What the template gave stays first, in its own order: only the instance's are sorted.
+        let given = crate::resolver::given_entries(list_node);
+        let mut taken = std::mem::take(&mut list_node.children);
+        let rest = taken.split_off(given);
+        list_node.children = taken;
         let mut entries: Vec<(OverseerValue, OverseerNode, usize)> = keys
             .into_iter()
-            .zip(taken)
+            .skip(given)
+            .zip(rest)
             .enumerate()
             .map(|(i, (key, item))| (key, item, i))
             .collect();
@@ -4687,7 +4753,7 @@ impl ActionExecutor {
             }
         }
 
-        list_node.children = entries.into_iter().map(|(_k, item, _i)| item).collect();
+        list_node.children.extend(entries.into_iter().map(|(_k, item, _i)| item));
         // The same entries in a new order still each match their text - see `move_in_list`.
         list_node.source_fingerprint = None;
         Self::mark_field_explicit_override(nodes, &indices);
