@@ -134,6 +134,19 @@ fn a_field_can_ask_for_a_line_of_its_own() {
 }
 
 #[test]
+fn a_grip_is_marked_as_one_so_no_rule_is_drawn_beside_it() {
+    let nodes = resolved(include_str!("../../examples/projects/project.os"));
+    let columns = columns(&nodes, "Items");
+    assert_eq!(columns[0]["name"], "mark");
+    assert_eq!(columns[0]["grip"], true);
+    assert!(
+        columns[1..].iter().all(|c| c["grip"] == false),
+        "only the grip column is a grip: {:?}",
+        columns,
+    );
+}
+
+#[test]
 fn a_list_that_did_not_ask_gets_nothing() {
     // Every list is templated; only the ones drawn as tables should carry the extra parameter,
     // which travels in every delta for as long as it exists.

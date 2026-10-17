@@ -647,6 +647,9 @@ div Card (layout="vertical") {
 }
 ```
 
+In a list drawn as a table a grip has a column of its own, and no rule is drawn between it and the
+column after it, since it divides nothing.
+
 A `mark` of a type the page does not know draws nothing.
 
 #### Conditional actions inside action blocks

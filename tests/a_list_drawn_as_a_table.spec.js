@@ -225,6 +225,38 @@ describe('rules between the cells', () => {
   })
 })
 
+describe('a grip in a table', () => {
+  beforeEach(setupDOM)
+
+  const WITH_GRIP = JSON.stringify([
+    { name: 'mark', label: '', width: '4%', span: false, grip: true },
+    { name: 'handle', label: 'id', width: '10%', span: false },
+    { name: 'title', label: 'title', width: '50%', span: false },
+  ])
+  const gripped = (n) => row(n, [
+    Object.assign(base('mark', 'mark'), { parameters: { type: { String: 'grip' } } }),
+    field('handle', `h${n}`, { label: 'id', width: 10 }),
+    field('title', `title ${n}`, { label: 'title', width: 50 }),
+  ])
+
+  it('has no rule between it and the column after it, in the rows or the heading', () => {
+    render([gripped(1)], {
+      _columns: { String: WITH_GRIP }, lines: { String: 'vertical' }, header: { Boolean: true },
+    })
+    const cells = Array.from(rowsOf()[0].children)
+    const flagged = cells.map((c) => c.classList.contains('table-after-grip'))
+    expect(flagged).toEqual([false, true, false])
+    const headings = Array.from(table().querySelectorAll('.table-heading'))
+    expect(headings.map((h) => h.classList.contains('table-after-grip')))
+      .toEqual([false, true, false])
+  })
+
+  it('leaves a table without one alone', () => {
+    render([withDone(1)], { lines: { String: 'vertical' } })
+    expect(table().querySelector('.table-after-grip')).toBeNull()
+  })
+})
+
 describe('a button in a table', () => {
   beforeEach(setupDOM)
 

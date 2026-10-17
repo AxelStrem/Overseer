@@ -3084,6 +3084,9 @@ export class OverseerRenderer {
         list.style.gridTemplateColumns = across.map((c) => c.width || '1fr').join(' ')
 
         const column = new Map(across.map((c, i) => [c.name, i + 1]))
+        // The column right after a grip. A grip is the handle on the row's edge, not data, so no
+        // rule is drawn between it and the column beside it - see `.table-after-grip`.
+        const afterGrip = this.columnsAfterGrip(across)
 
         for (const row of Array.from(list.children)) {
             if (row.classList.contains('table-header')) continue
@@ -3114,6 +3117,7 @@ export class OverseerRenderer {
                     cell.style.gridColumn = '1 / -1'
                     cell.classList.add('table-own-line')
                 }
+                cell.classList.toggle('table-after-grip', afterGrip.has(Number(cell.style.gridColumn)))
                 // The heading says what the column holds, so the cell need not repeat it.
                 const label = cell.querySelector(':scope > label')
                 if (label) label.remove()
@@ -3136,6 +3140,13 @@ export class OverseerRenderer {
         }
 
         this.drawTableHeading(list, across)
+    }
+
+    /** The numbers of the columns that sit right after a grip's column. */
+    columnsAfterGrip(across) {
+        const after = new Set()
+        across.forEach((c, i) => { if (c.grip) after.add(i + 2) })
+        return after
     }
 
     /**
@@ -3163,9 +3174,11 @@ export class OverseerRenderer {
             sortable = JSON.parse(list.dataset.sortable || '[]')
             sorts = JSON.parse(list.dataset.columnSorts || '[]')
         } catch (_) { /* not sortable */ }
+        const afterGrip = this.columnsAfterGrip(across)
         across.forEach((c, i) => {
             const cell = document.createElement('span')
             cell.className = 'table-heading'
+            if (afterGrip.has(i + 1)) cell.classList.add('table-after-grip')
             this.setTextWithIcons(cell, c.label || '')
             cell.style.gridColumn = String(i + 1)
             if (sortable.includes(c.name)) this.makeHeadingSort(list, cell, c.name, sorts)
