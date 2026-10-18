@@ -3885,7 +3885,45 @@ impl ActionExecutor {
             Some(from) => Some(Self::source_of_a_copy(nodes, owner_path, from)?),
             None => None,
         };
+        // A copy from a list is a copy from each of its entries, in their order, the block applying
+        // to every one. The source was read before anything is written, so a list copied into
+        // itself is doubled rather than copied for ever.
+        if let Some(list) = source.as_ref().filter(|s| s.node_type == "list") {
+            return Self::put_entries_of(nodes, owner_path, &indices, list_path, template_name, list, overrides, goes);
+        }
         Self::put_entry_at(nodes, owner_path, indices, list_path, template_name, value_opt, overrides, source.as_ref(), goes)
+    }
+
+    /// Put a copy of every entry of `list` into the list at `indices`, in `list`'s order whichever
+    /// end they go. What the template gave `list` is not copied: the target's template gives it its
+    /// own. A list of plain values copies the values; one of entries copies each entry, filled by
+    /// name.
+    #[allow(clippy::too_many_arguments)]
+    fn put_entries_of(
+        nodes: &mut Vec<OverseerNode>,
+        owner_path: &[String],
+        indices: &[usize],
+        list_path: &str,
+        template_name: Option<&str>,
+        list: &OverseerNode,
+        overrides: &Vec<OverseerNode>,
+        goes: WhereItGoes,
+    ) -> Result<(), OverseerError> {
+        let entries: Vec<&OverseerNode> = list.children.iter().filter(|c| !crate::resolver::is_a_given_entry(c)).collect();
+        // Each goes in at the front in turn, so the last goes first to keep the order.
+        let ordered: Box<dyn Iterator<Item = &&OverseerNode>> = match goes {
+            WhereItGoes::First => Box::new(entries.iter().rev()),
+            WhereItGoes::Last => Box::new(entries.iter()),
+        };
+        for copied in ordered {
+            let (value, from) = if copied.children.is_empty() && copied.parameters.contains_key("value") {
+                (copied.parameters.get("value").cloned(), None)
+            } else {
+                (None, Some(*copied))
+            };
+            Self::put_entry_at(nodes, owner_path, indices.to_vec(), list_path, template_name, value, overrides, from, goes)?;
+        }
+        Ok(())
     }
 
     /// Put an entry into the list at `indices`, filled from `source` when there is one.
@@ -4053,16 +4091,7 @@ impl ActionExecutor {
         for (path, list) in lists_to_copy {
             let Some(into) = Self::list_in_entry(nodes, &entry, &path) else { continue };
             let into_path = format!("{}/{}", list_path, path);
-            // What the template gave the copied list, the new entry's template gives it too.
-            for copied in list.children.iter().filter(|c| !crate::resolver::is_a_given_entry(c)) {
-                // A list of plain values copies the values; one of entries copies each entry.
-                let (value, from) = if copied.children.is_empty() && copied.parameters.contains_key("value") {
-                    (copied.parameters.get("value").cloned(), None)
-                } else {
-                    (None, Some(copied))
-                };
-                Self::put_entry_at(nodes, owner_path, into.clone(), &into_path, None, value, &Vec::new(), from, WhereItGoes::Last)?;
-            }
+            Self::put_entries_of(nodes, owner_path, &into, &into_path, None, &list, &Vec::new(), WhereItGoes::Last)?;
         }
         Ok(())
     }

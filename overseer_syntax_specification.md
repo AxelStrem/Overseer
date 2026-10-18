@@ -738,7 +738,7 @@ can be a formula.
 | `clear (path)` | removes what the field holds, so its template's or type's value stands |
 | `set_now (path, clock)` | today's date, by the `local` clock or `utc` |
 | `set_now_ts (path, offset)` | the moment now, `offset` seconds later |
-| `append (list, template, value, from) { ... }`, `prepend (...)` | a new entry at the end or the front, made from the list's template (or `template=`), its fields set by the block - `- field = value` - or by `from` (see "A form that fills an entry"); a list of plain values takes `value=` |
+| `append (list, template, value, from) { ... }`, `prepend (...)` | a new entry at the end or the front, made from the list's template (or `template=`), its fields set by the block - `- field = value` - or by `from`, which can also name a list to copy every entry of (see "A form that fills an entry"); a list of plain values takes `value=` |
 | `ensure_in_list (list, keyField, keyValue, template, position)` | the entry holding that key, made if there is none - at the end, or the front with `position="first"` |
 | `set_in_list (list, keyField, keyValue, field) = value` | writes one field of the entry holding that key |
 | `remove (from, keyField, keyValue)` | takes away the entry holding that key; `remove_from_list` and `list=` say the same |
@@ -881,6 +881,26 @@ append (list="/project/History", from="..") {
     - status = $(../stage)
 }
 ```
+
+`from` can name a list, and then every entry of it is copied, in its order, each one as a copy
+from that entry would be - `prepend` puts them at the front in the same order. The block applies to
+every copy. A list of plain values copies its values. A key the target already holds refuses the
+press, as for one entry; to put the copies in place of what a list holds, empty it first, in the
+same press:
+
+```overseer
+button archive (label="Archive all") {
+    on click {
+        clear_list (path="/shelf/Archive")
+        append (list="/shelf/Archive", from="/shelf/Books") {
+            - archived = $(today())
+        }
+    }
+}
+```
+
+The source is read as the press has left it so far: a list copied into itself is copied once, and a
+list emptied earlier in the press copies nothing.
 
 The textboxes a copy read are emptied afterwards - back to what they start with - and a textbox
 anywhere else keeps what was typed into it.
