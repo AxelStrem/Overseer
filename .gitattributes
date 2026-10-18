@@ -1,0 +1,2 @@
+# Run inside a Linux container, where a carriage return ends up in the shebang.
+docker/*.sh text eol=lf

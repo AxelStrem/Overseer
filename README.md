@@ -36,7 +36,10 @@ cargo run --features server --bin overseer-server -- --root <documents>
 ```
 
 It binds to loopback unless told otherwise. Reachable from outside, it refuses to start without
-`OVERSEER_TOKEN` — a document set is someone's diary, and an open port is an open diary.
+`OVERSEER_TOKEN` — a document set is someone's diary, and an open port is an open diary — unless
+`--open` says that everyone who can reach it may read it, as on a home network.
+[DEPLOYING.md](DEPLOYING.md) covers a home server, a hosting service and the image in
+`Dockerfile`, and lists every setting.
 
 ## The language
 
@@ -85,6 +88,7 @@ reformats itself on the first button press is a diff nobody can review.
 - [overseer_syntax_specification.md](overseer_syntax_specification.md) — the DSL, node by node
 - [technical_architecture.md](technical_architecture.md) — how a document becomes a screen
 - [API.md](API.md) — reading and writing documents over the server
+- [DEPLOYING.md](DEPLOYING.md) — the desktop app, a home server, a hosted one, and their settings
 - [DEVELOPMENT.md](DEVELOPMENT.md) — toolchain, debug builds, WebView2
 - [product_description.md](product_description.md) — what this is for, written before it existed
 

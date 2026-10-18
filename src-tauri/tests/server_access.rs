@@ -4,7 +4,7 @@
 //! matter are the refusals, and the one about starting up: a server reachable from beyond
 //! this machine without a token would publish a personal record to whoever finds the port.
 
-use overseer::server::{refuse_to_start, Access};
+use overseer::server::{from_environment, is_switched_on, refuse_to_start, Access};
 use std::net::IpAddr;
 
 const TOKEN: &str = "correct-horse-battery-staple";
@@ -57,15 +57,57 @@ fn a_token_without_the_scheme_is_not_a_bearer_token() {
 #[test]
 fn it_will_not_listen_beyond_this_machine_without_a_token() {
     assert!(
-        refuse_to_start(&everywhere(), &Access::unrestricted()).is_some(),
+        refuse_to_start(&everywhere(), &Access::unrestricted(), false).is_some(),
         "an open server was allowed to listen on every interface"
     );
     assert!(
-        refuse_to_start(&everywhere(), &Access::with_token(TOKEN)).is_none(),
+        refuse_to_start(&everywhere(), &Access::with_token(TOKEN), false).is_none(),
         "a server with a token was refused"
     );
     assert!(
-        refuse_to_start(&loopback(), &Access::unrestricted()).is_none(),
+        refuse_to_start(&loopback(), &Access::unrestricted(), false).is_none(),
         "a loopback server was refused, which would make the local workflow need a token"
     );
+}
+
+#[test]
+fn asked_for_by_name_it_listens_beyond_this_machine_without_a_token() {
+    assert!(
+        refuse_to_start(&everywhere(), &Access::unrestricted(), true).is_none(),
+        "--open did not let a server on a home network start without a token"
+    );
+    let refusal = refuse_to_start(&everywhere(), &Access::unrestricted(), false).unwrap();
+    assert!(refusal.contains("--open"), "the refusal does not say how to serve open: {}", refusal);
+}
+
+#[test]
+fn a_setting_comes_from_the_first_variable_that_is_set() {
+    let env = |name: &str| match name {
+        "OVERSEER_PORT" => None,
+        "BLANK" => Some("  ".to_string()),
+        "PORT" => Some("8080".to_string()),
+        _ => None,
+    };
+    assert_eq!(
+        from_environment(&["OVERSEER_PORT", "BLANK", "PORT"], env),
+        Some(("PORT", "8080".to_string())),
+        "an unset or blank variable was not passed over"
+    );
+    assert_eq!(from_environment(&["OVERSEER_PORT"], env), None);
+    let both = |name: &str| Some(format!("from {}", name));
+    assert_eq!(
+        from_environment(&["OVERSEER_PORT", "PORT"], both),
+        Some(("OVERSEER_PORT", "from OVERSEER_PORT".to_string())),
+        "the host's PORT won over the port Overseer was given"
+    );
+}
+
+#[test]
+fn a_switch_is_on_only_when_it_says_so() {
+    for on in ["1", "true", "YES", " on "] {
+        assert!(is_switched_on(on), "'{}' did not switch it on", on);
+    }
+    for off in ["0", "false", "no", "off", "", "maybe"] {
+        assert!(!is_switched_on(off), "'{}' switched it on", off);
+    }
 }

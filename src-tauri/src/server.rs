@@ -791,15 +791,42 @@ pub fn is_loopback(addr: &std::net::IpAddr) -> bool {
 ///
 /// Reaching beyond this machine without a token would publish a personal record to whoever
 /// finds the port, so it is refused at startup rather than left as something to remember.
-pub fn refuse_to_start(bind: &std::net::IpAddr, access: &Access) -> Option<String> {
-    if !is_loopback(bind) && !access.is_restricted() {
+/// `open` is the one way past it, for a home network where everyone who can reach the port may
+/// read the documents: it has to be asked for by name, so that nobody gets it by forgetting a
+/// token.
+pub fn refuse_to_start(bind: &std::net::IpAddr, access: &Access, open: bool) -> Option<String> {
+    if !is_loopback(bind) && !access.is_restricted() && !open {
         return Some(format!(
             "refusing to listen on {} without a token: set OVERSEER_TOKEN, or pass --token-file, \
-             or bind to 127.0.0.1 to keep this machine's documents on this machine",
+             or bind to 127.0.0.1 to keep this machine's documents on this machine - or, if \
+             everyone who can reach this address may read them, pass --open (OVERSEER_OPEN=1)",
             bind
         ));
     }
     None
+}
+
+/// A setting given by the environment rather than a flag: the first of `names` that is set and
+/// not empty, with the name it came from, so a bad value can be blamed on the right variable.
+///
+/// What a container is told comes by environment - a host such as Railway hands it `PORT` and
+/// nothing else - so every flag of the server has a variable too. `env` is the lookup, so that a
+/// test need not change the process's own environment.
+pub fn from_environment<'a>(
+    names: &[&'a str],
+    env: impl Fn(&str) -> Option<String>,
+) -> Option<(&'a str, String)> {
+    names.iter().find_map(|name| {
+        env(name)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .map(|v| (*name, v))
+    })
+}
+
+/// Whether a switch given by the environment is on: `1`, `true`, `yes` or `on`.
+pub fn is_switched_on(value: &str) -> bool {
+    matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
 }
 
 /// Build the overrides for a new entry from field names, which may name a nested field.

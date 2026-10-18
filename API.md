@@ -16,7 +16,8 @@ cargo run --release --features server --bin overseer-server -- --root ../example
 `../dist`; without it the API still works), `--port` the port (default `4747`), `--bind` the
 address (default `127.0.0.1`). The token comes from `OVERSEER_TOKEN` or `--token-file PATH`, never
 from the command line. Without a token the server answers anyone on this machine; bound anywhere
-but loopback, it refuses to start without one.
+but loopback, it refuses to start without one unless `--open` is given. Every flag can be set by
+environment instead - [DEPLOYING.md](DEPLOYING.md) lists them.
 
 With a token, every request carries it, as `Authorization: Bearer <token>` or as the
 `overseer_token` cookie. A browser gets the cookie by visiting `/auth?token=<token>&next=/` once.

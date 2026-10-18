@@ -6,12 +6,14 @@
 //! cargo run --features server --bin overseer-server -- --root ../examples
 //! ```
 //!
-//! Read-only for now: it answers what documents exist and what one resolves to. It reuses
+//! It answers what documents exist and what one resolves to, and writes them. It reuses
 //! `app_api`, the same code the desktop app runs, so a document cannot mean one thing here
 //! and another there.
 //!
-//! It binds to localhost. There is no authentication, so it should stay that way until there
-//! is - a document is personal data, and this one will eventually accept writes.
+//! It binds to localhost unless told otherwise, and beyond it refuses to start without a token
+//! (`OVERSEER_TOKEN` or `--token-file`) unless `--open` says that everyone who can reach it may
+//! read and write the documents. Every flag has an environment variable too, for a container;
+//! DEPLOYING.md lists them.
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -22,7 +24,10 @@ use axum::routing::post;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::{routing::get, Router};
-use overseer::server::{refuse_to_start, Access, DocumentRoot, RequestError};
+use overseer::server::{
+    from_environment, is_loopback, is_switched_on, refuse_to_start, Access, DocumentRoot,
+    RequestError,
+};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -472,32 +477,22 @@ fn main() {
 }
 
 async fn serve() {
-    let mut root = std::path::PathBuf::from("../examples");
-    let mut frontend_dir = std::path::PathBuf::from("../dist");
-    let mut port: u16 = 4747;
-    let mut bind: std::net::IpAddr = std::net::IpAddr::from([127, 0, 0, 1]);
+    let mut root: Option<String> = None;
+    let mut frontend_dir: Option<String> = None;
+    let mut port: Option<String> = None;
+    let mut bind: Option<String> = None;
+    let mut open = false;
     // Read from the environment or a file rather than an argument: a command line ends up in
     // shell history and in the process list, where a secret has no business being.
     let mut token = std::env::var("OVERSEER_TOKEN").ok().filter(|t| !t.is_empty());
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--root" => {
-                if let Some(value) = args.next() {
-                    root = std::path::PathBuf::from(value);
-                }
-            }
-            "--bind" => {
-                if let Some(value) = args.next() {
-                    match value.parse() {
-                        Ok(a) => bind = a,
-                        Err(_) => {
-                            eprintln!("--bind takes an address, got '{}'", value);
-                            std::process::exit(2);
-                        }
-                    }
-                }
-            }
+            "--root" => root = args.next(),
+            "--bind" => bind = args.next(),
+            "--port" => port = args.next(),
+            "--frontend" => frontend_dir = args.next(),
+            "--open" => open = true,
             "--token-file" => {
                 if let Some(value) = args.next() {
                     match std::fs::read_to_string(&value) {
@@ -509,40 +504,73 @@ async fn serve() {
                     }
                 }
             }
-            "--frontend" => {
-                if let Some(value) = args.next() {
-                    frontend_dir = std::path::PathBuf::from(value);
-                }
-            }
-            "--port" => {
-                if let Some(value) = args.next() {
-                    match value.parse() {
-                        Ok(p) => port = p,
-                        Err(_) => {
-                            eprintln!("--port takes a number, got '{}'", value);
-                            std::process::exit(2);
-                        }
-                    }
-                }
-            }
             other => {
                 eprintln!("unknown argument '{}'", other);
                 eprintln!(
-                    "usage: overseer-server [--root DIR] [--frontend DIR] [--bind ADDR] [--port N] [--token-file PATH]"
+                    "usage: overseer-server [--root DIR] [--frontend DIR] [--bind ADDR] [--port N] [--token-file PATH] [--open]"
                 );
                 std::process::exit(2);
             }
         }
     }
 
+    // A flag wins over the environment, so a script that passes one is not overridden by
+    // whatever its host happens to set. `PORT` comes last: it is what a host such as Railway
+    // hands every container, and a port asked for by name is the more deliberate of the two.
+    fn env(name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+    fn setting(
+        flag: Option<String>,
+        what: &'static str,
+        names: &[&'static str],
+    ) -> Option<(&'static str, String)> {
+        match flag {
+            Some(value) => Some((what, value)),
+            None => from_environment(names, env),
+        }
+    }
+    let root = setting(root, "--root", &["OVERSEER_ROOT"])
+        .map_or_else(|| "../examples".to_string(), |(_, v)| v);
+    let root = std::path::PathBuf::from(root);
+    let frontend_dir = setting(frontend_dir, "--frontend", &["OVERSEER_FRONTEND"])
+        .map_or_else(|| "../dist".to_string(), |(_, v)| v);
+    let frontend_dir = std::path::PathBuf::from(frontend_dir);
+    let bind: std::net::IpAddr = match setting(bind, "--bind", &["OVERSEER_BIND"]) {
+        None => std::net::IpAddr::from([127, 0, 0, 1]),
+        Some((from, value)) => match value.parse() {
+            Ok(a) => a,
+            Err(_) => {
+                eprintln!("{} takes an address, got '{}'", from, value);
+                std::process::exit(2);
+            }
+        },
+    };
+    let port: u16 = match setting(port, "--port", &["OVERSEER_PORT", "PORT"]) {
+        None => 4747,
+        Some((from, value)) => match value.parse() {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("{} takes a number, got '{}'", from, value);
+                std::process::exit(2);
+            }
+        },
+    };
+    if !open {
+        open = from_environment(&["OVERSEER_OPEN"], env).is_some_and(|(_, v)| is_switched_on(&v));
+    }
+
     let access = match token {
         Some(t) => Access::with_token(t),
         None => Access::unrestricted(),
     };
-    if let Some(reason) = refuse_to_start(&bind, &access) {
+    if let Some(reason) = refuse_to_start(&bind, &access, open) {
         eprintln!("{}", reason);
         std::process::exit(2);
     }
+    // Only open matters when it is what let the server start: with a token, or on loopback, it
+    // changes nothing and a warning would only teach people to ignore warnings.
+    let serving_open = open && !access.is_restricted() && !is_loopback(&bind);
 
     let documents = match DocumentRoot::new(&root) {
         Ok(r) => Arc::new(r),
@@ -622,6 +650,11 @@ async fn serve() {
     let addr = SocketAddr::new(bind, port);
     if access.is_restricted() {
         println!("a token is required; a browser can present it once at /auth?token=...");
+    } else if serving_open {
+        println!(
+            "warning: serving open with no token - anyone who can reach {} may read and change these documents",
+            addr
+        );
     } else {
         println!("no token set, so anything on this machine may read these documents");
     }
