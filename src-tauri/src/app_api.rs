@@ -1830,6 +1830,9 @@ pub fn choose_settings(
                 );
                 // Changed, for the writer, which otherwise gives back the line as it was read.
                 declaration.source_fingerprint = None;
+                // Changed by hand rather than by an action, so said to have been: a change that
+                // reports nothing done is not written when the settings were already worked out.
+                crate::actions::note_acted();
             }
             Ok(())
         })

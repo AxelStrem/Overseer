@@ -528,7 +528,7 @@ pub(crate) fn converted(value: &OverseerValue, to: &str) -> Option<OverseerValue
 }
 
 /// Something ran that may have changed the document.
-fn note_acted() {
+pub(crate) fn note_acted() {
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
             changed.acted = true;

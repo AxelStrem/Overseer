@@ -216,6 +216,26 @@ fn choosing_a_theme_keeps_what_the_user_changed_of_the_last_one() {
 }
 
 #[test]
+fn every_choice_of_theme_reaches_the_settings_not_only_the_first() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let settings = "context theme (base=<themes/default.os/theme>) {\r\n}\r\ncontext mode = \"system\"\r\n";
+    let (sandbox, documents) = sandbox(
+        "again",
+        &[("p.os", READER), (environment::FILE, settings), ("themes/paper.os", PAPER)],
+    );
+    // Opened first, as the page does, so the settings as they stand are already worked out.
+    documents.open("p.os").expect("open");
+    for theme in ["paper", "default", "paper", "default"] {
+        let chosen = documents
+            .command(None, "settings_choose", &serde_json::json!({ "theme": theme }))
+            .expect("the choice");
+        assert_eq!(chosen["theme"], theme);
+        let written = std::fs::read_to_string(sandbox.0.join(environment::FILE)).unwrap();
+        assert_eq!(written, settings.replace("themes/default.os", &format!("themes/{}.os", theme)));
+    }
+}
+
+#[test]
 fn a_theme_that_is_not_there_is_refused() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let (sandbox, documents) = sandbox("missing", &[("p.os", READER)]);
