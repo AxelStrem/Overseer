@@ -2224,18 +2224,13 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
 /// serializer knows the value was not written there and does not write it to disk. Adding a
 /// name here without that marker being understood would persist the copy into every entry;
 /// `file_ops::marks_a_template_node` reads this same list for exactly that reason.
-pub const INHERITABLE_PARAMS: [&str; 5] = [
+///
+/// What a container means for everything inside it otherwise - `vocabulary`, `hide-labels`,
+/// `hover-text` - is a context (`contexts.rs`), which the page reads where it draws.
+pub const INHERITABLE_PARAMS: [&str; 3] = [
     "background-color",
     "font-color",
     "font-size",
-    // Whether the fields inside show their labels. A table's heading already names its
-    // columns, so a table-shaped list repeating every label on every row says everything
-    // twice; and a field whose name is obvious from where it sits does not need saying at all.
-    "hide-labels",
-    // What a field says about itself when the mouse rests on it. Said on a container so a
-    // table can ask once and every cell answer with the name of its own column - which is
-    // where the naming goes when the label is not shown.
-    "hover-text",
 ];
 
 fn resolve_parameter_inheritance(
@@ -2283,14 +2278,6 @@ fn resolve_parameter_inheritance(
         // Build inherited parameters map for children (including this node's parameters)
         let mut inherited_params = parent_params.clone();
         for (key, value) in &node.parameters {
-            // A tab's hover text is what its header says about the tab, not something every
-            // field on its page should say about itself. What the tab was handed from above
-            // goes on down as it would through anything else.
-            let a_tab = node.node_type == "tab"
-                || matches!(node.parameters.get("_original_type"), Some(OverseerValue::String(t)) if t == "tab");
-            if a_tab && key == "hover-text" {
-                continue;
-            }
             if inheritable_params.contains(&key.as_str()) {
                 inherited_params.insert(key.clone(), value.clone());
             }

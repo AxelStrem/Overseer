@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// `hide-labels` is said on a container and meant for the fields inside it. The resolver copies
-// it down onto every descendant, so by the time it reaches here the question is answered from
-// the field's own parameters - this is the half that decides what that means on the screen.
+// `context hide-labels = true` is said on a container and meant for the fields inside it; a field's
+// own `hide-labels` is that field's alone. The resolver puts a copy of the context first among the
+// children of the container that sees it, and the page reads the field's own word, then the
+// nearest copy - this is the half that decides what that means on the screen.
 //
 // Hidden, not left out. The label text is the only place the field says what it is, and a
 // heading above the column or a popup under the mouse will want to read it; taking it out of
@@ -40,6 +41,11 @@ const field = (name, { label = 'Name', hidden, type = 'string' } = {}) => {
   return node
 }
 
+/** What the resolver puts first in a container that declares `context hide-labels = ...`. */
+const hiding = (said) => Object.assign(base('hide-labels', 'context'), {
+  parameters: { value: { Boolean: said }, _context_copy: { Boolean: true } },
+})
+
 const render = (...fields) => {
   const app = new OverseerApp()
   app.currentDocument = [Object.assign(base('t', 'tab'), { children: fields })]
@@ -73,13 +79,40 @@ describe('a field told not to show its label', () => {
     expect(label.style.display).not.toBe('none')
   })
 
-  it('shows it again where a container inside said otherwise', () => {
-    // The resolver hands down `false` from the nearest ancestor to state anything, so the
-    // field arrives saying it outright.
-    render(field('a', { hidden: false }))
+  it('shows it where the field says so itself', () => {
+    render(hiding(true), field('a', { hidden: false }))
     const label = fieldFor('a').querySelector('label')
 
     expect(label.style.display).not.toBe('none')
+  })
+
+  it('hides it where a container around it said so', () => {
+    render(hiding(true), field('a'))
+
+    expect(fieldFor('a').querySelector('label').style.display).toBe('none')
+  })
+
+  it('hides it for a field further down too', () => {
+    render(hiding(true), Object.assign(base('box', 'div'), { children: [field('a')] }))
+
+    expect(document.querySelector('.overseer-field label').style.display).toBe('none')
+  })
+
+  it('shows it again where a container inside said otherwise', () => {
+    // The nearest container to see the context answers: its copy says `false`.
+    render(hiding(true), Object.assign(base('box', 'div'), { children: [hiding(false), field('a')] }))
+
+    expect(document.querySelector('.overseer-field label').style.display).not.toBe('none')
+  })
+
+  it('does not take a parameter on a container for a context', () => {
+    // `hide-labels=` on a div is the div's own, and was once handed down. It is not any more.
+    render(Object.assign(base('box', 'div'), {
+      parameters: { 'hide-labels': { Boolean: true } },
+      children: [field('a')],
+    }))
+
+    expect(document.querySelector('.overseer-field label').style.display).not.toBe('none')
   })
 
   it('does not arrange a label it is not going to show', () => {

@@ -1,16 +1,17 @@
 //! What a tab says on hover is about the tab, and stays on its header.
 //!
-//! `hover-text` is handed down from a container to everything inside it, so a table can ask once
-//! and every cell answer with the name of its column. A tab's is what its header says about the
-//! tab - "what is still to do" - and handed down, every field on the page would say the same about
-//! itself. So a tab keeps its own; what it was handed from above goes on down as through anything
-//! else.
+//! A container asks everything inside it to say something on hover with `context hover-text`, so a
+//! table can ask once and every cell answer with the name of its column. A tab's `hover-text=`
+//! parameter is what its header says about the tab - "what is still to do" - and handed down,
+//! every field on the page would say the same about itself. A parameter is a node's own, so the
+//! tab keeps it, and what the context above says still reaches the tab's page.
 
 use overseer::app_api;
 use overseer::types::{OverseerNode, OverseerValue};
 
 const DOCUMENT: &str = r#"tab t (label="T") {
-    div plan (hover-text=true) {
+    div plan {
+        context hover-text = true
         tab open (label="Open", hover-text="What is still to do") {
             string first = "x"
         }
@@ -58,11 +59,18 @@ fn the_fields_on_its_page_do_not_say_it() {
 }
 
 #[test]
-fn what_the_tab_was_handed_still_goes_on_down() {
-    // `plan` asks every field inside it to say its own name on hover, tabs or no tabs.
+fn what_the_context_above_says_still_reaches_the_tabs_page() {
+    // `plan` asks every field inside it to say its own name on hover, tabs or no tabs. A tab
+    // without a name is no container of its own, so `plan` is the nearest one, and its copy of the
+    // context is first among what it holds.
     let nodes = app_api::load_document(DOCUMENT.to_string()).expect("open");
-    assert_eq!(says(&nodes, "first"), Some(OverseerValue::Boolean(true)));
-    assert_eq!(says(&nodes, "third"), Some(OverseerValue::Boolean(true)));
+    let plan = find(&nodes, "plan").expect("no plan");
+    let copy = plan.children.first().expect("plan is empty");
+    assert_eq!(copy.node_type, "context");
+    assert_eq!(copy.name, "hover-text");
+    let value = copy.parameters.get("_computed_value").or_else(|| copy.parameters.get("value"));
+    assert_eq!(value, Some(&OverseerValue::Boolean(true)));
+    assert_eq!(says(&nodes, "first"), None, "the context was copied onto a field");
 }
 
 #[test]

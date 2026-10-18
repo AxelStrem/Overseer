@@ -50,7 +50,10 @@ same merge an instance uses - and puts a copy of each in front of that container
 marked `_context_copy`. Being first, a copy is what the ordinary climb of a formula's lookup meets;
 searches that go down into other containers, method chains, and the page leave contexts out. The
 declarations themselves are left as they were read, and are not worked out where they stand, so
-the writer takes the copies out and writes the rest as it would any node.
+the writer takes the copies out and writes the rest as it would any node. The page reads a few
+contexts itself - `theme`, and `vocabulary`, `hide-labels` and `hover-text` for a field that does
+not say its own - by climbing from the field and looking only at each container's leading children,
+where the copies are.
 
 Above a document's top is the environment, `environment.rs`: the context declarations of the
 user's `settings.os`, read with their references settled where that file is, and worked out as the

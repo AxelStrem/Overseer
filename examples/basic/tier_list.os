@@ -5,7 +5,8 @@ tab tiers (label="Best Food, Ranked", mutable=true) {
             string colour = "#cbd5e1"
         }
 
-        div Food (layout="vertical", spacing=2, width=110px, background-color=#ffffff, border-style=solid 1px #e2e8f0, border-radius=8px, font-color=#1e293b, hide-labels=true) {
+        div Food (layout="vertical", spacing=2, width=110px, background-color=#ffffff, border-style=solid 1px #e2e8f0, border-radius=8px, font-color=#1e293b) {
+            context hide-labels = true
             string emoji (font-size=32px) = ""
             string name (font-weight=bold) = ""
             enum tier (vocabulary="/tiers/Tiers", hidden=true) = ""

@@ -4962,20 +4962,57 @@ export class OverseerRenderer {
 
     /**
      * Which lists a field's chips are named from: its own `vocabulary`, or else the nearest
-     * ancestor's. Said once on a container, it is meant for everything inside it, the way
-     * `hide-labels` is - a project names its items once, and every comment within can mention
-     * one while a field naming a list of its own keeps that one.
-     *
-     * Worked out here rather than copied down by the resolver, as the styles are: nothing but the
-     * page reads it, and a copy on each of a project's thousands of nodes would be most of what
-     * an open answers.
+     * `context vocabulary`. Said once on a container, it is meant for everything inside it - a
+     * project names its items once, and every comment within can mention one while a field
+     * naming a list of its own keeps that one.
      */
     vocabularyFor(node) {
-        for (let at = node; at; at = this.parentOf(at)) {
-            const where = this.getParameterValue(at, 'vocabulary')
-            if (where) return String(where)
+        const own = this.getParameterValue(node, 'vocabulary')
+        if (own) return String(own)
+        const given = this.contextAt(node, 'vocabulary')
+        return given ? String(given) : null
+    }
+
+    /**
+     * What the nearest context of this name says for a node, or undefined: the copy the resolver
+     * put in front of the children of the nearest container that sees one.
+     *
+     * Only a container's leading children are looked at, since copies go first - all of them, as
+     * they are worked out in each container that declares any - and the document's top holds the
+     * environment's last. Looking through all of a list's entries for each of its cells would make
+     * drawing a table cost the square of its size.
+     */
+    contextAt(node, name) {
+        for (let at = this.parentOf(node); at; at = this.parentOf(at)) {
+            const found = this.leadingContext(at.children, name)
+            if (found) return this.contextSays(found)
+        }
+        const doc = window.app && window.app.currentDocument
+        const top = Array.isArray(doc) ? doc : []
+        const found = this.leadingContext(top, name)
+            || this.leadingContext(top.slice().reverse(), name)
+        return found ? this.contextSays(found) : undefined
+    }
+
+    leadingContext(children, name) {
+        for (const child of children || []) {
+            if ((child?.node_type || child?.type) !== 'context') return null
+            if (child.name === name && this.isContextCopy(child)) return child
         }
         return null
+    }
+
+    /** A context's value as the document gave it, worked out where it has a formula. */
+    contextSays(node) {
+        const params = node.parameters || {}
+        const raw = params._computed_value !== undefined ? params._computed_value : params.value
+        if (raw && typeof raw === 'object') {
+            for (const kind of ['String', 'Integer', 'Float', 'Boolean']) {
+                if (raw[kind] !== undefined) return raw[kind]
+            }
+            return undefined
+        }
+        return raw === null ? undefined : raw
     }
 
     /**
@@ -6991,17 +7028,16 @@ export class OverseerRenderer {
 
     /// Whether this field is somewhere that has asked for labels not to be shown.
     ///
-    /// `hide-labels` is said on a container and meant for everything inside it - a list drawn
-    /// as a table whose heading already names the columns, or a group of fields whose names
-    /// are obvious from where they sit. The resolver copies it down to every descendant, so
-    /// the question is answered from this node alone, and a div within that says
-    /// `hide-labels=false` gets its labels back because the nearest ancestor to state anything
-    /// is the one that was copied.
+    /// `context hide-labels = true` is said on a container and meant for everything inside it - a
+    /// list drawn as a table whose heading already names the columns, or a group of fields whose
+    /// names are obvious from where they sit. A field's own `hide-labels` is that field's alone,
+    /// and a container within that says `context hide-labels = false` gets its labels back.
     ///
-    /// Two shapes arrive here depending on how the parameter was written - `true` and `"true"`
-    /// - and both mean the same thing.
+    /// Two shapes arrive here depending on how the value was written - `true` and `"true"` - and
+    /// both mean the same thing.
     labelsAreHidden(node) {
-        const said = this.getParameterValue(node, 'hide-labels')
+        let said = this.getParameterValue(node, 'hide-labels')
+        if (said === undefined || said === null) said = this.contextAt(node, 'hide-labels')
         return said === true || said === 'true'
     }
 
@@ -7012,10 +7048,11 @@ export class OverseerRenderer {
     /// then carry its name here and show nothing but its value. The two are the same sentence -
     /// something this field says about itself that is only read when somebody asks.
     ///
-    /// Read from the node, which is where inheritance leaves it, so a list says it once and
-    /// every cell answers with the name of its own column.
+    /// The field's own, or else the nearest `context hover-text`, so a list's entry template says
+    /// it once and every cell answers with the name of its own column.
     hoverTextFor(node, label) {
-        const said = this.getParameterValue(node, 'hover-text')
+        let said = this.getParameterValue(node, 'hover-text')
+        if (said === undefined || said === null) said = this.contextAt(node, 'hover-text')
         if (said === undefined || said === null || said === false || said === 'false') return null
         if (said === true || said === 'true') {
             const named = label ? this.textOf(label) : ''

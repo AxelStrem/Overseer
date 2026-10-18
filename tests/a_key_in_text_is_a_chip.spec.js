@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // `<#key>` in any text the page draws is the chip of the entry the nearest vocabulary knows by
-// that key. A vocabulary said on a container is handed down to everything inside it, so the text
+// that key. A `context vocabulary` said on a container is seen by everything inside it, so the text
 // of a comment and a field naming the items it waits on draw from the one list, and pressing a
 // chip that stands for an entry shows that entry.
 
@@ -43,20 +43,27 @@ const item = (handle, title, colour, fields = []) => Object.assign(base(`Item__$
 
 const ITEMS = { String: '/project/Items' }
 
-/// Two tabs: a page of notes, and the project with its items. The notes say the vocabulary on
-/// their tab; the project's on its own.
+/// What the resolver puts first in a container that declares `context vocabulary = ...`.
+const aVocabulary = (value) => Object.assign(base('vocabulary', 'context'), {
+  parameters: { value, _context_copy: { Boolean: true } },
+})
+
+/// Two tabs: a page of notes, and the project with its items. The notes declare the vocabulary on
+/// their tab; the project on its own.
 const docWith = ({ note = '', markdown = true, after = null, parentOf = false } = {}) => ([
   Object.assign(base('notes', 'tab'), {
-    parameters: { vocabulary: ITEMS, mutable: { Boolean: true } },
+    parameters: { mutable: { Boolean: true } },
     children: [
+      aVocabulary(ITEMS),
       valued('note', 'text', note, { markdown: { Boolean: markdown } }),
       ...(after === null ? [] : [valued('after', 'tags', after)]),
       valued('labels', 'tags', 'ui', { vocabulary: { String: '/project/Labels' } }),
     ],
   }),
   Object.assign(base('project', 'tab'), {
-    parameters: { vocabulary: ITEMS, mutable: { Boolean: true } },
+    parameters: { mutable: { Boolean: true } },
     children: [
+      aVocabulary(ITEMS),
       Object.assign(base('Labels', 'list'), {
         parameters: { key: { String: 'tag' }, hidden: { Boolean: true } },
         children: [Object.assign(base('Label__ui', 'div'), {
@@ -141,7 +148,7 @@ describe('a key in text', () => {
 
   it('says why on hover, and shows nothing, when the entry is in a list the page does not draw', () => {
     const doc = docWith({ note: 'see <#escape>' })
-    doc[1].children[1].parameters.hidden = { Boolean: true }
+    doc[1].children.find(c => c.name === 'Items').parameters.hidden = { Boolean: true }
     render(doc)
     const [chip] = noteChips()
     press(chip)

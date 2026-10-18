@@ -69,8 +69,9 @@ const leave = (element) => {
   element.dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true }))
 }
 
-/// A list drawn as a table, as the resolver hands it over. The list says `hover-text` once and
-/// inheritance puts it on every field, so each cell answers with the name of its own column.
+/// A list drawn as a table, as the resolver hands it over. The entry template declares
+/// `context hover-text = true` once, so each entry holds a copy first and each cell answers with
+/// the name of its own column.
 const aTable = () => {
   const columns = JSON.stringify([
     { name: 'handle', label: 'id', width: '10%', span: false },
@@ -81,13 +82,15 @@ const aTable = () => {
     parameters: {
       value: { String: value },
       label: { String: label },
-      // What the resolver leaves on every field once the list has said it.
-      'hover-text': { Boolean: true },
     },
   })
   const row = (n, handle, title, points) => Object.assign(base(`Row__${n}`, 'div'), {
     parameters: { layout: { String: 'horizontal' }, _effective_layout: { String: 'horizontal' } },
     children: [
+      Object.assign(base('hover-text', 'context'), {
+        parameters: { value: { Boolean: true }, _context_copy: { Boolean: true } },
+      }),
+      Object.assign(base('hover-text', 'context'), { parameters: { value: { Boolean: true } } }),
       cell('handle', handle, 'id'),
       cell('title', title, 'title'),
       cell('points', points, 'pts'),
@@ -100,7 +103,6 @@ const aTable = () => {
         header: { Boolean: true },
         _columns: { String: columns },
         _effective_layout: { String: 'vertical' },
-        'hover-text': { Boolean: true },
       },
       children: [row(1, 'h1', 'the first thing', '3'), row(2, 'h2', 'the second', '5')],
     })],

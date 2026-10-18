@@ -114,7 +114,8 @@ A line that cannot be read - a string without its closing quote, a `{` never clo
     horizontal. A system of one tab draws no bar.
   - The header shows the tab's `label`, which may be a formula - a list whose entry template is a
     tab draws one page per entry, each headed by, say, `label=$(date)`.
-  - A tab's own `hover-text` is what its header says, and is not handed down to what the tab holds.
+  - A tab's own `hover-text` is what its header says. A parameter is the tab's alone, so what the
+    tab holds says nothing of it.
   - Which tab is showing belongs to the viewer: kept for the session, never written to the file.
   - An unnamed tab, like an unnamed div, is no step of any address: putting part of a document on
     `tab (label="Rules") { ... }` changes nothing a formula, an action or the bot refers to.
@@ -560,6 +561,10 @@ tab project (label="Project") {
   one the document declared, a node of the same name is refused, saying why.
 - **It is saved as written**: the declarations are the document's text, and what a container sees
   is worked out from them each time the document is.
+- **Some names the page reads itself**: `theme` (below), and `vocabulary`, `hide-labels` and
+  `hover-text`, which say how the fields inside a container are drawn (see "Tags", "Hiding Labels"
+  and "Saying More When Asked"). A field's own parameter of the same name is that field's alone, and
+  wins over the context for it.
 
 #### The theme and the mode
 
@@ -676,12 +681,13 @@ would be. The SVG is drawn as a picture, so nothing it carries runs.
 
 Any text a document shows can name an entry of a vocabulary (see "Tags"), written `<#key>`: it is
 drawn as that entry's chip, with its name, its colour and its `title` on hover - the chip a `tags`
-field holding the key would draw. The key is looked up in the nearest `vocabulary`, the text's own
-field's or an ancestor's, so a container that names a list once lets everything inside mention
-its entries:
+field holding the key would draw. The key is looked up in the text's own field's `vocabulary`, or
+else the nearest `context vocabulary`, so a container that names a list once lets everything inside
+mention its entries:
 
 ```overseer
-tab project (vocabulary="/project/Items, /project/History") {
+tab project (label="Project") {
+    context vocabulary = "/project/Items, /project/History"
     ...
     text body (markdown=true) = "Waits on <#parser>, as <#escape> did."
 }
@@ -1057,11 +1063,18 @@ already held. A task naming the tasks it waits on, open or finished, each in its
 tags after (vocabulary="/project/Items, /project/History") = "parser, escape"
 ```
 
-A `vocabulary` is handed down, as `hide-labels` is: said on a container, it is the vocabulary of
-every field inside that names none of its own, and of the chips in their text (see "Chips in
-text"). A field that names its own uses that one. So a project names its items once, on its tab,
-and both the field saying what a task waits on and every comment that mentions a task draw from
-it, while its labels and its stage keep their own lists.
+A `context vocabulary` (see "Contexts") is the vocabulary of every field inside its container that
+names none of its own, and of the chips in their text (see "Chips in text"). A field that names its
+own uses that one. So a project names its items once, on its tab, and both the field saying what a
+task waits on and every comment that mentions a task draw from it, while its labels and its stage
+keep their own lists:
+
+```overseer
+tab project (label="Project") {
+    context vocabulary = "/project/Items, /project/History"
+    ...
+}
+```
 
 `shape` says how its chips are drawn: `pill`, rounded at the ends, which tags are unless told
 otherwise, or `box`, a rectangle with softened corners, which an `enum` is. A filter's row of
@@ -1237,23 +1250,25 @@ div (overflow-x=auto) {
 
 #### Hiding Labels:
 
-A field shows its `label` beside or above its value. A container can say once that the fields
-inside it do not, which is what a list drawn as a table wants: the heading names the columns, so
-a cell repeating the name says everything twice.
+A field shows its `label` beside or above its value. `hide-labels=true` on a field hides its own,
+and a container can say once that the fields inside it do not, with `context hide-labels = true`
+(see "Contexts"). That is what a list drawn as a table wants: the heading names the columns, so a
+cell repeating the name says everything twice.
 
 ```overseer
 list rows (entry=<Row>, view="table", header=true) { }
 
-div Row (layout="horizontal", hide-labels=true) {
+div Row (layout="horizontal") {
+    context hide-labels = true
     string title (label="Title") = ""      // the label names the column, not the cell
     int points (label="Points") = 0
 }
 ```
 
-It reaches every descendant, so it need not be repeated on groups nested inside, and a container
-within that says `hide-labels=false` shows its own fields' labels again - the nearest ancestor to
-state anything wins. Like the inherited styling parameters, the copy handed to a descendant is
-not written back to the document.
+It reaches everything inside, so it need not be repeated on groups nested within, and a container
+within that says `context hide-labels = false` shows its own fields' labels again. A field's own
+`hide-labels` wins for that field. Written in an unnamed div, a context is the container's around
+it; a group of fields inside a container that keeps its labels says it on each field.
 
 The label is still part of the field, hidden rather than left out. Writing `label=""` instead
 takes the name away altogether, which is worth knowing when nothing else on the screen carries
@@ -1268,11 +1283,14 @@ which needs nothing written twice.
 ```overseer
 float weight (label="Weight", hover-text="Measured before breakfast") = 82.5
 
-list rows (entry=<Row>, view="table", header=true, hover-text=true) { }
+div Row (layout="horizontal") {
+    context hover-text = true
+    ...
+}
 ```
 
-Like `hide-labels`, it reaches every descendant, so a list says it once and every cell answers
-with the name of its own column. That is the pairing worth knowing: a table takes the label out
+As `context hover-text`, it reaches everything inside its container, so a list's entry template
+says it once and every cell answers with the name of its own column, unless a field says its own. That is the pairing worth knowing: a table takes the label out
 of each cell because the heading names the column, and far down a long table the heading has
 scrolled away - so the cell shows a value and nothing else. Asked with `hover-text=true`, it can
 say which column it is in without showing the name on every row.
