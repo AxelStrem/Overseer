@@ -2545,6 +2545,50 @@ pub fn image_beside(document: &std::path::Path, image: &str) -> std::result::Res
     }))
 }
 
+/// The most a theme's font may weigh: a family in one file, even one that covers many scripts,
+/// is well under it.
+pub const FONT_MOST_BYTES: u64 = 8 * 1024 * 1024;
+
+/// The font files a theme may load, by extension, and the type each is served as.
+const FONT_TYPES: &[(&str, &str)] = &[
+    ("woff2", "font/woff2"),
+    ("woff", "font/woff"),
+    ("ttf", "font/ttf"),
+    ("otf", "font/otf"),
+];
+
+/// A font a theme names in its `fonts` key, by a path relative to the folders themes are kept
+/// in (`environment::theme_folders`), as in `- plex_sans = "fonts/plex-sans.woff2"`: its type
+/// and its bytes in base64, as an image is handed out. The first folder that holds it wins, as
+/// a theme of the same name does. The page has no record of which file a key of the theme it
+/// draws came from, so the path means the same wherever the key is written - for a theme's own
+/// file, which sits in one of those folders, it is a path beside it. Checked as an image is.
+pub fn font_in_themes(font: &str) -> std::result::Result<serde_json::Value, IconRefused> {
+    use base64::Engine as _;
+    let extensions: Vec<&str> = FONT_TYPES.iter().map(|(e, _)| *e).collect();
+    let mut refused = IconRefused::Missing(format!("no font '{}'", font));
+    let mut found = None;
+    for folder in crate::environment::theme_folders() {
+        match file_in(&folder, font, &extensions, FONT_MOST_BYTES, "a font") {
+            Ok(file) => {
+                found = Some(file);
+                break;
+            }
+            // A path that is not one is refused whatever folder it is looked for in.
+            Err(IconRefused::NotAName(m)) => return Err(IconRefused::NotAName(m)),
+            Err(missing) => refused = missing,
+        }
+    }
+    let found = found.ok_or(refused)?;
+    let extension = found.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let mime = FONT_TYPES.iter().find(|(e, _)| *e == extension).map(|(_, m)| *m).unwrap_or_default();
+    let bytes = std::fs::read(&found).map_err(|_| IconRefused::Missing(format!("no font '{}'", font)))?;
+    Ok(serde_json::json!({
+        "mime": mime,
+        "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+    }))
+}
+
 /// Keeps an image pasted into the document's text beside it, under `images/<document name>/`,
 /// and answers with the path the text refers to it by, relative to the document.
 ///
@@ -2614,10 +2658,28 @@ fn file_beside(
     most: u64,
     what: &str,
 ) -> std::result::Result<std::path::PathBuf, IconRefused> {
+    if name.is_empty() || std::path::Path::new(name).is_absolute() {
+        return Err(IconRefused::NotAName(format!("'{}' is not a path relative to the document", name)));
+    }
+    let missing = || IconRefused::Missing(format!("no {} '{}'", what.trim_start_matches("an "), name));
+    let folder = document.parent().ok_or_else(missing)?;
+    file_in(folder, name, extensions, most, what)
+}
+
+/// A file named by a path relative to this folder, checked as `file_beside` says: plain names
+/// only, one of these extensions, under the folder once links are followed, and no heavier than
+/// `most`.
+fn file_in(
+    folder: &std::path::Path,
+    name: &str,
+    extensions: &[&str],
+    most: u64,
+    what: &str,
+) -> std::result::Result<std::path::PathBuf, IconRefused> {
     use std::path::{Component, Path};
     let relative = Path::new(name);
     if name.is_empty() || relative.is_absolute() {
-        return Err(IconRefused::NotAName(format!("'{}' is not a path relative to the document", name)));
+        return Err(IconRefused::NotAName(format!("'{}' is not a relative path", name)));
     }
     if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
         return Err(IconRefused::NotAName(format!("'{}' contains a path component that is not a name", name)));
@@ -2626,11 +2688,9 @@ fn file_beside(
     if !extensions.iter().any(|e| e.eq_ignore_ascii_case(extension)) {
         return Err(IconRefused::NotAName(format!("'{}' is not {} file", name, what)));
     }
-    let missing = || IconRefused::Missing(format!("no {} '{}'", what.trim_start_matches("an "), name));
-    let folder = document
-        .parent()
-        .and_then(|d| d.canonicalize().ok())
-        .ok_or_else(missing)?;
+    let kind = what.strip_prefix("an ").or_else(|| what.strip_prefix("a ")).unwrap_or(what);
+    let missing = || IconRefused::Missing(format!("no {} '{}'", kind, name));
+    let folder = folder.canonicalize().map_err(|_| missing())?;
     let found = folder.join(relative).canonicalize().map_err(|_| missing())?;
     if !found.starts_with(&folder) || !found.is_file() {
         return Err(missing());

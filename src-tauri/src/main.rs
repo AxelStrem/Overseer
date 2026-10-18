@@ -134,6 +134,14 @@ async fn load_overseer_image(path: String, image: String) -> Result<serde_json::
     })
 }
 
+/// A font the theme names, kept in a themes folder - see `app_api::font_in_themes`.
+#[command]
+async fn load_overseer_font(font: String) -> Result<serde_json::Value> {
+    app_api::font_in_themes(&font).map_err(|refused| match refused {
+        app_api::IconRefused::NotAName(m) | app_api::IconRefused::Missing(m) => OverseerError::IoError(m),
+    })
+}
+
 /// An image pasted into the open document's text, kept beside it - see
 /// `app_api::save_image_beside`.
 #[command]
@@ -440,6 +448,7 @@ fn main() {
             load_overseer_text,
             load_overseer_icon,
             load_overseer_image,
+            load_overseer_font,
             save_overseer_image,
             save_overseer_file,
             save_overseer_file_from_text,

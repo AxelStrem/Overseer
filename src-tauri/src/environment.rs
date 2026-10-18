@@ -206,14 +206,7 @@ pub fn held() -> Vec<(String, String)> {
 /// of the same name, as a base beside a document does.
 pub fn themes() -> Vec<String> {
     let mut names = Vec::new();
-    let mut folders = Vec::new();
-    if let Some(library) = crate::bases::library() {
-        folders.push(library.join("themes"));
-    }
-    if let Some(dir) = file().as_deref().and_then(Path::parent) {
-        folders.push(dir.join("themes"));
-    }
-    for folder in folders {
+    for folder in theme_folders() {
         let Ok(entries) = std::fs::read_dir(&folder) else {
             continue;
         };
@@ -231,4 +224,19 @@ pub fn themes() -> Vec<String> {
     }
     names.sort();
     names
+}
+
+/// The folders themes are kept in: the `themes` folder beside the settings first, then the one
+/// that ships with Overseer - the order a name is looked for in, so that one beside the settings
+/// takes the place of a shipped one. What a theme keeps beside it, its fonts, is looked for in
+/// the same order.
+pub fn theme_folders() -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    if let Some(dir) = file().as_deref().and_then(Path::parent) {
+        folders.push(dir.join("themes"));
+    }
+    if let Some(library) = crate::bases::library() {
+        folders.push(library.join("themes"));
+    }
+    folders
 }

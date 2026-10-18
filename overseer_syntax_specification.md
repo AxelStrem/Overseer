@@ -666,6 +666,23 @@ context mode = "system"
   that figures line up down a column. The shipped theme works each colour out from `mode`, as
   `$(mode == "dark" ? "#1e293b" : "#ffffff")`. A theme that leaves a key out leaves that part of
   the page as it is drawn without one.
+- **A theme can bring its own fonts**, so that `font` and `mono` need not name one installed where
+  the page is opened. `fonts` holds a key for each family, its name the one `font` and `mono` call
+  it by and its value a font file - `.woff2`, `.woff`, `.ttf` or `.otf` - by a path relative to the
+  `themes` folders, the one beside `settings.os` looked in first and then the library's:
+
+  ```overseer
+  context theme {
+      - fonts {
+          - plex_sans = "fonts/plex-sans.woff2"
+      }
+      - font = "plex_sans, sans-serif"
+  }
+  ```
+
+  For a theme in its own file the path is beside it, wherever the key is written. One family is
+  one file, which a variable font fills with all its weights. A file missing, or outside those
+  folders, is left out, and the next family `font` names is drawn instead.
 - **A key that holds keys says how one kind of element looks**, and a container overrides one of
   them as it does any key: `context theme { - checkbox { - style = switch } }` draws the `bool` and
   `checkbox` fields inside it as switches rather than boxes, and `style = box` inside that draws

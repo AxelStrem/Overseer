@@ -437,6 +437,16 @@ impl DocumentRoot {
                     app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
                 })
             }
+            // A font the theme names, looked for in the folders themes are kept in - those of
+            // this server's settings, not of any one document.
+            "load_overseer_font" => {
+                let font = arg_str(args, &["font"])
+                    .ok_or_else(|| RequestError::Rejected("'font' is required".into()))?;
+                app_api::font_in_themes(&font).map_err(|refused| match refused {
+                    app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),
+                    app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
+                })
+            }
             // An image pasted into the document's text, kept beside it under a name picked
             // here; the answer is the path the text refers to it by.
             "save_overseer_image" => {

@@ -172,6 +172,12 @@ export const imageBeside = (path) => {
         p.split('/').every((part) => part && part !== '.' && part !== '..')
 }
 
+// A theme's fonts, `- fonts { - plex_sans = "fonts/plex-sans.woff2" }`, by family and file: the
+// face once it has loaded, null for one refused or missing, or the promise while it is on its way.
+// A face stays here once loaded, so a theme chosen again does not fetch it again; it is on the
+// page only while a theme there names it - see `nameThemeFonts` and `dropUnnamedFonts`.
+const themeFonts = new Map()
+
 // A document's own raster images, by the document and the path it gives, the way its icons are
 // kept: the blob address once the bytes have come, null for one refused or missing, or the
 // promise while they are on their way. Asked for only when something draws one, so an image under
@@ -1724,6 +1730,8 @@ export class OverseerRenderer {
             if (DEBUG_MODE) console.warn('Unexpected document format:', overseerDocument)
             this.contentDisplay.innerHTML += '<p>Unexpected document format</p>'
         }
+
+        try { this.dropUnnamedFonts() } catch (_) { /* the fonts stay until the next */ }
 
     if (DEBUG_MODE) console.log('Content display after rendering:', this.contentDisplay.innerHTML)
     }
@@ -7484,6 +7492,11 @@ export class OverseerRenderer {
     writeTheme(element, theme, prefix = '--ov-') {
         for (const key of theme.children || []) {
             if (!key?.name || key.name.startsWith('_')) continue
+            // Files to load, not values the stylesheet reads - see `nameThemeFonts`.
+            if (key.name === 'fonts' && prefix === '--ov-') {
+                this.nameThemeFonts(key)
+                continue
+            }
             const value = this.contextValue(key)
             if (value !== null) {
                 element.style.setProperty(`${prefix}${key.name}`, value)
@@ -7588,7 +7601,52 @@ export class OverseerRenderer {
             if (name.startsWith('--ov-')) root.style.removeProperty(name)
         }
         delete root.dataset.ovMode
+        this._fontsNamed = new Set()
         this.applyContexts(root, Array.isArray(nodes) ? nodes : [])
+    }
+
+    /**
+     * The fonts a theme names, each key a family and its value a file in the folders themes are
+     * kept in: each is fetched once and added to the page under the family's name, which the
+     * theme's `font` and `mono` then name like any installed one. One refused or missing is left
+     * out, and the next family in the list is drawn in its place.
+     */
+    nameThemeFonts(fonts) {
+        if (typeof FontFace === 'undefined' || typeof document === 'undefined' || !document.fonts) return
+        if (!this._fontsNamed) this._fontsNamed = new Set()
+        for (const key of fonts.children || []) {
+            const family = key?.name
+            const file = this.contextValue(key)
+            if (!family || family.startsWith('_') || typeof file !== 'string' || !file) continue
+            const at = `${family}\n${file}`
+            this._fontsNamed.add(at)
+            const known = themeFonts.get(at)
+            if (known instanceof FontFace) {
+                document.fonts.add(known)
+                continue
+            }
+            if (known !== undefined) continue
+            themeFonts.set(at, invoke('load_overseer_font', { font: file })
+                .then((got) => {
+                    if (!got || typeof got.data !== 'string' || !/^font\//.test(got.mime || '')) return null
+                    const bytes = Uint8Array.from(atob(got.data), (c) => c.charCodeAt(0))
+                    return new FontFace(family, bytes.buffer).load()
+                })
+                .catch(() => null)
+                .then((face) => {
+                    themeFonts.set(at, face)
+                    // A theme that stopped naming it while it was on its way does not get it.
+                    if (face && this._fontsNamed?.has(at)) document.fonts.add(face)
+                }))
+        }
+    }
+
+    /** Takes off the page the fonts no theme drawn there names any more. */
+    dropUnnamedFonts() {
+        if (typeof FontFace === 'undefined' || typeof document === 'undefined' || !document.fonts) return
+        for (const [at, face] of themeFonts) {
+            if (face instanceof FontFace && !this._fontsNamed?.has(at)) document.fonts.delete(face)
+        }
     }
 
     isContextCopy(node) {
