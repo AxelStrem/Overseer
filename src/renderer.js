@@ -7082,10 +7082,7 @@ export class OverseerRenderer {
         // Border radius parameter for controlling corner rounding
         const statedRadius = params['border-radius']
         if (statedRadius !== undefined && statedRadius !== null) {
-            // A bare number - `border-radius=0` - arrives as `{ Integer: 0 }` rather than as a CSS
-            // size, and a radius without a unit is no CSS at all: it means pixels.
-            const bare = typeof statedRadius === 'object' ? (statedRadius.Integer ?? statedRadius.Float) : statedRadius
-            const radius = typeof bare === 'number' ? `${bare}px` : this.convertCssSizeValue(statedRadius)
+            const radius = this.convertCssSizeValue(statedRadius)
             for (const el of [element, ...ownValues()]) {
                 el.style.borderRadius = radius
             }
@@ -7329,7 +7326,7 @@ export class OverseerRenderer {
         const get = (k) => this.getParameterValue(node, k)
         const setSize = (prop, val) => {
             if (val === null || val === undefined) return
-            if (typeof val === 'object') {
+            if (typeof val === 'object' || typeof val === 'number') {
                 element.style[prop] = this.convertCssSizeValue(val)
             } else {
                 element.style[prop] = String(val)
@@ -7690,6 +7687,11 @@ export class OverseerRenderer {
         // Handle different CSS size value types from the Rust backend
         // A unit variant comes as its bare name, "Auto" or "FitContent", wrapped or not.
         const unitVariants = { Auto: 'auto', FitContent: 'fit-content' }
+        // A size without a unit is in pixels: `width=150` comes as { Integer: 150 }, or as 150
+        // once read through `getParameterValue`, and a bare number is no CSS length.
+        const bare = (typeof sizeParam === 'object' && sizeParam !== null)
+            ? (sizeParam.Integer ?? sizeParam.Float) : sizeParam
+        if (typeof bare === 'number' && Number.isFinite(bare)) return `${bare}px`
         if (typeof sizeParam === 'string') {
             return unitVariants[sizeParam] || sizeParam // Legacy string sizes
         }

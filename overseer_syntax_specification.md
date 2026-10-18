@@ -1561,6 +1561,7 @@ string title (font-weight=$(../kids > 0 ? "bold" : "normal")) = ""  // bold, nor
 div FixedBox (width=200px, height=150px) {          // Pixel values
 div ResponsiveBox (width=50%, height=auto) {        // Percentage and auto
 div FitContent (width=fit-content, height=fit-content) { // Content-based sizing
+div Thumbnail (width=48, border-radius=0) {         // A size without a unit is in pixels
 
 // Overflow control
 div ScrollableBox (width=200px, height=100px, overflow=auto) {
