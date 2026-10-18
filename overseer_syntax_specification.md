@@ -1602,6 +1602,11 @@ div Sidebar (background-color="#16203a") {
 }
 ```
 
+The same holds for the borders, `border-radius`, `shadow` and `font-weight`. They style the node and
+what it draws itself - a field's value - and never a node inside it, so `border-style=none` on a
+list leaves the frames of the fields in its entries to the theme. On the node itself a parameter
+wins over the theme, its kind keys included.
+
 A width in pixels is kept. In a horizontal row too narrow for it, the row wraps it to the next line rather
 than squeezing it, and a row wider than the page scrolls sideways inside a container that says
 `overflow-x=auto`. A width in percent is a share of the row and shrinks with it. Together they lay out

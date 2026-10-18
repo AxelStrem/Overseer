@@ -646,18 +646,6 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     opacity: 0.7;
 }
 
-/* If inline style disables border, also suppress default shadow for a truly flat look */
-.overseer-div[style*="border: none"] {
-    border: none !important;
-    box-shadow: none !important;
-}
-
-/* Mirror border-none behavior for lists */
-.overseer-list[style*="border: none"] {
-    border: none !important;
-    box-shadow: none !important;
-}
-
 /* A div with `on click`, pressed wherever it is touched except where something inside keeps the
    tap for itself. The renderer says which as the pointer moves - `would-press` over the parts that
    would press it, `is-pressed` while held - so hovering a field that keeps its own taps does not
@@ -2229,13 +2217,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-radius: var(--ov-filter-radius, var(--ov-theme-radius)) !important;
 }
 
-/* A node given a font colour or size of its own keeps it to itself: what is drawn inside it is in
-   the theme, as though it had not been said. With no weight of its own, so any class that colours
-   or sizes a part of the page still does. A container that wants what is inside it to follow says
-   so with `context theme`. */
+/* A node given a font colour, size or weight of its own keeps it to itself: what is drawn inside it
+   is in the theme, as though it had not been said. With no weight of its own, so any class that
+   colours or sizes a part of the page still does. A container that wants what is inside it to
+   follow says so with `context theme`. */
 :where(.ov-own-font) :where([data-path]) {
     color: var(--ov-text);
     font-size: 1rem;
+    font-weight: normal;
 }
 
 /* Dark mode: what the theme's colours do not say - a highlight's shade, the code colours below -

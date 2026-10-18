@@ -6940,26 +6940,30 @@ export class OverseerRenderer {
             }
         }
         
-        // A colour or size given to a node is that node's alone: what is drawn inside it keeps
-        // the theme - see `.ov-own-font` in styles.css, which stops the stylesheet handing it
-        // down. Its own value is set again with `!important`, past the classes that size it.
-        const ownValues = () => Array.from(element.querySelectorAll('.field-value'))
-            .filter((value) => !this.liesInAnotherNode(value, element))
+        // A style given to a node is that node's alone: it goes on the node and on the parts it
+        // draws itself - a field's value - and never on a node drawn inside it, which keeps the
+        // theme (see `.ov-own-font` in styles.css, which stops the stylesheet handing a colour,
+        // a size or a weight down). Set inline without `!important`: an inline style already
+        // beats every class rule, the theme's kind keys among them, and the stylesheet sets
+        // none of these with `!important` of its own.
+        const own = (selector) => Array.from(element.querySelectorAll(selector))
+            .filter((inner) => !this.liesInAnotherNode(inner, element))
+        const ownValues = () => own('.field-value')
         const fontColor = this.getParameterValue(node, 'font-color')
         if (fontColor !== null) {
             element.style.color = this.convertColorValue(fontColor)
             element.classList.add('ov-own-font')
             ownValues().forEach(fieldValue => {
-                fieldValue.style.setProperty('color', this.convertColorValue(fontColor), 'important')
+                fieldValue.style.color = this.convertColorValue(fontColor)
             })
         }
         
         const fontSize = this.getParameterValue(node, 'font-size')
         if (fontSize !== null) {
-            element.style.setProperty('font-size', this.convertCssSizeValue(fontSize), 'important')
+            element.style.fontSize = this.convertCssSizeValue(fontSize)
             element.classList.add('ov-own-font')
             ownValues().forEach(fieldValue => {
-                fieldValue.style.setProperty('font-size', this.convertCssSizeValue(fontSize), 'important')
+                fieldValue.style.fontSize = this.convertCssSizeValue(fontSize)
             })
         }
 
@@ -6970,9 +6974,10 @@ export class OverseerRenderer {
         if (fontWeight !== null && fontWeight !== undefined) {
             const weight = String(fontWeight).trim().toLowerCase()
             if (/^(normal|bold|bolder|lighter|[1-9]00)$/.test(weight)) {
-                element.style.setProperty('font-weight', weight, 'important')
-                element.querySelectorAll('.field-value').forEach(fieldValue => {
-                    fieldValue.style.setProperty('font-weight', weight, 'important')
+                element.style.fontWeight = weight
+                element.classList.add('ov-own-font')
+                ownValues().forEach(fieldValue => {
+                    fieldValue.style.fontWeight = weight
                 })
             }
         }
@@ -7008,30 +7013,17 @@ export class OverseerRenderer {
         element.classList.toggle('scrolls-free-width', clipsDown && !params.width)
         element.classList.toggle('states-height', !!params.height)
 
-    // Border style parameter (prefer computed value)
-    {
-        let borderDisabled = false
+        // Border style parameter (prefer computed value)
+        {
             const borderParam = this.getParameterValue(node, 'border-style') ?? params['border-style']
             if (borderParam !== undefined) {
-                // Special-case: explicit none should remove both border and shadow to avoid default look
+                // No border is no frame at all: the shadow that draws a card goes with it, from
+                // the node and from the value a field draws in it.
                 if (this.isBorderNone(borderParam)) {
-                    element.style.setProperty('border', 'none', 'important')
-                    element.style.setProperty('box-shadow', 'none', 'important')
-            borderDisabled = true
-
-                    // Also remove borders and shadows from common inner wrappers to avoid residual lines
-                    try {
-                        const innerSelectors = [
-                            ':scope .field-value',
-                            ':scope .overseer-list',
-                            ':scope .overseer-list-value'
-                        ]
-                        const innerEls = element.querySelectorAll(innerSelectors.join(','))
-                        innerEls.forEach(el => {
-                            el.style.setProperty('border', 'none', 'important')
-                            el.style.setProperty('box-shadow', 'none', 'important')
-                        })
-                    } catch (_) { /* no-op */ }
+                    for (const el of [element, ...own('.field-value, .overseer-list-value')]) {
+                        el.style.border = 'none'
+                        el.style.boxShadow = 'none'
+                    }
                 } else {
                     const borderStyle = this.convertBorderStyleValue(borderParam)
                     if (borderStyle) {
@@ -7083,7 +7075,7 @@ export class OverseerRenderer {
             }
             const shadow = named[asked.toLowerCase()] ?? asked
             if (shadow) {
-                element.style.setProperty('box-shadow', shadow, 'important')
+                element.style.boxShadow = shadow
             }
         }
 
@@ -7098,27 +7090,10 @@ export class OverseerRenderer {
                                  params['border-radius'].CssSize && 
                                  params['border-radius'].CssSize.Pixels === 0)
             
-            if (isZeroRadius) {
-                // For zero radius, be extra explicit to override default CSS
-                element.style.setProperty('border-radius', '0px', 'important')
-                element.style.cssText += `; border-radius: 0px !important;`
-            } else {
-                // Use converted value for non-zero radius
-                element.style.setProperty('border-radius', borderRadiusValue, 'important')
+            const radius = isZeroRadius ? '0px' : borderRadiusValue
+            for (const el of [element, ...ownValues()]) {
+                el.style.borderRadius = radius
             }
-            
-            // Apply to field-value children for consistent appearance
-            setTimeout(() => {
-                const fieldValues = element.querySelectorAll('.field-value')
-                fieldValues.forEach(fieldValue => {
-                    if (isZeroRadius) {
-                        fieldValue.style.setProperty('border-radius', '0px', 'important')
-                        fieldValue.style.cssText += `; border-radius: 0px !important;`
-                    } else {
-                        fieldValue.style.setProperty('border-radius', borderRadiusValue, 'important')
-                    }
-                })
-            }, 0)
         }
         
         // Legacy border support (keep for compatibility) - but do not override explicit none
