@@ -268,7 +268,12 @@ impl FileOperations {
             // three-paragraph one did.
             allowed_blank_lines = 0;
         } else if !output.is_empty() {
-            if indent_level == 0 {
+            // At the top of a document the gap between two nodes is held twice: at the end of
+            // the text of the node before, and here. Counting only the first lost the blank line
+            // whenever the node before was rebuilt rather than given back, since a rebuilt
+            // container ends at its brace. Counted here too, the newlines already written are
+            // taken off below, so a node given back as read gets nothing added.
+            if indent_level == 0 && !trivia_is_whitespace {
                 allowed_blank_lines = 0;
             } else if trivia_is_whitespace {
                 allowed_blank_lines = allowed_blank_lines.saturating_sub(1);
