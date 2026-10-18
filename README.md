@@ -84,6 +84,7 @@ reformats itself on the first button press is a diff nobody can review.
 
 - [overseer_syntax_specification.md](overseer_syntax_specification.md) — the DSL, node by node
 - [technical_architecture.md](technical_architecture.md) — how a document becomes a screen
+- [API.md](API.md) — reading and writing documents over the server
 - [DEVELOPMENT.md](DEVELOPMENT.md) — toolchain, debug builds, WebView2
 - [product_description.md](product_description.md) — what this is for, written before it existed
 
