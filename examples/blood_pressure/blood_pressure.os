@@ -5,13 +5,13 @@
 // measurement is kept with its own timestamp, and the group shows what they came to
 // together. One group is one point on the chart whether it holds one measurement or four.
 // -
-// Grouping is the bot's job, not the document's. A document can average what is inside a
-// group; it cannot decide that a new measurement belongs in a different one. The rule lives
-// in the guide: within an hour of the group's first measurement, it joins that group.
+// Grouping is the job of whatever records the measurements, not the document's. A document
+// can average what is inside a group; it cannot decide that a new measurement belongs in a
+// different one. The rule: within an hour of the group's first measurement, it joins that group.
 // -
 // The group's key is `started`, written once when the group is made, rather than derived
 // from the measurements in it. A derived key would change the moment a second measurement
-// arrived - and the address the bot appends that measurement to would stop existing halfway
+// arrived - and the address that measurement is appended to would stop existing halfway
 // through the write.
 
 tab blood_pressure (label="Blood Pressure", mutable=true) {
@@ -39,7 +39,7 @@ tab blood_pressure (label="Blood Pressure", mutable=true) {
         // only when it began, and everything else follows from what is in it.
         div Reading (layout="vertical", margin=0, border-radius=0, shadow="lifted") {
 
-            // What the bot writes when it makes the group, and the only thing here it states
+            // What is written when the group is made, and the only thing here it states
             // rather than works out. It is the key, so it has to hold still.
             timestamp started (hidden=true) = "2026-01-01T08:00:00Z"
 
@@ -86,7 +86,7 @@ tab blood_pressure (label="Blood Pressure", mutable=true) {
             plot bpm (color="#7ed321", label="Pulse", source=$( /blood_pressure/History ), x=$(|x| x/first_at), y=$(|x| x/avg_pulse))
         }
     }
-    // Newest last, like everything else here: both the bot and the buttons append.
+    // Newest last, like everything else here: both an assistant and the buttons append.
     // Newest first. `sort_by` sorts ascending only, so the instant is negated - the same way
     // `tasks/Open` negates its priority. `millis_since_epoch` rather than "how long ago",
     // because a key that follows the clock changes every minute and every entry of it then

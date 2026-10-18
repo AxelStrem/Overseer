@@ -9,14 +9,11 @@ use overseer::server::{DocumentRoot, RequestError};
 use overseer::types::*;
 
 fn sandbox(tag: &str) -> (std::path::PathBuf, DocumentRoot) {
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Secrebot/documents");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let root = std::env::temp_dir().join(format!("overseer_events_{}_{}", tag, std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    if !source.join("exercise.os").exists() {
-        panic!("expected a migrated exercise.os beside this repository");
-    }
-    std::fs::copy(source.join("exercise.os"), root.join("exercise.os")).unwrap();
+    std::fs::copy(source.join("exercise_events.os"), root.join("exercise.os")).unwrap();
     let documents = DocumentRoot::new(&root).unwrap();
     (root, documents)
 }

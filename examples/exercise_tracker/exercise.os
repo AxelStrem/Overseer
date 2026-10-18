@@ -20,7 +20,7 @@ div exercise_tracker (border-style=none, layout="vertical", mutable=true) {
             - sets = 1
             - reps = 18
             - weight = 16.1
-            - time = "2026-08-09T06:34:33.436291200+00:00"
+            - time = "2026-08-09T07:30:00+00:00"
         }
     }
     div (hidden=true) {

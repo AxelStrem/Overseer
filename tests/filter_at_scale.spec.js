@@ -1,12 +1,14 @@
 import { it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
 
-// The filter against a real project document holding 120 open items, resolved by a real server.
+// The filter against a project document holding 120 open items, resolved by the real resolver.
 //
 // This is the size it exists for. A filter that is correct on four rows and slow or wrong on a
 // hundred would have missed the point, so the numbers below are measured rather than assumed.
 
-const SP = 'C:/Users/sc/AppData/Local/Temp/claude/e--Source-Repos-Overseer/171c2ed1-4b26-4cee-a303-b66b716dc586/scratchpad'
+// The items are invented, and the tree is written by src-tauri/tests/a_project_of_120_items_for_the_page.rs.
+const FIXTURE = 'tests/fixtures/project_120.json.gz'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
@@ -20,7 +22,7 @@ const find = (nodes, name) => {
   return null
 }
 
-it('filters 120 real items, quickly and without touching the document', () => {
+it('filters 120 items, quickly and without touching the document', () => {
   document.body.innerHTML = `
     <div id="app">
       <div id="toolbar"><button id="open-file-btn"></button><button id="new-file-btn"></button>
@@ -34,7 +36,7 @@ it('filters 120 real items, quickly and without touching the document', () => {
       <div id="error-screen" class="screen"></div><div id="error-message"></div>
     </div>`
 
-  const doc = JSON.parse(readFileSync(`${SP}/project_120.json`, 'utf8'))
+  const doc = JSON.parse(gunzipSync(readFileSync(FIXTURE)).toString('utf8'))
   const app = new OverseerApp()
   app.currentDocument = doc
   app._currentText = 'TEXT'

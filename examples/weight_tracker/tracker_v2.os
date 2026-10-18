@@ -253,7 +253,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // Where the day's calories came from, by what the food was.
                 //
                 // Hidden because the pie beside the macros is how these are read; they are here
-                // rather than in the chart so that anything else - a month's average, the bot
+                // rather than in the chart so that anything else - a month's average, an assistant
                 // answering "how much meat this week" - can have them without repeating the
                 // arithmetic.
                 //
@@ -482,7 +482,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
     // into the delta of every interaction.
     //
     // Presentation only: the file keeps the days in whatever order they were written in, which
-    // matters here because days added through the UI are prepended and days added by the bot are
+    // matters here because days added through the UI are prepended and days added by an assistant are
     // appended, so the stored order has never been the order to read them in.
     // On one line because the serialiser writes parameters on one line, and this document is
     // checked byte for byte across a save - see tests/app_load_save_cycle.rs.

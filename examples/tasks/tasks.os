@@ -7,8 +7,9 @@
 // it leaves `Open` and lands in `History`. Nothing is ever edited into place, so the history
 // is a record of what happened rather than of what the list looks like now.
 // -
-// A rule decides *whether* it is due; it does not act. The sweep in the bot reads `due` and
-// does the appending, because only the bot can tell you a task appeared, and because nothing
+// A rule decides *whether* it is due; it does not act. A sweep outside the document - an
+// assistant, a scheduled script - reads `due` and does the appending, because only it can tell
+// you a task appeared, and because nothing
 // on the server drives a clock. That split is the point: every reason a task did or did not
 // show up is a formula in this document, readable in the browser, and the sweep is dumb.
 // -
@@ -125,8 +126,8 @@ tab tasks (label="Tasks", mutable=true) {
             // `priority` itself stays the honest number a person reads.
             float rank (hidden=true) = $(priority + (overdue ? 1000000 : 0))
 
-            // Whether the bot has said anything about this one being late. It tells you once;
-            // the flag lives here rather than in the bot because the document is the only
+            // Whether the assistant has said anything about this one being late. It tells you
+            // once; the flag lives here rather than in the assistant because the document is the only
             // thing that survives a restart, and being told twice is worse than being told
             // late.
             bool announced (hidden=true) = false
@@ -296,7 +297,7 @@ tab tasks (label="Tasks", mutable=true) {
             //
             // Each setting shows only for the mode that reads it. Hiding all of them keeps the
             // card short at the cost of making a rule unreadable - you cannot see what "every
-            // 10 days" means, and neither can the bot, which can write these fields but only
+            // 10 days" means, and neither can an assistant, which can write these fields but only
             // reads back what is shown. Hiding the ones that do not apply costs nothing and
             // leaves every rule saying exactly what it does.
             //
@@ -346,7 +347,7 @@ tab tasks (label="Tasks", mutable=true) {
                 //
                 // Two integers rather than one timestamp, deliberately. A timestamp would show
                 // as "07:30" and read back through `minutes_of_day` - but it carries an
-                // offset, and whatever writes it has to get that offset right. The bot writes
+                // offset, and whatever writes it has to get that offset right. An assistant writes
                 // these fields, and a zone guessed wrong fires the rule four hours out with
                 // nothing on the card to say why. 7 and 30 cannot be wrong about a zone.
                 int at_hour (label="at", format="trim") = 0
@@ -507,13 +508,13 @@ tab tasks (label="Tasks", mutable=true) {
         }
     }
 
-    // A one-off task, without asking the bot.
+    // A one-off task, without asking an assistant.
     //
     // For the things no rule puts here. What is typed stays on the page until "add" copies it
     // into a new task and empties the boxes; a box left empty leaves the template's value -
     // difficulty 1, no priority and nothing gained per day. No rule, which is what makes it a
     // one-off. No deadline either: a date typed into a box would have to be read as a moment,
-    // and "by Friday" is the end of Friday in your zone, which the bot is better placed to ask.
+    // and "by Friday" is the end of Friday in your zone, which an assistant is better placed to ask.
     div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
         textbox title (label="", placeholder="a one-off task", width=40%) = ""
         textbox labels (label="", placeholder="tags", vocabulary="/tasks/Labels", width=17%) = ""

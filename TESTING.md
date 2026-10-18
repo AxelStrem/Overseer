@@ -66,6 +66,21 @@ distinction matters:
 `serializer_golden.rs`; every `.os` file dropped there joins the golden corpus.
 Fixtures for a single test go directly in `fixtures/`.
 
+### Your own documents
+
+`real_documents_round_trip.rs` also round-trips documents that are not in the
+repository - the ones a person actually keeps, which a parser or serializer change
+can damage in ways no example shows. It reads every `.os` file at the top of each
+folder named in `OVERSEER_REAL_DOCS`, separated as in `PATH` (`;` on Windows, `:`
+elsewhere):
+
+```bash
+OVERSEER_REAL_DOCS="E:/docs;E:/docs/projects" cargo test --test real_documents_round_trip -- --nocapture
+```
+
+Without it the test prints that no folders were named and passes; the examples and
+the library are round-tripped either way.
+
 ## Recording known bugs
 
 A reproducible bug that is not being fixed yet is worth a test marked

@@ -1,6 +1,6 @@
 // Diary: a day at a time, in two voices.
 // -
-// One entry per day, holding two accounts of it: the bot's, written each morning from what the
+// One entry per day, holding two accounts of it: an assistant's, written each morning from what the
 // other documents recorded, and yours, given whenever you feel like giving it. Neither is
 // authoritative. The point of keeping both is that they disagree - the figures say a quiet day
 // and you remember a hard one, and the gap between those is the thing worth having.
@@ -22,7 +22,7 @@ tab diary (label="Diary", mutable=true) {
 
             date day (label="", font-size=20px) = "2026-01-01"
 
-            // The bot's account, written the morning after. Long-form, so `text` rather than
+            // The assistant's account, written the morning after. Long-form, so `text` rather than
             // `string` - it is read as prose, not as a field.
             text recap (markdown=true) = ""
 
@@ -35,7 +35,7 @@ tab diary (label="Diary", mutable=true) {
             //
             // Deliberately unnamed: what they hold is decided day to day rather than fixed
             // here, and a field called `mood` would quietly insist on meaning mood forever.
-            // Nothing reads them - not the bot, not a formula, not the recap - so they can be
+            // Nothing reads them - not the assistant, not a formula, not the recap - so they can be
             // repurposed without breaking anything.
             // What was said as the day went, in the day it was said in.
             //
@@ -57,9 +57,9 @@ tab diary (label="Diary", mutable=true) {
         // Something said during the day: how it felt, what was happening, what was being done.
         //
         // These lived in a list of their own, because a day's entry did not exist until the
-        // morning after and whether it existed was how the bot decided the recap had been
+        // morning after and whether it existed was how the assistant decided the recap had been
         // written - so a note at lunchtime would have looked like a recap already done, and
-        // the day would never have got one. That is no longer what is asked: the bot looks at
+        // the day would never have got one. That is no longer what is asked: the assistant looks at
         // whether the day has a `recap`, which a note does not write. So a note can live where
         // it belongs, in its own day.
         //

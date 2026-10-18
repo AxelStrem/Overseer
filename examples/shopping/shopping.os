@@ -8,8 +8,8 @@
 // same shops whether or not it is on the list today. An entry says which type, how much, and
 // anything worth remembering about this particular one.
 // -
-// Buying is a tap on the entry rather than a message to the bot, because it happens in a shop
-// with one hand full. It moves the entry to History - the same two actions the bot would do,
+// Buying is a tap on the entry rather than a message to an assistant, because it happens in a shop
+// with one hand full. It moves the entry to History - the same two actions an assistant would do,
 // written once in the document where the finger is.
 // -
 // Duplicates are allowed: two entries of milk with different amounts are two things to buy.

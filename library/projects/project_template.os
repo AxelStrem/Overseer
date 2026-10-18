@@ -366,7 +366,7 @@ tab project (label="Project", mutable=true) {
     // The plan in two tabs - what is still to do, and what was finished or cancelled - so the
     // closed items are a tap away rather than a scroll past the open ones. Unnamed, so they are
     // no step of any address: the lists are /project/Items and /project/History as they always
-    // were, to the formulas here, the bot and the sweep alike.
+    // were, to the formulas here and to anything reading them alike.
     tab (label="Open", hover-text="What is still to do") {
         div (layout="horizontal", margin=0, spacing=10, alignment="center") {
             filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, flags",

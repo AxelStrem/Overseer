@@ -4,8 +4,10 @@
 //! the change can actually damage: the ones holding two years of someone's records. A unit test
 //! on a fixture proves the new construct works; this proves the old ones still do.
 //!
-//! Skipped rather than failed when the documents are not on this machine, so the suite still
-//! runs for anyone who has only the repository.
+//! The documents are not in the repository: the folders holding them are named in
+//! `OVERSEER_REAL_DOCS`, separated as `PATH` is. Without it the test says so and checks nothing,
+//! so the suite still runs for anyone who has only the repository; the examples and the library
+//! are round-tripped by the test below either way.
 
 use overseer::app_api;
 use overseer::docmgr::manager::DocumentManager;
@@ -58,11 +60,11 @@ fn round_trips(path: &std::path::Path) -> Result<(), String> {
 
 #[test]
 fn the_documents_in_use_survive_a_round_trip() {
-    let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let places = [
-        here.join("../../Secrebot-Docs/personal-stats/documents"),
-        here.join("../../Secrebot/documents"),
-    ];
+    let Some(named) = std::env::var_os("OVERSEER_REAL_DOCS") else {
+        eprintln!("OVERSEER_REAL_DOCS names no folders of real documents; nothing to check");
+        return;
+    };
+    let places: Vec<_> = std::env::split_paths(&named).collect();
 
     let mut checked = 0;
     let mut broken = Vec::new();
@@ -80,7 +82,7 @@ fn the_documents_in_use_survive_a_round_trip() {
     }
 
     if checked == 0 {
-        eprintln!("no real documents on this machine; nothing to check");
+        eprintln!("no documents in the folders OVERSEER_REAL_DOCS names; nothing to check");
         return;
     }
     assert!(

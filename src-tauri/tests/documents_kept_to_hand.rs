@@ -68,7 +68,7 @@ fn a_file_anywhere_on_this_computer_reads_back_as_it_was_given() {
     // into a quoted string and read out of it again.
     serialised(|| {
         let file = a_folder("windows").join(menu::FILE);
-        let here = r"E:\Source\Repos\Secrebot-Docs\personal-stats\documents\projects\black spores.os";
+        let here = r"E:\docs\projects\black spores.os";
         let there = "/home/someone/notes/diary.os";
         menu::keep(&file, here, "Black Spores").unwrap();
         let places = menu::keep(&file, there, "").unwrap();

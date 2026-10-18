@@ -127,16 +127,12 @@ tab t (label=\"T\", mutable=true) {
 }
 
 #[test]
-fn the_real_food_tracker_says_its_day_is_the_viewers() {
+fn the_food_tracker_says_its_day_is_the_viewers() {
     // The case this exists for, read from the document itself rather than a fixture: the day
     // being looked at is marked guarded, while the meals recorded against it are not.
-    let path = std::path::Path::new(
-        "E:/Source/Repos/Secrebot-Docs/personal-stats/documents/tracker_v2.os",
-    );
-    let Ok(text) = std::fs::read_to_string(path) else {
-        eprintln!("the deployed tracker is not beside this checkout; skipping");
-        return;
-    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../examples/weight_tracker/tracker_v2.os");
+    let text = std::fs::read_to_string(&path).expect("the example food tracker");
     overseer::docmgr::manager::DocumentManager::set_current_document(Some(
         path.to_string_lossy().as_ref(),
     ));

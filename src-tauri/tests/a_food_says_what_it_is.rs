@@ -191,17 +191,17 @@ fn the_alcohol_tag_agrees_with_the_number_beside_it() {
     // reading - a chip on a row - and the number is what anything counting uses. They were set
     // from each other, and this is what keeps them that way.
     //
-    // Both catalogues where they are available - the one in the repository, and the deployed one
-    // the bot writes to, which is where the hundred and twenty real tags are. The deployed one is
-    // outside the repository, so it is checked when present and skipped when not.
+    // Every catalogue available - the one in the repository, and a `foods.os` in any folder of
+    // real documents named in `OVERSEER_REAL_DOCS` (see TESTING.md), which is where a catalogue
+    // kept in use has its hundred and more real tags. Those are outside the repository, so they
+    // are checked when named and skipped when not.
     let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut checked = 0;
-    for path in [
-        here.join("../examples/weight_tracker/foods.os"),
-        std::path::PathBuf::from(
-            "E:/Source/Repos/Secrebot-Docs/personal-stats/documents/foods.os",
-        ),
-    ] {
+    let mut paths = vec![here.join("../examples/weight_tracker/foods.os")];
+    if let Some(named) = std::env::var_os("OVERSEER_REAL_DOCS") {
+        paths.extend(std::env::split_paths(&named).map(|folder| folder.join("foods.os")));
+    }
+    for path in paths {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };

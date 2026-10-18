@@ -64,7 +64,7 @@ fn a_graph_was_kept() -> bool {
 
 #[test]
 fn nothing_set_means_a_graph_is_recorded() {
-    // The case that matters: neither build, nor Railway, sets anything.
+    // The case that matters: neither a build nor a deployment sets anything.
     assert!(
         with_setting(None, a_graph_was_kept),
         "opening a document recorded nothing, so an unchanged one will be worked out again"

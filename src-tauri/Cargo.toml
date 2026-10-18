@@ -55,6 +55,8 @@ base64 = "0.22"
 
 [dev-dependencies]
 parking_lot = "0.12"
+# Writes the page's frozen project fixture compressed; see tests/a_project_of_120_items_for_the_page.rs.
+flate2 = "1"
 
 [features]
 # This feature is used for production builds or when `devPath` points to the filesystem
