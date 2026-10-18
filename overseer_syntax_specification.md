@@ -715,7 +715,7 @@ date finished = ""
 
 - `click` - a button pressed, or a div that carries it pressed anywhere (see "A whole entry as the
   thing you press").
-- `change` - a field's value changed by hand: typed, or picked from a chip. The new value is written
+- `change` - a field's value changed by hand: typed, picked from a chip, or ticked. The new value is written
   first, and the handler and the value are one change, so the handler reads what was just chosen
   and one undo takes back both.
 - `load`, `unload` - on a `mount`; without a block of its own, a mount loads and unloads what it

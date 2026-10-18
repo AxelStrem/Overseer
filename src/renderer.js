@@ -4880,6 +4880,30 @@ export class OverseerRenderer {
     }
 
     /**
+     * Send a ticked box's value with the handlers it has for the tick, as one instruction, when
+     * there is a file - as a typed value and a picked enum go. Says whether it did; otherwise the
+     * box writes its value the way it always has - straight away, since whether to send is
+     * decided before anything is waited for.
+     *
+     * The value goes with the first handler only, and those after it run on what that wrote.
+     * Written first and the handlers asked for after, a box's value and its handler's write were
+     * two changes that raced, and a `checkbox` came back holding the text `"true"`.
+     */
+    sendTickWithHandlers(node, container, checked, events) {
+        const declared = events.filter((ev) => this.declaresEvent(node, ev))
+        if (declared.length === 0 || !window.app || !window.app.currentFile) return false
+        const holder = { dataset: { path: JSON.stringify(this.buildNodePath(container)) } }
+        ;(async () => {
+            for (const [i, ev] of declared.entries()) {
+                try {
+                    await this.emitEvent(node, holder, ev, i === 0 ? { Boolean: checked } : undefined)
+                } catch (_) {}
+            }
+        })()
+        return true
+    }
+
+    /**
      * Write one value into an enum field, as picking it does - from its chip, or by dropping its
      * entry in another column of a board.
      *
@@ -5874,6 +5898,7 @@ export class OverseerRenderer {
             if (mode === 'guarded') { try { checkbox.setAttribute('data-guarded-edit','1') } catch(_) {} }
             const was = this.getNodeValue(node)
             this.updateNodeValue(node, checkbox.checked)
+            if (mode !== 'guarded' && this.sendTickWithHandlers(node, container, checkbox.checked, ['change'])) return
             if (window.app && window.app.markDocumentModified) {
                 window.app.markDocumentModified()
             }
@@ -6106,6 +6131,8 @@ export class OverseerRenderer {
             if (DEBUG_MODE) console.log('Checkbox changed:', node.name, checkbox.checked)
             const was = this.getNodeValue(node)
             this.updateNodeValue(node, checkbox.checked)
+            const ticked = ['toggle', checkbox.checked ? 'check' : 'uncheck', 'change']
+            if (mode !== 'guarded' && this.sendTickWithHandlers(node, container, checkbox.checked, ticked)) return
 
             // Mark document as modified
             if (window.app && window.app.markDocumentModified) {
