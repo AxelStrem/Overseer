@@ -2,11 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // A translucent background was drawn in several shades.
 //
-// `background-color` is handed down the tree, and every container and field inside a coloured
-// div painted the colour it was handed once more. Painting an opaque colour twice looks the same,
+// `background-color` used to be handed down the tree, and every container and field inside a
+// coloured div painted the colour it was handed once more. Painting an opaque colour twice looks the same,
 // but a translucent one compounds level by level - and a tint is the one colour a document can
-// state that reads right in both the light and the dark theme. A node that only carries on the
-// colour it was handed now lets its parent show through, and still hands it on.
+// state that reads right in both the light and the dark theme. A colour now stays on the node that
+// states it, and what is inside lets it show through, while the page still tells a button what it
+// sits on.
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerRenderer } from '../src/renderer.js'
@@ -27,20 +28,12 @@ const node = (name, type, params, children = []) => ({
   is_hierarchy_transparent: false, param_order: [], authored_dash: false,
 })
 
-/// What the resolver leaves on a node that was handed the colour rather than stating it.
-const handed = (params, colour = TINT) => ({
-  ...params,
-  'background-color': { String: colour },
-  '_template_background-color': { String: colour },
-  '_inherited_background-color': { Boolean: true },
-})
-
-const aTintedCard = (innerParams = handed({})) => [
+const aTintedCard = (innerParams = {}) => [
   node('root', 'tab', { label: { String: 'T' } }, [
     node('card', 'div', { 'background-color': { String: TINT } }, [
       node('inner', 'div', innerParams, [
-        node('title', 'string', handed({ value: { String: 'Climb a mountain' } }), []),
-        node('go', 'button', handed({ label: { String: 'Done' } }), []),
+        node('title', 'string', { value: { String: 'Climb a mountain' } }, []),
+        node('go', 'button', { label: { String: 'Done' } }, []),
       ]),
     ]),
   ]),

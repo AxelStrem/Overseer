@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // A button on a coloured div used to be exactly the colour of the div.
 //
-// `background-color` is inherited down the tree, so a button inside a coloured container is
+// `background-color` used to be copied down the tree, so a button inside a coloured container was
 // handed that colour - and the renderer then applied it as though the button had asked for it.
-// The result was a button the same shade as the thing it sat on, findable only by hovering.
+// The result was a button the same shade as the thing it sat on, findable only by hovering. The
+// colour stays on the container now, and the page tells the button what it sits on.
 //
 // It is brightened now, with hover brighter again and press darker, so it reads as a raised
 // thing that answers being pressed. A document that states a colour still gets that colour,
@@ -27,15 +28,9 @@ const node = (name, type, params, children = []) => ({
   is_hierarchy_transparent: false, param_order: [], authored_dash: false,
 })
 
-/// A coloured container with a button in it. `handedDown` marks the button's colour as one the
-/// styling inheritance gave it, which is what the resolver does.
-const aDocumentWhere = (buttonParams = {}, containerColour = '#204080', handedDown = true) => {
+/// A coloured container with a button in it.
+const aDocumentWhere = (buttonParams = {}, containerColour = '#204080') => {
   const params = { label: { String: 'Press' }, ...buttonParams }
-  if (handedDown) {
-    params['background-color'] = { String: containerColour }
-    params['_template_background-color'] = { Boolean: true }
-    params['_inherited_background-color'] = { Boolean: true }
-  }
   return [
     node('root', 'tab', { label: { String: 'T' } }, [
       node('panel', 'div', { 'background-color': { String: containerColour } }, [
@@ -84,7 +79,7 @@ describe('a button stands out from what it sits on', () => {
     // showed the colours worked out for them.
     expect(drawn(aDocumentWhere()).style.backgroundColor).toBe('')
     setupDOM()
-    expect(drawn(aDocumentWhere({ 'background-color': { String: '#c0392b' } }, '#204080', false))
+    expect(drawn(aDocumentWhere({ 'background-color': { String: '#c0392b' } }, '#204080'))
       .style.backgroundColor).toBe('')
   })
 
@@ -100,7 +95,7 @@ describe('a button stands out from what it sits on', () => {
 
   it('keeps a colour the document states for the button itself', () => {
     // Saying it is the point of saying it, so nothing is derived over the top.
-    const doc = aDocumentWhere({ 'background-color': { String: '#c0392b' } }, '#204080', false)
+    const doc = aDocumentWhere({ 'background-color': { String: '#c0392b' } }, '#204080')
     const button = drawn(doc)
     expect(button.style.getPropertyValue('--overseer-button-bg')).toBe('#c0392b')
   })
@@ -132,8 +127,8 @@ describe('a button stands out from what it sits on', () => {
 
   it('keeps the text colour a list entry\'s template states for it', () => {
     // An entry's template marks every parameter it states `_template_`, the button's own
-    // colour among them; only `_inherited_` says the colour was handed down. The talk button
-    // on a coloured tracker row was drawn white over its grey.
+    // colour among them. The talk button on a coloured tracker row was once drawn white over
+    // its grey, taken for a colour handed down.
     const button = drawn(aDocumentWhere({
       'font-color': { String: '#6b7280' },
       '_template_font-color': { String: '#6b7280' },
@@ -145,7 +140,7 @@ describe('a button stands out from what it sits on', () => {
     const doc = aDocumentWhere({
       'background-color': { String: '#c0392b' },
       '_template_background-color': { String: '#c0392b' },
-    }, '#204080', false)
+    }, '#204080')
     expect(drawn(doc).style.getPropertyValue('--overseer-button-bg')).toBe('#c0392b')
   })
 

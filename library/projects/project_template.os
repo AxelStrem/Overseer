@@ -203,9 +203,11 @@ tab project (label="Project", mutable=true) {
                   background-color=$(flags.filter(|t| t == "asked").count() > 0 ? "#38331a" :
                                     (stage == "testing" ? "#2c2140" :
                                     (done >= 75 ? "#14321f" :
-                                    (done >= 25 ? "#1c2a3a" : "inherit")))),
-                  font-color=$(waiting > 0 ? "#6b7280" : "inherit")) {
+                                    (done >= 25 ? "#1c2a3a" : "inherit"))))) {
             context hover-text = true
+            context theme {
+                - text = $(waiting > 0 ? muted : "inherit")
+            }
             mark (type="grip")
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=7%) = ""

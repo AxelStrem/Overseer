@@ -16,13 +16,22 @@ tab grid_examples {
     
     text selective_borders_title = "2. Table-like Layout with Selective Borders:"
     div table_header (layout=horizontal, spacing=0, margin=10) {
-        div header1 (width=120px, height=40px, background-color=#333, font-color=white, border-top=solid 2px black, border-bottom=solid 2px black, border-left=solid 2px black) {
+        div header1 (width=120px, height=40px, background-color=#333, border-top=solid 2px black, border-bottom=solid 2px black, border-left=solid 2px black) {
+            context theme {
+                - text = "white"
+            }
             text content = "Name"
         }
-        div header2 (width=80px, height=40px, background-color=#333, font-color=white, border-top=solid 2px black, border-bottom=solid 2px black) {
+        div header2 (width=80px, height=40px, background-color=#333, border-top=solid 2px black, border-bottom=solid 2px black) {
+            context theme {
+                - text = "white"
+            }
             text content = "Age"
         }
-        div header3 (width=100px, height=40px, background-color=#333, font-color=white, border-top=solid 2px black, border-bottom=solid 2px black, border-right=solid 2px black) {
+        div header3 (width=100px, height=40px, background-color=#333, border-top=solid 2px black, border-bottom=solid 2px black, border-right=solid 2px black) {
+            context theme {
+                - text = "white"
+            }
             text content = "Status"
         }
     }

@@ -1,14 +1,15 @@
 //! An entry moved to another list takes the colour of where it goes, not of where it was.
 //!
-//! A style said on a container is handed to everything inside it, and that used to include what a
-//! button runs. So the line `- title = $(../title)` in a done button's `append` held the colour of
+//! A style said on a container used to be handed to everything inside it, what a button runs
+//! included. So the line `- title = $(../title)` in a done button's `append` held the colour of
 //! the task the button sat in, worked out there - red, for a task done while overdue - and the
 //! append gave it to the new entry's title along with the value. A field that already holds a style
 //! keeps it, so the history entry stayed red field by field, while its own box took the history's
 //! colour: in tasks.os, in exercise.os and wherever else a coloured entry is moved to another list.
 //!
 //! Only the document held in memory had it - the file never did, since a style handed down is not
-//! written - so it lasted until the server worked the document out again from its text.
+//! written - so it lasted until the server worked the document out again from its text. A style
+//! now stays on the node it is given to, so there is nothing of the task's left to carry.
 
 use overseer::app_api;
 use overseer::formula_evaluator::FormulaEvaluator;
@@ -98,7 +99,7 @@ fn moved(tag: &str) -> (String, Vec<OverseerNode>) {
     let open = find(&nodes, "Open").expect("no Open list");
     let task = &open.children[0];
     assert!(
-        !coloured(task).is_empty(),
+        task.parameters.contains_key("background-color"),
         "the late task is not coloured to begin with, so this shows nothing"
     );
     let button = overseer::addressing::name_path(&nodes, "t/Open/[a]/done").expect("the button");
@@ -127,17 +128,18 @@ fn the_moved_entry_holds_no_colour_of_the_list_it_left() {
 }
 
 #[test]
-fn what_a_press_runs_is_handed_no_style() {
-    // The cause rather than the symptom: nothing inside an `on` block is drawn, so nothing there
-    // is given a style to carry somewhere else.
+fn nothing_inside_the_task_is_handed_its_style() {
+    // The cause rather than the symptom: a style belongs to the node it is given to, so neither
+    // what a press runs nor the fields beside the button hold one to carry somewhere else.
     serialised(|| {
         app_api::forget_baseline();
         let nodes = app_api::load_document(DOCUMENT.to_string()).expect("open");
         let open = find(&nodes, "Open").expect("no Open list");
-        let click = find(&open.children[0].children, "click").expect("no on click");
+        let task = &open.children[0];
+        assert!(task.parameters.contains_key("background-color"));
         let mut handed = Vec::new();
         fn walk(node: &OverseerNode, handed: &mut Vec<String>) {
-            for key in overseer::resolver::INHERITABLE_PARAMS {
+            for key in ["background-color", "font-color", "font-size"] {
                 if node.parameters.contains_key(key) {
                     handed.push(format!("{} {}", node.name, key));
                 }
@@ -146,10 +148,9 @@ fn what_a_press_runs_is_handed_no_style() {
                 walk(child, handed);
             }
         }
-        walk(click, &mut handed);
+        for child in &task.children {
+            walk(child, &mut handed);
+        }
         assert_eq!(handed, Vec::<String>::new());
-        // And a field beside the button is still handed the task's colour, as it should be.
-        let title = find(&open.children[0].children, "title").expect("no title");
-        assert!(title.parameters.contains_key("background-color"), "inheritance stopped altogether");
     });
 }

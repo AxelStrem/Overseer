@@ -71,7 +71,7 @@ theme it is based on changes, as for the files its mounts and bases read.
 | --- | --- |
 | `parser.rs` | text to nodes |
 | `types.rs` | `OverseerNode`, `OverseerValue` — what everything else passes around |
-| `resolver.rs` | templates, inheritance, multipass, and which slice of a list is in view |
+| `resolver.rs` | templates, layout, multipass, and which slice of a list is in view |
 | `contexts.rs` | what each container sees of the contexts declared above it |
 | `environment.rs` | the user's theme and mode, seen at the top of every document |
 | `formula_evaluator.rs` | `$(...)`: arithmetic, comparisons, and the `filter`/`map`/`sum` chains |

@@ -1,13 +1,14 @@
 //! Colouring a template must not cost it its contents.
 //!
-//! Styling inherits: a `background-color` on a node is copied onto every descendant so the
-//! renderer can read it, and each copy is marked `_template_background-color` so it is not
-//! written back to disk. That marker says where one *parameter* got its value.
+//! Styling used to inherit: a `background-color` on a node was copied onto every descendant so
+//! the renderer could read it, and each copy was marked `_template_background-color` so it was
+//! not written back to disk. That marker said where one *parameter* got its value.
 //!
-//! The serializer also asked whether a node had any `_template_*` key, and took a yes to mean
+//! The serializer also asks whether a node has any `_template_*` key, and takes a yes to mean
 //! the whole node came from a template - which for an entry means "write it without its
 //! contents, the template supplies them". Inheriting a colour therefore answered a question it
-//! was never asked, and a group inside the coloured template came back as `{}`.
+//! was never asked, and a group inside the coloured template came back as `{}`. A colour stays
+//! on the node it is given to now, and these keep it from coming back.
 
 use overseer::app_api;
 use overseer::file_ops::OverseerFileHandler;
@@ -81,16 +82,15 @@ fn colouring_a_template_does_not_empty_the_group_inside_it() {
 }
 
 #[test]
-fn an_inherited_colour_is_still_not_written_onto_children() {
-    // The markers exist for this, and it has to keep working: the colour belongs to the node
-    // that set it, and writing it onto every descendant would make each of them state
-    // something the document never said.
+fn a_container_colour_is_not_written_onto_children() {
+    // The colour belongs to the node that set it, and writing it onto every descendant would
+    // make each of them state something the document never said.
     let coloured = document(", background-color=\"#16203a\"");
     let saved = load_and_save(&coloured);
     assert_eq!(
         saved.matches("background-color").count(),
         1,
-        "the inherited colour was persisted onto children:\n{}",
+        "the colour was persisted onto children:\n{}",
         saved
     );
 }

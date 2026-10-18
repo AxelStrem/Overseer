@@ -1241,6 +1241,20 @@ div RoundedBox (border-radius=8px) {                // Rounded corners
 div SharpBox (border-radius=0px) {                  // Sharp corners
 ```
 
+A style is the node's own. `background-color`, `font-color` and `font-size` given to a container
+paint that container, and what is inside it is drawn in the theme, as though nothing had been said:
+a background shows through what is inside it, but its text keeps the theme's colour and size. A
+container whose contents should follow says so by changing the theme for them (see "Contexts"):
+
+```overseer
+div Sidebar (background-color="#16203a") {
+    context theme {
+        - text = "#f1f5f9"
+    }
+    string title = "Inbox"
+}
+```
+
 A width in pixels is kept. In a horizontal row too narrow for it, the row wraps it to the next line rather
 than squeezing it, and a row wider than the page scrolls sideways inside a container that says
 `overflow-x=auto`. A width in percent is a share of the row and shrinks with it. Together they lay out

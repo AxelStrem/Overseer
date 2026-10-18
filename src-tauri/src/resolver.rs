@@ -291,8 +291,8 @@ pub fn paths_within(node: &OverseerNode, path: &str) -> std::collections::HashSe
 /// The rest of what a whole resolve does is left out because it has nothing to do: an entry is
 /// made from a template that was instantiated with the document, so there are no templates left to
 /// copy, and a list that shows only some of its entries is never followed here, so no window moves.
-/// Layout and inheritance are what an entry just made still lacks from its place in the document,
-/// and they are cheap enough to run over all of it.
+/// Layout is what an entry just made still lacks from its place in the document, and it is cheap
+/// enough to run over all of it.
 pub fn resolve_after_a_change_of_shape(
     nodes: &mut Vec<OverseerNode>,
     targets: &std::collections::HashSet<String>,
@@ -301,9 +301,8 @@ pub fn resolve_after_a_change_of_shape(
     let profiling = profile_enabled();
     let t = std::time::Instant::now();
     resolve_layout_parameters(nodes, None);
-    resolve_parameter_inheritance(nodes, &crate::types::Params::new());
     if profiling {
-        eprintln!("[PHASE]   layout and inheritance {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+        eprintln!("[PHASE]   layout {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
     resolve_specific_fields(nodes, targets);
 }
@@ -491,7 +490,7 @@ pub fn out_of_view(node: &OverseerNode) -> bool {
     )
 }
 
-/// Structural resolution: templates, layout and inheritance, but no formula evaluation.
+/// Structural resolution: templates and layout, but no formula evaluation.
 ///
 /// Callers that only need the tree to have its shape - so that a field belonging to a
 /// template instance exists and can be written to - want this rather than a full resolve.
@@ -520,11 +519,6 @@ pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
     resolve_layout_parameters(nodes, None);
     if profiling {
         eprintln!("[PHASE]   layout {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
-    }
-    let t = std::time::Instant::now();
-    resolve_parameter_inheritance(nodes, &crate::types::Params::new());
-    if profiling {
-        eprintln!("[PHASE]   inheritance {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
 }
 
@@ -563,7 +557,7 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     let profiling = profile_enabled();
     resolve_structure(nodes);
 
-    // After parameter inheritance, evaluate formulas (multi-pass so aggregates whose inputs appear later update)
+    // Then evaluate formulas (multi-pass so aggregates whose inputs appear later update)
     let t = std::time::Instant::now();
     evaluate_formulas_in_document_multi_pass(nodes);
     if profiling {
@@ -604,7 +598,7 @@ pub fn resolve_specific_fields(
     // For selective updates, we only need to:
     // 1. Re-evaluate formulas for the specific fields
     // 2. Re-compute charts that depend on those fields
-    // 3. Skip template resolution, layout, and parameter inheritance (those don't change)
+    // 3. Skip template resolution and layout (those don't change)
 
     // Only evaluate formulas for the specific field paths
     evaluate_formulas_for_specific_fields(nodes, field_paths);
@@ -2210,83 +2204,6 @@ fn calculate_effective_layout(node: &OverseerNode, parent_layout: Option<&str>) 
         "vertical" => "horizontal".to_string(),
         "horizontal" => "vertical".to_string(),
         _ => "horizontal".to_string(),
-    }
-}
-
-/// Parameters a container passes down to everything inside it.
-///
-/// Said once on a div and true of every field within, unless one of them says otherwise -
-/// which falls out of how they are copied: a node's own value replaces what it was given
-/// before its children are handed the map, so the nearest ancestor that states anything wins.
-/// CSS cannot express that for a descendant selector, which is why this is done here.
-///
-/// Each one is copied onto the descendant *and* marked `_template_<name>`, so that the
-/// serializer knows the value was not written there and does not write it to disk. Adding a
-/// name here without that marker being understood would persist the copy into every entry;
-/// `file_ops::marks_a_template_node` reads this same list for exactly that reason.
-///
-/// What a container means for everything inside it otherwise - `vocabulary`, `hide-labels`,
-/// `hover-text` - is a context (`contexts.rs`), which the page reads where it draws.
-pub const INHERITABLE_PARAMS: [&str; 3] = [
-    "background-color",
-    "font-color",
-    "font-size",
-];
-
-fn resolve_parameter_inheritance(
-    nodes: &mut Vec<OverseerNode>,
-    parent_params: &crate::types::Params,
-) {
-    for node in nodes.iter_mut() {
-        // Not into what a press runs. An action is never drawn, so a style handed to one means
-        // nothing - until an action copies itself somewhere: `- title = $(../title)` in an
-        // `append` is a node like any other, and every parameter it holds is applied to the new
-        // entry's field. Handed the colour of the entry the button sat in, it gave that colour to
-        // the field, which then never took the colour of where it now was, since a node that
-        // already holds a style keeps it. So a task done while overdue went into the history red,
-        // field by field, wherever a coloured entry was moved to another list.
-        if node.node_type == "on" {
-            continue;
-        }
-        let inheritable_params = INHERITABLE_PARAMS;
-
-        // Inherit each styling parameter from parent if not explicitly set
-        for param_name in &inheritable_params {
-            if !node.parameters.contains_key(*param_name) {
-                if let Some(parent_value) = parent_params.get(*param_name) {
-                    debug_resolver!(
-                        "[RESOLVER] Inheriting {} = {:?} for node {}",
-                        param_name,
-                        parent_value,
-                        node.name
-                    );
-                    node.parameters
-                        .insert(param_name.to_string(), parent_value.clone());
-                    // Mark as template-derived so serializer will not persist inherited styling
-                    node.parameters
-                        .insert(format!("_template_{}", param_name), parent_value.clone());
-                    // And as handed down, which `_template_` cannot say: a list entry's template
-                    // leaves that same marker on every parameter it states, so a button in an
-                    // entry that names its own font colour looked exactly like one that was
-                    // given its row's - and the page painted over the colour it had asked for.
-                    node.parameters
-                        .insert(format!("_inherited_{}", param_name), OverseerValue::Boolean(true));
-                }
-            }
-        }
-
-        // Build inherited parameters map for children (including this node's parameters)
-        let mut inherited_params = parent_params.clone();
-        for (key, value) in &node.parameters {
-            if inheritable_params.contains(&key.as_str()) {
-                inherited_params.insert(key.clone(), value.clone());
-            }
-        }
-
-        // Recursively resolve children with inherited parameters
-        if !node.children.is_empty() {
-            resolve_parameter_inheritance(&mut node.children, &inherited_params);
-        }
     }
 }
 
@@ -4377,12 +4294,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parameter_inheritance() {
-        let input = r#"div Container (font-color=blue, font-size=16px) {
+    fn a_style_stays_on_the_node_it_is_given_to() {
+        let input = r#"div Container (font-color=blue, font-size=16px, background-color=red) {
             div Inner {
                 string field = "Test"
             }
-            string direct = "Direct child"
+            string direct (font-color=green) = "Direct child"
         }"#;
         let mut nodes = parse_document(input).unwrap().1;
         resolve_document(&mut nodes);
@@ -4392,90 +4309,21 @@ mod tests {
         let field = &inner.children[0];
         let direct = &container.children[1];
 
-        // Container should have its own styling
         assert_eq!(
             container.parameters.get("font-color"),
             Some(&OverseerValue::Color(Color::Named("blue".to_string())))
         );
-        assert_eq!(
-            container.parameters.get("font-size"),
-            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
-        );
-
-        // Inner div should inherit styling parameters
-        assert_eq!(
-            inner.parameters.get("font-color"),
-            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
-        );
-        assert_eq!(
-            inner.parameters.get("font-size"),
-            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
-        );
-
-        // Field should inherit from both container and inner
-        assert_eq!(
-            field.parameters.get("font-color"),
-            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
-        );
-        assert_eq!(
-            field.parameters.get("font-size"),
-            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
-        );
-
-        // Direct child should inherit from container
+        for node in [inner, field, direct] {
+            for param in ["font-size", "background-color"] {
+                assert!(!node.parameters.contains_key(param), "{} was handed {}", node.name, param);
+                assert!(!node.parameters.contains_key(&format!("_template_{}", param)));
+            }
+        }
+        assert!(!inner.parameters.contains_key("font-color"));
+        assert!(!field.parameters.contains_key("font-color"));
         assert_eq!(
             direct.parameters.get("font-color"),
-            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
-        );
-        assert_eq!(
-            direct.parameters.get("font-size"),
-            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
-        );
-    }
-
-    #[test]
-    fn test_parameter_inheritance_override() {
-        let input = r#"div Container (font-color=blue, font-size=16px) {
-            string child1 = "Default styling"
-            string child2 (font-color=red) = "Overridden color"
-            string child3 (font-size=20px) = "Overridden size"
-        }"#;
-        let mut nodes = parse_document(input).unwrap().1;
-        resolve_document(&mut nodes);
-
-        let container = &nodes[0];
-        let child1 = &container.children[0];
-        let child2 = &container.children[1];
-        let child3 = &container.children[2];
-
-        // Child1 should inherit both parameters
-        assert_eq!(
-            child1.parameters.get("font-color"),
-            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
-        );
-        assert_eq!(
-            child1.parameters.get("font-size"),
-            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
-        );
-
-        // Child2 should override color but inherit size
-        assert_eq!(
-            child2.parameters.get("font-color"),
-            Some(&OverseerValue::Color(Color::Named("red".to_string())))
-        );
-        assert_eq!(
-            child2.parameters.get("font-size"),
-            Some(&OverseerValue::CssSize(CssSize::Pixels(16.0)))
-        );
-
-        // Child3 should override size but inherit color
-        assert_eq!(
-            child3.parameters.get("font-color"),
-            Some(&OverseerValue::Color(Color::Named("blue".to_string())))
-        );
-        assert_eq!(
-            child3.parameters.get("font-size"),
-            Some(&OverseerValue::CssSize(CssSize::Pixels(20.0)))
+            Some(&OverseerValue::Color(Color::Named("green".to_string())))
         );
     }
 

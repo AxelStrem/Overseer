@@ -1325,7 +1325,7 @@ export class OverseerRenderer {
         }
 
         const ordered = this.inDisplayOrder(list)
-        const inherited = { backgroundColor: getComputedStyle(element).backgroundColor || null }
+        const inherited = { backgroundColor: this.colourHandedAt(element) }
         for (const node of change.added || []) {
             if (!this.shouldRenderChild(list, node)) continue
             const at = ordered.indexOf(node)
@@ -1833,17 +1833,13 @@ export class OverseerRenderer {
                     try { element.style.backgroundColor = effectiveBg } catch (_) {}
                 }
 
-                // A button that takes its parent's colour disappears into it.
+                // A button painted the colour it sits on disappears into it. Brightened from that
+                // colour instead, with hover brighter again and press darker, so it reads as a
+                // raised thing that answers being pressed.
                 //
-                // `background-color` is inherited down the tree, so a button sitting on a
-                // coloured div is handed exactly that colour - and then this renderer applies
-                // it as though the button had asked for it, leaving the button the same shade
-                // as the thing it sits on. Brightened instead, with hover brighter again and
-                // press darker, so it reads as a raised thing that answers being pressed.
-                //
-                // Only when the colour was handed down. A document that says what colour a
-                // button is gets that colour, which is the point of saying it - and all three
-                // can be said: `background-color`, `hover-color`, `press-color`.
+                // Only when the button says no colour of its own. A document that says what
+                // colour a button is gets that colour, which is the point of saying it - and all
+                // three can be said: `background-color`, `hover-color`, `press-color`.
                 if (nodeTypeLower === 'button') {
                     try {
                         const stated = (name) => {
@@ -1852,13 +1848,9 @@ export class OverseerRenderer {
                             const asColour = this.convertColorValue(raw)
                             return typeof asColour === 'string' ? asColour : null
                         }
-                        // `_inherited_`, not `_template_`: a list entry's template leaves the
-                        // latter on every parameter it states, the button's own colours among
-                        // them, so it cannot tell a colour handed down from one asked for.
-                        const handedDown = !!(node && node.parameters
-                            && node.parameters['_inherited_background-color'] !== undefined)
-                        const ownColour = handedDown ? null : stated('background-color')
-                        const base = ownColour || this.shiftedBy(effectiveBg, 0.2)
+                        const ownColour = stated('background-color')
+                        const sitsOn = ownColour ? null : handedBg
+                        const base = ownColour || this.shiftedBy(sitsOn, 0.2)
                         const hover = stated('hover-color') || this.shiftedBy(base, 0.12)
                         const press = stated('press-color') || this.shiftedBy(base, -0.12)
                         if (base) {
@@ -1869,8 +1861,7 @@ export class OverseerRenderer {
                             // Readable on whatever it turned out to be, and only when the
                             // document has not said - the same rule the colour itself follows.
                             const saidTheText = !!(node && node.parameters
-                                && node.parameters['font-color'] !== undefined
-                                && node.parameters['_inherited_font-color'] === undefined)
+                                && node.parameters['font-color'] !== undefined)
                             if (!saidTheText) {
                                 element.style.color = this.wantsDarkText(base) ? '#1a1a1a' : '#ffffff'
                             }
@@ -1878,8 +1869,8 @@ export class OverseerRenderer {
                         // Handed no colour but "show what is behind you" - a row tinted only
                         // sometimes says `inherit` the rest of the time. Nothing to brighten, so it
                         // stays see-through, and hover and press wash it with its own text colour.
-                        const seeThrough = handedDown && !base
-                            && /^(inherit|transparent)$/i.test(String(effectiveBg || '').trim())
+                        const seeThrough = !ownColour && !base
+                            && /^(inherit|transparent)$/i.test(String(sitsOn || '').trim())
                         if (seeThrough) {
                             element.style.backgroundColor = ''
                             element.style.setProperty('--overseer-button-bg', 'transparent')
@@ -1893,6 +1884,9 @@ export class OverseerRenderer {
                 }
 
                 // Prepare styles to pass to children (inherit current effective bg)
+                // Kept on the element too, for a redraw of something inside it - see
+                // `colourHandedAt`.
+                element.ovHandsOn = effectiveBg ?? null
                 const nextInherited = {
                     backgroundColor: effectiveBg,
                     // Keep legacy key for potential future use; not used for decisions now
@@ -6800,6 +6794,28 @@ export class OverseerRenderer {
         }
     }
 
+    /**
+     * The colour what is drawn inside `element` sits on, as a whole draw hands it down - for a
+     * redraw of part of the page, which starts below the top. Not the computed style, which says
+     * `rgba(0, 0, 0, 0)` both where nothing is painted and on a row that says
+     * `background-color="inherit"`, where a whole draw hands nothing and `inherit`: a button shades
+     * itself from what it is handed, and would be drawn differently after the redraw.
+     */
+    colourHandedAt(element) {
+        for (let at = element; at; at = at.parentElement) {
+            if ('ovHandsOn' in at) return at.ovHandsOn
+        }
+        return null
+    }
+
+    /** Whether an element inside `element` belongs to a node drawn inside it, rather than to it. */
+    liesInAnotherNode(inner, element) {
+        for (let at = inner.parentElement; at && at !== element; at = at.parentElement) {
+            if (at.dataset && at.dataset.path !== undefined) return true
+        }
+        return false
+    }
+
     applyNodeStyles(element, node) {
         if (!node.parameters) return
         
@@ -6808,13 +6824,10 @@ export class OverseerRenderer {
         
         // Legacy background support (keep for compatibility) and computed background
         // Do not override background already set by renderNode's effectiveBg logic.
-        // Nor paint a colour that was only handed down: whatever handed it has painted it, and a
-        // translucent one painted again comes out darker.
-        const handedDown = params['_inherited_background-color'] !== undefined
         if (!element.style.backgroundColor) {
             if (params.background) {
                 element.style.backgroundColor = params.background
-            } else if (!handedDown) {
+            } else {
                 // New styling parameters (prefer computed values)
                 const bgColor = this.getParameterValue(node, 'background-color')
                 const hasComputedBg = !!(node?.parameters && node.parameters['_computed_background-color'] !== undefined)
@@ -6828,13 +6841,16 @@ export class OverseerRenderer {
             }
         }
         
+        // A colour or size given to a node is that node's alone: what is drawn inside it keeps
+        // the theme - see `.ov-own-font` in styles.css, which stops the stylesheet handing it
+        // down. Its own value is set again with `!important`, past the classes that size it.
+        const ownValues = () => Array.from(element.querySelectorAll('.field-value'))
+            .filter((value) => !this.liesInAnotherNode(value, element))
         const fontColor = this.getParameterValue(node, 'font-color')
         if (fontColor !== null) {
             element.style.color = this.convertColorValue(fontColor)
-            
-            // Also apply font-color to any field-value children to override CSS class specificity
-            const fieldValueElements = element.querySelectorAll('.field-value')
-            fieldValueElements.forEach(fieldValue => {
+            element.classList.add('ov-own-font')
+            ownValues().forEach(fieldValue => {
                 fieldValue.style.setProperty('color', this.convertColorValue(fontColor), 'important')
             })
         }
@@ -6842,10 +6858,8 @@ export class OverseerRenderer {
         const fontSize = this.getParameterValue(node, 'font-size')
         if (fontSize !== null) {
             element.style.setProperty('font-size', this.convertCssSizeValue(fontSize), 'important')
-            
-            // Also apply font-size to any field-value children to override CSS class specificity
-            const fieldValueElements = element.querySelectorAll('.field-value')
-            fieldValueElements.forEach(fieldValue => {
+            element.classList.add('ov-own-font')
+            ownValues().forEach(fieldValue => {
                 fieldValue.style.setProperty('font-size', this.convertCssSizeValue(fontSize), 'important')
             })
         }
@@ -10201,7 +10215,7 @@ export class OverseerRenderer {
             if (!el || !el.parentElement) return false
             const parent = el.parentElement
             if (this.isTab(node) && el.classList.contains('tab-page')) {
-                const bg = getComputedStyle(parent).backgroundColor || null
+                const bg = this.colourHandedAt(parent)
                 const done = this.repaintTab(node, el, pathArray, { backgroundColor: bg })
                 try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
                 try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
@@ -10214,7 +10228,7 @@ export class OverseerRenderer {
             // Create a temporary wrapper and render into it so dataset.path is correct
             const wrapper = document.createElement('div')
             // Inherit background from current parent to keep look stable during render
-            const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null
+            const bg = parent ? this.colourHandedAt(parent) : null
             const inherited = { backgroundColor: bg }
             this.renderNode(node, wrapper, inherited, pathArray)
             const fresh = wrapper.firstElementChild
@@ -10610,12 +10624,12 @@ export class OverseerRenderer {
                         const parent = element.parentElement
                         if (!parent) return false
                         if (this.isTab(newNode) && element.classList.contains('tab-page')) {
-                            const bg = getComputedStyle(parent).backgroundColor || null
+                            const bg = this.colourHandedAt(parent)
                             return this.repaintTab(newNode, element, pathArray, { backgroundColor: bg })
                         }
                         const idx = Array.prototype.indexOf.call(parent.children, element)
                         const wrapper = document.createElement('div')
-                        const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null
+                        const bg = parent ? this.colourHandedAt(parent) : null
                         this.renderNode(newNode, wrapper, { backgroundColor: bg }, pathArray)
                         const fresh = wrapper.firstElementChild
                         if (fresh) {
@@ -10634,7 +10648,7 @@ export class OverseerRenderer {
                         if (!parent) return false
                         const idx = Array.prototype.indexOf.call(parent.children, element)
                         const wrapper = document.createElement('div')
-                        const bg = parent ? (getComputedStyle(parent).backgroundColor || null) : null
+                        const bg = parent ? this.colourHandedAt(parent) : null
                         this.renderNode(newNode, wrapper, { backgroundColor: bg }, pathArray)
                         const fresh = wrapper.firstElementChild
                         if (fresh) {

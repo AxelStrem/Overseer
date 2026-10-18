@@ -1891,6 +1891,15 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     background-color: var(--ov-background);
 }
 
+/* A node given a font colour or size of its own keeps it to itself: what is drawn inside it is in
+   the theme, as though it had not been said. With no weight of its own, so any class that colours
+   or sizes a part of the page still does. A container that wants what is inside it to follow says
+   so with `context theme`. */
+:where(.ov-own-font) :where([data-path]) {
+    color: var(--ov-text);
+    font-size: 1rem;
+}
+
 /* Dark mode: what the theme's colours do not say - a highlight's shade, the code colours below -
    follows the mode the document is drawn in, which the page writes beside the theme. Before any
    document has said, the system's own setting stands in, with the shipped theme's dark colours. */

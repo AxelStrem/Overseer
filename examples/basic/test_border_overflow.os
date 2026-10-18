@@ -57,13 +57,22 @@ tab border_test {
     text section3 = "Table-like Grid with Straight Edges:"
     div table_example (layout=vertical, spacing=0, margin=20) {
         div header_row (layout=horizontal, spacing=0) {
-            div header1 (width=100px, height=30px, background-color=#333, font-color=white, border-style=solid 1px black, border-radius=0px) {
+            div header1 (width=100px, height=30px, background-color=#333, border-style=solid 1px black, border-radius=0px) {
+                context theme {
+                    - text = "white"
+                }
                 text content = "Name"
             }
-            div header2 (width=80px, height=30px, background-color=#333, font-color=white, border-style=solid 1px black, border-radius=0px) {
+            div header2 (width=80px, height=30px, background-color=#333, border-style=solid 1px black, border-radius=0px) {
+                context theme {
+                    - text = "white"
+                }
                 text content = "Age"
             }
-            div header3 (width=100px, height=30px, background-color=#333, font-color=white, border-style=solid 1px black, border-radius=0px) {
+            div header3 (width=100px, height=30px, background-color=#333, border-style=solid 1px black, border-radius=0px) {
+                context theme {
+                    - text = "white"
+                }
                 text content = "Status"
             }
         }
