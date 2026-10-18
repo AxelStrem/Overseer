@@ -9,6 +9,7 @@ context theme {
     - warning = $(mode == "dark" ? "#eab308" : "#f59e0b")
     - danger = $(mode == "dark" ? "#f87171" : "#ef4444")
     - font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    - mono = "ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace"
     - radius = "8px"
     - checkbox {
         - style = "box"

@@ -656,8 +656,11 @@ context mode = "system"
 - **A theme is a `context theme`** in a file of its own. Those that ship with Overseer are in its
   library's `themes` folder; one in a `themes` folder beside `settings.os` is offered beside them,
   and takes the place of a shipped one of the same name. Its keys are `background`, `surface`,
-  `text`, `muted`, `line`, `accent`, `success`, `warning`, `danger`, `font` and `radius`, and the
-  shipped theme works each colour out from `mode`, as `$(mode == "dark" ? "#1e293b" : "#ffffff")`.
+  `text`, `muted`, `line`, `accent`, `success`, `warning`, `danger`, `font`, `mono` and `radius`.
+  `font` is the font of the page, and `mono` the one the values of `string` and number fields,
+  code in markdown and the markdown editor are drawn in - a monospace font, unless a theme says
+  otherwise. The shipped theme works each colour out from `mode`, as
+  `$(mode == "dark" ? "#1e293b" : "#ffffff")`.
 - **A key that holds keys says how one kind of element looks**, and a container overrides one of
   them as it does any key: `context theme { - checkbox { - style = switch } }` draws the `bool` and
   `checkbox` fields inside it as switches rather than boxes, and `style = box` inside that draws

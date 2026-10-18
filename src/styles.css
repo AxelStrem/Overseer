@@ -14,6 +14,7 @@
     --ov-warning: #f59e0b;
     --ov-danger: #ef4444;
     --ov-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --ov-mono: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
     --ov-radius: 8px;
     /* The same keys as a container says them, for a kind of element to fall back to - see
        "A kind of element in the theme" below. */
@@ -27,6 +28,7 @@
     --ov-theme-warning: var(--ov-warning);
     --ov-theme-danger: var(--ov-danger);
     --ov-theme-font: var(--ov-font);
+    --ov-theme-mono: var(--ov-mono);
     --ov-theme-radius: var(--ov-radius);
     --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
     /* A shade laid over whatever is beneath, so that a highlight keeps the colour of a tinted
@@ -1335,12 +1337,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .string-field .field-value {
-    font-family: monospace;
+    font-family: var(--ov-mono);
     font-size: 14px;
 }
 
 .number-field .field-value {
-    font-family: monospace;
+    font-family: var(--ov-mono);
     /* The renderer makes this a block for number fields, which is what gives `text-align`
        something to move - see applyNodeStyles. Setting it here would not work: the display is
        an inline style, and an inline style wins. */
@@ -1872,7 +1874,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     border-radius: var(--ov-radius);
     padding: 16px;
     margin: 16px 0;
-    font-family: monospace;
+    font-family: var(--ov-mono);
     font-size: 14px;
     color: var(--ov-danger);
     text-align: left;
@@ -2005,6 +2007,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-warning: var(--ov-button-warning, var(--ov-theme-warning)) !important;
     --ov-danger: var(--ov-button-danger, var(--ov-theme-danger)) !important;
     --ov-font: var(--ov-button-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-button-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-button-radius, var(--ov-theme-radius)) !important;
 }
 
@@ -2020,6 +2023,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-warning: var(--ov-checkbox-warning, var(--ov-theme-warning)) !important;
     --ov-danger: var(--ov-checkbox-danger, var(--ov-theme-danger)) !important;
     --ov-font: var(--ov-checkbox-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-checkbox-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-checkbox-radius, var(--ov-theme-radius)) !important;
 }
 
@@ -2034,6 +2038,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-warning: var(--ov-chip-warning, var(--ov-theme-warning)) !important;
     --ov-danger: var(--ov-chip-danger, var(--ov-theme-danger)) !important;
     --ov-font: var(--ov-chip-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-chip-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-chip-radius, var(--ov-theme-radius)) !important;
 }
 
@@ -2048,6 +2053,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-warning: var(--ov-tab-warning, var(--ov-theme-warning)) !important;
     --ov-danger: var(--ov-tab-danger, var(--ov-theme-danger)) !important;
     --ov-font: var(--ov-tab-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-tab-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-tab-radius, var(--ov-theme-radius)) !important;
 }
 
@@ -2062,6 +2068,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-warning: var(--ov-table-warning, var(--ov-theme-warning)) !important;
     --ov-danger: var(--ov-table-danger, var(--ov-theme-danger)) !important;
     --ov-font: var(--ov-table-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-table-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-table-radius, var(--ov-theme-radius)) !important;
 }
 
@@ -2076,6 +2083,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-warning: var(--ov-field-warning, var(--ov-theme-warning)) !important;
     --ov-danger: var(--ov-field-danger, var(--ov-theme-danger)) !important;
     --ov-font: var(--ov-field-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-field-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-field-radius, var(--ov-theme-radius)) !important;
 }
 
@@ -2090,6 +2098,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-warning: var(--ov-chart-warning, var(--ov-theme-warning)) !important;
     --ov-danger: var(--ov-chart-danger, var(--ov-theme-danger)) !important;
     --ov-font: var(--ov-chart-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-chart-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-chart-radius, var(--ov-theme-radius)) !important;
 }
 
@@ -2104,6 +2113,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-warning: var(--ov-separator-warning, var(--ov-theme-warning)) !important;
     --ov-danger: var(--ov-separator-danger, var(--ov-theme-danger)) !important;
     --ov-font: var(--ov-separator-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-separator-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-separator-radius, var(--ov-theme-radius)) !important;
 }
 /* A node given a font colour or size of its own keeps it to itself: what is drawn inside it is in
@@ -2204,7 +2214,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     border: none;
     background: var(--field-bg-color);
     color: var(--ov-text);
-    font-family: 'Courier New', monospace;
+    font-family: var(--ov-mono);
     font-size: 14px;
     line-height: 1.4;
     resize: vertical;
@@ -2260,7 +2270,6 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --code-bg: #eff2f5;
     --code-border: #d8dee4;
     --code-text: #1f2328;
-    --code-font: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
     --code-keyword: #cf222e;
     --code-string: #0a3069;
     --code-comment: #6e7781;
@@ -2303,7 +2312,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     border: 1px solid var(--code-border);
     padding: 0.1em 0.35em;
     border-radius: 4px;
-    font-family: var(--code-font);
+    font-family: var(--ov-mono);
     font-size: 0.9em;
 }
 

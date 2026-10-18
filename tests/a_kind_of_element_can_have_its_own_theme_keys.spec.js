@@ -25,7 +25,7 @@ function setupDOM() {
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }))
 import { OverseerApp } from '../src/main.js'
 
-const GENERAL = ['background', 'surface', 'text', 'muted', 'line', 'accent', 'success', 'warning', 'danger', 'font', 'radius']
+const GENERAL = ['background', 'surface', 'text', 'muted', 'line', 'accent', 'success', 'warning', 'danger', 'font', 'mono', 'radius']
 const KINDS = {
   button: '.overseer-button',
   checkbox: '.checkbox-field input[type="checkbox"]',
