@@ -50,14 +50,31 @@ impl RequestError {
 }
 
 impl DocumentRoot {
+    /// The documents under this folder, drawn through the settings beside them. Those settings are
+    /// also made the process's own, for what is worked out outside any request - a server has one
+    /// folder; a request through it says its settings anyway, so two in one process, as the tests
+    /// run them, still each draw in their own.
     pub fn new(root: impl AsRef<Path>) -> std::io::Result<Self> {
-        Ok(Self {
+        let documents = Self {
             root: root.as_ref().canonicalize()?,
-        })
+        };
+        crate::environment::set_file(Some(documents.settings_file()));
+        Ok(documents)
     }
 
     pub fn path(&self) -> &Path {
         &self.root
+    }
+
+    /// Work in a document's folder, under the settings this server keeps beside its documents -
+    /// see `environment`. Every document it works out is drawn through them.
+    fn within<T>(&self, dir: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
+        crate::environment::with_file(self.settings_file(), || DocumentManager::with_document(dir, f))
+    }
+
+    /// Where the settings every document here is worked out under are kept.
+    pub fn settings_file(&self) -> PathBuf {
+        self.root.join(crate::environment::FILE)
     }
 
     /// The file a requested name refers to.
@@ -156,7 +173,7 @@ impl DocumentRoot {
         // what keeps two documents being served at once from deciding for each other.
         let dir = path.parent().map(|d| d.to_path_buf());
         let looking_at = crate::viewstate::overlay(session, name);
-        DocumentManager::with_document(dir, || {
+        self.within(dir, || {
             if looking_at.is_empty() {
                 app_api::load_document(text)
             } else {
@@ -371,7 +388,7 @@ impl DocumentRoot {
         };
         let named = document.is_some();
 
-        DocumentManager::with_document(dir, || match cmd {
+        self.within(dir, || match cmd {
             "load_overseer_file" => {
                 let path = arg_str(args, &["path"])
                     .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
@@ -689,6 +706,20 @@ impl DocumentRoot {
                     _ => as_json(crate::menu::FILE),
                 }
             }
+            // How every document here is drawn - see `environment`. Kept beside the documents, as
+            // the menu is, whichever document the page is showing.
+            "settings_read" => as_json(app_api::settings_in(&self.settings_file())),
+            "settings_choose" => {
+                let theme = arg_str(args, &["theme"]);
+                let mode = arg_str(args, &["mode"]);
+                as_json(
+                    app_api::choose_settings(&self.settings_file(), theme, mode)
+                        .map_err(|e| RequestError::Failed(format!("the settings: {:?}", e)))?,
+                )
+            }
+            // A page reports its scheme with every request here - see the bridge - so there is
+            // nothing to keep.
+            "report_color_scheme" => Ok(serde_json::Value::Null),
             other => Err(RequestError::Rejected(format!("no command '{}'", other))),
         })
     }
@@ -1229,7 +1260,7 @@ impl DocumentRoot {
             }
             *since = std::time::Instant::now();
         }
-        let (outcome, nodes, serialized, report, settled_quickly) = DocumentManager::with_document(dir.clone(), || {
+        let (outcome, nodes, serialized, report, settled_quickly) = self.within(dir.clone(), || {
             // The quick way, taken whenever it can be: the document as it was last worked out for
             // this very text, when what the write is about is in view there. A write then works
             // out what it reaches and no more, as the page's writes do - see
@@ -1333,7 +1364,7 @@ impl DocumentRoot {
                 let now = if wrote { settled.text.as_str() } else { text_before.as_str() };
                 // In the document's own folder, which is half of what it is kept under - see
                 // `document_cache::Entry::base`.
-                DocumentManager::with_document(dir, || {
+                self.within(dir, || {
                     crate::app_api::keep_worked_out(&text_before, now, nodes, whole)
                 });
             }

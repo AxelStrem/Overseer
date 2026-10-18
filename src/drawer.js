@@ -11,6 +11,9 @@ import { textWithoutIcons } from './renderer.js'
  * any other. The desktop app keeps one in its settings folder, naming files anywhere on the
  * computer; the server keeps one in its documents folder, naming documents under it.
  *
+ * Below them, the look every document is drawn in: a theme and light, dark or the system's own,
+ * kept in `settings.os` beside the menu - see the backend's `environment`.
+ *
  * It also took over what the header and the status bar at the foot of the page held - the path,
  * Undo, opening and making a file, the status line - so that folded away it leaves the document
  * nearly the whole of the screen. On a narrow screen it lies over the page instead of beside it,
@@ -42,6 +45,12 @@ export class Drawer {
         on('drawer-backdrop', () => this.fold(true))
         on('drawer-keep', () => this.keep())
         on('drawer-edit-list', () => this.editList())
+        const theme = document.getElementById('drawer-theme')
+        if (theme) theme.addEventListener('change', () => this.choose({ theme: theme.value }))
+        for (const button of document.querySelectorAll('#drawer-mode [data-mode]')) {
+            button.addEventListener('click', () => this.choose({ mode: button.dataset.mode }))
+        }
+        this.watchTheScheme()
         // Ctrl+\, as in the tools this was modelled on. One listener for the page, whichever
         // drawer was started last - a second would toggle it straight back.
         if (window.__overseerDrawerKeys) document.removeEventListener('keydown', window.__overseerDrawerKeys)
@@ -52,7 +61,92 @@ export class Drawer {
             }
         }
         document.addEventListener('keydown', window.__overseerDrawerKeys)
+        this.refreshSettings()
         return this.refresh()
+    }
+
+    /// Whether the computer is set light or dark, which a mode of "system" follows.
+    scheme() {
+        try {
+            return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        } catch (_) {
+            return 'light'
+        }
+    }
+
+    /// Tell the host the scheme, and again whenever the computer switches, drawing the open
+    /// document again in it. In a browser the bridge sends it with every request; the desktop app
+    /// keeps what it was last told.
+    watchTheScheme() {
+        const report = () => invoke('report_color_scheme', { scheme: this.scheme() }).catch(() => { /* drawn light */ })
+        this.reported = report()
+        try {
+            const query = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)')
+            if (!query || !query.addEventListener) return
+            query.addEventListener('change', async () => {
+                await report()
+                if (this.settings && this.settings.mode === 'system') this.redraw()
+            })
+        } catch (_) { /* follows the scheme it started in */ }
+    }
+
+    async refreshSettings() {
+        try {
+            this.settings = await invoke('settings_read')
+        } catch (e) {
+            console.warn('[Overseer] the settings could not be read', e)
+            this.settings = null
+        }
+        this.paintSettings()
+    }
+
+    paintSettings() {
+        const theme = document.getElementById('drawer-theme')
+        const settings = this.settings
+        if (theme) {
+            theme.textContent = ''
+            const names = settings && Array.isArray(settings.themes) ? settings.themes : []
+            for (const name of names) {
+                const option = document.createElement('option')
+                option.value = name
+                option.textContent = name.charAt(0).toUpperCase() + name.slice(1).replace(/[_-]+/g, ' ')
+                theme.appendChild(option)
+            }
+            if (settings && settings.theme && !names.includes(settings.theme)) {
+                // Named by the settings and not among the files there are: shown, not offered.
+                const option = document.createElement('option')
+                option.value = settings.theme
+                option.textContent = settings.theme
+                option.disabled = true
+                theme.appendChild(option)
+            }
+            theme.value = (settings && settings.theme) || ''
+            theme.disabled = !settings || names.length === 0
+        }
+        for (const button of document.querySelectorAll('#drawer-mode [data-mode]')) {
+            const on = !!settings && settings.mode === button.dataset.mode
+            button.classList.toggle('chosen', on)
+            button.setAttribute('aria-pressed', String(on))
+            button.disabled = !settings
+        }
+    }
+
+    /// Choose a theme or a mode: written to the settings, and the open document drawn again in it.
+    async choose(choice) {
+        try {
+            this.settings = await invoke('settings_choose', choice)
+        } catch (e) {
+            console.warn('[Overseer] the settings could not be changed', e)
+            this.notice('The look could not be changed.')
+        }
+        this.paintSettings()
+        await this.redraw()
+    }
+
+    /// The open document, worked out again in the look now chosen.
+    async redraw() {
+        if (!this.app || !this.app.currentFile || typeof this.app.loadFile !== 'function') return
+        try { await this.app.loadFile(this.app.currentFile) } catch (_) { /* drawn as it was */ }
     }
 
     isFolded() {

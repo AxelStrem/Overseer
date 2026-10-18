@@ -43,11 +43,22 @@
         }
     })()
 
+    // Whether the browser is light or dark, which a document whose settings say `mode = "system"`
+    // is worked out in. Asked on every call rather than kept, so a switch of the computer's own
+    // setting is in the next request.
+    const scheme = () => {
+        try {
+            return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        } catch (_) {
+            return 'light'
+        }
+    }
+
     async function call(cmd, args) {
         const response = await fetch(`/api/${encodeURIComponent(cmd)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ document: documentName, session, args: args || {} }),
+            body: JSON.stringify({ document: documentName, session, scheme: scheme(), args: args || {} }),
         })
         const body = await response.json().catch(() => null)
         if (!response.ok) {

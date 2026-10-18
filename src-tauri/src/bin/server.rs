@@ -51,6 +51,10 @@ struct CommandBody {
     /// else is. Absent means a caller with no view of its own - a script, or the bot.
     #[serde(default)]
     session: Option<String>,
+    /// The scheme the page is in, light or dark, which a `mode` of "system" stands for - see
+    /// `overseer::environment`. Absent for a caller with no page, which is drawn light.
+    #[serde(default)]
+    scheme: Option<String>,
     #[serde(default)]
     args: serde_json::Value,
 }
@@ -63,12 +67,14 @@ async fn command(
     let documents = service.documents.clone();
     // Resolving is CPU work, long enough on a large document to block the thread it lands on.
     let outcome = tokio::task::spawn_blocking(move || {
-        documents.command_for(
-            body.session.as_deref().unwrap_or(""),
-            body.document.as_deref(),
-            &cmd,
-            &body.args,
-        )
+        overseer::environment::seen_as(body.scheme.as_deref(), || {
+            documents.command_for(
+                body.session.as_deref().unwrap_or(""),
+                body.document.as_deref(),
+                &cmd,
+                &body.args,
+            )
+        })
     })
     .await
     .map_err(|e| respond(RequestError::Failed(format!("command panicked: {}", e))))?;

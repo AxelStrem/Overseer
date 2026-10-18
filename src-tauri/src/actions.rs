@@ -1844,10 +1844,16 @@ impl ActionExecutor {
         fn matches_base(effective: &str, base: &str) -> bool {
             effective == base || effective.starts_with(&format!("{}__", base))
         }
+        // A context's worked-out copy stands first among its container's children, and is never
+        // written - see `contexts`. What a path names is the declaration the document wrote, so a
+        // write to `mode` or `theme/accent` reaches the file.
+        fn is_named(n: &OverseerNode, base: &str) -> bool {
+            !crate::contexts::is_copy(n) && matches_base(eff_name(n), base)
+        }
         // Helper: DFS to find a descendant by name through transparent nodes, returning index chain from 'cur'
         fn find_child_chain(cur: &OverseerNode, target: &str) -> Option<Vec<usize>> {
             for (i, ch) in cur.children.iter().enumerate() {
-                if matches_base(eff_name(ch), target) {
+                if is_named(ch, target) {
                     return Some(vec![i]);
                 }
                 if ch.is_hierarchy_transparent {
@@ -1864,7 +1870,7 @@ impl ActionExecutor {
         fn find_kth_direct_child(cur: &OverseerNode, target: &str, k: usize) -> Option<usize> {
             let mut count = 0usize;
             for (i, ch) in cur.children.iter().enumerate() {
-                if matches_base(eff_name(ch), target) {
+                if is_named(ch, target) {
                     if count == k {
                         return Some(i);
                     }
@@ -1880,7 +1886,7 @@ impl ActionExecutor {
                 // k-th direct root with effective name == base
                 let mut count = 0usize;
                 for (i, n) in nodes.iter().enumerate() {
-                    if matches_base(eff_name(n), base) {
+                    if is_named(n, base) {
                         if count == k {
                             return Some(vec![i]);
                         }
@@ -1891,7 +1897,7 @@ impl ActionExecutor {
             } else {
                 // No ordinal: try direct root first, else search through transparent wrappers
                 for (i, n) in nodes.iter().enumerate() {
-                    if matches_base(eff_name(n), base) {
+                    if is_named(n, base) {
                         return Some(vec![i]);
                     }
                     if let Some(mut sub) = find_child_chain(n, base) {
@@ -2306,7 +2312,9 @@ impl ActionExecutor {
             .map_err(|e| format!("Failed to read mount file '{}': {}", path, e))?;
         let (_rem, mut ext_nodes) = crate::parser::parse_document(&content)
             .map_err(|e| format!("Failed to parse mount file '{}': {:?}", path, e))?;
-        crate::resolver::resolve_document(&mut ext_nodes);
+        // Without the environment: what a mount brings in sits inside its host, and sees the
+        // contexts of the place it is mounted at - the environment among them, through the host.
+        crate::environment::without(|| crate::resolver::resolve_document(&mut ext_nodes));
 
         if let Some(stamp) = stamp {
             if let Ok(mut cache) = CACHE.lock() {

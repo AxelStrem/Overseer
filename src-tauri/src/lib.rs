@@ -6,6 +6,7 @@ pub mod contexts;
 pub mod dependencies;
 pub mod document_cache;
 pub mod document_disk;
+pub mod environment;
 pub mod delta;
 pub mod docmgr;
 pub mod file_ops;

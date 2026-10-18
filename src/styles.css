@@ -1,16 +1,20 @@
 /* Overseer Application Styles */
 
 :root {
-    --primary-color: #2563eb;
-    --secondary-color: #64748b;
-    --background-color: #f8fafc;
-    --surface-color: #ffffff;
-    --border-color: #e2e8f0;
-    --text-color: #1e293b;
-    --text-secondary: #64748b;
-    --success-color: #10b981;
-    --warning-color: #f59e0b;
-    --error-color: #ef4444;
+    /* The theme's keys, as the page writes them from the document's `theme` context - on the root
+       for the user's, and on any container that changes it for what is inside. These are the
+       shipped theme's light values, for the moment before a document has been worked out. */
+    --ov-background: #f8fafc;
+    --ov-surface: #ffffff;
+    --ov-text: #1e293b;
+    --ov-muted: #64748b;
+    --ov-line: #e2e8f0;
+    --ov-accent: #2563eb;
+    --ov-success: #10b981;
+    --ov-warning: #f59e0b;
+    --ov-danger: #ef4444;
+    --ov-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --ov-radius: 8px;
     --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
     /* A shade laid over whatever is beneath, so that a highlight keeps the colour of a tinted
        row rather than covering it with the page's own. */
@@ -24,9 +28,9 @@
 
 body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: var(--background-color);
-    color: var(--text-color);
+    font-family: var(--ov-font);
+    background-color: var(--ov-background);
+    color: var(--ov-text);
     line-height: 1.6;
 }
 
@@ -56,8 +60,8 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    background: var(--surface-color);
-    border-right: 1px solid var(--border-color);
+    background: var(--ov-surface);
+    border-right: 1px solid var(--ov-line);
     overflow-y: auto;
     z-index: 50;
     transition: transform 160ms ease;
@@ -95,7 +99,7 @@ body.drawer-folded #main {
 .drawer-open {
     border: 1px solid transparent;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     border-radius: 6px;
     width: 32px;
     height: 32px;
@@ -106,9 +110,9 @@ body.drawer-folded #main {
 
 .drawer-fold:hover,
 .drawer-open:hover {
-    background: var(--background-color);
-    border-color: var(--border-color);
-    color: var(--text-color);
+    background: var(--ov-background);
+    border-color: var(--ov-line);
+    color: var(--ov-text);
 }
 
 .drawer-section {
@@ -122,7 +126,7 @@ body.drawer-folded #main {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     padding: 4px 8px;
 }
 
@@ -139,12 +143,12 @@ body.drawer-folded #main {
 }
 
 .drawer-place:hover {
-    background: var(--background-color);
+    background: var(--ov-background);
 }
 
 .drawer-place.current {
-    background: var(--background-color);
-    box-shadow: inset 3px 0 0 var(--primary-color);
+    background: var(--ov-background);
+    box-shadow: inset 3px 0 0 var(--ov-accent);
 }
 
 .drawer-place-open {
@@ -153,7 +157,7 @@ body.drawer-folded #main {
     text-align: left;
     border: none;
     background: transparent;
-    color: var(--text-color);
+    color: var(--ov-text);
     padding: 6px 8px;
     font-size: 14px;
     cursor: pointer;
@@ -169,7 +173,7 @@ body.drawer-folded #main {
 .drawer-place-drop {
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     width: 28px;
     height: 28px;
     font-size: 16px;
@@ -184,7 +188,7 @@ body.drawer-folded #main {
 }
 
 .drawer-place-drop:hover {
-    color: var(--error-color);
+    color: var(--ov-danger);
 }
 
 /* No hovering on a touch screen, so what hovering would show is always there. */
@@ -204,7 +208,7 @@ body.drawer-folded #main {
     text-align: left;
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     padding: 6px 8px;
     font-size: 13px;
     font-weight: 600;
@@ -213,8 +217,8 @@ body.drawer-folded #main {
 }
 
 .drawer-folder-head:hover {
-    background: var(--background-color);
-    color: var(--text-color);
+    background: var(--ov-background);
+    color: var(--ov-text);
 }
 
 .drawer-folder-mark {
@@ -247,7 +251,7 @@ body.drawer-folded #main {
 }
 
 .drawer-empty {
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     font-size: 13px;
     padding: 6px 8px;
 }
@@ -256,7 +260,7 @@ body.drawer-folded #main {
     text-align: left;
     border: none;
     background: transparent;
-    color: var(--text-color);
+    color: var(--ov-text);
     padding: 6px 8px;
     font-size: 14px;
     border-radius: 6px;
@@ -264,22 +268,60 @@ body.drawer-folded #main {
 }
 
 .drawer-action:hover:not(:disabled) {
-    background: var(--background-color);
+    background: var(--ov-background);
 }
 
 .drawer-action:disabled {
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     cursor: default;
 }
 
+.drawer-theme {
+    margin: 2px 8px 6px;
+    padding: 4px 6px;
+    font: inherit;
+    font-size: 14px;
+    color: var(--ov-text);
+    background: var(--ov-surface);
+    border: 1px solid var(--ov-line);
+    border-radius: 6px;
+}
+
+.drawer-mode {
+    display: flex;
+    margin: 0 8px 4px;
+    border: 1px solid var(--ov-line);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.drawer-mode button {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--ov-muted);
+    padding: 4px 0;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.drawer-mode button + button {
+    border-left: 1px solid var(--ov-line);
+}
+
+.drawer-mode button.chosen {
+    background: var(--ov-accent);
+    color: white;
+}
+
 .drawer-action.quiet {
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     font-size: 13px;
 }
 
 .drawer-path {
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     padding: 2px 8px 6px;
     overflow-wrap: anywhere;
 }
@@ -294,9 +336,9 @@ body.drawer-folded #main {
     flex-direction: column;
     gap: 2px;
     padding: 10px 16px 12px;
-    border-top: 1px solid var(--border-color);
+    border-top: 1px solid var(--ov-line);
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
 }
 
 /* Opening a file and making one are the desktop's; a browser opens documents from the list. */
@@ -350,10 +392,10 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     bottom: 16px;
     max-width: min(420px, calc(100vw - 32px));
     padding: 10px 14px;
-    border-radius: 8px;
-    background: var(--surface-color);
-    border: 1px solid var(--error-color);
-    color: var(--text-color);
+    border-radius: var(--ov-radius);
+    background: var(--ov-surface);
+    border: 1px solid var(--ov-danger);
+    color: var(--ov-text);
     box-shadow: var(--shadow);
     font-size: 13px;
     opacity: 0;
@@ -389,8 +431,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .toolbar {
-    background: var(--surface-color);
-    border-bottom: 1px solid var(--border-color);
+    background: var(--ov-surface);
+    border-bottom: 1px solid var(--ov-line);
     padding: 8px 16px;
     display: flex;
     align-items: center;
@@ -400,9 +442,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .toolbar button {
     padding: 6px 12px;
-    border: 1px solid var(--border-color);
-    background: var(--surface-color);
-    color: var(--text-color);
+    border: 1px solid var(--ov-line);
+    background: var(--ov-surface);
+    color: var(--ov-text);
     border-radius: 6px;
     cursor: pointer;
     font-size: 14px;
@@ -410,8 +452,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .toolbar button:hover {
-    background: var(--background-color);
-    border-color: var(--primary-color);
+    background: var(--ov-background);
+    border-color: var(--ov-accent);
 }
 
 .toolbar button:disabled {
@@ -420,19 +462,19 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .toolbar button:disabled:hover {
-    background: var(--surface-color);
-    border-color: var(--border-color);
+    background: var(--ov-surface);
+    border-color: var(--ov-line);
 }
 
 .toolbar .file-path {
-    color: var(--text-color);
+    color: var(--ov-text);
     font-size: 13px;
     font-weight: 500;
     margin-left: auto;
-    background: var(--background-color);
+    background: var(--ov-background);
     padding: 4px 8px;
     border-radius: 4px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--ov-line);
     max-width: 300px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -445,8 +487,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 /* Tab System */
 .tab-container {
-    background: var(--surface-color);
-    border-bottom: 1px solid var(--border-color);
+    background: var(--ov-surface);
+    border-bottom: 1px solid var(--ov-line);
     padding: 0 16px;
     display: flex;
     gap: 4px;
@@ -456,7 +498,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     padding: 8px 16px;
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     border-radius: 6px 6px 0 0;
     cursor: pointer;
     font-size: 14px;
@@ -465,14 +507,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .tab-button:hover {
-    background: var(--background-color);
-    color: var(--text-color);
+    background: var(--ov-background);
+    color: var(--ov-text);
 }
 
 .tab-button.active {
-    background: var(--background-color);
-    color: var(--primary-color);
-    border-bottom-color: var(--primary-color);
+    background: var(--ov-background);
+    color: var(--ov-accent);
+    border-bottom-color: var(--ov-accent);
 }
 
 /* A tab system inside a document: the tabs one parent holds, drawn where the first of them stands.
@@ -488,7 +530,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     display: flex;
     gap: 4px;
     flex-wrap: wrap;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--ov-line);
     margin-bottom: 8px;
 }
 
@@ -510,7 +552,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     flex-direction: column;
     flex-wrap: nowrap;
     border-bottom: none;
-    border-right: 1px solid var(--border-color);
+    border-right: 1px solid var(--ov-line);
     margin-bottom: 0;
     margin-right: 12px;
 }
@@ -523,7 +565,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .overseer-tabs.tabs-beside > .tab-bar > .tab-button.active {
-    border-right-color: var(--primary-color);
+    border-right-color: var(--ov-accent);
 }
 
 /* Content Area */
@@ -538,14 +580,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     flex: 1;
     padding: 20px;
     overflow-y: auto;
-    background: var(--background-color);
+    background: var(--ov-background);
 }
 
 /* Overseer Components */
 .overseer-div {
-    background: var(--surface-color);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    background: var(--ov-surface);
+    border: 1px solid var(--ov-line);
+    border-radius: var(--ov-radius);
     box-shadow: var(--shadow);
 }
 
@@ -632,7 +674,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .overseer-pressable:focus-visible {
-    outline: 2px solid var(--primary-color);
+    outline: 2px solid var(--ov-accent);
     outline-offset: 2px;
 }
 
@@ -677,7 +719,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     gap: 6px;
     padding: 6px;
     border-radius: 6px;
-    background: var(--background-color);
+    background: var(--ov-background);
 }
 
 .board-column-head {
@@ -731,7 +773,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     flex-direction: column;
     justify-content: center;
     padding: 8px 6px;
-    background: var(--border-color, rgba(127, 127, 127, 0.2));
+    background: var(--ov-line, rgba(127, 127, 127, 0.2));
 }
 
 .board-rows .board-column-head .tag-chip {
@@ -751,7 +793,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .board-column.drop-here {
-    outline: 2px dashed var(--primary-color);
+    outline: 2px dashed var(--ov-accent);
     outline-offset: 1px;
 }
 
@@ -790,7 +832,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .overseer-list.drop-here {
-    outline: 2px dashed var(--primary-color);
+    outline: 2px dashed var(--ov-accent);
     outline-offset: 2px;
 }
 
@@ -807,7 +849,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     pointer-events: none;
     opacity: 0.85;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
-    background: var(--surface-color);
+    background: var(--ov-surface);
     border-radius: 6px;
 }
 
@@ -815,14 +857,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     position: fixed;
     z-index: 10001;
     pointer-events: none;
-    background: var(--primary-color);
+    background: var(--ov-accent);
     border-radius: 2px;
 }
 
 .overseer-list {
-    background: var(--surface-color);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    background: var(--ov-surface);
+    border: 1px solid var(--ov-line);
+    border-radius: var(--ov-radius);
     padding-top: 8px; /* ensure content isn’t glued to top */
 }
 /* Suppress top margin when container explicitly marked tight */
@@ -853,17 +895,17 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 .overseer-list h3 {
     margin: 0 0 12px 0;
-    color: var(--text-color);
+    color: var(--ov-text);
     font-size: 18px;
     font-weight: 600;
 }
 
 .overseer-list-value {
-    color: var(--text-color);
+    color: var(--ov-text);
     padding: 4px 8px;
     background: var(--field-bg-color);
     border-radius: 4px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--ov-line);
     display: inline-block;
     margin: 2px;
 }
@@ -1053,10 +1095,10 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.03em;
-    color: var(--secondary-color);
-    border-bottom: 1px solid var(--border-color);
+    color: var(--ov-muted);
+    border-bottom: 1px solid var(--ov-line);
     padding: 2px 0 3px 0;
-    background: var(--background-color);
+    background: var(--ov-background);
 }
 
 /* Held at the top of the scrolling area while the table is on screen, and gone with the table
@@ -1111,12 +1153,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
  * note is not the last column, it is under all of them.
  */
 .overseer-list.view-table.table-lines-rows > .table-row {
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--ov-line);
 }
 
 .overseer-list.view-table.table-lines-columns > .table-row > *,
 .overseer-list.view-table.table-lines-columns > .table-header > .table-heading {
-    border-left: 1px solid var(--border-color);
+    border-left: 1px solid var(--ov-line);
     /* A field's rounded corners would bend its left border into a bracket: a rule is straight. */
     border-radius: 0;
 }
@@ -1166,7 +1208,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
  */
 .overseer-field label {
     font-weight: 500;
-    color: var(--text-color);
+    color: var(--ov-text);
     font-size: 14px;
 }
 
@@ -1243,7 +1285,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .field-value:hover {
-    border-color: var(--border-color);
+    border-color: var(--ov-line);
     background: var(--hover-tint);
 }
 
@@ -1258,7 +1300,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
        something to move - see applyNodeStyles. Setting it here would not work: the display is
        an inline style, and an inline style wins. */
     text-align: right;
-    color: var(--primary-color);
+    color: var(--ov-accent);
     font-weight: 500;
 }
 
@@ -1269,18 +1311,18 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .date-field .field-value {
-    color: var(--secondary-color);
+    color: var(--ov-muted);
 }
 
 /* Timer Field */
 .timer-field .field-value {
-    color: var(--secondary-color);
+    color: var(--ov-muted);
     font-variant-numeric: tabular-nums;
 }
 
 .timer-field .field-value:empty::after {
     content: '\2014'; /* em dash placeholder */
-    color: var(--text-secondary);
+    color: var(--ov-muted);
 }
 
 .text-content {
@@ -1340,7 +1382,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .checkbox-field input[type="checkbox"] {
     width: 16px;
     height: 16px;
-    accent-color: var(--primary-color);
+    accent-color: var(--ov-accent);
 }
 
 /* Buttons */
@@ -1357,9 +1399,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     margin: 6px 8px 6px 0;  /* top right bottom left */
     /* What the renderer worked out for this button, or the stylesheet's own answer when it had
        nothing to work from - a named colour, or no colour on the parent at all. */
-    background: var(--overseer-button-bg, var(--primary-color));
+    background: var(--overseer-button-bg, var(--ov-accent));
     color: white;
-    border: 1px solid var(--border-color); /* restore visible border */
+    border: 1px solid var(--ov-line); /* restore visible border */
     border-radius: 6px;
     cursor: pointer;
     font-size: 14px;
@@ -1380,7 +1422,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-refusal {
     align-self: center;
     margin: 2px 8px;
-    color: var(--error-color);
+    color: var(--ov-danger);
     font-size: 13px;
     line-height: 1.3;
 }
@@ -1427,25 +1469,25 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* A button that opens a div, while the div is open: its colour washed with the accent, so it
    reads as switched on. Before hover and press, which still show over it. */
 .overseer-button.toggled {
-    background: color-mix(in srgb, var(--primary-color) 35%, var(--overseer-button-bg, transparent));
-    border-color: color-mix(in srgb, var(--primary-color) 60%, var(--border-color));
+    background: color-mix(in srgb, var(--ov-accent) 35%, var(--overseer-button-bg, transparent));
+    border-color: color-mix(in srgb, var(--ov-accent) 60%, var(--ov-line));
 }
 
 .overseer-button:hover {
-    background: var(--overseer-button-hover, #1d4ed8);
-    border-color: var(--primary-color);
+    background: var(--overseer-button-hover, color-mix(in srgb, var(--ov-accent) 82%, black));
+    border-color: var(--ov-accent);
 }
 
 /* Darker while held, so a press reads as a press. */
 .overseer-button:active {
-    background: var(--overseer-button-press, #1b3fa8);
+    background: var(--overseer-button-press, color-mix(in srgb, var(--ov-accent) 68%, black));
 }
 
 .overseer-button:focus,
 .overseer-button:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
-    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ov-accent) 25%, transparent);
+    border-color: var(--ov-accent);
 }
 
 .overseer-button:disabled {
@@ -1466,9 +1508,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 /* Charts */
 .overseer-chart {
-    background: var(--surface-color);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    background: var(--ov-surface);
+    border: 1px solid var(--ov-line);
+    border-radius: var(--ov-radius);
     padding: 16px;
     margin-bottom: 16px;
     text-align: center;
@@ -1504,34 +1546,34 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     box-sizing: border-box;
     min-height: 32px;
     padding: 6px 10px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--ov-line);
     border-radius: 6px;
     font-family: inherit;
     font-size: inherit;
-    background: var(--background-color);
-    color: var(--text-color);
+    background: var(--ov-background);
+    color: var(--ov-text);
     outline: none;
     transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .textbox-input::placeholder {
-    color: var(--text-secondary);
+    color: var(--ov-muted);
 }
 
 /* What a tag-picking box says while nothing is picked, as a typed one says it in its placeholder. */
 .tag-placeholder {
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     margin-right: 6px;
 }
 
 .textbox-input:focus {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+    border-color: var(--ov-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ov-accent) 20%, transparent);
 }
 
 .textbox-input[readonly] {
     border-style: dashed;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
 }
 
 /* A colour textbox is the picker's own button, a box of the colour, rather than a line of text. */
@@ -1563,7 +1605,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     height: 18px;
     margin-right: 6px;
     vertical-align: middle;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--ov-line);
     border-radius: 4px;
     overflow: hidden;
 }
@@ -1586,12 +1628,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .field-editor {
     width: 100%;
     padding: 6px 8px;
-    border: 2px solid var(--primary-color);
+    border: 2px solid var(--ov-accent);
     border-radius: 4px;
     font-family: inherit;
     font-size: inherit;
-    background: var(--surface-color);
-    color: var(--text-color);
+    background: var(--ov-surface);
+    color: var(--ov-text);
     outline: none;
     resize: vertical;
 }
@@ -1617,13 +1659,13 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .welcome-content h1 {
     font-size: 48px;
     font-weight: 700;
-    color: var(--primary-color);
+    color: var(--ov-accent);
     margin-bottom: 16px;
 }
 
 .welcome-content p {
     font-size: 18px;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     margin-bottom: 32px;
     max-width: 500px;
 }
@@ -1637,9 +1679,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .welcome-actions button {
     padding: 12px 24px;
     font-size: 16px;
-    border-radius: 8px;
-    border: 2px solid var(--primary-color);
-    background: var(--primary-color);
+    border-radius: var(--ov-radius);
+    border: 2px solid var(--ov-accent);
+    background: var(--ov-accent);
     color: white;
     cursor: pointer;
     transition: all 0.2s;
@@ -1647,12 +1689,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .welcome-actions button.secondary {
     background: transparent;
-    color: var(--primary-color);
+    color: var(--ov-accent);
 }
 
 .welcome-actions button:hover {
-    background: #1d4ed8;
-    border-color: #1d4ed8;
+    background: color-mix(in srgb, var(--ov-accent) 82%, black);
+    border-color: color-mix(in srgb, var(--ov-accent) 82%, black);
     color: white;
 }
 
@@ -1665,30 +1707,30 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .error-content h2 {
-    color: var(--error-color);
+    color: var(--ov-danger);
     margin-bottom: 16px;
 }
 
 .error-details {
     background: #fef2f2;
     border: 1px solid #fecaca;
-    border-radius: 8px;
+    border-radius: var(--ov-radius);
     padding: 16px;
     margin: 16px 0;
     font-family: monospace;
     font-size: 14px;
-    color: var(--error-color);
+    color: var(--ov-danger);
     text-align: left;
     max-width: 600px;
 }
 
 /* Status Bar */
 .status-bar {
-    background: var(--surface-color);
-    border-top: 1px solid var(--border-color);
+    background: var(--ov-surface);
+    border-top: 1px solid var(--ov-line);
     padding: 6px 16px;
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -1701,7 +1743,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 #status-info {
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     max-width: 50%;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1709,22 +1751,22 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .status-message.error, #status-message.error {
-    color: var(--error-color);
+    color: var(--ov-danger);
 }
 
 .status-message.success, #status-message.success {
-    color: var(--success-color);
+    color: var(--ov-success);
 }
 
 .status-message.warning, #status-message.warning {
-    color: var(--warning-color);
+    color: var(--ov-warning);
 }
 
 /* Mount placeholder */
 .overseer-mount {
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  background: var(--ov-surface);
+  border: 1px solid var(--ov-line);
+  border-radius: var(--ov-radius);
   padding: 12px;
   margin-bottom: 12px;
 }
@@ -1733,7 +1775,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
   margin-bottom: 6px;
 }
 .overseer-mount .mount-status {
-  color: var(--text-secondary);
+  color: var(--ov-muted);
   margin-bottom: 8px;
 }
 
@@ -1781,34 +1823,52 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     }
 }
 
-/* Dark mode support */
+/* A container that changes the theme for what is inside it - see `applyContexts` in renderer.js. */
+.ov-themed {
+    color: var(--ov-text);
+}
+
+.ov-themed-background {
+    background-color: var(--ov-background);
+}
+
+/* Dark mode: what the theme's colours do not say - a highlight's shade, the code colours below -
+   follows the mode the document is drawn in, which the page writes beside the theme. Before any
+   document has said, the system's own setting stands in, with the shipped theme's dark colours. */
+[data-ov-mode="dark"] {
+    --hover-tint: rgba(255, 255, 255, 0.06);
+}
+
+[data-ov-mode="light"] {
+    --hover-tint: rgba(15, 23, 42, 0.05);
+}
+
+[data-ov-mode="dark"] .error-details {
+    background: #1f1f1f;
+    border-color: #dc2626;
+    color: #f87171;
+}
+
 @media (prefers-color-scheme: dark) {
-    :root {
-        --primary-color: #3b82f6;
-        --secondary-color: #94a3b8;
-        --background-color: #0f172a;
-        --surface-color: #1e293b;
-        --border-color: #334155;
-        --text-color: #f1f5f9;
-        --text-secondary: #94a3b8;
-        --success-color: #22c55e;
-        --warning-color: #eab308;
-        --error-color: #f87171;
+    :root:not([data-ov-mode]) {
+        --ov-background: #0f172a;
+        --ov-surface: #1e293b;
+        --ov-text: #f1f5f9;
+        --ov-muted: #94a3b8;
+        --ov-line: #334155;
+        --ov-accent: #3b82f6;
+        --ov-success: #22c55e;
+        --ov-warning: #eab308;
+        --ov-danger: #f87171;
         --hover-tint: rgba(255, 255, 255, 0.06);
-    }
-    
-    .error-details {
-        background: #1f1f1f;
-        border-color: #dc2626;
-        color: #f87171;
     }
 }
 
 /* Markdown Editor Styles */
 .markdown-editor-container {
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--surface-color);
+    border: 1px solid var(--ov-line);
+    border-radius: var(--ov-radius);
+    background: var(--ov-surface);
     margin: 8px 0;
     overflow: hidden;
 }
@@ -1817,42 +1877,42 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     display: flex;
     gap: 8px;
     padding: 8px;
-    background: var(--background-color);
-    border-bottom: 1px solid var(--border-color);
+    background: var(--ov-background);
+    border-bottom: 1px solid var(--ov-line);
 }
 
 .markdown-toolbar button {
     padding: 4px 12px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--ov-line);
     border-radius: 4px;
-    background: var(--surface-color);
-    color: var(--text-color);
+    background: var(--ov-surface);
+    color: var(--ov-text);
     cursor: pointer;
     font-size: 12px;
     transition: all 0.2s;
 }
 
 .markdown-toolbar button:hover {
-    background: var(--primary-color);
+    background: var(--ov-accent);
     color: white;
     transform: translateY(-1px);
 }
 
 .mode-toggle-btn {
-    background: var(--secondary-color) !important;
+    background: var(--ov-muted) !important;
     color: white !important;
 }
 
 .save-btn {
-    background: var(--success-color) !important;
+    background: var(--ov-success) !important;
     color: white !important;
-    border-color: var(--success-color) !important;
+    border-color: var(--ov-success) !important;
 }
 
 .cancel-btn {
-    background: var(--error-color) !important;
+    background: var(--ov-danger) !important;
     color: white !important;
-    border-color: var(--error-color) !important;
+    border-color: var(--ov-danger) !important;
 }
 
 .markdown-editor {
@@ -1860,7 +1920,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     padding: 12px;
     border: none;
     background: var(--field-bg-color);
-    color: var(--text-color);
+    color: var(--ov-text);
     font-family: 'Courier New', monospace;
     font-size: 14px;
     line-height: 1.4;
@@ -1870,8 +1930,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .markdown-preview {
     padding: 12px;
-    background: var(--surface-color);
-    color: var(--text-color);
+    background: var(--ov-surface);
+    color: var(--ov-text);
     line-height: 1.6;
 }
 
@@ -1891,7 +1951,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .markdown-enabled h6 {
     margin-top: 0;
     margin-bottom: 16px;
-    color: var(--text-color);
+    color: var(--ov-text);
 }
 
 .markdown-enabled p {
@@ -1913,7 +1973,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
    by highlight.js (see renderer.js): the token colours are kept here, beside the page's own, so
    they follow its dark mode rather than bring a theme's background of their own. The editor's
    preview draws the same markdown and takes the same look. */
-:root {
+:root, [data-ov-mode="light"] {
     --code-bg: #eff2f5;
     --code-border: #d8dee4;
     --code-text: #1f2328;
@@ -1927,8 +1987,21 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --code-meta: #116329;
 }
 
+[data-ov-mode="dark"] {
+    --code-bg: #0d1117;
+    --code-border: #30363d;
+    --code-text: #e6edf3;
+    --code-keyword: #ff7b72;
+    --code-string: #a5d6ff;
+    --code-comment: #8b949e;
+    --code-number: #79c0ff;
+    --code-title: #d2a8ff;
+    --code-type: #ffa657;
+    --code-meta: #7ee787;
+}
+
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-ov-mode]) {
         --code-bg: #0d1117;
         --code-border: #30363d;
         --code-text: #e6edf3;
@@ -1994,10 +2067,10 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .hljs-emphasis { font-style: italic; }
 
 .markdown-enabled blockquote {
-    border-left: 4px solid var(--primary-color);
+    border-left: 4px solid var(--ov-accent);
     margin-left: 0;
     padding-left: 16px;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
 }
 
 .markdown-enabled ul,
@@ -2043,7 +2116,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     line-height: 16px;
     white-space: nowrap;
     /* The default, for a field that names no vocabulary or a tag the list does not hold. */
-    background-color: var(--secondary-color);
+    background-color: var(--ov-muted);
     color: #f5f5f5;
 }
 
@@ -2060,8 +2133,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
  * a typo or a tag someone has since removed from the list. */
 .tag-chip.tag-unknown {
     background-color: transparent;
-    color: var(--text-secondary);
-    border: 1px dashed var(--border-color);
+    color: var(--ov-muted);
+    border: 1px dashed var(--ov-line);
 }
 
 .tag-remove {
@@ -2082,9 +2155,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .tag-add {
-    border: 1px dashed var(--border-color);
+    border: 1px dashed var(--ov-line);
     background: none;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     border-radius: 9px;
     padding: 0 6px;
     font-size: 11px;
@@ -2108,9 +2181,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     max-width: 320px;
     margin-top: 2px;
     padding: 6px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--ov-line);
     border-radius: 6px;
-    background-color: var(--surface-color);
+    background-color: var(--ov-surface);
     box-shadow: var(--shadow);
 }
 
@@ -2131,8 +2204,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* An enum with nothing chosen yet: a place to press, not a value. */
 .tag-chip.tag-placeholder {
     background-color: transparent;
-    color: var(--text-secondary);
-    border: 1px dashed var(--border-color);
+    color: var(--ov-muted);
+    border: 1px dashed var(--ov-line);
     margin-right: 0;
 }
 
@@ -2144,7 +2217,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .tag-chip.tag-placeholder:empty:hover {
-    border-color: var(--border-color);
+    border-color: var(--ov-line);
 }
 
 /* `<#key>` in text: a chip in the line, sitting on it as a word does. */
@@ -2165,7 +2238,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 @keyframes overseer-revealed {
-    0%, 30% { box-shadow: inset 0 0 0 2px var(--primary-color, #3b82f6); background-color: rgba(59, 130, 246, 0.18); }
+    0%, 30% { box-shadow: inset 0 0 0 2px var(--ov-accent); background-color: color-mix(in srgb, var(--ov-accent) 18%, transparent); }
     100% { box-shadow: inset 0 0 0 2px transparent; background-color: transparent; }
 }
 
@@ -2184,7 +2257,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .filter-text {
     padding: 3px 8px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--ov-line);
     border-radius: 4px;
     font-size: 12px;
     min-width: 160px;
@@ -2202,7 +2275,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
  * way; the renderer marks every group that something else follows. */
 .filter-tags.filter-sep {
     padding-right: 8px;
-    border-right: 1px solid var(--border-color);
+    border-right: 1px solid var(--ov-line);
 }
 
 /* Faint until chosen, so the row reads as "what could I narrow by" rather than as a set of
@@ -2218,19 +2291,19 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .filter-tag.filter-tag-on {
     opacity: 1;
-    outline: 2px solid var(--text-color);
+    outline: 2px solid var(--ov-text);
     outline-offset: 1px;
 }
 
 .filter-count {
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     margin-left: auto;
 }
 
 .filter-broken {
     font-size: 12px;
-    color: var(--error-color);
+    color: var(--ov-danger);
 }
 
 /* Hidden by the filter.
@@ -2259,7 +2332,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     align-items: center;
     gap: 3px;
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--ov-muted);
     cursor: pointer;
     white-space: nowrap;
 }

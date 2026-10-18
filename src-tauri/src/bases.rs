@@ -220,19 +220,27 @@ pub fn load(file: &str) -> Result<Arc<Vec<OverseerNode>>, String> {
     }
     let shown = file_name(file);
     let text = std::fs::read_to_string(&key).map_err(|_| format!("{} could not be read", shown))?;
-    let (_rest, mut nodes) = crate::parser::parse_document(&text)
-        .map_err(|_| format!("{} could not be parsed", shown))?;
-    let beside = Path::new(&key).parent().map(Path::to_path_buf);
-    let mut own = std::collections::HashSet::new();
-    names_in(&nodes, &mut own);
-    for node in nodes.iter_mut() {
-        settle(node, &key, beside.as_deref(), &own);
-    }
-    let nodes = Arc::new(nodes);
+    let nodes = Arc::new(parse_as_at(&text, &key)?);
     if let Some(now) = now {
         if let Ok(mut cache) = CACHE.lock() {
             cache.insert(key, (now, nodes.clone()));
         }
+    }
+    Ok(nodes)
+}
+
+/// A file's text parsed, with its references settled as though it were the file at `key`: a
+/// reference to another file is looked for beside it, and one to a node of its own names that node
+/// wherever it is copied to. What `load` does with a file it has read, and what the environment
+/// does with the text it stands in for a file that is not there - see `environment`.
+pub fn parse_as_at(text: &str, key: &str) -> Result<Vec<OverseerNode>, String> {
+    let (_rest, mut nodes) = crate::parser::parse_document(text)
+        .map_err(|_| format!("{} could not be parsed", file_name(key)))?;
+    let beside = Path::new(key).parent().map(Path::to_path_buf);
+    let mut own = std::collections::HashSet::new();
+    names_in(&nodes, &mut own);
+    for node in nodes.iter_mut() {
+        settle(node, key, beside.as_deref(), &own);
     }
     Ok(nodes)
 }

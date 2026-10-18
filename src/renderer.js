@@ -1660,6 +1660,8 @@ export class OverseerRenderer {
             return
         }
 
+        try { this.applyDocumentContexts(overseerDocument) } catch (_) { /* drawn in the page's own look */ }
+
         if (Array.isArray(overseerDocument)) {
             if (DEBUG_MODE) console.log('Processing array document with', overseerDocument.length, 'nodes')
 
@@ -1767,6 +1769,9 @@ export class OverseerRenderer {
             // A div that says `on click` is pressed wherever it is touched - see `makePressable`.
             try { this.makePressable(element, node) } catch (_) { /* it still shows, unpressable */ }
 
+            // What this container changes of the theme, for everything drawn inside it.
+            try { this.applyContexts(element, node.children) } catch (_) { /* drawn in the theme above */ }
+
             // Before the children, so it is the first thing in the div - see `drawFoldHeader`.
             try { this.drawFoldHeader(element, node, path) } catch (_) { /* it still shows, unfoldable */ }
 
@@ -1815,7 +1820,10 @@ export class OverseerRenderer {
                 const carriesItOn = effectiveBg === null || effectiveBg === undefined
                     || (handedBg !== null && String(effectiveBg).trim() === String(handedBg).trim())
                 if (carriesItOn) {
-                    if (!skipBgInherit) element.style.backgroundColor = 'transparent'
+                    // A container whose theme has a background of its own paints it - see
+                    // `applyContexts` - unless it is given a colour outright.
+                    const themed = element.classList.contains('ov-themed-background')
+                    if (!skipBgInherit) element.style.backgroundColor = themed ? 'var(--ov-background)' : 'transparent'
                     // A field keeps its native look, but `applyNodeStyles` has already painted
                     // it with the colour it carries, which is its parent's.
                     else if (handedBg !== null && ownEffectiveBg !== null && ownEffectiveBg !== undefined) {
@@ -7282,6 +7290,92 @@ export class OverseerRenderer {
         const c = this.asChannels(colour)
         if (!c) return false
         return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 150
+    }
+
+    /**
+     * What a container sees of the theme, written where the browser hands it down: each key of the
+     * `theme` copy among its children as an `--ov-<key>` variable on its element, and the `mode`
+     * copy as `data-ov-mode`. The resolver puts a copy in a container only where something there
+     * changes a context - see the backend's `contexts` - so a container that changes nothing is
+     * left to inherit from the one above. The document's own top writes to the page's root, which
+     * is also the drawer's: the user's theme is the whole page's.
+     */
+    applyContexts(element, children) {
+        if (!element || !element.style || !Array.isArray(children)) return
+        for (const child of children) {
+            if ((child?.node_type || child?.type) !== 'context') continue
+            if (!this.isContextCopy(child)) continue
+            if (child.name === 'theme') {
+                if (element === document.documentElement) {
+                    this.writeTheme(element, child)
+                    continue
+                }
+                // What it was above, to tell whether this container's background is its own.
+                const above = this.themeAbove(element, 'background')
+                this.writeTheme(element, child)
+                // The text's colour is worked out where it is said - the page's body - and handed
+                // down as a colour, not as the variable: so a container with a theme of its own
+                // says it again. Its background is painted only where it is not the one it sits
+                // on, so a container that changes something else keeps what is behind it showing.
+                element.classList.add('ov-themed')
+                const background = this.contextValue((child.children || []).find((k) => k?.name === 'background'))
+                element.classList.toggle('ov-themed-background', background !== null && background !== above)
+            } else if (child.name === 'mode') {
+                const mode = this.contextValue(child)
+                if (mode === 'dark' || mode === 'light') element.dataset.ovMode = mode
+            }
+        }
+    }
+
+    writeTheme(element, theme) {
+        for (const key of theme.children || []) {
+            if (!key?.name || key.name.startsWith('_')) continue
+            const value = this.contextValue(key)
+            if (value === null) continue
+            element.style.setProperty(`--ov-${key.name}`, value)
+        }
+    }
+
+    /** A theme key as the nearest element above that says it has it, or the page's root. */
+    themeAbove(element, key) {
+        const name = `--ov-${key}`
+        for (let at = element.parentElement; at; at = at.parentElement) {
+            const said = at.style && at.style.getPropertyValue(name)
+            if (said) return said.trim()
+        }
+        return null
+    }
+
+    /** The document's own top: what it wrote there last time is taken off first. */
+    applyDocumentContexts(nodes) {
+        const root = typeof document !== 'undefined' ? document.documentElement : null
+        if (!root || !root.style) return
+        for (const name of Array.from(root.style)) {
+            if (name.startsWith('--ov-')) root.style.removeProperty(name)
+        }
+        delete root.dataset.ovMode
+        this.applyContexts(root, Array.isArray(nodes) ? nodes : [])
+    }
+
+    isContextCopy(node) {
+        const marked = node?.parameters?._context_copy
+        return marked === true || (marked && typeof marked === 'object' && marked.Boolean === true)
+    }
+
+    /** A context's value as CSS can take it, worked out where it has a formula; null for none. */
+    contextValue(node) {
+        if (!node) return null
+        const params = node.parameters || {}
+        const raw = params._computed_value !== undefined ? params._computed_value : params.value
+        if (raw === undefined || raw === null) return null
+        if (typeof raw === 'object') {
+            if (raw.Color !== undefined) return this.convertColorValue(raw)
+            for (const kind of ['String', 'Integer', 'Float', 'Boolean']) {
+                if (raw[kind] !== undefined) return this.convertColorValue(String(raw[kind]))
+            }
+            return null
+        }
+        return this.convertColorValue(String(raw))
     }
 
     convertColorValue(colorParam) {

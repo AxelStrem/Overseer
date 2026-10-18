@@ -165,6 +165,10 @@ struct Entry {
     /// catalogue each were handed one another's tracker, worked out from a catalogue without the
     /// food just added to theirs.
     base: Option<std::path::PathBuf>,
+    /// The environment it was worked out in, and the last of what makes it usable: the same
+    /// document in the same folder is drawn dark for one page and light for another - see
+    /// `environment::key`.
+    seen: String,
     nodes: Option<Vec<OverseerNode>>,
     graph: Option<crate::dependencies::Graph>,
     bytes: usize,
@@ -244,6 +248,7 @@ fn let_go(entry: Entry) {
         crate::document_disk::store(
             entry.text,
             entry.base,
+            entry.seen,
             crate::document_disk::Held {
                 nodes,
                 graph,
@@ -269,9 +274,10 @@ fn here() -> Option<std::path::PathBuf> {
 /// asked works the document out from the files as though it had never been held.
 fn at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
     let base = here();
+    let seen = crate::environment::key();
     let found = store
         .iter()
-        .position(|entry| entry.text == text && entry.base == base)?;
+        .position(|entry| entry.text == text && entry.base == base && entry.seen == seen)?;
     if !store[found].mounts_unchanged() {
         store.remove(found);
         return None;
@@ -292,10 +298,12 @@ fn found(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
         return None;
     }
     let base = here();
-    let held = crate::document_disk::take(text, &base)?;
+    let seen = crate::environment::key();
+    let held = crate::document_disk::take(text, &base, &seen)?;
     let mut entry = Entry {
         text: text.to_string(),
         base,
+        seen,
         nodes: Some(held.nodes),
         graph: Some(held.graph),
         bytes: 0,
@@ -416,6 +424,7 @@ fn put(text: &str, work: impl FnOnce(&mut Entry)) {
                 store.push(Entry {
                     text: text.to_string(),
                     base: here(),
+                    seen: crate::environment::key(),
                     nodes: None,
                     graph: None,
                     bytes: 0,
@@ -434,11 +443,11 @@ fn put(text: &str, work: impl FnOnce(&mut Entry)) {
     })
 }
 
-/// Every file a tree was worked out from besides its own text: what its mounts read, and the
-/// bases its templates came from.
+/// Every file a tree was worked out from besides its own text: what its mounts read, the bases its
+/// templates came from, and the settings and theme it was drawn in.
 fn read_from(nodes: &[OverseerNode]) -> Vec<(String, String)> {
     let mut files = crate::actions::mounts_held(nodes);
-    for held in crate::bases::held(nodes) {
+    for held in crate::bases::held(nodes).into_iter().chain(crate::environment::held()) {
         if !files.contains(&held) {
             files.push(held);
         }

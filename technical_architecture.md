@@ -52,6 +52,16 @@ searches that go down into other containers, method chains, and the page leave c
 declarations themselves are left as they were read, and are not worked out where they stand, so
 the writer takes the copies out and writes the rest as it would any node.
 
+Above a document's top is the environment, `environment.rs`: the context declarations of the
+user's `settings.os`, read with their references settled where that file is, and worked out as the
+visible contexts the document's top starts from. Where the document declares nothing at its top,
+its copies of them go last rather than first, so no node of the document moves. A `mode` saying
+`"system"` is made the scheme the request reported. The server scopes each request to the settings
+beside its documents and to the scheme the page sent; the desktop app keeps both for the process.
+A mount is worked out without the environment, and sees it through its host. A worked-out document
+is held under its text, its folder, and the mode it came to, and is let go once `settings.os` or a
+theme it is based on changes, as for the files its mounts and bases read.
+
 ## The modules
 
 | | |
@@ -60,6 +70,7 @@ the writer takes the copies out and writes the rest as it would any node.
 | `types.rs` | `OverseerNode`, `OverseerValue` — what everything else passes around |
 | `resolver.rs` | templates, inheritance, multipass, and which slice of a list is in view |
 | `contexts.rs` | what each container sees of the contexts declared above it |
+| `environment.rs` | the user's theme and mode, seen at the top of every document |
 | `formula_evaluator.rs` | `$(...)`: arithmetic, comparisons, and the `filter`/`map`/`sum` chains |
 | `actions.rs` | what a button does: append, remove, set |
 | `addressing.rs` | stable addresses, so a thing read can be written afterwards |

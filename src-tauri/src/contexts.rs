@@ -19,6 +19,12 @@
 //! but to leave them out of searches that go *down* into other containers, where a copy would be
 //! some other container's context. Nothing else counts a context among a container's contents:
 //! not a method chain over it, not the page, not the file.
+//!
+//! Above a document's top is the environment - the user's theme and mode, see `environment` - which
+//! is seen there as though declared before anything the document declares. Its names are the
+//! document's only until the document uses one for something else: a field named `mode` hides the
+//! environment's `mode` from what is inside it, where a context the document declares itself would
+//! be refused, since a document that never asked for a theme cannot be told its names are taken.
 
 use crate::types::{OverseerNode, OverseerValue};
 
@@ -73,17 +79,21 @@ fn declares_any(nodes: &[OverseerNode]) -> bool {
         .any(|node| is_context(node) || declares_any(&node.children))
 }
 
-/// What a container sees, by name, in the order the names were first declared.
-type Visible = Vec<(String, OverseerNode)>;
+/// What a container sees, by name, in the order the names were first declared - and whether the
+/// document declared it, rather than only the environment.
+type Visible = Vec<(String, OverseerNode, bool)>;
 
 fn visible<'a>(seen: &'a Visible, name: &str) -> Option<&'a OverseerNode> {
-    seen.iter().find(|(n, _)| n == name).map(|(_, node)| node)
+    seen.iter().find(|(n, _, _)| n == name).map(|(_, node, _)| node)
 }
 
-fn set_visible(seen: &mut Visible, name: &str, node: OverseerNode) {
-    match seen.iter_mut().find(|(n, _)| n == name) {
-        Some(slot) => slot.1 = node,
-        None => seen.push((name.to_string(), node)),
+fn set_visible(seen: &mut Visible, name: &str, node: OverseerNode, declared: bool) {
+    match seen.iter_mut().find(|(n, _, _)| n == name) {
+        Some(slot) => {
+            slot.1 = node;
+            slot.2 |= declared;
+        }
+        None => seen.push((name.to_string(), node, declared)),
     }
 }
 
@@ -92,8 +102,8 @@ fn set_visible(seen: &mut Visible, name: &str, node: OverseerNode) {
 #[derive(Default)]
 struct Work {
     /// Where copies go - the indices of a container from the top, empty for the document itself -
-    /// and the copies, in the order they are put in front of its children.
-    copies: Vec<(Vec<usize>, Vec<OverseerNode>)>,
+    /// the copies, in the order they are put among its children, and whether after them.
+    copies: Vec<(Vec<usize>, Vec<OverseerNode>, bool)>,
     /// Nodes refused, and why.
     refused: Vec<(Vec<usize>, String)>,
 }
@@ -105,11 +115,20 @@ struct Work {
 /// time are taken out first, and everything is worked out again from the declarations.
 pub fn resolve_contexts(nodes: &mut Vec<OverseerNode>) {
     leave_out_copies(nodes);
-    if !declares_any(nodes) {
+    let environment = crate::environment::declarations();
+    if environment.is_empty() && !declares_any(nodes) {
         return;
     }
+    // The environment is worked out as the settings document's own top would be: each declaration
+    // merged onto those before it. Its `base=` names a file, so there is no tree to look it up in.
+    let mut seen = Visible::new();
+    for declaration in &environment {
+        let worked_out = override_with(&[], visible(&seen, &declaration.name), declaration);
+        set_visible(&mut seen, &declaration.name, worked_out, false);
+    }
     let mut work = Work::default();
-    walk_scope(nodes, nodes, &Vec::new(), &mut Vec::new(), &mut work);
+    let at_the_top = !seen.is_empty();
+    walk_scope(nodes, nodes, &Vec::new(), &mut seen, at_the_top, &mut work);
 
     for (at, why) in work.refused {
         if let Some(node) = node_at_mut(nodes, &at) {
@@ -121,14 +140,18 @@ pub fn resolve_contexts(nodes: &mut Vec<OverseerNode>) {
     }
     // Deepest first: putting copies in front of a container's children moves the place of every
     // child in it, and with it the indices recorded for any container below.
-    for (at, copies) in work.copies.into_iter().rev() {
+    for (at, copies, after) in work.copies.into_iter().rev() {
         let children = if at.is_empty() {
             Some(&mut *nodes)
         } else {
             node_at_mut(nodes, &at).map(|node| &mut node.children)
         };
         if let Some(children) = children {
-            children.splice(0..0, copies);
+            if after {
+                children.extend(copies);
+            } else {
+                children.splice(0..0, copies);
+            }
         }
     }
 }
@@ -168,6 +191,7 @@ fn walk_scope(
     children: &[OverseerNode],
     at: &Vec<usize>,
     seen: &mut Visible,
+    always: bool,
     work: &mut Work,
 ) {
     let mut level = Vec::new();
@@ -179,27 +203,38 @@ fn walk_scope(
         .filter(|node| is_context(node))
         .collect();
     let mut here: Visible = seen.clone();
-    if !declared.is_empty() {
-        for declaration in declared {
+    // Where the document declares nothing, the copies above serve: but at its top there is nothing
+    // above, and the environment is seen there only by being put there.
+    if !declared.is_empty() || always {
+        for declaration in &declared {
             let worked_out = override_with(root, visible(&here, &declaration.name), declaration);
-            set_visible(&mut here, &declaration.name, worked_out);
+            set_visible(&mut here, &declaration.name, worked_out, true);
         }
         let copies = here
             .iter()
-            .map(|(_, node)| node.clone())
+            .map(|(_, node, _)| node.clone())
             .collect::<Vec<_>>();
-        work.copies.push((at.clone(), copies));
+        // A copy goes first so that a lookup meets it before the declaration of the same name.
+        // With no declaration here - only the environment, at the top of a document that declares
+        // nothing - nothing shares its name, and it goes last, where it moves no node's place.
+        work.copies.push((at.clone(), copies, declared.is_empty()));
     }
 
     for (place, node) in &level {
         if is_context(node) {
             continue;
         }
-        if !node.name.is_empty() && visible(&here, &node.name).is_some() {
-            work.refused.push((
-                place.clone(),
-                format!("'{}' is a context here, and cannot name anything else", node.name),
-            ));
+        let mut hides = None;
+        if !node.name.is_empty() {
+            match here.iter().position(|(n, _, _)| *n == node.name) {
+                Some(found) if here[found].2 => work.refused.push((
+                    place.clone(),
+                    format!("'{}' is a context here, and cannot name anything else", node.name),
+                )),
+                // Only the environment's: the node takes the name, for itself and what is inside.
+                Some(found) => hides = Some(found),
+                None => {}
+            }
         }
         // Not into what is out of view, which nothing works out, nor into what a press runs,
         // which is never drawn - a context copied into an action would be copied with it into
@@ -207,7 +242,14 @@ fn walk_scope(
         if crate::resolver::out_of_view(node) || node.node_type == "on" {
             continue;
         }
-        walk_scope(root, &node.children, place, &mut here, work);
+        match hides {
+            Some(found) => {
+                let mut inside = here.clone();
+                inside.remove(found);
+                walk_scope(root, &node.children, place, &mut inside, false, work);
+            }
+            None => walk_scope(root, &node.children, place, &mut here, false, work),
+        }
     }
 }
 
@@ -266,6 +308,7 @@ fn override_with(
     worked_out
         .parameters
         .insert(CONTEXT_COPY.to_string(), OverseerValue::Boolean(true));
+    crate::environment::settle_mode(&mut worked_out);
     forget_the_text(&mut worked_out);
     worked_out
 }

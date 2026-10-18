@@ -557,9 +557,45 @@ tab project (label="Project") {
   of a list, sees those around the instance; a mounted document sees those of the document that
   mounts it. A context a template declares is declared again in every instance.
 - **A name is one thing in its scope.** Any name can be a context, and inside a container that sees
-  one, a node of the same name is refused, saying why.
+  one the document declared, a node of the same name is refused, saying why.
 - **It is saved as written**: the declarations are the document's text, and what a container sees
   is worked out from them each time the document is.
+
+#### The theme and the mode
+
+Every document is worked out inside the user's own choice of look, which is two contexts kept in a
+document of their own, `settings.os` - beside the documents a server serves, and in the desktop
+app's settings folder:
+
+```overseer
+context theme (base=<themes/default.os/theme>) {
+    - accent = "#e11d48"
+}
+context mode = "system"
+```
+
+- **They are seen at the top of every document**, before anything the document declares, so a
+  document's own `context theme { - accent = red }` changes one key and keeps the rest, and a part
+  of it can change more for what is inside that part. A mounted document sees them through the one
+  that mounts it. Where there is no `settings.os` yet, it is as though it held
+  `context theme (base=<themes/default.os/theme>) { }` and `context mode = "system"`.
+- **A theme is a `context theme`** in a file of its own. Those that ship with Overseer are in its
+  library's `themes` folder; one in a `themes` folder beside `settings.os` is offered beside them,
+  and takes the place of a shipped one of the same name. Its keys are `background`, `surface`,
+  `text`, `muted`, `line`, `accent`, `success`, `warning`, `danger`, `font` and `radius`, and the
+  shipped theme works each colour out from `mode`, as `$(mode == "dark" ? "#1e293b" : "#ffffff")`.
+- **`mode` is `"light"`, `"dark"` or `"system"`**, and `"system"` is the scheme the page is in -
+  the browser's, or the computer's - sent with every request, and light where nothing says.
+- **`theme` is the name the page draws through.** The resolved theme of the document's top is the
+  look of the whole page; a container that changes it is drawn in its own, its text in the theme's
+  `text` and, where it differs from the one around it, its background in its `background`. Any
+  other name is the document's own, `mode` included as a value it can read.
+- **They are the document's only until it uses the name for something else.** A field named `mode`
+  is that field for itself and what is inside it, where a context the document declares itself
+  would be refused: a document that never asked for a theme cannot be told its names are taken.
+- **The drawer chooses them**: a theme from those there are, and Light, Dark or System. The mode is
+  written to `settings.os` as a value; the theme as the `base=` of its `context theme`, so the keys
+  the user changed inside the block stay as they were, now changing the theme chosen.
 
 ### 4. Actions and Triggers
 

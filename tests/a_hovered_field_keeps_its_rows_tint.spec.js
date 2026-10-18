@@ -31,8 +31,9 @@ describe('a hovered field keeps the tint of the row it is in', () => {
   }
 
   it('the tint is translucent in the light theme and the dark one', () => {
+    // One for each mode, said wherever that mode is drawn: the page's own and a container's.
     const tints = hoverTints()
-    expect(tints).toHaveLength(2)
+    expect(new Set(tints).size).toBe(2)
     for (const tint of tints) {
       const alpha = Number(tint.match(/^rgba\([^)]*,\s*([\d.]+)\s*\)$/)?.[1])
       expect(alpha, tint).toBeGreaterThan(0)

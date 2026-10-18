@@ -1731,6 +1731,127 @@ pub fn write_values_at(
     })
 }
 
+/// What the drawer shows of the settings every document is drawn through - see `environment`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Settings {
+    /// The themes there are to choose from, by name.
+    pub themes: Vec<String>,
+    /// The one chosen, where the settings name one by its file.
+    pub theme: Option<String>,
+    /// `light`, `dark` or `system`.
+    pub mode: String,
+}
+
+/// The settings kept in this file, or those every document is drawn through until there is one.
+pub fn settings_in(file: &std::path::Path) -> Settings {
+    let text = std::fs::read_to_string(file)
+        .unwrap_or_else(|_| crate::environment::DEFAULT.to_string());
+    let nodes = crate::parser::parse_document(&text).map(|(_, nodes)| nodes).unwrap_or_default();
+    let mut theme = None;
+    let mut mode = crate::environment::SYSTEM.to_string();
+    for node in declared_settings(&nodes) {
+        match node.name.as_str() {
+            "theme" => {
+                if let Some(OverseerValue::Template(path)) = node.parameters.get("base") {
+                    theme = crate::bases::reference(path).file.and_then(|file| {
+                        std::path::Path::new(&file)
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                    });
+                }
+            }
+            crate::environment::MODE => {
+                if let Some(OverseerValue::String(said)) = node.parameters.get("value") {
+                    mode = said.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+    Settings { themes: crate::environment::with_file(file.to_path_buf(), crate::environment::themes), theme, mode }
+}
+
+/// The declarations a settings document makes at its top, as it wrote them.
+fn declared_settings(nodes: &[OverseerNode]) -> Vec<&OverseerNode> {
+    let mut out = Vec::new();
+    for node in nodes {
+        if crate::contexts::is_declaration(node) {
+            out.push(node);
+        } else if crate::addressing::is_wrapper(node) && !crate::contexts::is_context(node) {
+            out.extend(declared_settings(&node.children));
+        }
+    }
+    out
+}
+
+/// Choose a theme, a mode or both, as one change to the settings - made first, where there are
+/// none yet, with what they would have said.
+///
+/// The mode is an ordinary value. The theme is the `base=` of the settings' `theme`, so that what
+/// the user has changed of it - the keys inside the block - stays as it is and now changes the
+/// theme chosen instead.
+pub fn choose_settings(
+    file: &std::path::Path,
+    theme: Option<String>,
+    mode: Option<String>,
+) -> Result<Settings> {
+    if let Some(mode) = &mode {
+        if !["light", "dark", crate::environment::SYSTEM].contains(&mode.as_str()) {
+            return Err(OverseerError::ValidationError(format!("no mode '{}'", mode)));
+        }
+    }
+    if let Some(theme) = &theme {
+        // A name, not a path: it is looked for among the themes there are.
+        if !crate::environment::with_file(file.to_path_buf(), crate::environment::themes).contains(theme) {
+            return Err(OverseerError::ValidationError(format!("no theme '{}'", theme)));
+        }
+    }
+    if !file.exists() {
+        std::fs::write(file, crate::environment::DEFAULT)
+            .map_err(|e| OverseerError::IoError(format!("could not make the settings: {}", e)))?;
+    }
+    let path = file.to_string_lossy().into_owned();
+    crate::environment::with_file(file.to_path_buf(), || {
+        change_document(&path, crate::environment::FILE, "", |nodes| {
+            if let Some(mode) = mode {
+                crate::actions::ActionExecutor::assign_value(
+                    nodes,
+                    &format!("/{}", crate::environment::MODE),
+                    OverseerValue::String(mode),
+                )?;
+            }
+            if let Some(theme) = theme {
+                let declaration = declaration_mut(nodes, "theme").ok_or_else(|| {
+                    OverseerError::ValidationError("the settings declare no theme".into())
+                })?;
+                declaration.parameters.insert(
+                    "base".to_string(),
+                    OverseerValue::Template(format!("themes/{}.os/theme", theme)),
+                );
+                // Changed, for the writer, which otherwise gives back the line as it was read.
+                declaration.source_fingerprint = None;
+            }
+            Ok(())
+        })
+    })?;
+    Ok(settings_in(file))
+}
+
+fn declaration_mut<'a>(nodes: &'a mut [OverseerNode], name: &str) -> Option<&'a mut OverseerNode> {
+    for node in nodes.iter_mut() {
+        if crate::contexts::is_declaration(node) {
+            if node.name == name {
+                return Some(node);
+            }
+        } else if crate::addressing::is_wrapper(node) && !crate::contexts::is_context(node) {
+            if let Some(found) = declaration_mut(&mut node.children, name) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 /// Run one handler, named the same way.
 ///
 /// `typed` is what the page's textboxes hold as the press is made. It is put on them for the

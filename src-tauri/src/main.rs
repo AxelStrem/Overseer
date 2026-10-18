@@ -49,6 +49,46 @@ async fn menu_location(app: tauri::AppHandle) -> Result<String> {
     Ok(menu_file(&app)?.to_string_lossy().to_string())
 }
 
+/// How every document is drawn - see `overseer::environment` - kept in the same settings folder
+/// as the menu, and made the settings everything this app works out is drawn through.
+fn settings_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf> {
+    use tauri::Manager;
+    let folder = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| OverseerError::IoError(format!("no settings folder: {}", e)))?;
+    let file = folder.join(overseer::environment::FILE);
+    overseer::environment::set_file(Some(file.clone()));
+    Ok(file)
+}
+
+#[command]
+async fn settings_read(app: tauri::AppHandle) -> Result<app_api::Settings> {
+    Ok(app_api::settings_in(&settings_file(&app)?))
+}
+
+#[command]
+async fn settings_choose(
+    app: tauri::AppHandle,
+    theme: Option<String>,
+    mode: Option<String>,
+) -> Result<app_api::Settings> {
+    let file = settings_file(&app)?;
+    if let Some(folder) = file.parent() {
+        let _ = std::fs::create_dir_all(folder);
+    }
+    app_api::choose_settings(&file, theme, mode)
+}
+
+/// The scheme the page is in, which a `mode` of "system" stands for. The app has one page, so it
+/// is kept for the process until the page says otherwise.
+#[command]
+async fn report_color_scheme(app: tauri::AppHandle, scheme: String) -> Result<()> {
+    settings_file(&app)?;
+    overseer::environment::set_scheme(Some(&scheme));
+    Ok(())
+}
+
 #[command]
 async fn load_overseer_file(path: String) -> Result<String> {
     // Record the document's directory so a mount's relative source resolves against the
@@ -421,7 +461,10 @@ fn main() {
             menu_places,
             menu_keep,
             menu_drop,
-            menu_location
+            menu_location,
+            settings_read,
+            settings_choose,
+            report_color_scheme
         ])
         .run(tauri::generate_context!())
     {

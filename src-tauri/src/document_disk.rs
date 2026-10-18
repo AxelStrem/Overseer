@@ -106,7 +106,7 @@ fn build() -> Option<&'static str> {
 }
 
 /// The file a document worked out from this text in this folder goes in.
-fn file_for(folder: &Path, build: &str, base: &Option<PathBuf>, text: &str) -> PathBuf {
+fn file_for(folder: &Path, build: &str, base: &Option<PathBuf>, seen: &str, text: &str) -> PathBuf {
     use std::hash::Hasher;
     let mut hasher = twox_hash::XxHash64::with_seed(0);
     hasher.write(build.as_bytes());
@@ -114,6 +114,8 @@ fn file_for(folder: &Path, build: &str, base: &Option<PathBuf>, text: &str) -> P
     if let Some(base) = base {
         hasher.write(base.to_string_lossy().as_bytes());
     }
+    hasher.write(&[0]);
+    hasher.write(seen.as_bytes());
     hasher.write(&[0]);
     hasher.write(text.as_bytes());
     folder.join(format!("{:016x}.json", hasher.finish()))
@@ -123,6 +125,9 @@ fn file_for(folder: &Path, build: &str, base: &Option<PathBuf>, text: &str) -> P
 struct Stored {
     build: String,
     base: Option<PathBuf>,
+    /// The environment it was worked out in - see `environment::key`.
+    #[serde(default)]
+    seen: String,
     text: String,
     mounts: Vec<(String, String)>,
     clock_minute: Option<i64>,
@@ -213,7 +218,7 @@ impl Snapshots {
     }
 }
 
-fn stored(text: String, base: Option<PathBuf>, build: &str, held: Held) -> Stored {
+fn stored(text: String, base: Option<PathBuf>, seen: String, build: &str, held: Held) -> Stored {
     let mut snapshots = Snapshots::default();
     let mut on_nodes = Vec::new();
     // What the registry holds under each id the tree carries: the writer looks there for a node
@@ -254,6 +259,7 @@ fn stored(text: String, base: Option<PathBuf>, build: &str, held: Held) -> Store
     Stored {
         build: build.to_string(),
         base,
+        seen,
         text,
         mounts: held.mounts,
         clock_minute: held.clock_minute,
@@ -339,13 +345,13 @@ static WRITING: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
 static WRITTEN: std::sync::Condvar = std::sync::Condvar::new();
 
 /// Write a document the cache is letting go of, without making whoever let it go wait.
-pub fn store(text: String, base: Option<PathBuf>, held: Held) {
+pub fn store(text: String, base: Option<PathBuf>, seen: String, held: Held) {
     let Some((folder, budget)) = setting() else { return };
     let Some(build) = build() else { return };
     *WRITING.lock().unwrap_or_else(|e| e.into_inner()) += 1;
     std::thread::spawn(move || {
         // A file that cannot be written is a document worked out again later, and nothing more.
-        let _ = write(&folder, budget, build, text, base, held);
+        let _ = write(&folder, budget, build, text, base, seen, held);
         let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
         *writing -= 1;
         WRITTEN.notify_all();
@@ -358,11 +364,13 @@ fn write(
     build: &str,
     text: String,
     base: Option<PathBuf>,
+    seen: String,
     held: Held,
 ) -> std::io::Result<()> {
     std::fs::create_dir_all(folder)?;
-    let file = file_for(folder, build, &base, &text);
-    let bytes = serde_json::to_vec(&stored(text, base, build, held)).map_err(std::io::Error::other)?;
+    let file = file_for(folder, build, &base, &seen, &text);
+    let bytes =
+        serde_json::to_vec(&stored(text, base, seen, build, held)).map_err(std::io::Error::other)?;
     if bytes.len() > budget {
         return Ok(());
     }
@@ -408,14 +416,14 @@ fn trim(folder: &Path, budget: usize) {
 /// The document worked out from this text in this folder, if it was written down - taken, so the
 /// file goes with it. Nothing when there is none, or the one there will not do: from another
 /// build, damaged, or for another text that happened to share its name.
-pub fn take(text: &str, base: &Option<PathBuf>) -> Option<Held> {
+pub fn take(text: &str, base: &Option<PathBuf>, seen: &str) -> Option<Held> {
     let (folder, _) = setting()?;
     let build = build()?;
-    let file = file_for(&folder, build, base, text);
+    let file = file_for(&folder, build, base, seen, text);
     let bytes = std::fs::read(&file).ok()?;
     let _ = std::fs::remove_file(&file);
     let stored: Stored = serde_json::from_slice(&bytes).ok()?;
-    if stored.build != build || &stored.base != base || stored.text != text {
+    if stored.build != build || &stored.base != base || stored.seen != seen || stored.text != text {
         return None;
     }
     unpacked(stored)
@@ -425,7 +433,7 @@ pub fn take(text: &str, base: &Option<PathBuf>) -> Option<Held> {
 /// tests, which have no other way to tell which file is which.
 pub fn where_kept(text: &str, base: &Option<PathBuf>) -> Option<PathBuf> {
     let (folder, _) = setting()?;
-    let file = file_for(&folder, build()?, base, text);
+    let file = file_for(&folder, build()?, base, &crate::environment::key(), text);
     file.exists().then_some(file)
 }
 
