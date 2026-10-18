@@ -56,7 +56,7 @@ list Phases (entry=string) {
 #### Examples:
 ```overseer
 // Named node with parameters
-div Tasks (background=#F0F0F0, border=solid) {
+div Tasks (background-color=#F0F0F0, border-style=solid 1px gray) {
     // content
 }
 
@@ -97,8 +97,11 @@ A line that cannot be read - a string without its closing quote, a `{` never clo
 - `text`: Multi-line text with markdown support
 - `int`: Integer numbers
 - `float`: Floating-point numbers
-- `date`: Date values
-- `bool`: Boolean true/false
+- `date`: Date values, `"2026-10-18"`
+- `timestamp`: A moment, RFC 3339 with its offset, `"2026-10-18T09:30:00+04:00"` - see "Showing
+  values"
+- `bool`: Boolean true/false, drawn as a checkbox
+- `tags`: Several labels out of a list of them, drawn as chips - see "Tags"
 - `enum`: One value out of a list of them, drawn as a chip and picked from that list - see "Enum"
 
 #### Container Types:
@@ -166,13 +169,16 @@ list Priorities (entry=int) {
 #### Interactive Types:
 - `button`: Clickable button with actions
 - `checkbox`: Boolean toggle with actions
-- `chart`: Data visualization element (planned)
+- `chart`: A line, pie or bar chart of what its `plot`s say (see "Charts")
 - `image`: A picture kept beside the document (see "Images")
 - `mark`: Something drawn with no value of its own, such as a grip (see "Marks")
+- `filter`: A view over a list, narrowing what it shows (see "Filter")
 
-#### Logic Types:
-- `trigger`: Conditional logic execution
-- `action`: Operation to perform
+#### Other nodes:
+- `on <event>`: What happens when the node it is written in is pressed or changed: a block of
+  actions (see "Actions and Events")
+- `mount`: Another document's node brought in under a name (see "Mounting another document")
+- `context`: A name handed down to everything inside a container (see "Contexts")
 
 ### 3. Value Assignment
 
@@ -184,10 +190,13 @@ type FieldName = value
 ```overseer
 string Header = "My Task"
 int Priority = 10
-date Created = today()
+date Created = $(today())
 bool Completed = false
-enum Status = "Active"  // from predefined choices
+enum Status (vocabulary="/Statuses") = "active"
 ```
+
+A field that states no value has its type's empty one, or its template's (see "Templates and
+Inheritance"): an entry of a list writes only what differs from the template it is made from.
 
 ### 4. Formulas
 
@@ -199,14 +208,35 @@ string Summary = $("Priority: " + ../Priority + ", Due: " + ../Due)
 float Average = $(../Tasks/Data.average(Priority))
 ```
 
-#### Formula Functions:
-- `today()`: Current date
+A formula can stand wherever a value can - a field's value, a parameter, an action's argument -
+and is worked out again whenever what it reads changes.
+
+#### Operators:
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
 - Comparison: `>`, `<`, `>=`, `<=`, `==`, `!=`
+- Logic: `&&`, `||`, `!`
 - Conditional: `condition ? value_if_true : value_if_false`
 - String concatenation: `+` joins two values when either is text that does not read as a number
   (`"the id " + 7` is `"the id 7"`, and an empty field joins as nothing); otherwise it adds them
   (`"5" + "3"` is `8`)
+
+#### Functions:
+
+A moment can be given as a `date`, a `timestamp`, or text holding either; one with no offset is
+taken as UTC, and a bare date as its midnight.
+
+| function | |
+| --- | --- |
+| `today()` | the date today, in the local time zone |
+| `now()` | the moment now, a timestamp |
+| `days_since(x)`, `minutes_since(x)` | whole days or minutes from `x` to now, negative when `x` is still to come - `minutes_since(due) > 0` is overdue |
+| `date_add_days(x, n)` | `n` days after `x`: a date stays a date, a timestamp a timestamp |
+| `date_add_hours(x, n)` | `n` hours after `x`, a timestamp; `n` may be fractional |
+| `same_day(a, b)` | whether two moments fall on the same local day |
+| `weekday(x)`, `day_of_month(x)`, `month_of(x)` | of the local day: 1 for Monday to 7 for Sunday; 1 to 31; 1 to 12 |
+| `minutes_of_day(x)` | minutes since local midnight, for a time of day |
+| `millis_since_epoch(x)` | the moment as a number, for sorting by it |
+| `fresh_key(list, ...)` | a key no entry of the keyed lists given holds - see "A form that fills an entry" |
 
 ### 5. Path References
 
@@ -232,39 +262,61 @@ business: `./show` on one reads the container's `show`, and its `..` is the cont
 
 Another document is reached through a mount rather than a path - see "Mounting another document".
 
-### 6. Array Indexing
+### 6. Entries of a list
 
-Use square brackets for accessing array elements:
+An entry of a list is named in one of three ways, and which one depends on who is naming it.
+
+- **By its key, `[key]`.** A list that says `key="handle"` names each entry by what its `handle`
+  holds: `project/Items/[parser]/stage`. This is the address the page, the server API
+  ([API.md](API.md)) and `scripts/preview.mjs` use, and it stays the entry's whatever is added or
+  removed around it. A `/`, `[` or `]` inside a key is escaped with `\`.
+- **By its place, `[n]`**, in an action's path: `../Comments[0]` the first entry, `[-1]` the last,
+  counting from the end when the number is negative (see "Opening a field for editing").
+- **By its template and place, `<Template>__n`.** An entry written without a name is named after
+  its list's template and its place, counted from 1: `History/Bought__1`, `Bought__2`. In a list
+  without a key this is the entry's address, and it shifts when an entry before it is removed -
+  the reason `key=` is worth declaring. Actions and formulas can name an entry this way too.
+
+Two siblings of one name are `name` and `name#1`, in an address as in a path.
+
+A formula does not index a list. It reaches entries through the list's methods: `find` for an
+entry by its key, `filter` for those that match, `first` for the first of what is left.
 
 ```overseer
-string FirstTask = $(../Tasks/Data[0]/Header)
-int HighestPriority = $(../Tasks/Data.find_max(Priority)[0]/Priority)
+int points = $(/project/Items.find("parser")/points)
+string first_open = $(Items.filter(|x| x/stage != "done").map(|x| x/title).first(""))
 ```
 
-### 7. List Operations
+Actions that change a list name their entry by a key field and value instead -
+`remove (from="/project/Items", keyField="handle", keyValue=$(../handle))` - see "Actions and
+Events".
 
-Lists provide built-in query methods:
+### 7. Lists
+
+A list in a formula is a chain of methods, each taking what the one before it left. A method that
+looks at each entry takes a lambda, `|x| ...`, where `x` is the entry and `x/field` one of its
+fields; in a list of plain values `x` is the value.
+
+| method | |
+| --- | --- |
+| `filter(\|x\| condition)` | the entries the condition holds for |
+| `map(\|x\| expression)` | what the expression gives for each entry |
+| `find(key)` | the entry of a keyed list holding that key |
+| `first()`, `first(default)` | the first of them, or the default when there are none |
+| `count()` | how many there are |
+| `sum()`, `sum(\|x\| x/field)` | their sum, or the sum of what the lambda gives |
+| `avg()`, `average()`, and with a lambda | their mean |
+| `max()`, `min()` | the largest and smallest - numbers, dates, timestamps or text |
+| `reduce(start, \|acc, x\| expression)` | folds them into one value, from `start` |
 
 ```overseer
-count()                    // Number of items
-where(condition)           // Filter items
-sort(field)               // Sort by field
-sort_decreasing(field)    // Sort descending
-find_max(field)           // Find maximum value
-find_min(field)           // Find minimum value
-average(field)            // Calculate average
-sum(field)                // Calculate sum
+int open = $(/project/Items.filter(|x| x/stage != "done").count())
+int points = $(/project/Items.sum(|x| x/points))
+float average = $(Readings.avg(|x| x/systolic))
+date latest = $(Readings.map(|x| x/day).max())
 ```
 
-#### Examples:
-```overseer
-int ActiveTasks = $(../Tasks/Data.where(Completed == false).count())
-int HighestPriority = $(../Tasks/Data.find_max(Priority)/Priority)
-float AvgPriority = $(../Tasks/Data.average(Priority))
-```
-
----
-
+A `tags` field read by a formula is a list of its labels (see "Tags").
 
 #### Showing part of a list
 
@@ -378,28 +430,38 @@ list Unranked (entry=<Food>, layout="horizontal", movable=true) { }
 
 ### 1. Templates and Inheritance
 
-Use hidden template sections and `base` parameter for reusability:
+A template is an ordinary node, usually kept in a hidden div. An instance is written with the
+template's name in angle brackets in its type's place, and a list's `entry=` makes every entry
+an instance of it:
 
 ```overseer
 tab Tasks {
-    div (hidden=true) {  // Template section
-        div Task (background=$(Priority>20?Red:White)) {
+    div (hidden=true) {
+        div Task (background-color=$(Priority > 20 ? "#fee2e2" : "#ffffff")) {
             string Header = ""
             int Priority = 0
             date Due = ""
             bool Completed = false
         }
     }
-    
-    list Data (entry=../Task) {
-        div task1 (base=../../Task) {
-            Header = "Learn Overseer"
-            Priority = 5
-            Due = "2025-07-30"
+
+    <Task> pinned {
+        - Header = "Read the specification"
+    }
+
+    list Data (entry=<Task>) {
+        - {
+            - Header = "Learn Overseer"
+            - Priority = 5
+            - Due = "2025-07-30"
         }
     }
 }
 ```
+
+`<Task>` names the template by its name; a path, `<../Task>`, or a file (see "A template from
+another file") says where to look when the name alone is not enough. An instance writes only what
+differs from its template: `Completed` is `false` in both instances above without saying so.
 
 An instance's kind is its template's name, so a template cannot be named after a type - `tags`,
 `list`, `button` and the rest under "Reserved Keywords", in any case. A reference to one is
@@ -446,7 +508,7 @@ div (hidden=true) {
     tab { }
     tab {
         div { }
-        div (background=#eee) { }
+        div (background-color=#eee) { }
     }
     - owner = "me"
 }
@@ -466,7 +528,7 @@ appended, prepended, moved or sorted - always stays after them.
 Saving gives an instance back as it was written, with only what changed since: a value edited
 where the instance wrote it is changed there, and one edited on something only the template gave
 becomes an override in the nearest block the instance wrote around it - inside the unnamed step
-that reached it (`div (background=#eee) { - links = "..." }`), inside a named override
+that reached it (`div (background-color=#eee) { - links = "..." }`), inside a named override
 (`- Deep (x=2) { - inner = "..." }`), or on the instance itself, after the element written before
 it. A parameter set on a named node the template gave is written as `- Deep (x=3)`.
 
@@ -626,175 +688,92 @@ context mode = "system"
   written to `settings.os` as a value; the theme as the `base=` of its `context theme`, so the keys
   the user changed inside the block stay as they were, now changing the theme chosen.
 
-### 4. Actions and Triggers
+### 3. Actions and Events
 
-Overseer supports interactive elements and automated actions:
-
-#### Interactive Elements:
-```overseer
-// Button with actions
-button save_button "Save Data" {
-    action Set (target=../status) = "saved"
-    action Add (target=../save_count) = 1
-}
-
-// Checkbox with actions
-checkbox completed "Mark Complete" {
-    action Set (target=../completed) = true
-    action Add (target=../../stats/completed_count) = 1
-}
-
-```
-
-#### Icons
-
-A button can show an icon, alone or in front of its label: `icon` names one from the library
-that comes with Overseer. An icon is drawn in the colour of the text around it.
+A document changes itself through what it says happens when something is pressed or changed. An
+`on <event>` block, written inside the node it belongs to, holds actions, run one after another
+when the event comes:
 
 ```overseer
-button add (icon="plus", label="Add") { }
-button note (icon="note") { }
-```
-
-Names are lower case, words joined by `-`. The library holds Overseer's own icons - `cross`,
-`check`, `arrow-up`, `arrow-down`, `arrow-left`, `arrow-right`, `ellipsis-h`, `ellipsis-v`,
-`burger`, `note` - then every icon of [Lucide](https://lucide.dev/icons) and of
-[Tabler](https://tabler.io/icons) under their own names, Tabler's filled ones with `-filled`
-added (`heart-filled`). Where two have the same name, the first in that order is the one drawn. A
-name the library does not have leaves an empty space the size of an icon. An icon-only button
-says its name on hover. A button wider than what it shows - given a `width`, or stretched across
-a vertical div - keeps its icon and label together in its middle.
-
-##### Icons in text
-
-Any text a document shows can hold an icon, written `<icon=name>` where the icon goes: a label, a
-value, a tab's label, a button's label, a tag or enum name, hover text, markdown.
-
-```overseer
-string due (label="<icon=clock> Due") = "today"
-button add (label="<icon=plus>") { }
-- {
-    - tag = "veg"
-    - name = "<icon=carrot> vegetable"
-}
-text note (markdown=true) = "<color=red | <icon=alarm-clock> **late**>"
-```
-
-The text is kept as written - in the file, in formulas, in the editor - and only drawing turns
-the tag into the icon. `icon="plus"` on a button is the short way of writing a label of
-`<icon=plus>`; a button or a chip that shows only icons says its name, or its tag, on hover.
-Anything else in angle brackets stays text. Where only text can go - the window's title - the
-icons are left out.
-
-A document can bring its own icons: a name with a `/` in it, or ending in `.svg`, is the path of
-an SVG file relative to the document's own folder. It is drawn in its own colours. After the name,
-`color=` draws any icon - the library's or the document's - in one colour instead of the text's.
-
-```overseer
-string carrot (label="<icon=icons/carrot.svg> Carrot") = "fresh"
-string late (label="<icon=alarm-clock color=#E91E63> Late") = "2 days"
-string pantry (label="<icon=icons/jar.svg color=gray> Pantry") = "full"
-```
-
-Only the document's folder and the folders under it can be reached: a path that starts at a root
-or a drive, or holds `..`, names no icon, and nor does a file that is not `.svg` or is larger than
-256 KB. Such a name, like one the library does not have, leaves an empty space where the icon
-would be. The SVG is drawn as a picture, so nothing it carries runs.
-
-##### Chips in text
-
-Any text a document shows can name an entry of a vocabulary (see "Tags"), written `<#key>`: it is
-drawn as that entry's chip, with its name, its colour and its `title` on hover - the chip a `tags`
-field holding the key would draw. The key is looked up in the text's own field's `vocabulary`, or
-else the nearest `context vocabulary`, so a container that names a list once lets everything inside
-mention its entries:
-
-```overseer
-tab project (label="Project") {
-    context vocabulary = "/project/Items, /project/History"
-    ...
-    text body (markdown=true) = "Waits on <#parser>, as <#escape> did."
-}
-```
-
-A key no vocabulary holds is drawn as a plain chip of the word. As with icons, the text is kept as
-written - in the file, in formulas, in the editor - and a filter matches the key inside it. Inside
-markdown code, `` `<#key>` `` stays text, and so does `` `<icon=name>` ``.
-
-Pressing a chip that stands for an entry - in text, in a `tags` field, or an `enum` with nothing to
-pick - shows the entry: the folds and tabs around it open, it is scrolled into view and marked for
-a moment. An entry the filter hides, or one in a list the page does not draw, is not shown, and
-the chip says why on hover.
-
-#### Images
-
-An `image` shows a picture the document keeps beside it: its value is the path of a PNG, JPEG,
-WebP or GIF file relative to the document's own folder.
-
-```overseer
-image plate (width=50%) = "images/plate.jpg"
-image shelf (label="The pantry shelf") = "images/shelf.png"
-```
-
-It is drawn as large as it is given room for, keeping its proportions: `width` and `height` size
-it, as they size any node. Its label heads it and says what the picture is to whoever cannot see
-it; without one, its name does. The same paths are reached as an icon's, under the document's
-folder and nowhere else, and a file larger than 8 MB is refused. A path that cannot be reached, or
-a file that is not there, leaves an empty space. A picture is fetched only when it is drawn, so one
-inside a folded div costs nothing until the div is opened. Markdown text shows the same images,
-`![plate](images/plate.jpg)` (see "Markdown Text Formatting").
-
-A picture pasted or dropped into the editor of a markdown text is kept beside the document, in
-`images/<document name>/` under a name made from the time, such as
-`images/tracker/20261014-153012.png`, and the text gets `![](images/tracker/20261014-153012.png)`
-where the caret is. The same types and the same 8 MB hold as for a picture shown. A text that
-says `markdown=false`, and a one-line field, take no pictures, since there the reference would
-only be words. Removing the reference from the text leaves the file where it is.
-
-#### Marks
-
-A `mark` is drawn and nothing more: it is unnamed, holds no value, and, like an unnamed `div`, is
-no step of any address, so it can be added to or taken out of a document without changing a
-formula. Its `type` says what it draws.
-
-`grip` is the place an entry of a movable list, or a card of a board, is dragged by: a press on it
-lifts the entry whatever lies around it, and a finger on it drags at once. Where the entry cannot be
-dragged - its list is not movable or is sorted with nowhere else to drop into, or the entry says
-`movable=false` - it is drawn faint and lifts nothing.
-
-```overseer
-div Card (layout="vertical") {
-    div (layout="horizontal") {
-        mark (type="grip")
-        string title = ""
+int count = 0
+button add (label="+1") {
+    on click {
+        inc (path="../count")
     }
-    text notes = ""
 }
+enum stage (vocabulary="/Stages") = "open" {
+    on change {
+        if (cond=$(../stage == "done")) {
+            set (path="../finished") = $(today())
+        }
+    }
+}
+date finished = ""
 ```
 
-In a list drawn as a table a grip has a column of its own.
+#### Events
 
-`separator` is a line. It runs across the way its parent lays things out - down a horizontal row,
-along a vertical column - and its own `layout` turns it the other way. How it is drawn is the
-theme's (see "The theme and the mode"): solid, dashed or dotted, how thick, what colour, and whether
-it runs the whole way or is a short line in the middle.
+- `click` - a button pressed, or a div that carries it pressed anywhere (see "A whole entry as the
+  thing you press").
+- `change` - a field's value changed by hand: typed, or picked from a chip. The new value is written
+  first, and the handler and the value are one change, so the handler reads what was just chosen
+  and one undo takes back both.
+- `load`, `unload` - on a `mount`; without a block of its own, a mount loads and unloads what it
+  names.
+
+#### Actions
+
+A path is found as a formula's is (see "Path References"), from the node that carries the
+block - so a button's `../` is the node the button sits in. `path="../node.param"` names a
+parameter of the node rather than its value. An entry of a list is named by its place in a path,
+`../Comments[-1]/body`, or by a key field and value in the actions that change a list; `keyField`
+is the list's own `key` where it names none. A value is written after the action, `= value`, and
+can be a formula.
+
+| action | what it does |
+| --- | --- |
+| `set (path) = value` | writes the value; `mode="formula"` writes a formula as itself, to be worked out where it lands |
+| `inc (path, by)`, `dec (path, by)` | adds or takes away `by`, 1 unless it says |
+| `toggle (path)` | turns a `bool` over |
+| `clear (path)` | removes what the field holds, so its template's or type's value stands |
+| `set_now (path, clock)` | today's date, by the `local` clock or `utc` |
+| `set_now_ts (path, offset)` | the moment now, `offset` seconds later |
+| `append (list, template, value, from) { ... }`, `prepend (...)` | a new entry at the end or the front, made from the list's template (or `template=`), its fields set by the block - `- field = value` - or by `from` (see "A form that fills an entry"); a list of plain values takes `value=` |
+| `ensure_in_list (list, keyField, keyValue, template, position)` | the entry holding that key, made if there is none - at the end, or the front with `position="first"` |
+| `set_in_list (list, keyField, keyValue, field) = value` | writes one field of the entry holding that key |
+| `remove (from, keyField, keyValue)` | takes away the entry holding that key; `remove_from_list` and `list=` say the same |
+| `move (from, keyField, keyValue, to, at)` | moves the entry to another list, or to place `at` in its own |
+| `sort (list, by, order, stable)` | puts the entries in the order `by` gives, `by="$(x/title)"`, `asc` or `desc`, and writes that order |
+| `clear_list (path)` | takes away every entry |
+| `if (cond) { ... }` | runs the actions inside when the condition holds (see below) |
+| `refuse = "why"` | stops the press and writes nothing (see "Saying no to a press") |
+| `start_editing (path)` | opens a field for typing (see "Opening a field for editing") |
+| `fold (path)`, `unfold (path)`, `toggle_fold (path)` | folds a div away or brings it back (see "Folding a div away") |
+| `load_mount (path)`, `unload_mount (path)` | brings in, or lets go of, what a mount names |
+
+A press is one change: every action in it is written together, and one undo takes back all of
+it. An action that fails - a path that names nothing, say - refuses the whole press, and nothing of it
+is written.
+
+#### Who may change what
+
+`mutable` says what a person may change by hand in the page: `true`, the change is the
+document's and is written to it; `false`, it is not offered; `"guarded"`, it is changed for
+whoever is looking and never written - which day a tracker shows, what a box holds while it is
+typed into. It is inherited, so a tab says it once for everything inside, and it can be a
+formula. A document that says nothing is for reading. A drag is a change by hand too, and needs
+writes allowed there.
+
+Actions, and programs writing through the server, are not held back by it: the document said what
+they do. An action that writes a guarded field changes it for whoever pressed, and the file keeps
+what it said.
 
 ```overseer
-div Row (layout="horizontal") {
-    string name = ""
-    mark (type="separator")
-    int count = 0
-    mark (type="separator", layout="horizontal")
+tab Tasks (mutable=true) {
+    date showing (mutable="guarded") = $(today())
+    int total (mutable=false) = $(Items.count())
 }
 ```
-
-In a list drawn as a table the rules between columns are separators the entry declares, one for
-each place a rule is wanted. Each has a column of its own that takes no room unless it asks for a
-`width`, so its line sits on the edge between its neighbours, and the same separator lines up from
-row to row and on through the heading. One laid along the row, as the last one above, is a line of
-its own across the row, under it or over it as it comes last or first.
-
-A `mark` of a type the page does not know draws nothing.
 
 #### Conditional actions inside action blocks
 
@@ -817,7 +796,7 @@ on click {
 Notes:
 - `cond` should evaluate to a boolean. Standard formula comparisons and logical operations are supported.
 - Nested content of `if { ... }` must be actions; field assignments inside action blocks follow the usual `- field = value` rules when used within `append`/`prepend` object initializers.
-- This conditional is available only within action contexts (e.g., inside `on click {}` or `on timeout {}` blocks).
+- This conditional is available only within action contexts (inside `on click {}` or `on change {}` blocks, or another `if`).
 
 #### Saying no to a press
 
@@ -1062,9 +1041,187 @@ div Notes (foldable=true, folded=$(/project/fold_all), label="Notes") { ... }
 
 `hidden=true` wins over any fold.
 
+### 4. Fields and Marks
 
+What a field shows besides its value - icons, chips, pictures, charts - and the nodes drawn with
+no value at all.
 
-### Showing a time as a duration
+#### Showing values
+
+A number is shown as it is unless the field says otherwise: `precision` gives the digits after the
+point, `format="trim"` drops the zeros that leaves at the end, and `prefix` and `suffix` go either
+side of it. What is stored is the number alone.
+
+```overseer
+float weight (precision=1, suffix=" kg") = 82.46          // 82.5 kg
+float portions (precision=2, format="trim") = 1.5          // 1.5
+int price (prefix="$") = 12                                // $12
+```
+
+A `timestamp` is stored as a moment and shown in the viewer's own time zone: by `precision`,
+`seconds` unless it says `minutes`, `hours` or `days`, or by `format` - `date`, `time` (to the
+`precision` given), `datetime` or `iso`.
+
+```overseer
+timestamp eaten (format="time", precision="minutes") = "2026-10-18T09:30:00+04:00"   // 09:30
+```
+
+`freeze=true` keeps what a formula gave at the moment its entry was made: in a new entry the field
+is written with the value its formula works out, and from then on it states that value rather than
+following the formula. A day's target that starts as yesterday's, and stays what it was once
+yesterday changes, is a formula with `freeze=true`.
+
+#### Icons
+
+A button can show an icon, alone or in front of its label: `icon` names one from the library
+that comes with Overseer. An icon is drawn in the colour of the text around it.
+
+```overseer
+button add (icon="plus", label="Add") { }
+button note (icon="note") { }
+```
+
+Names are lower case, words joined by `-`. The library holds Overseer's own icons - `cross`,
+`check`, `arrow-up`, `arrow-down`, `arrow-left`, `arrow-right`, `ellipsis-h`, `ellipsis-v`,
+`burger`, `note` - then every icon of [Lucide](https://lucide.dev/icons) and of
+[Tabler](https://tabler.io/icons) under their own names, Tabler's filled ones with `-filled`
+added (`heart-filled`). Where two have the same name, the first in that order is the one drawn. A
+name the library does not have leaves an empty space the size of an icon. An icon-only button
+says its name on hover. A button wider than what it shows - given a `width`, or stretched across
+a vertical div - keeps its icon and label together in its middle.
+
+##### Icons in text
+
+Any text a document shows can hold an icon, written `<icon=name>` where the icon goes: a label, a
+value, a tab's label, a button's label, a tag or enum name, hover text, markdown.
+
+```overseer
+string due (label="<icon=clock> Due") = "today"
+button add (label="<icon=plus>") { }
+- {
+    - tag = "veg"
+    - name = "<icon=carrot> vegetable"
+}
+text note (markdown=true) = "<color=red | <icon=alarm-clock> **late**>"
+```
+
+The text is kept as written - in the file, in formulas, in the editor - and only drawing turns
+the tag into the icon. `icon="plus"` on a button is the short way of writing a label of
+`<icon=plus>`; a button or a chip that shows only icons says its name, or its tag, on hover.
+Anything else in angle brackets stays text. Where only text can go - the window's title - the
+icons are left out.
+
+A document can bring its own icons: a name with a `/` in it, or ending in `.svg`, is the path of
+an SVG file relative to the document's own folder. It is drawn in its own colours. After the name,
+`color=` draws any icon - the library's or the document's - in one colour instead of the text's.
+
+```overseer
+string carrot (label="<icon=icons/carrot.svg> Carrot") = "fresh"
+string late (label="<icon=alarm-clock color=#E91E63> Late") = "2 days"
+string pantry (label="<icon=icons/jar.svg color=gray> Pantry") = "full"
+```
+
+Only the document's folder and the folders under it can be reached: a path that starts at a root
+or a drive, or holds `..`, names no icon, and nor does a file that is not `.svg` or is larger than
+256 KB. Such a name, like one the library does not have, leaves an empty space where the icon
+would be. The SVG is drawn as a picture, so nothing it carries runs.
+
+##### Chips in text
+
+Any text a document shows can name an entry of a vocabulary (see "Tags"), written `<#key>`: it is
+drawn as that entry's chip, with its name, its colour and its `title` on hover - the chip a `tags`
+field holding the key would draw. The key is looked up in the text's own field's `vocabulary`, or
+else the nearest `context vocabulary`, so a container that names a list once lets everything inside
+mention its entries:
+
+```overseer
+tab project (label="Project") {
+    context vocabulary = "/project/Items, /project/History"
+    ...
+    text body (markdown=true) = "Waits on <#parser>, as <#escape> did."
+}
+```
+
+A key no vocabulary holds is drawn as a plain chip of the word. As with icons, the text is kept as
+written - in the file, in formulas, in the editor - and a filter matches the key inside it. Inside
+markdown code, `` `<#key>` `` stays text, and so does `` `<icon=name>` ``.
+
+Pressing a chip that stands for an entry - in text, in a `tags` field, or an `enum` with nothing to
+pick - shows the entry: the folds and tabs around it open, it is scrolled into view and marked for
+a moment. An entry the filter hides, or one in a list the page does not draw, is not shown, and
+the chip says why on hover.
+
+#### Images
+
+An `image` shows a picture the document keeps beside it: its value is the path of a PNG, JPEG,
+WebP or GIF file relative to the document's own folder.
+
+```overseer
+image plate (width=50%) = "images/plate.jpg"
+image shelf (label="The pantry shelf") = "images/shelf.png"
+```
+
+It is drawn as large as it is given room for, keeping its proportions: `width` and `height` size
+it, as they size any node. Its label heads it and says what the picture is to whoever cannot see
+it; without one, its name does. The same paths are reached as an icon's, under the document's
+folder and nowhere else, and a file larger than 8 MB is refused. A path that cannot be reached, or
+a file that is not there, leaves an empty space. A picture is fetched only when it is drawn, so one
+inside a folded div costs nothing until the div is opened. Markdown text shows the same images,
+`![plate](images/plate.jpg)` (see "Markdown Text Formatting").
+
+A picture pasted or dropped into the editor of a markdown text is kept beside the document, in
+`images/<document name>/` under a name made from the time, such as
+`images/tracker/20261014-153012.png`, and the text gets `![](images/tracker/20261014-153012.png)`
+where the caret is. The same types and the same 8 MB hold as for a picture shown. A text that
+says `markdown=false`, and a one-line field, take no pictures, since there the reference would
+only be words. Removing the reference from the text leaves the file where it is.
+
+#### Marks
+
+A `mark` is drawn and nothing more: it is unnamed, holds no value, and, like an unnamed `div`, is
+no step of any address, so it can be added to or taken out of a document without changing a
+formula. Its `type` says what it draws.
+
+`grip` is the place an entry of a movable list, or a card of a board, is dragged by: a press on it
+lifts the entry whatever lies around it, and a finger on it drags at once. Where the entry cannot be
+dragged - its list is not movable or is sorted with nowhere else to drop into, or the entry says
+`movable=false` - it is drawn faint and lifts nothing.
+
+```overseer
+div Card (layout="vertical") {
+    div (layout="horizontal") {
+        mark (type="grip")
+        string title = ""
+    }
+    text notes = ""
+}
+```
+
+In a list drawn as a table a grip has a column of its own.
+
+`separator` is a line. It runs across the way its parent lays things out - down a horizontal row,
+along a vertical column - and its own `layout` turns it the other way. How it is drawn is the
+theme's (see "The theme and the mode"): solid, dashed or dotted, how thick, what colour, and whether
+it runs the whole way or is a short line in the middle.
+
+```overseer
+div Row (layout="horizontal") {
+    string name = ""
+    mark (type="separator")
+    int count = 0
+    mark (type="separator", layout="horizontal")
+}
+```
+
+In a list drawn as a table the rules between columns are separators the entry declares, one for
+each place a rule is wanted. Each has a column of its own that takes no room unless it asks for a
+`width`, so its line sits on the edge between its neighbours, and the same separator lines up from
+row to row and on through the heading. One laid along the row, as the last one above, is a line of
+its own across the row, under it or over it as it comes last or first.
+
+A `mark` of a type the page does not know draws nothing.
+
+#### Showing a time as a duration
 
 A `timestamp` draws as an absolute moment by default, or as a duration either side of now:
 
@@ -1078,7 +1235,7 @@ is the moment, and only its reading moves. There is no timer node - there was on
 fired actions on a schedule, which only worked while the app happened to be open. Anything that
 has to happen whether or not a document is open belongs outside the document.
 
-### Tags
+#### Tags
 
 A `tags` field holds several labels in one string, drawn as chips and matched against a
 vocabulary elsewhere in the document. A label not in the vocabulary still shows, marked as no
@@ -1132,7 +1289,7 @@ Handed to a formula, a `tags` field reads as a list, so a document can ask what 
 bool is_vegan = $(labels.filter(|t| t == "vegan").count() > 0)
 ```
 
-### Enum
+#### Enum
 
 One value out of a list of them: a task's stage, say. The same vocabulary a `tags` field reads -
 a handle, a name, a colour - and the same chip, holding exactly one. Pressing it offers the other
@@ -1180,7 +1337,7 @@ enum stage (vocabulary="/project/Stages") = "filed" {
 from being finished. It changes only what the picker offers: a value held back can still be
 written some other way, so a handler that must not act on it says so in its own `if`.
 
-### Filter
+#### Filter
 
 A view over a list, and nothing more: it writes nothing and the document never changes. What
 is typed is matched against the fields named in `text` — the fields, not what is on screen,
@@ -1201,7 +1358,37 @@ filter (target="/project/Items", text="title, handle, Comments", enum="stage", t
 | `enum` | an `enum` field, its values offered as chips from its own vocabulary; picking two finds either |
 | `hide` | a field to offer one box for, which leaves out the entries where it is above nought |
 
-### 3. Layout and Styling
+#### Charts
+
+A `chart` draws its `plot`s, one series or one figure each. `kind` says how: `line`, unless it says
+`pie` or `bar`.
+
+A line plot reads a list: `source` names it, and `x` and `y` are lambdas giving each entry's point.
+
+```overseer
+chart trend (height=320px, width=100%) {
+    plot sys (label="Systolic", color="#b42c22", source=$(/blood_pressure/History),
+              x=$(|x| x/first_at), y=$(|x| x/avg_systolic))
+}
+```
+
+`domain-x-min`, `domain-x-max`, `domain-y-min` and `domain-y-max` fix the axes; without them the
+axes fit the points. A time on the x axis is drawn as a date.
+
+A pie plot is one slice, its `amount` a number; a bar plot is one bar, its `amount` drawn as a
+share of its `limit`, with a line where the limit is, and `suffix` after the figures it shows.
+
+```overseer
+chart macros (kind="pie", width=220px, height=150px) {
+    plot protein (label="Protein", color="#4A90E2", amount=$(totals/protein * 4))
+    plot fat (label="Fat", color="#e2a24a", amount=$(totals/fat * 9))
+}
+chart allowances (kind="bar", width=240px, height=150px) {
+    plot salt (label="Salt", amount=$(totals/salt), limit=6, suffix=" g")
+}
+```
+
+### 5. Layout and Styling
 
 #### Layout Parameters:
 ```overseer
@@ -1229,6 +1416,32 @@ div Element (margin=10) {
 
 div Element (margin-top=5, margin-bottom=15, margin-left=0, margin-right=20) {
     // Individual margin control per side
+}
+```
+
+`layout` is `vertical` unless it says `horizontal`, `flow`, `inherit` or `opposite`. `flow` fits as
+many equal columns as there is room for and wraps the rest - three cards across on a wide window,
+one on a narrow one - with `min-width` saying how narrow a column may get. `alignment` places the
+children across the way they run: `near`, `center` or `far`. `shadow` is `soft`, `lifted`,
+`floating`, `none`, or a CSS shadow of its own.
+
+```overseer
+list Ideas (entry=<Card>, layout="flow", min-width=260px) { }
+div Card (layout="horizontal", alignment="center", shadow="soft") { }
+```
+
+`view="table"` draws a list as a table, a column for each field of its entries, with `header=true`
+for a heading naming them and `sticky=true` to keep the heading in view while the rows scroll. A
+node of an entry that says `span="row"` is not a column but a line of its own across the row,
+under the cells when it comes last and over them when it comes first - a folded thread of
+comments under each task.
+
+```overseer
+list Items (entry=<Item>, view="table", header=true, sticky=true) { }
+div Item (layout="horizontal") {
+    string title = ""
+    int points = 1
+    div Talk (foldable=true, folded=true, span="row", label="Talk") { }
 }
 ```
 
@@ -1412,118 +1625,89 @@ Security & Sanitization:
 
 Use node-level `font-color` for broad styling, and inline color syntax for emphasis or multi-colored text segments.
 
-#### Chart Configuration:
-```overseer
-chart WeightChart (
-    type=line, 
-    data=../WeightData/*/Weight, 
-    labels=../WeightData/*/Date,
-    title="Weight Progress",
-    color=#0066CC
-) {
-    // chart styling options
-}
-```
-
 ---
 
 ## Complete Example
 
+A list of tasks with a vocabulary of stages, a form that adds one, totals worked out from the
+list, and buttons that change an entry or take it away:
+
 ```overseer
-// File: personal_dashboard.os
+div (hidden=true) {
+    div Stage (layout="horizontal") {
+        string tag = ""
+        string name = ""
+        string colour = "#6b7280"
+    }
+    div Task (layout="horizontal") {
+        context hide-labels = true
+        string handle (hidden=true) = ""
+        string title (label="Task") = ""
+        enum stage (label="Stage", vocabulary="/dashboard/Stages", width=12%) = "open"
+        int points (label="Points", width=10%) = 1
+        date due (label="Due", width=14%) = ""
+        int days_left (label="Days left", width=10%) = $(due == "" ? 0 : 0 - days_since(due))
 
-tab Dashboard {
-    div Statistics (background=#F5F5F5, padding=10px) {
-        int TotalTasks = $(../Tasks/Data.count())
-        int CompletedTasks = $(../Tasks/Data.where(Completed == true).count())
-        float CompletionRate = $(CompletedTasks / TotalTasks * 100)
-        
-        text Summary = $("Completed " + CompletedTasks + " out of " + TotalTasks + " tasks (" + CompletionRate + "%)")
+        button done (icon="check", hidden=$(stage == "done")) {
+            on click {
+                set (path="../stage") = "done"
+            }
+        }
+        button drop (icon="cross") {
+            on click {
+                remove (from="/dashboard/Tasks", keyValue=$(../handle))
+            }
+        }
     }
 }
 
-tab Tasks {
-    // Hidden template section
-    div (hidden=true) {
-        div TaskTemplate (background=$(Priority>20?"#FFE6E6":"#E6F3FF")) {
-            string Header = ""
-            text Description = ""
-            int Priority = 0
-            date Created = today()
-            date Due = ""
-            int DaysUntilDue = $(../Due - today())
-            bool Completed = false
-            
-            // Automatic priority boost for urgent tasks
-            trigger (condition=$(../DaysUntilDue < 2 && ../Completed == false)) {
-                action Set (target=../Priority) = $(../Priority + 10)
-            }
-            
-            // Completion checkbox
-            checkbox Completed {
-                action Set (target=../Completed) = true
-                action Add (target=../../Statistics/CompletedTasks) = 1
-            }
-            
-            // Priority adjustment buttons
-            button BumpPriority "↑" {
-                action Set (target=../Priority) = $(../Priority + 1)
-            }
-            
-            button LowerPriority "↓" {
-                action Set (target=../Priority) = $(../Priority - 1)
-            }
-            
-            button DeleteTask "Delete" {
-                action Delete (target=../)
-            }
+tab dashboard (label="Tasks", mutable=true) {
+    list Stages (entry=<Stage>, key="tag", hidden=true) {
+        - {
+            - tag = "open"
+            - name = "Open"
+            - colour = "#2563eb"
+        }
+        - {
+            - tag = "done"
+            - name = "Done"
+            - colour = "#10b981"
         }
     }
-    
-    // Task list with grid layout
-    list Data (entry=<../TaskTemplate>, layout=grid, sort=Priority, direction=vertical) {
-        div urgent_task {
-            Header = "Fix critical bug"
-            Description = "System crashes on startup"
-            Priority = 25
-            Due = "2025-07-25"
-        }
-        
-        div normal_task {
-            Header = "Write documentation"
-            Description = "Update API documentation"
-            Priority = 5
-            Due = "2025-07-30"
-        }
-        
-        div completed_task {
-            Header = "Setup development environment"
-            Priority = 3
-            Due = "2025-07-20"
-            Completed = true
-        }
-    }
-    
-    // Add new task button
-    button AddTask "Add New Task" {
-        action Create (target=Data, template=<../Task>)
-    }
-}
 
-tab Analytics {
-    chart PriorityDistribution (
-        type=bar,
-        data=../Tasks/Data.group_by(Priority).count(),
-        title="Tasks by Priority Level",
-        color=#4A90E2
-    )
-    
-    chart CompletionTrend (
-        type=line,
-        data=../Statistics/CompletionHistory/*/Rate,
-        labels=../Statistics/CompletionHistory/*/Date,
-        title="Completion Rate Over Time"
-    )
+    div (layout="horizontal") {
+        int open (label="Open", mutable=false) = $(Tasks.filter(|x| x/stage != "done").count())
+        int points_left (label="Points left", mutable=false) = $(Tasks.filter(|x| x/stage != "done").sum(|x| x/points))
+    }
+
+    div NewTask (layout="horizontal") {
+        textbox title (placeholder="a new task") = ""
+        textbox points (placeholder="points", width=10%) = ""
+        textbox handle (hidden=true) = $(fresh_key(/dashboard/Tasks))
+        button add (label="Add") {
+            on click {
+                if (cond=$(../title == "")) {
+                    refuse = "say what the task is"
+                }
+                append (list="/dashboard/Tasks", from="..")
+            }
+        }
+    }
+
+    list Tasks (entry=<Task>, key="handle", view="table", header=true,
+               sort_by=$(|x| x/stage == "done" ? 1 : 0)) {
+        - {
+            - handle = "k7m2"
+            - title = "Write the guide"
+            - points = 3
+            - due = "2026-10-25"
+        }
+        - {
+            - handle = "p4t9"
+            - title = "Read the specification"
+            - stage = "done"
+        }
+    }
 }
 ```
 
@@ -1532,12 +1716,11 @@ tab Analytics {
 ## File Organization
 
 ### Single File
-```overseer
-// simple_tasks.os
-div Tasks {
-    // all content in one file
-}
-```
+
+A document is one `.os` file, and everything it needs can be in it. Two ways reach beyond it: a
+template from another file (see "A template from another file"), which is how documents share a
+structure - the templates that ship with Overseer are in its `library` folder - and a mount, which
+is how they share data.
 
 ### Mounting another document
 
@@ -1561,9 +1744,16 @@ string name = $(FOODS.filter(|f| f/handle == ../food).map(|f| f/name).first())
 
 `source` is relative to the document that declares the mount, not to the working directory.
 
+A lazy mount brings in what it names once something asks for it; `load_mount` brings it in from a
+press and `unload_mount` lets it go again (see "Actions and Events").
+
 ---
 
 ## Comments
+
+A document is meant to be read without them: names, labels and structure say what it holds. A
+comment is for what they cannot say - why something is the way it is. Comments are kept where they
+are when the document is saved.
 
 ```overseer
 // Single line comment
@@ -1590,18 +1780,20 @@ div Tasks {
 
 ## Reserved Keywords
 
-- **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
-- **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
+- **Layout**: `layout` (`vertical`, `horizontal`, `flow`, `inherit`, `opposite`), `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`, `alignment`, `min-width`
+- **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
-- **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`)
-- **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
-- **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
-- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is)
-- **Mounts**: `source`, `lazy`, `mutable`
+- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`
+- **Values**: `precision`, `format`, `prefix`, `suffix`, `mode` (`elapsed`, `remaining`, on a `timestamp`)
+- **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
+- **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
+- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
+- **Mounts**: `source`, `lazy`, `mutable`, `hidden`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`
 - **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
+- **Events**: `on click`, `on change`, `on load`, `on unload`
 - **Types** (not to be a template's name): `tab`, `div`, `list`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context)
 

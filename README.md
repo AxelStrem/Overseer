@@ -85,6 +85,7 @@ reformats itself on the first button press is a diff nobody can review.
 
 ## Reading further
 
+- [AGENTS.md](AGENTS.md) — a short guide to the language for agents, and how to see a document
 - [overseer_syntax_specification.md](overseer_syntax_specification.md) — the DSL, node by node
 - [technical_architecture.md](technical_architecture.md) — how a document becomes a screen
 - [API.md](API.md) — reading and writing documents over the server
