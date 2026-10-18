@@ -15,6 +15,19 @@
     --ov-danger: #ef4444;
     --ov-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --ov-radius: 8px;
+    /* The same keys as a container says them, for a kind of element to fall back to - see
+       "A kind of element in the theme" below. */
+    --ov-theme-background: var(--ov-background);
+    --ov-theme-surface: var(--ov-surface);
+    --ov-theme-text: var(--ov-text);
+    --ov-theme-muted: var(--ov-muted);
+    --ov-theme-line: var(--ov-line);
+    --ov-theme-accent: var(--ov-accent);
+    --ov-theme-success: var(--ov-success);
+    --ov-theme-warning: var(--ov-warning);
+    --ov-theme-danger: var(--ov-danger);
+    --ov-theme-font: var(--ov-font);
+    --ov-theme-radius: var(--ov-radius);
     --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
     /* A shade laid over whatever is beneath, so that a highlight keeps the colour of a tinted
        row rather than covering it with the page's own. */
@@ -1974,6 +1987,125 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     background-color: var(--ov-background);
 }
 
+/* A kind of element in the theme: `context theme { - button { - accent = ... } }` gives the
+   buttons inside a container a key of their own, and every other kind keeps the container's. Each
+   kind's element takes the general keys again from its own, or else from what the container says
+   (`--ov-theme-*`, written beside the general keys), so what is drawn inside it follows and nothing
+   that reads a key needs to know about kinds. Another kind inside it starts again from the
+   container's. Important, because a list that declares a theme has the general keys written on
+   its own element, and its own `table` keys still have to win there. */
+.overseer-button {
+    --ov-background: var(--ov-button-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-button-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-button-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-button-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-button-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-button-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-button-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-button-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-button-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-button-font, var(--ov-theme-font)) !important;
+    --ov-radius: var(--ov-button-radius, var(--ov-theme-radius)) !important;
+}
+
+.boolean-field input[type="checkbox"],
+.checkbox-field input[type="checkbox"] {
+    --ov-background: var(--ov-checkbox-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-checkbox-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-checkbox-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-checkbox-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-checkbox-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-checkbox-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-checkbox-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-checkbox-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-checkbox-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-checkbox-font, var(--ov-theme-font)) !important;
+    --ov-radius: var(--ov-checkbox-radius, var(--ov-theme-radius)) !important;
+}
+
+.tag-chip {
+    --ov-background: var(--ov-chip-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-chip-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-chip-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-chip-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-chip-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-chip-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-chip-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-chip-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-chip-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-chip-font, var(--ov-theme-font)) !important;
+    --ov-radius: var(--ov-chip-radius, var(--ov-theme-radius)) !important;
+}
+
+.tab-bar {
+    --ov-background: var(--ov-tab-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-tab-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-tab-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-tab-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-tab-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-tab-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-tab-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-tab-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-tab-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-tab-font, var(--ov-theme-font)) !important;
+    --ov-radius: var(--ov-tab-radius, var(--ov-theme-radius)) !important;
+}
+
+.overseer-list.view-table {
+    --ov-background: var(--ov-table-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-table-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-table-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-table-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-table-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-table-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-table-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-table-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-table-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-table-font, var(--ov-theme-font)) !important;
+    --ov-radius: var(--ov-table-radius, var(--ov-theme-radius)) !important;
+}
+
+.overseer-field {
+    --ov-background: var(--ov-field-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-field-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-field-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-field-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-field-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-field-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-field-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-field-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-field-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-field-font, var(--ov-theme-font)) !important;
+    --ov-radius: var(--ov-field-radius, var(--ov-theme-radius)) !important;
+}
+
+.overseer-chart {
+    --ov-background: var(--ov-chart-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-chart-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-chart-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-chart-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-chart-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-chart-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-chart-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-chart-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-chart-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-chart-font, var(--ov-theme-font)) !important;
+    --ov-radius: var(--ov-chart-radius, var(--ov-theme-radius)) !important;
+}
+
+.mark-separator {
+    --ov-background: var(--ov-separator-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-separator-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-separator-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-separator-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-separator-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-separator-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-separator-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-separator-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-separator-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-separator-font, var(--ov-theme-font)) !important;
+    --ov-radius: var(--ov-separator-radius, var(--ov-theme-radius)) !important;
+}
 /* A node given a font colour or size of its own keeps it to itself: what is drawn inside it is in
    the theme, as though it had not been said. With no weight of its own, so any class that colours
    or sizes a part of the page still does. A container that wants what is inside it to follow says

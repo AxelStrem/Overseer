@@ -7385,14 +7385,21 @@ export class OverseerRenderer {
 
     /**
      * A key of the theme as `--ov-<key>`; and a key that holds keys of its own - how one kind of
-     * element looks, `- checkbox { - style = switch }` - as `--ov-<kind>-<key>`.
+     * element looks, `- checkbox { - style = switch }` - as `--ov-<kind>-<key>`. A general key is
+     * also written as `--ov-theme-<key>`: the stylesheet gives each kind of element the general
+     * keys again from its own, `--ov-button-accent` or else `--ov-theme-accent`, and a variable
+     * cannot fall back to itself.
      */
     writeTheme(element, theme, prefix = '--ov-') {
         for (const key of theme.children || []) {
             if (!key?.name || key.name.startsWith('_')) continue
             const value = this.contextValue(key)
-            if (value !== null) element.style.setProperty(`${prefix}${key.name}`, value)
-            else if (Array.isArray(key.children) && key.children.length) this.writeTheme(element, key, `${prefix}${key.name}-`)
+            if (value !== null) {
+                element.style.setProperty(`${prefix}${key.name}`, value)
+                if (prefix === '--ov-') element.style.setProperty(`--ov-theme-${key.name}`, value)
+            } else if (Array.isArray(key.children) && key.children.length) {
+                this.writeTheme(element, key, `${prefix}${key.name}-`)
+            }
         }
     }
 

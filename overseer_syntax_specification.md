@@ -602,6 +602,17 @@ context mode = "system"
   - `separator`: `style` (`solid`, `dashed`, `dotted`), `thickness` (`1px`), `color` (the theme's
     `line` where it says none) and `length` - `full`, or a size such as `60%` or `12px` for a
     short line in the middle.
+- **A kind can also have the theme's general keys of its own**:
+  `context theme { - button { - accent = "#7c3aed" } - chip { - muted = "#475569" } }` draws the
+  buttons violet and the uncoloured chips slate, and leaves everything else in the theme. Each
+  kind's own key wins over the general one. That holds inside a part that changes only the general
+  `accent`, too, since that part's theme still holds the `button` key from above. A kind's key
+  reaches what is drawn inside that element, and another kind inside it starts again from the
+  container's theme: a `table` key changes the table's heading and rows, not the fields in it. The
+  kinds are `button`, `checkbox`, `chip` (tags and enums), `tab` (a tab bar and its tabs), `table`
+  (a list drawn as a table), `field`, `chart` and `separator`. Each of them changes what its look
+  takes from the theme, and nothing it draws in a fixed way: a button's label is white whatever
+  its `text`.
 - **`mode` is `"light"`, `"dark"` or `"system"`**, and `"system"` is the scheme the page is in -
   the browser's, or the computer's - sent with every request, and light where nothing says.
 - **`theme` is the name the page draws through.** The resolved theme of the document's top is the
