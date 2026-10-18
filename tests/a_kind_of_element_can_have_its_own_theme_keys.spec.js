@@ -35,6 +35,7 @@ const KINDS = {
   field: '.overseer-field',
   chart: '.overseer-chart',
   separator: '.mark-separator',
+  filter: '.overseer-filter',
 }
 
 const key = (name, value) => ({

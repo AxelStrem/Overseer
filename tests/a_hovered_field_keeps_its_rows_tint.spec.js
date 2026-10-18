@@ -26,7 +26,8 @@ function hoverTints() {
 describe('a hovered field keeps the tint of the row it is in', () => {
   for (const selector of ['.overseer-field:hover', '.field-value:hover']) {
     it(`${selector} is shaded with a tint, not an opaque theme colour`, () => {
-      expect(background(rule(selector))).toBe('var(--hover-tint)')
+      // A theme whose values have no frame says none, and the tint is what is left otherwise.
+      expect(background(rule(selector))).toMatch(/^(var\(--[\w-]+, )?var\(--hover-tint\)\)?$/)
     })
   }
 

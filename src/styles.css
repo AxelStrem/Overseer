@@ -46,7 +46,11 @@ body {
     font-family: var(--ov-font);
     background-color: var(--ov-background);
     color: var(--ov-text);
-    line-height: 1.6;
+    /* The theme's `size`, `leading` and `numerals`. A key no theme says leaves the variable
+       unset, and the property is then inherited as though nothing were written. */
+    font-size: var(--ov-size);
+    line-height: var(--ov-leading, 1.6);
+    font-variant-numeric: var(--ov-numerals--css);
 }
 
 /* Layout */
@@ -510,13 +514,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .tab-button {
-    padding: 8px 16px;
+    padding: var(--ov-tab-padding, 8px 16px);
     border: none;
     background: transparent;
     color: var(--ov-muted);
     border-radius: 6px 6px 0 0;
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--ov-tab-size, 14px);
+    font-weight: var(--ov-tab-weight, normal);
     border-bottom: 2px solid transparent;
     transition: all 0.2s;
 }
@@ -1081,6 +1086,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-list.view-table {
     display: grid;
     align-items: start;
+    /* The theme's `table/frame`: `none` draws no frame, fill or padding around the table. */
+    border: var(--ov-table-frame--border, 1px solid var(--ov-line));
+}
+
+.overseer-list.view-table[data-padding-is-default] {
+    padding: var(--ov-table-frame--pad, 8px) !important;
 }
 
 .overseer-list.view-table > .table-row,
@@ -1098,6 +1109,31 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     row-gap: 0;
 }
 
+/* A row is a card of its own, unless the theme says `table/row/rule`: then the rows are lines
+   of the table, with a rule of that thickness under each and no frame, gap or side padding - so
+   the cells sit under the heading's words. `pointed = tint` shades the row under the pointer,
+   or the one last tapped. The margins and padding are the renderer's defaults, inline, which is
+   why they are only replaced where it says they are its own. */
+.overseer-list.view-table > .table-row:not(.layout-wrapper) {
+    border: var(--ov-table-row-rule--border, 1px solid var(--ov-line));
+    border-bottom: var(--ov-table-row-rule--css, 1px) solid var(--ov-line);
+    border-radius: var(--ov-table-row-rule--radius, var(--ov-radius));
+    box-shadow: var(--ov-table-row-rule--shadow, var(--shadow));
+}
+
+.overseer-list.view-table > .table-row[data-margin-is-default] {
+    margin-top: var(--ov-table-row-rule--gap, 8px) !important;
+    margin-bottom: var(--ov-table-row-rule--gap, 8px) !important;
+}
+
+.overseer-list.view-table > .table-row[data-padding-is-default] {
+    padding: var(--ov-table-row-padding, 8px) var(--ov-table-row-rule--side, 8px) !important;
+}
+
+.overseer-list.view-table > .table-row:hover {
+    background-image: var(--ov-table-row-pointed--tint, none);
+}
+
 /* A grid item will not shrink below its content unless told it may, and these are columns of a
    fixed share of the width: without this a long title widens its column and drags the whole
    table out of shape. */
@@ -1111,14 +1147,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-list.view-table > .table-row > .overseer-field {
     display: flex;
     align-items: center;
-    padding: 0 6px;
+    padding: 0 var(--ov-table-cell-padding, 6px) 0 var(--ov-table-cell-padding--start, 6px);
 }
 
 .overseer-list.view-table > .table-row > .overseer-field > .field-value,
 .overseer-list.view-table > .table-row > .overseer-field > .text-content {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 1px 0;
+    padding: var(--ov-field-value-frame--pad, 1px 0);
     min-height: 0;
 }
 
@@ -1142,8 +1178,24 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-list.view-table > .table-row > .table-own-line {
     grid-column: 1 / -1;
     display: block;
-    padding: 0 6px 1px 6px;
+    padding: var(--ov-table-detail-padding, 0 6px 1px 6px);
     opacity: 0.85;
+}
+
+/* The theme's `table/detail`: the line drawn as a frame like any div's (and a field's, none), a
+   bar in the accent down its side on the surface, or plain. */
+.overseer-list.view-table > .table-row > .table-own-line.overseer-div {
+    border: var(--ov-table-detail--border, 1px solid var(--ov-line));
+    border-left: var(--ov-table-detail--side, var(--ov-table-detail--border, 1px solid var(--ov-line)));
+    border-radius: var(--ov-table-detail--radius, var(--ov-radius));
+    box-shadow: var(--ov-table-detail--shadow, var(--shadow));
+    background-image: var(--ov-table-detail--fill, none);
+}
+
+.overseer-list.view-table > .table-row > .table-own-line:not(.overseer-div) {
+    border-left: var(--ov-table-detail--side, none);
+    border-radius: var(--ov-table-detail--radius, 6px);
+    background-image: var(--ov-table-detail--fill, none);
 }
 
 .overseer-list.view-table > .table-row > .table-own-line > .field-value {
@@ -1153,11 +1205,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 /* The heading. Quiet on purpose: it names the columns and should not compete with them. */
 .table-header {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
+    font-size: var(--ov-table-heading-size, 11px);
+    font-weight: var(--ov-table-heading-weight, 600);
+    letter-spacing: var(--ov-table-heading-tracking--css, 0.03em);
+    text-transform: var(--ov-table-heading-case--css, none);
     color: var(--ov-muted);
-    border-bottom: 1px solid var(--ov-line);
+    border-bottom: var(--ov-table-heading-rule--css, 1px) solid var(--ov-line);
     padding: 2px 0 3px 0;
     background: var(--ov-background);
 }
@@ -1172,7 +1225,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .table-heading {
-    padding: 0 6px;
+    padding: 0 var(--ov-table-cell-padding, 6px) 0 var(--ov-table-cell-padding--start, 6px);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1225,6 +1278,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-field {
     border-radius: 6px;
     transition: background-color 0.2s;
+}
+
+/* The theme's `field/spacing`, in place of the renderer's default margin. */
+.overseer-field[data-margin-is-default] {
+    margin-top: var(--ov-field-spacing, 8px) !important;
+    margin-bottom: var(--ov-field-spacing, 8px) !important;
 }
 
 /* Add a little breathing room at the very top only for vertical layout */
@@ -1322,8 +1381,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 
+/* The theme's `field/value-frame`: `none` draws a value as text, with no padded frame of its own. */
 .field-value {
-    padding: 6px 8px;
+    padding: var(--ov-field-value-frame--pad, 6px 8px);
     border: 1px solid transparent;
     border-radius: 4px;
     min-height: 24px;
@@ -1332,8 +1392,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .field-value:hover {
-    border-color: var(--ov-line);
-    background: var(--hover-tint);
+    border-color: var(--ov-field-value-frame--hover, var(--ov-line));
+    background: var(--ov-field-value-frame--hover, var(--hover-tint));
 }
 
 .string-field .field-value {
@@ -1345,8 +1405,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     font-family: var(--ov-mono);
     /* The renderer makes this a block for number fields, which is what gives `text-align`
        something to move - see applyNodeStyles. Setting it here would not work: the display is
-       an inline style, and an inline style wins. */
-    text-align: right;
+       an inline style, and an inline style wins. The theme's `field/number-align` moves it. */
+    text-align: var(--ov-field-number-align, right);
     color: var(--ov-accent);
     font-weight: 500;
 }
@@ -1354,7 +1414,7 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* A column of figures is read down its right-hand edge, where the units line up - so the
    heading belongs over that edge rather than over the first digit. */
 .number-field label {
-    text-align: right;
+    text-align: var(--ov-field-number-align, right);
 }
 
 .date-field .field-value {
@@ -1500,7 +1560,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     justify-content: center;
     gap: 0; /* avoid stray inline gap artifacts next to text */
     overflow: hidden; /* hide any stray inline decorations */
-    padding: 8px 16px;
+    padding: var(--ov-button-padding, 8px 16px);
+    height: var(--ov-button-height, auto);
     /* Balanced margins so controls are not glued to the top in rows */
     margin: 6px 8px 6px 0;  /* top right bottom left */
     /* What the renderer worked out for this button, or the stylesheet's own answer when it had
@@ -1510,9 +1571,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     border: 1px solid var(--ov-line); /* restore visible border */
     border-radius: 6px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--ov-button-size, 14px);
     line-height: 1.2; /* avoid odd baseline/line artifacts */
-    font-weight: 500;
+    font-weight: var(--ov-button-weight, 500);
     text-decoration: none;
     transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
     outline: none;
@@ -1638,6 +1699,39 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* Darker while held, so a press reads as a press. */
 .overseer-button:active {
     background: var(--overseer-button-press, color-mix(in srgb, var(--ov-accent) 68%, black));
+}
+
+/* The theme's `button/spacing`, in place of the renderer's default margin. */
+.overseer-button[data-margin-is-default] {
+    margin-top: var(--ov-button-spacing, 8px) !important;
+    margin-bottom: var(--ov-button-spacing, 8px) !important;
+}
+
+/* The theme's `button/style`, marked by the renderer on a button the document did not colour
+   itself. Its label is set inline to read on the colour it was given, hence `!important`. */
+.overseer-button.ov-style-outline,
+.overseer-button.ov-style-outline:active {
+    background: transparent;
+    border: 1px solid var(--ov-line);
+    color: var(--ov-muted) !important;
+}
+
+.overseer-button.ov-style-outline:hover {
+    background: transparent;
+    border-color: var(--ov-accent);
+    color: var(--ov-accent) !important;
+}
+
+.overseer-button.ov-style-plain,
+.overseer-button.ov-style-plain:active {
+    background: transparent;
+    border-color: transparent;
+    color: var(--ov-accent) !important;
+}
+
+.overseer-button.ov-style-plain:hover {
+    background: var(--hover-tint);
+    border-color: transparent;
 }
 
 .overseer-button:focus,
@@ -1983,6 +2077,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* A container that changes the theme for what is inside it - see `applyContexts` in renderer.js. */
 .ov-themed {
     color: var(--ov-text);
+    font-size: var(--ov-size);
+    line-height: var(--ov-leading);
+    font-variant-numeric: var(--ov-numerals--css);
 }
 
 .ov-themed-background {
@@ -2116,6 +2213,22 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --ov-mono: var(--ov-separator-mono, var(--ov-theme-mono)) !important;
     --ov-radius: var(--ov-separator-radius, var(--ov-theme-radius)) !important;
 }
+
+.overseer-filter {
+    --ov-background: var(--ov-filter-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-filter-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-filter-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-filter-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-filter-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-filter-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-filter-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-filter-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-filter-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-filter-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-filter-mono, var(--ov-theme-mono)) !important;
+    --ov-radius: var(--ov-filter-radius, var(--ov-theme-radius)) !important;
+}
+
 /* A node given a font colour or size of its own keeps it to itself: what is drawn inside it is in
    the theme, as though it had not been said. With no weight of its own, so any class that colours
    or sizes a part of the page still does. A container that wants what is inside it to follow says
@@ -2402,9 +2515,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    padding: 1px 7px;
+    padding: var(--ov-chip-padding, 1px 7px);
     border-radius: 9px;
-    font-size: 11px;
+    font-size: var(--ov-chip-size, 11px);
     line-height: 16px;
     white-space: nowrap;
     /* The default, for a field that names no vocabulary or a tag the list does not hold. */
@@ -2423,6 +2536,12 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* A tag the document's list does not mention. Not hidden - it is in the document, and drawing
  * only the known ones would misreport what the field holds - but marked, because it is usually
  * a typo or a tag someone has since removed from the list. */
+/* The theme's `chip/label`: the text on a chip coloured by its vocabulary, or else whichever of
+ * dark and light the renderer found reads on that colour. */
+.tag-chip.chip-coloured {
+    color: var(--ov-chip-label, var(--chip-readable)) !important;
+}
+
 .tag-chip.tag-unknown {
     background-color: transparent;
     color: var(--ov-muted);
@@ -2440,6 +2559,21 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     color: inherit;
     /* Faint until wanted: the tag is what you are reading, the cross is what you reach for. */
     opacity: 0.5;
+    display: var(--ov-chip-remove--rest, inline-block);
+}
+
+/* The theme's `chip/remove` and `chip/add`: `pointed` shows them only on the field, or the
+   table row, under the pointer - on a touch screen, the one last tapped. */
+.tags-field:hover .tag-remove,
+.tags-field:focus-within .tag-remove,
+.table-row:hover .tag-remove {
+    display: var(--ov-chip-remove--pointed, var(--ov-chip-remove--rest, inline-block));
+}
+
+.tags-field:hover .tag-add,
+.tags-field:focus-within .tag-add,
+.table-row:hover .tag-add {
+    visibility: var(--ov-chip-add--pointed, var(--ov-chip-add--rest, visible));
 }
 
 .tag-remove:hover {
@@ -2452,10 +2586,11 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     color: var(--ov-muted);
     border-radius: 9px;
     padding: 0 6px;
-    font-size: 11px;
+    font-size: var(--ov-chip-size, 11px);
     line-height: 16px;
     cursor: pointer;
     opacity: 0.55;
+    visibility: var(--ov-chip-add--rest, visible);
 }
 
 .tag-add:hover {
@@ -2548,10 +2683,11 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 }
 
 .filter-text {
-    padding: 3px 8px;
+    padding: var(--ov-filter-padding, 3px 8px);
     border: 1px solid var(--ov-line);
     border-radius: 4px;
-    font-size: 12px;
+    font-size: var(--ov-filter-size, 12px);
+    width: var(--ov-filter-width, auto);
     min-width: 160px;
 }
 

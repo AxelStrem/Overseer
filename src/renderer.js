@@ -63,6 +63,45 @@ const CHIP_IN_TEXT = /<#([^<>\s]+)>/g
 const CHIP_IN_HTML = /&lt;#([^<>&\s]+)&gt;/g
 /// The ways a button can answer hover, the theme's `button/hover`; each is a class in the stylesheet.
 const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
+/// The ways a button can be drawn, the theme's `button/style`; `solid` is the stylesheet's own.
+const BUTTON_STYLES = ['outline', 'plain']
+/// The kinds of element a theme says something about, and those of them that hold others - a
+/// table's `button` keys are how the buttons in a table look.
+const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'filter']
+const KINDS_HOLDING = { table: '.overseer-list.view-table', tab: '.tab-bar', filter: '.overseer-filter' }
+
+/// A theme key said in words, as the CSS values the stylesheet reads: each is written beside the
+/// key as `--ov-<key>--<part>`, and a word that means today's look writes `initial`, which leaves
+/// the stylesheet to its own fallback - and undoes what a theme further out said.
+const unsaid = (...parts) => Object.fromEntries(parts.map((p) => [p, 'initial']))
+const THEME_WORDS = {
+    numerals: (v) => ({ css: v === 'tabular' ? 'tabular-nums' : 'normal' }),
+    case: (v) => ({ css: v === 'upper' ? 'uppercase' : 'none' }),
+    tracking: (v) => ({ css: /^-?[\d.]+$/.test(v) ? `${v}em` : v }),
+    // A rule under a table's rows draws them as lines of the table rather than as cards.
+    rule: (v) => ({
+        css: v === 'none' ? '0px' : v,
+        border: 'none', radius: '0px', shadow: 'none', gap: '0px', side: '0px',
+    }),
+    // Said, it is the space after a cell's content, and none comes before it.
+    'cell-padding': () => ({ start: '0px' }),
+    'value-frame': (v) => v === 'none' ? { pad: '0px', hover: 'transparent' } : unsaid('pad', 'hover'),
+    frame: (v) => v === 'none' ? { border: 'none', pad: '0px' } : unsaid('border', 'pad'),
+    pointed: (v) => v === 'tint'
+        ? { tint: 'linear-gradient(var(--hover-tint), var(--hover-tint))' } : unsaid('tint'),
+    detail: (v) => {
+        if (v === 'bar') return {
+            border: 'none', side: '3px solid var(--ov-accent)', shadow: 'none', radius: '0px',
+            fill: 'linear-gradient(var(--ov-surface), var(--ov-surface))',
+        }
+        if (v === 'plain') return { border: 'none', side: 'none', shadow: 'none', radius: '0px', fill: 'none' }
+        return unsaid('border', 'side', 'shadow', 'radius', 'fill')
+    },
+    remove: (v) => v === 'pointed' ? { rest: 'none', pointed: 'inline-block' }
+        : v === 'never' ? { rest: 'none', pointed: 'none' } : unsaid('rest', 'pointed'),
+    add: (v) => v === 'pointed' ? { rest: 'hidden', pointed: 'visible' }
+        : v === 'never' ? { rest: 'hidden', pointed: 'hidden' } : unsaid('rest', 'pointed'),
+}
 
 /// Text with its icons taken out, for places that can only hold text: a title attribute, the
 /// window's title, a search over names. A chip says its key.
@@ -1851,6 +1890,7 @@ export class OverseerRenderer {
                             return typeof asColour === 'string' ? asColour : null
                         }
                         const ownColour = stated('background-color')
+                        if (ownColour) element.dataset.ownColour = '1'
                         const sitsOn = ownColour ? null : handedBg
                         const base = ownColour || this.shiftedBy(sitsOn, 0.2)
                         const hover = stated('hover-color') || this.shiftedBy(base, 0.12)
@@ -1866,6 +1906,8 @@ export class OverseerRenderer {
                                 && node.parameters['font-color'] !== undefined)
                             if (!saidTheText) {
                                 element.style.color = this.wantsDarkText(base) ? '#1a1a1a' : '#ffffff'
+                            } else {
+                                element.dataset.ownText = '1'
                             }
                         }
                         // Handed no colour but "show what is behind you" - a row tinted only
@@ -2800,6 +2842,7 @@ export class OverseerRenderer {
             const bar = document.createElement('div')
             bar.className = 'tab-bar'
             bar.setAttribute('role', 'tablist')
+            this.drawInKindLook(bar)
             const pages = document.createElement('div')
             pages.className = 'tab-pages'
             system.append(bar, pages)
@@ -3072,6 +3115,8 @@ export class OverseerRenderer {
             delete list.dataset.columnSorts
         }
         this.arrangeTable(list)
+        // A table can say how the kinds inside it look.
+        this.drawInKindLook(list)
     }
 
     /**
@@ -4353,6 +4398,7 @@ export class OverseerRenderer {
     createFilterElement(node) {
         const container = document.createElement('div')
         container.className = 'overseer-filter'
+        this.drawInKindLook(container)
 
         const target = String(this.getParameterValue(node, 'target') || '')
             .split('/').filter(Boolean)
@@ -5123,6 +5169,10 @@ export class OverseerRenderer {
         if (known && known.colour) {
             chip.style.backgroundColor = known.colour
             chip.style.color = this.readableOn(known.colour)
+            // The theme's `chip/label`, where it says one, is the text on every coloured chip; the
+            // stylesheet falls back to this one.
+            chip.style.setProperty('--chip-readable', chip.style.color)
+            chip.classList.add('chip-coloured')
         }
         if (known && known.hover) chip.title = String(known.hover)
         // A chip that is only an icon still says what it is, when asked.
@@ -6806,6 +6856,8 @@ export class OverseerRenderer {
             } else {
                 element.style.marginTop = '8px'
                 element.style.marginBottom = '8px'
+                // Ours, so the theme's `field/spacing` and a table's rows may change it.
+                element.dataset.marginIsDefault = '1'
             }
         }
         if (!hasExplicitPadding) {
@@ -7415,7 +7467,10 @@ export class OverseerRenderer {
      * element looks, `- checkbox { - style = switch }` - as `--ov-<kind>-<key>`. A general key is
      * also written as `--ov-theme-<key>`: the stylesheet gives each kind of element the general
      * keys again from its own, `--ov-button-accent` or else `--ov-theme-accent`, and a variable
-     * cannot fall back to itself.
+     * cannot fall back to itself. A key said in words is written again as the CSS values it means,
+     * `--ov-<key>--<part>` (see `THEME_WORDS`). A kind's key that holds another kind's keys -
+     * `- table { - button { ... } }` - is written as `--ov-table-button-*`, and handed on to the
+     * buttons by each table they are in (`handOnKindsWithin`).
      */
     writeTheme(element, theme, prefix = '--ov-') {
         for (const key of theme.children || []) {
@@ -7424,8 +7479,41 @@ export class OverseerRenderer {
             if (value !== null) {
                 element.style.setProperty(`${prefix}${key.name}`, value)
                 if (prefix === '--ov-') element.style.setProperty(`--ov-theme-${key.name}`, value)
+                const words = THEME_WORDS[key.name]
+                if (words) {
+                    for (const [part, css] of Object.entries(words(String(value).trim()))) {
+                        element.style.setProperty(`${prefix}${key.name}--${part}`, css)
+                    }
+                }
             } else if (Array.isArray(key.children) && key.children.length) {
+                const holder = Object.keys(KINDS_HOLDING).find((kind) => prefix === `--ov-${kind}-`)
+                if (holder && THEME_KINDS.includes(key.name)) {
+                    if (!this._kindsHeld) this._kindsHeld = new Set()
+                    this._kindsHeld.add(holder)
+                }
                 this.writeTheme(element, key, `${prefix}${key.name}-`)
+            }
+        }
+    }
+
+    /**
+     * What a theme says of the kinds inside a table, a tab bar or a filter, handed to what is
+     * inside this one: `--ov-table-button-height` from the nearest theme above that says it,
+     * written on the table as `--ov-button-height`, which the buttons in it read as they read any.
+     * A container inside the table that says how buttons look is nearer still, and wins.
+     */
+    handOnKindsWithin(element, kind) {
+        if (!this._kindsHeld || !this._kindsHeld.has(kind)) return
+        const prefix = `--ov-${kind}-`
+        const seen = new Set()
+        for (let at = element.parentElement; at; at = at.parentElement) {
+            if (!at.style) continue
+            for (const name of Array.from(at.style)) {
+                if (!name.startsWith(prefix)) continue
+                const rest = name.slice(prefix.length)
+                if (seen.has(rest) || !THEME_KINDS.some((inner) => rest.startsWith(`${inner}-`))) continue
+                seen.add(rest)
+                element.style.setProperty(`--ov-${rest}`, at.style.getPropertyValue(name))
             }
         }
     }
@@ -7450,12 +7538,24 @@ export class OverseerRenderer {
     applyKindLooks() {
         const pending = this._lookPending || []
         this._lookPending = null
+        // What holds other kinds first, so that a table's buttons are marked from what the table
+        // says of buttons.
+        for (const box of pending) {
+            if (!box.isConnected) continue
+            const holder = Object.keys(KINDS_HOLDING).find((kind) => box.matches(KINDS_HOLDING[kind]))
+            if (holder) this.handOnKindsWithin(box, holder)
+        }
         for (const box of pending) {
             if (!box.isConnected) continue
             if (box.classList.contains('overseer-button')) {
                 const hover = this.themeAbove(box, 'button-hover')
                 for (const way of BUTTON_HOVERS) box.classList.toggle(`ov-hover-${way}`, way === hover)
-            } else {
+                // A button the document coloured itself keeps its colours whatever the theme's style.
+                const style = box.dataset.ownColour ? null : this.themeAbove(box, 'button-style')
+                for (const way of BUTTON_STYLES) box.classList.toggle(`ov-style-${way}`, way === style)
+                const label = this.themeAbove(box, 'button-label')
+                if (label && !BUTTON_STYLES.includes(style) && !box.dataset.ownText) box.style.color = label
+            } else if (box.matches('input[type="checkbox"]')) {
                 box.classList.toggle('ov-switch', this.themeAbove(box, 'checkbox-style') === 'switch')
             }
         }

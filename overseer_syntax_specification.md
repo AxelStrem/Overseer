@@ -656,11 +656,16 @@ context mode = "system"
 - **A theme is a `context theme`** in a file of its own. Those that ship with Overseer are in its
   library's `themes` folder; one in a `themes` folder beside `settings.os` is offered beside them,
   and takes the place of a shipped one of the same name. Its keys are `background`, `surface`,
-  `text`, `muted`, `line`, `accent`, `success`, `warning`, `danger`, `font`, `mono` and `radius`.
-  `font` is the font of the page, and `mono` the one the values of `string` and number fields,
-  code in markdown and the markdown editor are drawn in - a monospace font, unless a theme says
-  otherwise. The shipped theme works each colour out from `mode`, as
-  `$(mode == "dark" ? "#1e293b" : "#ffffff")`.
+  `text`, `muted`, `line`, `accent`, `success`, `warning`, `danger`, `font`, `mono`, `radius`,
+  `size`, `leading` and `numerals`. `font` is the font of the page, and `mono` the one the values
+  of `string` and number fields, code in markdown and the markdown editor are drawn in - a
+  monospace font, unless a theme says otherwise: `- mono = $(font)` draws values in the page's
+  font. `size` is the size of the text (`14px`), which values and text follow and labels,
+  headings, chips and buttons do not - their kinds say theirs; `leading` the height of a line, as
+  a factor of the size (`1.5`); `numerals` is `proportional` or `tabular`, digits of one width so
+  that figures line up down a column. The shipped theme works each colour out from `mode`, as
+  `$(mode == "dark" ? "#1e293b" : "#ffffff")`. A theme that leaves a key out leaves that part of
+  the page as it is drawn without one.
 - **A key that holds keys says how one kind of element looks**, and a container overrides one of
   them as it does any key: `context theme { - checkbox { - style = switch } }` draws the `bool` and
   `checkbox` fields inside it as switches rather than boxes, and `style = box` inside that draws
@@ -671,17 +676,52 @@ context mode = "system"
   - `separator`: `style` (`solid`, `dashed`, `dotted`), `thickness` (`1px`), `color` (the theme's
     `line` where it says none) and `length` - `full`, or a size such as `60%` or `12px` for a
     short line in the middle.
+  - `field`: `value-frame` - `box`, each value in a padded frame of its own that shows under the
+    pointer, or `none`, the value as text; `spacing`, the space above and below a field (`8px`);
+    `number-align`, `start` or `end` (the default), where a number sits in its field.
+  - `table`: `frame`, `box` or `none` - the frame and padding around the whole table;
+    `heading { size, weight, case, tracking, rule }` - the heading row's text size (`11px`), its
+    weight (`400` to `700`, `600`), `case` (`as-written` or `upper`), `tracking`, the space
+    between letters in em (`0.03`), and `rule`, the line under it (`none`, or a thickness, `1px`);
+    `row { padding, rule, pointed }` - the space above and below a row's cells (`8px`), `rule`,
+    which draws the rows as lines of the table rather than as cards, with a line of that thickness
+    in `line` under each (`none` for none), and `pointed`, `none` or `tint`, shading the row under
+    the pointer or, on a touch screen, the one last tapped; `cell-padding`, the space after each
+    cell's content, where by default there is `6px` on either side; `detail`, how a `span="row"`
+    line is drawn - `frame` as anything else, `bar` (a bar in `accent` down its side, on
+    `surface`) or `plain`; and `detail-padding`, the space around that line's content.
+  - `chip`: `size` (`11px`), `padding` (`1px 7px`), `label` - the text on a chip coloured by its
+    vocabulary, where by default it is light or dark, whichever reads on the colour - and
+    `remove` and `add`, the × that takes a tag off and the + of a `tags` field: `always`,
+    `pointed` (only on the field, or the table row, under the pointer or last tapped) or `never`.
+    The chips of a filter are chips like any.
+  - `button`: `height` (as tall as its padding makes it), `padding` (`8px 16px`), `spacing` (the
+    space above and below, `8px`), `size` and `weight` of the label (`14px`, `500`), `style` -
+    `solid`, filled with its colour; `outline`, a border in `line` and the label in `muted`, both
+    in `accent` under the pointer; or `plain`, no border or fill and the label in `accent` - and
+    `label`, the label's colour on a solid button, where by default it is whichever of light and
+    dark reads on the button. A button the document colours itself keeps its colours whatever
+    the `style`.
+  - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
+  - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box a filter is typed in.
+
+  Sizes are written as text, `"14px"`; weights and factors as numbers. A `table`, a `tab` bar and
+  a `filter` can also say how the kinds inside them look: `- table { - button { - height =
+  "22px" } }` gives the buttons in a table their own size and leaves every other button as it
+  was, and `- table { - field { - spacing = "0px" } }` packs its rows. A container inside the
+  table that says how buttons look is nearer to them still, and wins.
 - **A kind can also have the theme's general keys of its own**:
   `context theme { - button { - accent = "#7c3aed" } - chip { - muted = "#475569" } }` draws the
   buttons violet and the uncoloured chips slate, and leaves everything else in the theme. Each
   kind's own key wins over the general one. That holds inside a part that changes only the general
   `accent`, too, since that part's theme still holds the `button` key from above. A kind's key
   reaches what is drawn inside that element, and another kind inside it starts again from the
-  container's theme: a `table` key changes the table's heading and rows, not the fields in it. The
-  kinds are `button`, `checkbox`, `chip` (tags and enums), `tab` (a tab bar and its tabs), `table`
-  (a list drawn as a table), `field`, `chart` and `separator`. Each of them changes what its look
-  takes from the theme, and nothing it draws in a fixed way: a button's label is white whatever
-  its `text`.
+  container's theme: a `table` key changes the table's heading and rows, not the fields in it -
+  unless it holds that kind's keys, as above. The kinds are `button`, `checkbox`, `chip` (tags and
+  enums), `tab` (a tab bar and its tabs), `table` (a list drawn as a table), `field`, `chart`,
+  `separator` and `filter`. Each of them changes what its look takes from the theme, and nothing
+  it draws in a fixed way: a solid button's label is light or dark to read on its colour whatever
+  its `text`, and `button/label` says otherwise.
 - **`mode` is `"light"`, `"dark"` or `"system"`**, and `"system"` is the scheme the page is in -
   the browser's, or the computer's - sent with every request, and light where nothing says.
 - **`theme` is the name the page draws through.** The resolved theme of the document's top is the

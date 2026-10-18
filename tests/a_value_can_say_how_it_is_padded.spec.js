@@ -112,6 +112,7 @@ describe('a value can say how it is padded', () => {
     // marked tight trims this to 2px - and the card's list is not one of them.
     const rule = styles.match(/^\.field-value\s*\{([^}]*)\}/m)
     expect(rule, 'the value box has no rule of its own').not.toBeNull()
-    expect(rule[1]).toMatch(/padding:\s*6px\s+8px/)
+    // Through the theme's `field/value-frame`, which falls back to it.
+    expect(rule[1]).toMatch(/padding:\s*(var\(--[\w-]+,\s*)?6px\s+8px/)
   })
 })
