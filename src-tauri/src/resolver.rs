@@ -1283,12 +1283,18 @@ fn css_size_text(value: &OverseerValue) -> Option<String> {
 ///
 /// Each column carries what the renderer needs and nothing else: the field's name, to match a
 /// cell to a column; its label, which becomes the heading; its width, which moves from the cell
-/// to the column because a percentage on a grid item is a percentage of its own column; and
-/// whether it takes a line of its own below the rest, whether it is a grip - which is no data, so
-/// the page draws no rule between it and the column after it - and whether it is a button, since
-/// the buttons standing together at a row's end are its controls, with no rule between them.
+/// to the column because a percentage on a grid item is a percentage of its own column; whether
+/// it takes a line of its own below the rest; and whether it is a separator.
+///
+/// A mark has no name of its own - every one is called `mark` - so two of them in a row would be
+/// one column. A mark's column is named by its place among the template's marks instead,
+/// `mark#0`, `mark#1`, and the page counts the marks of a row the same way. A separator is a
+/// column only while it runs down the row; one laid along it (`layout="horizontal"`) rules a
+/// line of its own across the row, as `span="row"` does, and its column takes no room unless it
+/// asks for a width: the line it draws sits on the edge between its neighbours.
 fn table_columns(template: &OverseerNode) -> String {
     let mut columns = Vec::new();
+    let mut marks = 0;
     for child in &template.children {
         if is_event_or_action_name(&child.name)
             || is_always_hidden(child)
@@ -1300,27 +1306,35 @@ fn table_columns(template: &OverseerNode) -> String {
             Some(OverseerValue::String(s)) => s.clone(),
             _ => String::new(),
         };
+        let is_separator = child.node_type == "mark"
+            && matches!(
+                child.parameters.get("type"),
+                Some(OverseerValue::String(s)) if s == "separator"
+            );
+        let along_the_row =
+            is_separator && calculate_effective_layout(child, Some("horizontal")) == "horizontal";
         let width = child
             .parameters
             .get("width")
             .and_then(css_size_text)
-            .unwrap_or_default();
-        let spans_the_row = matches!(
-            child.parameters.get("span"),
-            Some(OverseerValue::String(s)) if s == "row"
-        );
-        let is_grip = child.node_type == "mark"
-            && matches!(
-                child.parameters.get("type"),
-                Some(OverseerValue::String(s)) if s == "grip"
+            .unwrap_or_else(|| if is_separator { "0px".to_string() } else { String::new() });
+        let spans_the_row = along_the_row
+            || matches!(
+                child.parameters.get("span"),
+                Some(OverseerValue::String(s)) if s == "row"
             );
+        let name = if child.node_type == "mark" {
+            marks += 1;
+            format!("mark#{}", marks - 1)
+        } else {
+            child.name.clone()
+        };
         columns.push(serde_json::json!({
-            "name": child.name,
+            "name": name,
             "label": label,
             "width": width,
             "span": spans_the_row,
-            "grip": is_grip,
-            "button": child.node_type == "button",
+            "separator": is_separator,
         }));
     }
     serde_json::to_string(&columns).unwrap_or_else(|_| "[]".to_string())

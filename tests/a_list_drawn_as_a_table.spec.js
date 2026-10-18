@@ -197,66 +197,6 @@ describe('the room a table does not have', () => {
   })
 })
 
-describe('rules between the cells', () => {
-  beforeEach(setupDOM)
-
-  it('are off unless asked for', () => {
-    render([withDone(1)])
-    expect(table().classList.contains('table-lines-columns')).toBe(false)
-    expect(table().classList.contains('table-lines-rows')).toBe(false)
-  })
-
-  it('can be asked for one at a time', () => {
-    render([withDone(1)], { lines: { String: 'vertical' } })
-    expect(table().classList.contains('table-lines-columns')).toBe(true)
-    expect(table().classList.contains('table-lines-rows'), 'vertical drew horizontals too')
-      .toBe(false)
-
-    setupDOM()
-    render([withDone(1)], { lines: { String: 'horizontal' } })
-    expect(table().classList.contains('table-lines-rows')).toBe(true)
-    expect(table().classList.contains('table-lines-columns')).toBe(false)
-  })
-
-  it('draws both when simply turned on', () => {
-    render([withDone(1)], { lines: { Boolean: true } })
-    expect(table().classList.contains('table-lines-columns')).toBe(true)
-    expect(table().classList.contains('table-lines-rows')).toBe(true)
-  })
-})
-
-describe('a grip in a table', () => {
-  beforeEach(setupDOM)
-
-  const WITH_GRIP = JSON.stringify([
-    { name: 'mark', label: '', width: '4%', span: false, grip: true },
-    { name: 'handle', label: 'id', width: '10%', span: false },
-    { name: 'title', label: 'title', width: '50%', span: false },
-  ])
-  const gripped = (n) => row(n, [
-    Object.assign(base('mark', 'mark'), { parameters: { type: { String: 'grip' } } }),
-    field('handle', `h${n}`, { label: 'id', width: 10 }),
-    field('title', `title ${n}`, { label: 'title', width: 50 }),
-  ])
-
-  it('has no rule between it and the column after it, in the rows or the heading', () => {
-    render([gripped(1)], {
-      _columns: { String: WITH_GRIP }, lines: { String: 'vertical' }, header: { Boolean: true },
-    })
-    const cells = Array.from(rowsOf()[0].children)
-    const flagged = cells.map((c) => c.classList.contains('table-no-rule'))
-    expect(flagged).toEqual([false, true, false])
-    const headings = Array.from(table().querySelectorAll('.table-heading'))
-    expect(headings.map((h) => h.classList.contains('table-no-rule')))
-      .toEqual([false, true, false])
-  })
-
-  it('leaves a table without one alone', () => {
-    render([withDone(1)], { lines: { String: 'vertical' } })
-    expect(table().querySelector('.table-no-rule')).toBeNull()
-  })
-})
-
 describe('a button in a table', () => {
   beforeEach(setupDOM)
 
@@ -275,7 +215,7 @@ describe('a button in a table', () => {
   it('sits in a cell of its own, in its column', () => {
     // The cell takes the rule down the column's edge, so the button keeps all four sides of its
     // own border, and the cell is what is centred in the column rather than the button's start.
-    render([withButton(1)], { _columns: { String: COLUMNS_WITH_BUTTON }, lines: { String: 'vertical' } })
+    render([withButton(1)], { _columns: { String: COLUMNS_WITH_BUTTON } })
     const cell = cellOf()
     expect(cell, 'the button was left as the cell').toBeTruthy()
     expect(cell.style.gridColumn).toBe('2')
@@ -289,24 +229,6 @@ describe('a button in a table', () => {
     app.renderer.arrangeTables()
     expect(document.querySelectorAll('.table-cell').length).toBe(1)
     expect(document.querySelectorAll('.table-cell .table-cell').length).toBe(0)
-  })
-
-  it('has no rule between it and a button beside it, but one before the first', () => {
-    const BUTTONS = JSON.stringify([
-      { name: 'handle', label: 'id', width: '20%', span: false },
-      { name: 'talk', label: '', width: '10%', span: false, button: true },
-      { name: 'pin', label: '', width: '10%', span: false, button: true },
-      { name: 'drop', label: '', width: '10%', span: false, button: true },
-    ])
-    const button = (name) => Object.assign(base(name, 'button'), {
-      parameters: { label: { String: name }, width: { CssSize: { Percentage: 10 } } },
-    })
-    render([row(1, [field('handle', 'h1', { label: 'id', width: 20 }), button('talk'), button('pin'), button('drop')])],
-      { _columns: { String: BUTTONS }, lines: { String: 'vertical' }, header: { Boolean: true } })
-    const cells = Array.from(rowsOf()[0].children)
-    expect(cells.map((c) => c.classList.contains('table-no-rule'))).toEqual([false, false, true, true])
-    const headings = Array.from(table().querySelectorAll('.table-heading'))
-    expect(headings.map((h) => h.classList.contains('table-no-rule'))).toEqual([false, false, true, true])
   })
 
   it('takes its cell with it when it is gone', () => {
@@ -402,12 +324,6 @@ describe('the stylesheet half', () => {
     const body = bodyOf('.overseer-list.view-table > .table-row')
     expect(body).toMatch(/grid-template-columns\s*:\s*subgrid/)
     expect(body).toMatch(/grid-column\s*:\s*1\s*\/\s*-1/)
-  })
-
-  it('draws the rules between columns straight', () => {
-    // A field's rounded corners bent its left border into something like an opening bracket.
-    expect(bodyOf('.overseer-list.view-table.table-lines-columns > .table-row > *'))
-      .toMatch(/border-radius\s*:\s*0/)
   })
 
   it('centres a button in its column', () => {

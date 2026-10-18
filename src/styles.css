@@ -824,6 +824,52 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     opacity: 0.9;
 }
 
+/* A separator: a line across the way its parent lays things out, drawn as the theme's `separator`
+   key says - `style`, `thickness`, `color` (the theme's `line` where it says none) and `length`.
+   The element fills the room it is given and the line is drawn inside it, centred: a `length`
+   of `full` is no size CSS knows, so the height or width falls back to filling the element. */
+.mark-separator {
+    display: block;
+    position: relative;
+    flex: none;
+    align-self: stretch;
+    pointer-events: none;
+}
+
+.mark-separator.separator-vertical {
+    width: var(--ov-separator-thickness, 1px);
+    margin: 0 6px;
+}
+
+.mark-separator.separator-horizontal {
+    height: var(--ov-separator-thickness, 1px);
+    margin: 6px 0;
+}
+
+.mark-separator::before {
+    content: '';
+    position: absolute;
+    margin: auto;
+}
+
+.mark-separator.separator-vertical::before {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    height: var(--ov-separator-length);
+    border-left: var(--ov-separator-thickness, 1px) var(--ov-separator-style, solid) var(--ov-separator-color, var(--ov-line));
+}
+
+.mark-separator.separator-horizontal::before {
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: var(--ov-separator-length);
+    border-top: var(--ov-separator-thickness, 1px) var(--ov-separator-style, solid) var(--ov-separator-color, var(--ov-line));
+}
+
 .overseer-dragging,
 .overseer-dragging * {
     user-select: none;
@@ -1143,35 +1189,21 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     opacity: 1;
 }
 
-/* Rules between the cells, for a table wide enough that the eye loses its place along a row. Off
-   by default: on a short table they are clutter, and the row's own tint already separates one row
-   from the next. `lines=true` draws both; `lines="vertical"` or `lines="horizontal"` draws one.
- *
- * Drawn on the left of each cell rather than the right, so that the column set does not have to
- * be consulted to know which cell is last. A row whose note takes a line of its own ends with the
- * note, so a right-hand rule would have to skip it and then find the real last column - and the
- * note is not the last column, it is under all of them.
- */
-.overseer-list.view-table.table-lines-rows > .table-row {
-    border-bottom: 1px solid var(--ov-line);
+/* A separator in a table row has a column of its own that takes no room: its line sits on the
+   edge between its neighbours, inside their padding, and runs the height of the row. The heading
+   draws one in the same column, so the rule goes on through it. */
+.overseer-list.view-table > .table-row > .mark-separator,
+.overseer-list.view-table > .table-header > .mark-separator {
+    width: 0;
+    margin: 0;
 }
 
-.overseer-list.view-table.table-lines-columns > .table-row > *,
-.overseer-list.view-table.table-lines-columns > .table-header > .table-heading {
-    border-left: 1px solid var(--ov-line);
-    /* A field's rounded corners would bend its left border into a bracket: a rule is straight. */
-    border-radius: 0;
-}
-
-/* No rule down the outside edge of the table, and none beside a note: it sits below the columns
-   rather than in one, so a line at its left would point at nothing. Nor one where the page says
-   a column divides nothing from the one before - after a grip, between buttons side by side. */
-.overseer-list.view-table.table-lines-columns > .table-row > *:first-child,
-.overseer-list.view-table.table-lines-columns > .table-header > .table-heading:first-child,
-.overseer-list.view-table.table-lines-columns > .table-header > .table-heading.table-no-rule,
-.overseer-list.view-table.table-lines-columns > .table-row > .table-no-rule,
-.overseer-list.view-table.table-lines-columns > .table-row > .table-own-line {
-    border-left: none;
+/* A rule along the row - a separator laid `horizontal` in it - is a line of its own across it. */
+.overseer-list.view-table > .table-row > .mark-separator.separator-horizontal {
+    width: auto;
+    height: var(--ov-separator-thickness, 1px);
+    padding: 0;
+    opacity: 1;
 }
 
 /* Field Styles */
@@ -1535,6 +1567,57 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .overseer-button:hover {
     background: var(--overseer-button-hover, color-mix(in srgb, var(--ov-accent) 82%, black));
     border-color: var(--ov-accent);
+}
+
+/* The other ways a button can answer hover, the theme's `button/hover`; `background` is the one
+   above. Each keeps the button's own colour and changes one thing instead. */
+.overseer-button.ov-hover-border:hover,
+.overseer-button.ov-hover-glow:hover,
+.overseer-button.ov-hover-lift:hover,
+.overseer-button.ov-hover-grow:hover,
+.overseer-button.ov-hover-none:hover {
+    background: var(--overseer-button-bg, var(--ov-accent));
+}
+
+.overseer-button.ov-hover-glow:hover,
+.overseer-button.ov-hover-lift:hover,
+.overseer-button.ov-hover-grow:hover,
+.overseer-button.ov-hover-none:hover {
+    border-color: var(--ov-line);
+}
+
+.overseer-button.ov-hover-border:hover {
+    border-color: var(--ov-accent);
+    box-shadow: inset 0 0 0 1px var(--ov-accent);
+}
+
+.overseer-button.ov-hover-glow:hover {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ov-accent) 45%, transparent),
+        0 0 10px 2px color-mix(in srgb, var(--ov-accent) 45%, transparent);
+}
+
+.overseer-button.ov-hover-lift,
+.overseer-button.ov-hover-grow {
+    transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+
+.overseer-button.ov-hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.18);
+}
+
+.overseer-button.ov-hover-grow:hover {
+    transform: scale(1.05);
+}
+
+/* A press still reads as one, whichever way the button answered hover. */
+.overseer-button.ov-hover-border:active,
+.overseer-button.ov-hover-glow:active,
+.overseer-button.ov-hover-lift:active,
+.overseer-button.ov-hover-grow:active,
+.overseer-button.ov-hover-none:active {
+    background: var(--overseer-button-press, color-mix(in srgb, var(--ov-accent) 68%, black));
+    transform: none;
 }
 
 /* Darker while held, so a press reads as a press. */

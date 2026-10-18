@@ -61,6 +61,8 @@ const ICON_IN_TEXT = /<icon=([^<>]*)>/g
 /// that key. In markdown it reaches the HTML escaped, as any `<` that opens no tag does.
 const CHIP_IN_TEXT = /<#([^<>\s]+)>/g
 const CHIP_IN_HTML = /&lt;#([^<>&\s]+)&gt;/g
+/// The ways a button can answer hover, the theme's `button/hover`; each is a class in the stylesheet.
+const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
 
 /// Text with its icons taken out, for places that can only hold text: a title attribute, the
 /// window's title, a search over names. A chip says its key.
@@ -3058,10 +3060,6 @@ export class OverseerRenderer {
         list.dataset.columns = String(columns)
         list.dataset.header = this.getParameterValue(node, 'header') ? '1' : ''
         list.dataset.stickyHeader = this.getParameterValue(node, 'sticky') ? '1' : ''
-        // `true` for both, or name the one wanted: `vertical` rules between the columns,
-        // `horizontal` between the rows.
-        const lines = this.getParameterValue(node, 'lines')
-        list.dataset.lines = (lines === null || lines === undefined) ? '' : String(lines)
         // The columns a reader may sort by, and how they are sorted now - for the heading, which
         // is drawn again with every arrangement and has only the element to go by.
         const sortable = this.sortableColumnsOf(node)
@@ -3098,14 +3096,9 @@ export class OverseerRenderer {
         // one that hides a filtered row.
         list.classList.add('view-table')
         list.classList.remove('layout-vertical', 'layout-horizontal', 'layout-flow')
-        const lines = list.dataset.lines || ''
-        list.classList.toggle('table-lines-columns', lines === 'true' || lines === 'vertical')
-        list.classList.toggle('table-lines-rows', lines === 'true' || lines === 'horizontal')
         list.style.gridTemplateColumns = across.map((c) => c.width || '1fr').join(' ')
 
         const column = new Map(across.map((c, i) => [c.name, i + 1]))
-        // The columns drawn without a rule at their left - see `columnsWithoutRule`.
-        const noRule = this.columnsWithoutRule(across)
 
         for (const row of Array.from(list.children)) {
             if (row.classList.contains('table-header')) continue
@@ -3117,11 +3110,14 @@ export class OverseerRenderer {
             // where the shorter one's text does. The content is centred inside the cell instead.
             row.style.alignItems = ''
 
+            // A mark has no name to find its column by, so it goes by its place among the row's
+            // marks, as the resolver numbered the template's: `mark#0`, `mark#1`.
+            let marks = 0
             for (let cell of Array.from(row.children)) {
                 cell = this.tableCellFor(cell)
                 if (!cell) continue
                 const held = cell.classList.contains('table-cell') ? cell.firstElementChild : cell
-                const name = this.fieldNameOf(held)
+                const name = held.classList.contains('overseer-mark') ? `mark#${marks++}` : this.fieldNameOf(held)
                 // The column owns the width now. Left on the cell, a percentage would be read
                 // against its own column rather than the row, and every cell would be a sliver
                 // of the space it asked for.
@@ -3136,7 +3132,12 @@ export class OverseerRenderer {
                     cell.style.gridColumn = '1 / -1'
                     cell.classList.add('table-own-line')
                 }
-                cell.classList.toggle('table-no-rule', noRule.has(Number(cell.style.gridColumn)))
+                // In a table a row is a row whatever its template says, so a separator is turned
+                // by where the table put it: down its column, or across the row on a line of its own.
+                if (held.classList.contains('mark-separator')) {
+                    held.classList.toggle('separator-vertical', column.has(name))
+                    held.classList.toggle('separator-horizontal', !column.has(name))
+                }
                 // The heading says what the column holds, so the cell need not repeat it.
                 const label = cell.querySelector(':scope > label')
                 if (label) label.remove()
@@ -3159,21 +3160,6 @@ export class OverseerRenderer {
         }
 
         this.drawTableHeading(list, across)
-    }
-
-    /**
-     * The numbers of the columns drawn with no rule between them and the column before: the one
-     * right after a grip, which is the handle on the row's edge and divides nothing, and a button
-     * right after a button, since the buttons standing together are one row's controls.
-     */
-    columnsWithoutRule(across) {
-        const without = new Set()
-        across.forEach((c, i) => {
-            if (i === 0) return
-            const before = across[i - 1]
-            if (before.grip || (before.button && c.button)) without.add(i + 1)
-        })
-        return without
     }
 
     /**
@@ -3201,11 +3187,17 @@ export class OverseerRenderer {
             sortable = JSON.parse(list.dataset.sortable || '[]')
             sorts = JSON.parse(list.dataset.columnSorts || '[]')
         } catch (_) { /* not sortable */ }
-        const noRule = this.columnsWithoutRule(across)
         across.forEach((c, i) => {
+            // A separator runs on through the heading, so its line is one from top to bottom.
+            if (c.separator) {
+                const line = document.createElement('span')
+                line.className = 'overseer-mark mark-separator separator-vertical'
+                line.style.gridColumn = String(i + 1)
+                header.appendChild(line)
+                return
+            }
             const cell = document.createElement('span')
             cell.className = 'table-heading'
-            if (noRule.has(i + 1)) cell.classList.add('table-no-rule')
             this.setTextWithIcons(cell, c.label || '')
             cell.style.gridColumn = String(i + 1)
             if (sortable.includes(c.name)) this.makeHeadingSort(list, cell, c.name, sorts)
@@ -5584,6 +5576,10 @@ export class OverseerRenderer {
     /// A grip is what an entry of a movable list, or a board card, is always dragged by. A type
     /// this page does not know draws an empty element, so a document written for a later page
     /// shows nothing here rather than something wrong.
+    ///
+    /// `mark (type="separator")` is a line. It runs across the way its parent lays things out -
+    /// down a row, along a column - unless its own `layout` says which way; the resolver works
+    /// that out as it does for a field's label. How it is drawn is the theme's `separator` key.
     createMarkElement(node) {
         const element = document.createElement('span')
         const type = String(this.getParameterValue(node, 'type') ?? '').trim().toLowerCase()
@@ -5592,6 +5588,12 @@ export class OverseerRenderer {
         if (type === 'grip') {
             element.classList.add('mark-grip')
             element.appendChild(this.createIconElement('grip-vertical'))
+        } else if (type === 'separator') {
+            const said = String(this.getParameterValue(node, 'layout') ?? '').toLowerCase()
+            const along = said === 'horizontal' || said === 'vertical'
+                ? said
+                : (this.getParameterValue(node, '_label_layout') === 'horizontal' ? 'horizontal' : 'vertical')
+            element.classList.add('mark-separator', `separator-${along}`)
         }
         this.applyLayoutStyles(element, node)
         this.applyNodeStyles(element, node)
@@ -6011,6 +6013,7 @@ export class OverseerRenderer {
     this.applyLayoutStyles(button, node)
     this.applyNodeStyles(button, node)
         this.markFoldButton(button, node)
+        this.drawInKindLook(button)
         return button
     }
 
@@ -7394,9 +7397,10 @@ export class OverseerRenderer {
     }
 
     /**
-     * Draw a field's checkbox in the look the theme around it gives checkboxes: a box, or a switch
-     * where `checkbox/style` is `switch`. A CSS variable cannot choose a selector, so the page
-     * reads the nearest `--ov-checkbox-style` and marks the box - but only once it is in the page:
+     * Draw a field's checkbox in the look the theme around it gives checkboxes - a box, or a switch
+     * where `checkbox/style` is `switch` - and a button in the way it answers hover, `button/hover`.
+     * A CSS variable cannot choose a selector, so the page reads the nearest `--ov-checkbox-style`
+     * or `--ov-button-hover` and marks the element - but only once it is in the page:
      * most of what is drawn is drawn into a wrapper first, and which theme it is under is known
      * only from where it lands. Every caller puts what it drew in place before it returns, so the
      * boxes drawn in one go are all decided together a microtask later, a walk up each.
@@ -7414,7 +7418,12 @@ export class OverseerRenderer {
         this._lookPending = null
         for (const box of pending) {
             if (!box.isConnected) continue
-            box.classList.toggle('ov-switch', this.themeAbove(box, 'checkbox-style') === 'switch')
+            if (box.classList.contains('overseer-button')) {
+                const hover = this.themeAbove(box, 'button-hover')
+                for (const way of BUTTON_HOVERS) box.classList.toggle(`ov-hover-${way}`, way === hover)
+            } else {
+                box.classList.toggle('ov-switch', this.themeAbove(box, 'checkbox-style') === 'switch')
+            }
         }
     }
 

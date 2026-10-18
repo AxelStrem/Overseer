@@ -133,34 +133,52 @@ fn a_field_can_ask_for_a_line_of_its_own() {
     assert_eq!(spanning[0]["name"], "note");
 }
 
+const MARKS: &str = r#"
+tab t (label="T") {
+    div (hidden=true) {
+        div Row (layout="horizontal") {
+            mark (type="grip")
+            string handle (label="id", width=10%) = ""
+            mark (type="separator")
+            string title (label="title", width=40%) = ""
+            mark (type="separator", width=8px)
+            string points (label="pts", width=10%) = ""
+            mark (type="separator", layout="horizontal")
+        }
+    }
+
+    list Rows (entry=<Row>, view="table", header=true) { }
+}
+"#;
+
 #[test]
-fn a_grip_is_marked_as_one_so_no_rule_is_drawn_beside_it() {
-    let nodes = resolved(include_str!("../../examples/projects/project.os"));
-    let columns = columns(&nodes, "Items");
-    assert_eq!(columns[0]["name"], "mark");
-    assert_eq!(columns[0]["grip"], true);
-    assert!(
-        columns[1..].iter().all(|c| c["grip"] == false),
-        "only the grip column is a grip: {:?}",
-        columns,
+fn marks_are_numbered_among_marks_so_two_never_share_a_column() {
+    // Every unnamed mark is called `mark`; named by that, the two separators would be one column
+    // and every row's cells would pile into it.
+    assert_eq!(
+        names(&resolved(MARKS), "Rows"),
+        vec!["mark#0", "handle", "mark#1", "title", "mark#2", "points", "mark#3"],
     );
 }
 
 #[test]
-fn a_button_is_marked_as_one_so_no_rule_is_drawn_between_buttons() {
-    let nodes = resolved(include_str!("../../examples/projects/project.os"));
-    let columns = columns(&nodes, "Items");
-    let buttons: Vec<&str> = columns
-        .iter()
-        .filter(|c| c["button"] == true)
-        .map(|c| c["name"].as_str().unwrap_or(""))
-        .collect();
-    assert!(buttons.contains(&"talk") && buttons.contains(&"drop"), "the buttons: {:?}", columns);
-    assert!(
-        columns.iter().filter(|c| c["name"] == "title").all(|c| c["button"] == false),
-        "a field is no button: {:?}",
-        columns,
-    );
+fn a_separator_down_the_row_is_a_column_that_takes_no_room() {
+    let columns = columns(&resolved(MARKS), "Rows");
+    let separators: Vec<&serde_json::Value> =
+        columns.iter().filter(|c| c["separator"] == true).collect();
+    assert_eq!(separators.len(), 3, "the grip is no separator: {:?}", columns);
+    assert_eq!(separators[0]["width"], "0px");
+    assert_eq!(separators[0]["span"], false);
+    // One that asks for room has it.
+    assert_eq!(separators[1]["width"], "8px");
+}
+
+#[test]
+fn a_separator_along_the_row_is_a_line_of_its_own() {
+    let columns = columns(&resolved(MARKS), "Rows");
+    let last = columns.last().expect("no columns");
+    assert_eq!(last["separator"], true);
+    assert_eq!(last["span"], true, "{:?}", last);
 }
 
 #[test]
@@ -192,20 +210,32 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
     assert_eq!(
         names(&nodes, "Items"),
         vec![
-            // The grip each row is dragged by, in a column of its own with no heading.
-            "mark",
+            // The grip each row is dragged by, in a column of its own with no heading, and a
+            // separator before each column with a rule at its left.
+            "mark#0",
             "handle",
+            "mark#1",
             "title",
+            "mark#2",
             "stage",
+            "mark#3",
             "parent",
+            "mark#4",
             "after",
+            "mark#5",
             "labels",
+            "mark#6",
             "flags",
+            "mark#7",
             "done",
+            "mark#8",
             "points",
+            "mark#9",
             "complexity",
+            "mark#10",
             "moved_at",
             // The row's controls, together at its end.
+            "mark#11",
             "talk",
             "work",
             "pin",
@@ -216,11 +246,13 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
     );
 
     let columns = columns(&nodes, "Items");
-    // Bar the grip and the talk, work, pin and drop buttons, which say what they are by their icons - as
+    // Bar the marks and the talk, work, pin and drop buttons, which say what they are by their icons - as
     // the note beside a task in the task manager does - and have no room for a word in their columns.
     let headings: Vec<&str> = columns
         .iter()
-        .filter(|c| !c["span"].as_bool().unwrap_or(false) && !["mark", "talk", "work", "pin", "drop"].contains(&c["name"].as_str().unwrap_or("")))
+        .filter(|c| !c["span"].as_bool().unwrap_or(false)
+            && !c["name"].as_str().unwrap_or("").starts_with("mark#")
+            && !["talk", "work", "pin", "drop"].contains(&c["name"].as_str().unwrap_or("")))
         .map(|c| c["label"].as_str().unwrap_or(""))
         .collect();
     assert!(

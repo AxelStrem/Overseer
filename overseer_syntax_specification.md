@@ -595,7 +595,13 @@ context mode = "system"
 - **A key that holds keys says how one kind of element looks**, and a container overrides one of
   them as it does any key: `context theme { - checkbox { - style = switch } }` draws the `bool` and
   `checkbox` fields inside it as switches rather than boxes, and `style = box` inside that draws
-  them as boxes again.
+  them as boxes again. The kinds a theme says something about:
+  - `checkbox`: `style`, `box` or `switch`.
+  - `button`: `hover`, how it answers the pointer over it - `background` (its colour lights up),
+    `border`, `glow`, `lift`, `grow` or `none`.
+  - `separator`: `style` (`solid`, `dashed`, `dotted`), `thickness` (`1px`), `color` (the theme's
+    `line` where it says none) and `length` - `full`, or a size such as `60%` or `12px` for a
+    short line in the middle.
 - **`mode` is `"light"`, `"dark"` or `"system"`**, and `"system"` is the scheme the page is in -
   the browser's, or the computer's - sent with every request, and light where nothing says.
 - **`theme` is the name the page draws through.** The resolved theme of the document's top is the
@@ -755,9 +761,27 @@ div Card (layout="vertical") {
 }
 ```
 
-In a list drawn as a table a grip has a column of its own, and no rule is drawn between it and the
-column after it, since it divides nothing. Nor is one drawn between two buttons side by side: the
-buttons standing together are the row's controls.
+In a list drawn as a table a grip has a column of its own.
+
+`separator` is a line. It runs across the way its parent lays things out - down a horizontal row,
+along a vertical column - and its own `layout` turns it the other way. How it is drawn is the
+theme's (see "The theme and the mode"): solid, dashed or dotted, how thick, what colour, and whether
+it runs the whole way or is a short line in the middle.
+
+```overseer
+div Row (layout="horizontal") {
+    string name = ""
+    mark (type="separator")
+    int count = 0
+    mark (type="separator", layout="horizontal")
+}
+```
+
+In a list drawn as a table the rules between columns are separators the entry declares, one for
+each place a rule is wanted. Each has a column of its own that takes no room unless it asks for a
+`width`, so its line sits on the edge between its neighbours, and the same separator lines up from
+row to row and on through the heading. One laid along the row, as the last one above, is a line of
+its own across the row, under it or over it as it comes last or first.
 
 A `mark` of a type the page does not know draws nothing.
 
@@ -1558,11 +1582,11 @@ div Tasks {
 - **Layout**: `layout`, `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
-- **Marks**: `type` (on a `mark`: `grip`)
+- **Marks**: `type` (on a `mark`: `grip`, `separator`)
 - **Content**: `markdown`, `hidden`, `entry`, `base`, `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`)
 - **Actions**: `target`, `condition`, `template`, `active`, `at`, `from`
 - **Charts**: `kind`, `data`, `labels`, `title`, `color`, `limit`
-- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `lines`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is)
+- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is)
 - **Mounts**: `source`, `lazy`, `mutable`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`

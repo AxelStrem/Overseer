@@ -1,37 +1,3 @@
-// Stages, for an agent working through the items below. Unless told otherwise, take items flagged
-// first before anything else, whatever their stage; then 'ready' items, then 'planning', and
-// 'filed' only when neither is left; past that, use your judgement. Skip any item flagged manual or
-// asked, and any whose after list names an item that is still open.
-//
-//   ready     Everything is decided: implement it, then move it to testing.
-//   planning  Its plan is being worked out: finish it, and move it to ready once nothing is left
-//             to decide.
-//   filed     Nothing done yet. Move it to ready with its plan if nothing is left to decide - or,
-//             if it has to wait for another item first, add that one to its after list.
-//   testing, later
-//             Waiting on a person: leave them.
-//
-// Flags, the same in every project, beside its own tags:
-//
-//   manual    For a person to work: leave it.
-//   auto      Filed by an agent of its own accord. File what you find along the way, flagged auto.
-//   first     Goes before everything else, whatever its stage.
-//   asked     A question in its note waits on a person, who takes the flag off once it is answered.
-//   discuss   Only your thoughts are wanted: give them in the note, move it at most to planning,
-//             and flag it asked. Never move it to ready.
-//
-// Whenever something needs a person's decision, at whatever stage, add the question to the note,
-// move the item to planning and flag it asked. Agents set no flag but auto and asked, and take
-// none off.
-//
-// Whenever you move an item to ready, set its complexity - how much thinking building it takes,
-// given the plan in its note, where points say how much work: trivial (straightforward or
-// boilerplate, however much of it), low, medium, or high (a good understanding of several parts
-// of the project and real analysis).
-//
-// Whenever you move an item, add what you did or found to the end of its note. Finishing,
-// cancelling or dropping an item is for a person.
-
 tab project (label="Project", mutable=true) {
     context vocabulary = "/project/Items, /project/History"
     string name (label="", font-size=22px) = "Untitled project"
@@ -185,16 +151,27 @@ tab project (label="Project", mutable=true) {
 
         div Run (layout="horizontal", margin=0, spacing=6, alignment="center") {
             timestamp at (label="when", format="datetime", precision="minutes", width=14%) = "2026-01-01T00:00:00Z"
+            mark (type="separator")
             string kind (label="kind", width=8%) = ""
+            mark (type="separator")
             string model (label="model", width=12%) = ""
+            mark (type="separator")
             string moved (label="moved", width=14%) = ""
+            mark (type="separator")
             int points (label="pts", format="trim", width=5%) = 1
+            mark (type="separator")
             float cost (label="$", precision=2, width=7%) = 0.0
+            mark (type="separator")
             int read (label="read k", format="trim", width=8%) = 0
+            mark (type="separator")
             int written (label="written k", format="trim", width=8%) = 0
+            mark (type="separator")
             int output (label="output k", format="trim", width=7%) = 0
+            mark (type="separator")
             int turns (label="turns", format="trim", width=5%) = 0
+            mark (type="separator")
             float minutes (label="min", precision=1, width=5%) = 0.0
+            mark (type="separator")
             int lines (label="lines", format="trim", width=6%) = 0
         }
 
@@ -211,10 +188,12 @@ tab project (label="Project", mutable=true) {
             mark (type="grip")
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=7%) = ""
+            mark (type="separator")
             string title (label="title", font-size=14px, width=24%,
                           hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
+            mark (type="separator")
             enum stage (label="stage", vocabulary="/project/Stages", width=6%,
                         hover-text="Where it is: filed, planning, ready, testing or later",
                         withhold=$(open_kids > 0 ? "finished, cancelled" : "")) = "filed" {
@@ -230,31 +209,40 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
+            mark (type="separator")
             enum parent (label="of", placeholder="", font-size=11px, width=6%,
                          hover-text="The larger item this is part of") = ""
+            mark (type="separator")
             tags after (label="after", width=10%,
                         hover-text="The items this waits on; grey while any is still open") = ""
+            mark (type="separator")
             tags labels (label="tags", vocabulary="/project/Labels", width=9%,
                          hover-text="The parts of the project it is in") = ""
+            mark (type="separator")
             tags flags (label="flags", vocabulary="/project/Flags", width=6%,
                         hover-text="How it is to be worked") = ""
+            mark (type="separator")
             int done (label="done", format="trim", precision=0, suffix="%", width=4%,
                       hover-text="How much of its parts is finished, by points",
                       hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
                           (/project/Items.filter(|x| x/parent == ../handle)
                                          .map(|x| x/done * x/weight).sum()
                            + finished_weight * 100) / weight)
+            mark (type="separator")
             int points (label="pts", format="trim", width=4%,
                         hover-text="How much work: 1 the smallest thing, 8 most of a day") = 1
+            mark (type="separator")
             enum complexity (label="think", vocabulary="/project/Complexities", width=6%,
                              hover-text="How much thinking building it takes") = "unassigned"
             bool pinned (hidden=true) = false
 
             timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
+            mark (type="separator")
             timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=6%,
                                hover-text="Since its stage or its conversation last changed, or a part of it closed") =
                 $(../said_at > ../touched_at ? ../said_at : ../touched_at)
 
+            mark (type="separator")
             button talk (icon="note", margin=0, width=3%,
                          font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
                 on click {
@@ -293,7 +281,7 @@ tab project (label="Project", mutable=true) {
                 }
             }
             div Agents (foldable=true, folded=true, span="row", layout="vertical", margin=0) {
-                list Work (entry=<Run>, view="table", header=true, lines="vertical", spacing=1) { }
+                list Work (entry=<Run>, view="table", header=true, spacing=1) { }
             }
 
             int kids (hidden=true) =
@@ -368,7 +356,7 @@ tab project (label="Project", mutable=true) {
                 list Comments (entry=<Comment>, layout="vertical", spacing=4, border-style=none) { }
             }
             div Agents (foldable=true, folded=true, layout="vertical", margin=0) {
-                list Work (entry=<Run>, view="table", header=true, lines="vertical", spacing=1) { }
+                list Work (entry=<Run>, view="table", header=true, spacing=1) { }
             }
             string colour (hidden=true) =
                 $(/project/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())
@@ -409,7 +397,7 @@ tab project (label="Project", mutable=true) {
             }
         }
 
-        list Items (entry=<Item>, key="handle", layout="vertical", spacing=1, view="table", header=true, sticky=true, lines="vertical", movable=true, sortable="handle, stage, parent, flags, points, moved_at", sort_by=$(|x| x/pinned == true ? 0 : 1)) { }
+        list Items (entry=<Item>, key="handle", layout="vertical", spacing=1, view="table", header=true, sticky=true, movable=true, sortable="handle, stage, parent, flags, points, moved_at", sort_by=$(|x| x/pinned == true ? 0 : 1)) { }
 
         div (layout="horizontal", margin=0, spacing=16, alignment="center") {
             int open_now (label="open") = $(/project/Items.count())

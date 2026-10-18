@@ -13,4 +13,12 @@ context theme {
     - checkbox {
         - style = "box"
     }
+    - button {
+        - hover = "background"
+    }
+    - separator {
+        - style = "solid"
+        - thickness = "1px"
+        - length = "full"
+    }
 }
