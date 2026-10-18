@@ -7080,17 +7080,12 @@ export class OverseerRenderer {
         }
 
         // Border radius parameter for controlling corner rounding
-        if (params['border-radius']) {
-            const borderRadiusValue = this.convertCssSizeValue(params['border-radius'])
-            
-            // Check for zero radius before applying - handle both string and object cases
-            const isZeroRadius = borderRadiusValue === '0px' || borderRadiusValue === '0' || borderRadiusValue === 0 ||
-                                String(borderRadiusValue) === '0px' || String(borderRadiusValue) === '0' ||
-                                (typeof params['border-radius'] === 'object' && 
-                                 params['border-radius'].CssSize && 
-                                 params['border-radius'].CssSize.Pixels === 0)
-            
-            const radius = isZeroRadius ? '0px' : borderRadiusValue
+        const statedRadius = params['border-radius']
+        if (statedRadius !== undefined && statedRadius !== null) {
+            // A bare number - `border-radius=0` - arrives as `{ Integer: 0 }` rather than as a CSS
+            // size, and a radius without a unit is no CSS at all: it means pixels.
+            const bare = typeof statedRadius === 'object' ? (statedRadius.Integer ?? statedRadius.Float) : statedRadius
+            const radius = typeof bare === 'number' ? `${bare}px` : this.convertCssSizeValue(statedRadius)
             for (const el of [element, ...ownValues()]) {
                 el.style.borderRadius = radius
             }

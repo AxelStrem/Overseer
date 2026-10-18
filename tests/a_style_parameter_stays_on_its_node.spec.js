@@ -62,6 +62,20 @@ describe('a style parameter', () => {
     expect(valueOf('box', 'inside').style.borderRadius).toBe('')
   })
 
+  it('takes a bare number for a radius in pixels', async () => {
+    // `border-radius=0` arrives as `{ Integer: 0 }`, not as a CSS size.
+    render(
+      field('square', { 'border-radius': { Integer: 0 } }),
+      div('box', { 'border-radius': { Integer: 0 } }, [field('inside')]),
+      div('round', { 'border-radius': { Integer: 8 } }, []),
+    )
+    await settle()
+    expect(valueOf('square').style.borderRadius).toBe('0px')
+    expect(at('box').style.borderRadius).toBe('0px')
+    expect(valueOf('box', 'inside').style.borderRadius).toBe('')
+    expect(at('round').style.borderRadius).toBe('8px')
+  })
+
   it('takes away its own frame, and leaves the frames of the fields inside a container', async () => {
     render(
       field('bare', { 'border-style': none }),
