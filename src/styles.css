@@ -1385,6 +1385,65 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     accent-color: var(--ov-accent);
 }
 
+/* A checkbox drawn as a switch, where the theme around it says `- checkbox { - style = switch }`
+ * (see `drawInKindLook`). Still the same input, so what a press does, whether it may change and
+ * its label are all the box's; only how it is drawn differs. It is wider than the box, which
+ * reads better for on and off and is a bigger thing to hit, and it keeps the box's place on the
+ * line so a row of fields stays aligned. */
+.boolean-field input[type="checkbox"].ov-switch,
+.checkbox-field input[type="checkbox"].ov-switch {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    flex: none;
+    width: 34px;
+    height: 20px;
+    margin: 0;
+    vertical-align: middle;
+    border-radius: 10px;
+    /* Half the muted colour, so the off track shows on a light page and a dark one alike. */
+    background: color-mix(in srgb, var(--ov-muted) 45%, transparent);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.boolean-field input[type="checkbox"].ov-switch::before,
+.checkbox-field input[type="checkbox"].ov-switch::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    /* White in either mode, as a switch's knob is: the surface colour vanished on a dark track. */
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: transform 0.15s ease;
+}
+
+.boolean-field input[type="checkbox"].ov-switch:checked,
+.checkbox-field input[type="checkbox"].ov-switch:checked {
+    background: var(--ov-accent);
+}
+
+.boolean-field input[type="checkbox"].ov-switch:checked::before,
+.checkbox-field input[type="checkbox"].ov-switch:checked::before {
+    transform: translateX(14px);
+}
+
+.boolean-field input[type="checkbox"].ov-switch:focus-visible,
+.checkbox-field input[type="checkbox"].ov-switch:focus-visible {
+    outline: 2px solid var(--ov-accent);
+    outline-offset: 2px;
+}
+
+.boolean-field input[type="checkbox"].ov-switch:disabled,
+.checkbox-field input[type="checkbox"].ov-switch:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 /* Buttons */
 .overseer-button {
     display: inline-flex;

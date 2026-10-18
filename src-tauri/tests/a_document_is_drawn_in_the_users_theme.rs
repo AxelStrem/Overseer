@@ -79,6 +79,29 @@ fn a_document_changes_one_key_of_the_theme_and_keeps_the_rest() {
 }
 
 #[test]
+fn a_part_of_a_document_changes_how_one_kind_of_element_looks_and_keeps_the_rest() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let doc = "tab t (label=\"T\") {
+    string outside = $(theme/checkbox/style)
+    div side {
+        context theme {
+            - checkbox {
+                - style = \"switch\"
+            }
+        }
+        string inside = $(theme/checkbox/style)
+        string accent = $(theme/accent)
+    }
+}
+";
+    let (_sandbox, documents) = sandbox("kind", &[("p.os", doc)]);
+    let nodes = documents.open("p.os").expect("open");
+    assert_eq!(text_at(&nodes, "t/outside").as_deref(), Some("box"), "the shipped theme draws boxes");
+    assert_eq!(text_at(&nodes, "t/side/inside").as_deref(), Some("switch"));
+    assert_eq!(text_at(&nodes, "t/side/accent").as_deref(), Some("#2563eb"), "the other keys are kept");
+}
+
+#[test]
 fn a_mode_the_settings_choose_is_not_the_systems() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let settings = "context theme (base=<themes/default.os/theme>) { }\r\ncontext mode = \"dark\"\r\n";

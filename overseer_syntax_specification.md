@@ -592,6 +592,10 @@ context mode = "system"
   and takes the place of a shipped one of the same name. Its keys are `background`, `surface`,
   `text`, `muted`, `line`, `accent`, `success`, `warning`, `danger`, `font` and `radius`, and the
   shipped theme works each colour out from `mode`, as `$(mode == "dark" ? "#1e293b" : "#ffffff")`.
+- **A key that holds keys says how one kind of element looks**, and a container overrides one of
+  them as it does any key: `context theme { - checkbox { - style = switch } }` draws the `bool` and
+  `checkbox` fields inside it as switches rather than boxes, and `style = box` inside that draws
+  them as boxes again.
 - **`mode` is `"light"`, `"dark"` or `"system"`**, and `"system"` is the scheme the page is in -
   the browser's, or the computer's - sent with every request, and light where nothing says.
 - **`theme` is the name the page draws through.** The resolved theme of the document's top is the

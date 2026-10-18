@@ -5862,6 +5862,7 @@ export class OverseerRenderer {
         const checkbox = document.createElement('input')
         checkbox.type = 'checkbox'
         checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
+        this.drawInKindLook(checkbox)
 
         container.appendChild(checkbox)
 
@@ -6080,6 +6081,7 @@ export class OverseerRenderer {
         const checkbox = document.createElement('input')
         checkbox.type = 'checkbox'
         checkbox.checked = this.getNodeValue(node) === 'true' || this.getNodeValue(node) === true
+        this.drawInKindLook(checkbox)
 
         // Only show a label if a user-friendly label is provided (e.g., via a 'label' parameter)
         const labelText = this.getParameterValue(node, 'label');
@@ -7364,12 +7366,41 @@ export class OverseerRenderer {
         }
     }
 
-    writeTheme(element, theme) {
+    /**
+     * A key of the theme as `--ov-<key>`; and a key that holds keys of its own - how one kind of
+     * element looks, `- checkbox { - style = switch }` - as `--ov-<kind>-<key>`.
+     */
+    writeTheme(element, theme, prefix = '--ov-') {
         for (const key of theme.children || []) {
             if (!key?.name || key.name.startsWith('_')) continue
             const value = this.contextValue(key)
-            if (value === null) continue
-            element.style.setProperty(`--ov-${key.name}`, value)
+            if (value !== null) element.style.setProperty(`${prefix}${key.name}`, value)
+            else if (Array.isArray(key.children) && key.children.length) this.writeTheme(element, key, `${prefix}${key.name}-`)
+        }
+    }
+
+    /**
+     * Draw a field's checkbox in the look the theme around it gives checkboxes: a box, or a switch
+     * where `checkbox/style` is `switch`. A CSS variable cannot choose a selector, so the page
+     * reads the nearest `--ov-checkbox-style` and marks the box - but only once it is in the page:
+     * most of what is drawn is drawn into a wrapper first, and which theme it is under is known
+     * only from where it lands. Every caller puts what it drew in place before it returns, so the
+     * boxes drawn in one go are all decided together a microtask later, a walk up each.
+     */
+    drawInKindLook(box) {
+        if (!this._lookPending) {
+            this._lookPending = []
+            queueMicrotask(() => this.applyKindLooks())
+        }
+        this._lookPending.push(box)
+    }
+
+    applyKindLooks() {
+        const pending = this._lookPending || []
+        this._lookPending = null
+        for (const box of pending) {
+            if (!box.isConnected) continue
+            box.classList.toggle('ov-switch', this.themeAbove(box, 'checkbox-style') === 'switch')
         }
     }
 
