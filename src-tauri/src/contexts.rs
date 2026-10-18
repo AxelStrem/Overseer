@@ -9,10 +9,12 @@
 //! A declaration is kept exactly as it was written - it is the document's text, and the writer
 //! gives it back as such. What a container *sees* is worked out here and put in front of its
 //! children as a copy marked `CONTEXT_COPY`: the context from above with every declaration of the
-//! container merged onto it. A container that declares any context is given a copy of every
-//! context visible there, not only of the ones it declares, so that a context's formulas are
-//! worked out where they are used: a theme whose `line` is derived from `text` follows a nearer
-//! `text`, and `context mode = "dark"` re-derives every theme below it.
+//! container merged onto it. A container is given a copy of each context it declares, and of each
+//! context whose formulas read one of those, so that a context's formulas are worked out where
+//! what they read changes: a theme whose `line` is derived from `text` follows a nearer `text`,
+//! and `context mode = "dark"` re-derives every theme below it. A context that reads nothing
+//! declared there is the same as the copy above, and a lookup climbs on to that one - an entry
+//! whose template declares one context carries one copy, not one of every context in view.
 //!
 //! Being first among its container's children, a copy is what a formula reading `theme/accent`
 //! meets as it climbs from where it is - the existing lookup, with nothing taught about contexts
@@ -79,21 +81,85 @@ fn declares_any(nodes: &[OverseerNode]) -> bool {
         .any(|node| is_context(node) || declares_any(&node.children))
 }
 
-/// What a container sees, by name, in the order the names were first declared - and whether the
-/// document declared it, rather than only the environment.
-type Visible = Vec<(String, OverseerNode, bool)>;
+/// One name a container sees: its worked-out node, whether the document declared it rather than
+/// only the environment, and the words its formulas are written with.
+#[derive(Clone)]
+struct Seen {
+    name: String,
+    node: OverseerNode,
+    declared: bool,
+    reads: Vec<String>,
+}
+
+/// What a container sees, by name, in the order the names were first declared.
+type Visible = Vec<Seen>;
 
 fn visible<'a>(seen: &'a Visible, name: &str) -> Option<&'a OverseerNode> {
-    seen.iter().find(|(n, _, _)| n == name).map(|(_, node, _)| node)
+    seen.iter().find(|s| s.name == name).map(|s| &s.node)
 }
 
 fn set_visible(seen: &mut Visible, name: &str, node: OverseerNode, declared: bool) {
-    match seen.iter_mut().find(|(n, _, _)| n == name) {
+    let mut reads = Vec::new();
+    words_of(&node, &mut reads);
+    match seen.iter_mut().find(|s| s.name == name) {
         Some(slot) => {
-            slot.1 = node;
-            slot.2 |= declared;
+            slot.node = node;
+            slot.declared |= declared;
+            slot.reads = reads;
         }
-        None => seen.push((name.to_string(), node, declared)),
+        None => seen.push(Seen {
+            name: name.to_string(),
+            node,
+            declared,
+            reads,
+        }),
+    }
+}
+
+/// Every word the formulas in a node are written with - a name, or a step of an address. More
+/// than the names a formula reads (a word inside a quoted string counts too), which costs at most a
+/// copy that was not needed, never a value worked out in the wrong place.
+fn words_of(node: &OverseerNode, out: &mut Vec<String>) {
+    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+    for value in node.parameters.values() {
+        if let OverseerValue::Formula(text) = value {
+            for found in text.split(|c: char| !word(c)) {
+                if !found.is_empty() && !out.iter().any(|w| w == found) {
+                    out.push(found.to_string());
+                }
+            }
+        }
+    }
+    for child in &node.children {
+        words_of(child, out);
+    }
+}
+
+/// The names a container is to carry copies of: those it declares, and every context that reads
+/// one of them, or reads a context that does, and so on.
+fn changed_here(here: &Visible, declared: &[&OverseerNode]) -> Vec<bool> {
+    let mut changed: Vec<bool> = here
+        .iter()
+        .map(|s| declared.iter().any(|d| d.name == s.name))
+        .collect();
+    loop {
+        let mut grew = false;
+        for (index, seen) in here.iter().enumerate() {
+            if changed[index] {
+                continue;
+            }
+            let reads_one = here
+                .iter()
+                .zip(&changed)
+                .any(|(other, &is)| is && seen.reads.iter().any(|w| *w == other.name));
+            if reads_one {
+                changed[index] = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            return changed;
+        }
     }
 }
 
@@ -210,9 +276,17 @@ fn walk_scope(
             let worked_out = override_with(root, visible(&here, &declaration.name), declaration);
             set_visible(&mut here, &declaration.name, worked_out, true);
         }
+        // At the top every name is copied: there is nothing above for a lookup to climb on to.
+        let carried = if always {
+            vec![true; here.len()]
+        } else {
+            changed_here(&here, &declared)
+        };
         let copies = here
             .iter()
-            .map(|(_, node, _)| node.clone())
+            .zip(&carried)
+            .filter(|(_, &carry)| carry)
+            .map(|(seen, _)| seen.node.clone())
             .collect::<Vec<_>>();
         // A copy goes first so that a lookup meets it before the declaration of the same name.
         // With no declaration here - only the environment, at the top of a document that declares
@@ -226,8 +300,8 @@ fn walk_scope(
         }
         let mut hides = None;
         if !node.name.is_empty() {
-            match here.iter().position(|(n, _, _)| *n == node.name) {
-                Some(found) if here[found].2 => work.refused.push((
+            match here.iter().position(|s| s.name == node.name) {
+                Some(found) if here[found].declared => work.refused.push((
                     place.clone(),
                     format!("'{}' is a context here, and cannot name anything else", node.name),
                 )),

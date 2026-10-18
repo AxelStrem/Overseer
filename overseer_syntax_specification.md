@@ -551,9 +551,12 @@ tab project (label="Project") {
   starts from another node rather than from the context above. Two declarations of one name in the
   same container merge in the order they are written.
 - **Its formulas are worked out where it is used.** In the example the sidebar's `line` is worked
-  out from the sidebar's `text`, though only the outer theme says how. A container that declares
-  any context has every context visible there worked out again, so a theme that reads
-  `$(mode == "dark" ? ... : ...)` follows a `context mode = "dark"` written below it.
+  out from the sidebar's `text`, though only the outer theme says how. A container that declares a
+  context has every context that reads it worked out again there - and every context that reads
+  one of those - so a theme that reads `$(mode == "dark" ? ... : ...)` follows a
+  `context mode = "dark"` written below it. A context that reads none of them is worked out where
+  it was declared, or where something it reads was last declared again: a container that declares
+  `context hover-text = true` changes nothing of what `$(accent)` is inside it.
 - **Templates and mounts** see the contexts of where they are used: an instance's body, or an entry
   of a list, sees those around the instance; a mounted document sees those of the document that
   mounts it. A context a template declares is declared again in every instance.
