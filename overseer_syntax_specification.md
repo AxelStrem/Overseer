@@ -463,6 +463,10 @@ tab Tasks {
 another file") says where to look when the name alone is not enough. An instance writes only what
 differs from its template: `Completed` is `false` in both instances above without saying so.
 
+A template can itself be an instance of another - `<Task> Errand { - Priority = 10 }` in the
+hidden div - and what is made from it, an instance or a list's entry, gets everything both give:
+the fields, buttons and actions of `Task`, with what `Errand` changed or added on them.
+
 An instance's kind is its template's name, so a template cannot be named after a type - `tags`,
 `list`, `button` and the rest under "Reserved Keywords", in any case. A reference to one is
 refused, saying why, as a reference to a missing node is: nothing is copied, and the instance is

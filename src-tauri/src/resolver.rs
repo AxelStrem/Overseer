@@ -1343,6 +1343,51 @@ fn table_columns(template: &OverseerNode) -> String {
 thread_local! {
     /// The templates whose instances `resolve_node_templates` is inside of, innermost last.
     static INSTANTIATING: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The templates `as_a_template` is working out, innermost last.
+    static WORKING_OUT: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A template as what is made from it should get it: when it is itself an instance - `<Thing>
+/// Movie { ... }` - a copy of it made from its own template first.
+///
+/// Each pass works from a copy of the document taken before the pass, where such a template is
+/// still only the overrides it wrote, and what was copied from that was never revisited: an entry
+/// of `entry=<Movie>` had none of Thing's fields, and a button Movie relabelled had no click. Its
+/// bookkeeping as an instance is taken off, so that the copy reads as a plain template of the type
+/// it comes down to. A template that comes back round to itself is used as it is written.
+fn as_a_template(
+    template: OverseerNode,
+    path: &str,
+    all_nodes: &[OverseerNode],
+    missed: &mut Vec<String>,
+) -> OverseerNode {
+    let key = crate::bases::short(path);
+    if template.template.is_none() || WORKING_OUT.with(|on| on.borrow().contains(&key)) {
+        return template;
+    }
+    WORKING_OUT.with(|on| on.borrow_mut().push(key));
+    let mut worked = template.clone();
+    resolve_node_templates(&mut worked, all_nodes, missed);
+    WORKING_OUT.with(|on| {
+        on.borrow_mut().pop();
+    });
+    if worked.template.is_some() {
+        return template;
+    }
+    if let Some(OverseerValue::String(original)) = worked.parameters.get("_original_type") {
+        worked.node_type = original.clone();
+    }
+    worked.parameters.retain(|key, _| {
+        !key.starts_with("_template_")
+            && !matches!(
+                key.as_str(),
+                "_original_type"
+                    | "_from_template"
+                    | "_explicit_overrides"
+                    | crate::bases::FROM
+            )
+    });
+    worked
 }
 
 /// Resolves templates for a single node and its children.
@@ -1383,6 +1428,7 @@ fn resolve_node_templates(
             };
             if let Some(path) = template_path {
                 if let Some(template_node) = crate::bases::find(all_nodes, &path) {
+                    let template_node = as_a_template(template_node, &path, all_nodes, missed);
                     let columns = table_columns(&template_node);
                     node.parameters
                         .insert("_columns".to_string(), OverseerValue::String(columns));
@@ -1412,7 +1458,10 @@ fn resolve_node_templates(
                             OverseerValue::String(why.clone()),
                         );
                     }
-                    if let Some(template_node) = found.ok().flatten() {
+                    let found = found.ok().flatten().map(|template_node| {
+                        as_a_template(template_node, &template_path, all_nodes, missed)
+                    });
+                    if let Some(template_node) = found {
                         debug_resolver!(
                             "[RESOLVER] Found template node for {}, processing {} children",
                             template_name,
@@ -1934,7 +1983,10 @@ fn resolve_node_templates(
                 OverseerValue::String(why.clone()),
             );
         }
-        let found = found.ok().flatten();
+        let found = found
+            .ok()
+            .flatten()
+            .map(|template_node| as_a_template(template_node, template_path, all_nodes, missed));
         if found.is_some() {
             instantiating = Some(key);
         }
