@@ -825,6 +825,7 @@ pub enum CssSize {
     ViewportHeight(f32), // 50vh
     Auto,                // auto
     FitContent,          // fit-content
+    Fraction(f32),       // 2fr, a share of what is left
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

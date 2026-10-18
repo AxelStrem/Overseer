@@ -2230,6 +2230,7 @@ impl FormulaEvaluator {
             crate::types::CssSize::ViewportHeight(vh) => format!("{}vh", vh),
             crate::types::CssSize::Auto => "auto".to_string(),
             crate::types::CssSize::FitContent => "fit-content".to_string(),
+            crate::types::CssSize::Fraction(v) => format!("{}fr", v),
         }
     }
 

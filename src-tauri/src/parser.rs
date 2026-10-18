@@ -1484,6 +1484,7 @@ fn parse_css_size_with_unit(input: &str) -> IResult<&str, OverseerValue> {
                 "rem" => CssSize::Rem(value),
                 "vw" => CssSize::ViewportWidth(value),
                 "vh" => CssSize::ViewportHeight(value),
+                "fr" => CssSize::Fraction(value),
                 _ => return OverseerValue::String(format!("{}{}", value, unit)), // Invalid unit, treat as string
             };
             OverseerValue::CssSize(size)
@@ -1499,6 +1500,7 @@ fn parse_css_unit(input: &str) -> IResult<&str, &str> {
         tag("rem"),
         tag("vh"),
         tag("vw"),
+        tag("fr"),
         tag("%"),
     ))(input)
 }
@@ -1981,6 +1983,13 @@ mod tests {
             result,
             Ok(("", OverseerValue::CssSize(CssSize::ViewportHeight(100.0))))
         );
+
+        // Test parts of what is left
+        let result = parse_value("2fr");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Fraction(2.0)))));
+
+        let result = parse_value("1.5fr");
+        assert_eq!(result, Ok(("", OverseerValue::CssSize(CssSize::Fraction(1.5)))));
 
         // Test keywords
         let result = parse_value("auto");

@@ -1562,6 +1562,10 @@ div FixedBox (width=200px, height=150px) {          // Pixel values
 div ResponsiveBox (width=50%, height=auto) {        // Percentage and auto
 div FitContent (width=fit-content, height=fit-content) { // Content-based sizing
 div Thumbnail (width=48, border-radius=0) {         // A size without a unit is in pixels
+div (layout=horizontal) {                           // Parts of what is left: the 200px first,
+    div Main (width=2fr) {                          // then the rest split two to one, and the
+    div Side (width=1fr) {                          // row filled exactly whatever its gaps
+    div Logo (width=200px) {
 
 // Overflow control
 div ScrollableBox (width=200px, height=100px, overflow=auto) {
@@ -1588,6 +1592,13 @@ div TableCell (
 div RoundedBox (border-radius=8px) {                // Rounded corners
 div SharpBox (border-radius=0px) {                  // Sharp corners
 ```
+
+A width in parts, `2fr`, is a share of what a horizontal row has left once the widths in pixels
+and percent and the gaps between its children are taken: two children at `1fr` and `2fr` split it
+one to two, and the row spans its container exactly however many children it has. `auto` is a
+share of the rest like `1fr`, but never narrower than what it holds. A table's columns take both
+the same way, and a column with no width at all is `1fr`. Parts are shares of a row, so a width in
+parts outside one means nothing; there `auto` is the plain width a node would have anyway.
 
 A style is the node's own. `background-color`, `font-color` and `font-size` given to a container
 paint that container, and what is inside it is drawn in the theme, as though nothing had been said:

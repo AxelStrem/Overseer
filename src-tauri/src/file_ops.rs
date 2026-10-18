@@ -3334,6 +3334,7 @@ impl FileOperations {
                 CssSize::ViewportHeight(vh) => format!("{}vh", vh),
                 CssSize::Auto => "auto".to_string(),
                 CssSize::FitContent => "fit-content".to_string(),
+                CssSize::Fraction(v) => format!("{}fr", v),
             },
             OverseerValue::BorderStyle(style) => match style {
                 BorderStyle::None => "none".to_string(),
@@ -3350,6 +3351,7 @@ impl FileOperations {
                             CssSize::ViewportHeight(vh) => format!("{}vh", vh),
                             CssSize::Auto => "auto".to_string(),
                             CssSize::FitContent => "fit-content".to_string(),
+                            CssSize::Fraction(v) => format!("{}fr", v),
                         },
                         match color {
                             Color::Hex(hex) => hex.clone(),
@@ -3370,6 +3372,7 @@ impl FileOperations {
                             CssSize::ViewportHeight(vh) => format!("{}vh", vh),
                             CssSize::Auto => "auto".to_string(),
                             CssSize::FitContent => "fit-content".to_string(),
+                            CssSize::Fraction(v) => format!("{}fr", v),
                         },
                         match color {
                             Color::Hex(hex) => hex.clone(),
@@ -3390,6 +3393,7 @@ impl FileOperations {
                             CssSize::ViewportHeight(vh) => format!("{}vh", vh),
                             CssSize::Auto => "auto".to_string(),
                             CssSize::FitContent => "fit-content".to_string(),
+                            CssSize::Fraction(v) => format!("{}fr", v),
                         },
                         match color {
                             Color::Hex(hex) => hex.clone(),

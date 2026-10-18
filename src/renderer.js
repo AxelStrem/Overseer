@@ -3149,7 +3149,11 @@ export class OverseerRenderer {
         // one that hides a filtered row.
         list.classList.add('view-table')
         list.classList.remove('layout-vertical', 'layout-horizontal', 'layout-flow')
-        list.style.gridTemplateColumns = across.map((c) => c.width || '1fr').join(' ')
+        // `auto` is what is left: a share of it like `1fr`, but never narrower than what the
+        // column holds - the same as in a horizontal row (see `.takes-rest`).
+        list.style.gridTemplateColumns = across
+            .map((c) => (c.width === 'auto' ? 'minmax(auto, 1fr)' : c.width || '1fr'))
+            .join(' ')
 
         const column = new Map(across.map((c, i) => [c.name, i + 1]))
 
@@ -6982,9 +6986,17 @@ export class OverseerRenderer {
             }
         }
 
-        // Width parameter
-        if (params.width) {
-            element.style.width = this.convertCssSizeValue(params.width)
+        // Width parameter. A width in parts (`2fr`) or `auto` is a share of what a horizontal row
+        // has left once its other widths and gaps are taken; it is no CSS width, so it goes on as
+        // a class the row's flex rules read (see `.takes-parts`). Outside a row, parts mean nothing.
+        const width = params.width ? this.convertCssSizeValue(params.width) : ''
+        const parts = /^(\d+(?:\.\d+)?)fr$/.exec(String(width))
+        element.classList.toggle('takes-parts', !!parts)
+        element.classList.toggle('takes-rest', width === 'auto')
+        if (parts) element.style.setProperty('--ov-parts', parts[1])
+        else element.style.removeProperty('--ov-parts')
+        if (params.width && !parts) {
+            element.style.width = width
         }
         // A width in pixels is a size the document asked for, not a share of the row: in a row too
         // narrow for it, the row wraps or scrolls rather than squeezing it (see `.keeps-width`).
@@ -7709,6 +7721,7 @@ export class OverseerRenderer {
                 if (size.ViewportHeight !== undefined) return `${size.ViewportHeight}vh`
                 if (size.Auto !== undefined) return 'auto'
                 if (size.FitContent !== undefined) return 'fit-content'
+                if (size.Fraction !== undefined) return `${size.Fraction}fr`
             }
             // Unwrapped inner variant: { Pixels: n } | { Percentage: n } | ...
             if (sizeParam.Pixels !== undefined) return `${sizeParam.Pixels}px`
@@ -7719,6 +7732,7 @@ export class OverseerRenderer {
             if (sizeParam.ViewportHeight !== undefined) return `${sizeParam.ViewportHeight}vh`
             if (sizeParam.Auto !== undefined) return 'auto'
             if (sizeParam.FitContent !== undefined) return 'fit-content'
+            if (sizeParam.Fraction !== undefined) return `${sizeParam.Fraction}fr`
         }
         
         return sizeParam // Fallback

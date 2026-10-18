@@ -1266,6 +1266,7 @@ fn css_size_text(value: &OverseerValue) -> Option<String> {
             crate::types::CssSize::ViewportHeight(v) => format!("{}vh", v),
             crate::types::CssSize::Auto => "auto".to_string(),
             crate::types::CssSize::FitContent => "fit-content".to_string(),
+            crate::types::CssSize::Fraction(v) => format!("{}fr", v),
         }),
         OverseerValue::String(s) if !s.is_empty() => Some(s.clone()),
         OverseerValue::Integer(i) => Some(format!("{}px", i)),

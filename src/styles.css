@@ -1016,6 +1016,20 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     flex-shrink: 0;
 }
 
+/* A width in parts is a share of what the row has left once its fixed widths, percentages and
+   gaps are taken: `1fr` and `2fr` beside a `200px` split the rest one to two, and the row is
+   filled exactly whatever the gaps come to. `auto` takes a share like `1fr`, starting from what
+   it holds rather than from nothing, so it never squeezes below its content. */
+.overseer-div.layout-horizontal > .takes-parts,
+.overseer-list.layout-horizontal > .takes-parts {
+    flex: var(--ov-parts) 1 0;
+}
+
+.overseer-div.layout-horizontal > .takes-rest,
+.overseer-list.layout-horizontal > .takes-rest {
+    flex: 1 1 auto;
+}
+
 /* A container that scrolls takes the height its row gives it rather than adding its own: stretched
    to the row, with `contain: size` so its contents count for nothing in the row's height. The row
    is then as tall as it states, or else as its other children. Alone in a row that states no

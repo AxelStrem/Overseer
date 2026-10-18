@@ -267,3 +267,44 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
         assert_eq!(folded["span"], true, "{} is a cell of the row", folded["name"]);
     }
 }
+
+const PARTS: &str = r#"
+tab t (label="T") {
+    div (hidden=true) {
+        div Part (layout="horizontal") {
+            string name (label="Name", width=2fr) = ""
+            string note (label="Note", width=1.5fr) = ""
+            int count (label="Count", width=auto) = 0
+            int size (label="Size", width=80px) = 0
+        }
+    }
+
+    list Parts (entry=<Part>, view="table") { }
+}
+"#;
+
+#[test]
+fn a_column_can_take_parts_of_what_is_left() {
+    let columns = columns(&resolved(PARTS), "Parts");
+    let widths: Vec<&str> = columns.iter().map(|c| c["width"].as_str().unwrap_or("")).collect();
+    assert_eq!(widths, vec!["2fr", "1.5fr", "auto", "80px"]);
+}
+
+#[test]
+fn a_width_in_parts_is_written_back_as_it_was_given() {
+    fn forget_source(nodes: &mut [OverseerNode]) {
+        for node in nodes {
+            node.source_snapshot = None;
+            node.source_fingerprint = None;
+            forget_source(&mut node.children);
+        }
+    }
+    let (_rest, mut nodes) = parser::parse_document(PARTS).expect("parse");
+    // Written from the values, not from the text they were read from.
+    forget_source(&mut nodes);
+    let written = overseer::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
+        .expect("serialize");
+    assert!(written.contains("width=2fr"), "{}", written);
+    assert!(written.contains("width=1.5fr"), "{}", written);
+    assert!(written.contains("width=auto"), "{}", written);
+}
