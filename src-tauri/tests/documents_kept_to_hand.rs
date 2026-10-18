@@ -216,6 +216,43 @@ fn a_document_is_called_by_the_label_of_the_tab_it_is_wrapped_in_as_it_says_now(
 }
 
 #[test]
+fn a_document_that_inherits_its_tab_is_called_by_that_tab_label() {
+    // A tracker is `<projects/project_template.os/project> project (label="Overseer") { ... }`: still
+    // a tab, called by its own label, or by its template's when it gives none. A base beside the
+    // document comes before the library, as it does when the document is worked out.
+    serialised(|| {
+        let root = a_folder("inherited_labels");
+        let library = a_folder("inherited_labels_library");
+        std::fs::create_dir_all(library.join("projects")).unwrap();
+        std::fs::write(
+            library.join("projects").join("project_template.os"),
+            "// the template\n\ntab project (label=\"Project\", mutable=true) {\n    string name = \"\"\n}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("base.os"), "tab sheet (label=\"Sheet\") {\n}\ndiv card (label=\"Card\") {\n}\n").unwrap();
+        std::fs::write(root.join("middle.os"), "<base.os/sheet> sheet {\n}\n").unwrap();
+        let docs = [
+            ("tracker.os", "// a tracker\n<projects/project_template.os/project> project (label=\"Overseer\") {\n    - name = \"Overseer\"\n}\n"),
+            ("plain.os", "<projects/project_template.os/project> project {\n}\n"),
+            ("near.os", "<base.os/sheet> sheet (label=\"Mine\") {\n}\n"),
+            ("chain.os", "<middle.os/sheet> sheet {\n}\n"),
+            ("card.os", "<base.os/card> card (label=\"Not a tab\") {\n}\n"),
+            ("missing.os", "<nowhere.os/project> project (label=\"Lost\") {\n}\n"),
+        ];
+        let file = root.join(menu::FILE);
+        for (name, text) in docs {
+            std::fs::write(root.join(name), text).unwrap();
+            menu::keep(&file, &root.join(name).to_string_lossy(), "").unwrap();
+        }
+        std::env::set_var("OVERSEER_LIBRARY", &library);
+        let places = menu::labelled(menu::places(&file).unwrap(), |path| Some(std::path::PathBuf::from(path)));
+        std::env::remove_var("OVERSEER_LIBRARY");
+        let labels: Vec<String> = places.into_iter().map(|p| p.label).collect();
+        assert_eq!(labels, vec!["Overseer", "Project", "Mine", "Sheet", "", ""]);
+    });
+}
+
+#[test]
 fn the_server_says_what_each_document_it_keeps_calls_itself() {
     serialised(|| {
         let root = a_folder("server_labels");

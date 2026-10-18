@@ -173,7 +173,8 @@ pub fn labelled(places: Vec<Place>, locate: impl Fn(&str) -> Option<std::path::P
         .collect()
 }
 
-/// The label of the tab a document is wrapped in, when its first node is a tab with one.
+/// The label of the tab a document is wrapped in, when its first node is a tab with one - written
+/// as one, or an instance of a template in another file that is one, as the project trackers are.
 ///
 /// Wrapping a whole document in a tab is a habit rather than a rule, but where it is followed the
 /// tab's label is what the document calls itself - and what it is shown as when documents are put
@@ -189,7 +190,7 @@ fn label_in(file: &Path) -> Option<String> {
             if trimmed.is_empty() || trimmed.starts_with("//") {
                 continue;
             }
-            if !(trimmed.starts_with("tab ") || trimmed.starts_with("tab(")) {
+            if !(trimmed.starts_with("tab ") || trimmed.starts_with("tab(") || trimmed.starts_with('<')) {
                 return None;
             }
         }
@@ -199,11 +200,25 @@ fn label_in(file: &Path) -> Option<String> {
             // The tab's header and nothing of what it holds: parsed as an empty tab.
             let header = format!("{}}}\n", &head[..=open]);
             let (_, nodes) = crate::parser::parse_document(&header).ok()?;
-            let label = text_of(nodes.first()?.parameters.get("label"));
-            return (!label.trim().is_empty()).then(|| label.trim().to_string());
+            let label = tab_label(nodes.first()?, file.parent()?, 8)?;
+            return (!label.is_empty()).then_some(label);
         }
     }
     None
+}
+
+/// What a tab says it is called: its own label, or what its template says when it gives none.
+/// Nothing when it is not a tab, nor an instance of one - the template followed through the files
+/// it names, `depth` of them at most, as `bases` finds them for a document in `beside`. A template
+/// of the document's own would be further down than the lines read, and is not looked for.
+fn tab_label(node: &OverseerNode, beside: &Path, depth: usize) -> Option<String> {
+    let own = text_of(node.parameters.get("label")).trim().to_string();
+    let Some(template) = &node.template else {
+        return (node.node_type == "tab").then_some(own);
+    };
+    let base = crate::bases::find_beside(beside, template).filter(|_| depth > 0)?;
+    let inherited = tab_label(&base, beside, depth - 1)?;
+    Some(if own.is_empty() { inherited } else { own })
 }
 
 /// Where the first `{` outside a quoted string is.

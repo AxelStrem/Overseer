@@ -65,6 +65,15 @@ pub fn find(document: &[OverseerNode], path: &str) -> Option<OverseerNode> {
     find_or_why(document, path).ok().flatten()
 }
 
+/// The node a reference to another file names, that file looked for as a document in `dir` would
+/// look for it: beside the document first, then in the library. Nothing for a reference to a node
+/// of the document's own, or one that cannot be had.
+pub fn find_beside(dir: &Path, path: &str) -> Option<OverseerNode> {
+    let found = reference(path);
+    let base = load(&as_key(&locate(&found.file?, Some(dir)))).ok()?;
+    by_name(&base, &found.name).cloned()
+}
+
 /// The kinds of node the engine and the page choose what to do by. An instance's type is its
 /// template's name, so a template named after one of these would be taken for that kind of
 /// field - a root named `tags` drew a tags field - and such a name is refused. The page lowercases

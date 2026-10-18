@@ -112,6 +112,22 @@ describe('the drawer', () => {
     expect(document.title).toBe('Chores - Overseer')
   })
 
+  it('calls the open one by its tab label when the tab is inherited from a template', async () => {
+    places = [{ path: TASKS, name: '', label: '' }]
+    const { app, drawer } = await withADrawer()
+    app.currentDocument = [{
+      name: 'project',
+      node_type: 'project',
+      parameters: { label: { String: 'Overseer' }, _original_type: { String: 'tab' } },
+      children: [],
+      is_hierarchy_transparent: false,
+    }]
+    drawer.paint()
+    app.showDocumentName()
+    expect(shown().map((s) => s.name)).toEqual(['Overseer'])
+    expect(document.title).toBe('Overseer - Overseer')
+  })
+
   it('lets the name the list gives win, and falls back to the file for a document with no tab', async () => {
     places = [{ path: TASKS, name: 'Mine', label: 'Tasks' }]
     const { app, drawer } = await withADrawer()

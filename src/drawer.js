@@ -207,13 +207,14 @@ export class Drawer {
         return this.labelOfCurrent()
     }
 
-    /// The label of the tab the open document is wrapped in: its first node, when that is a tab.
-    /// Wrapping a document in a tab is a habit rather than a rule, so there may be none.
+    /// The label of the tab the open document is wrapped in: its first node, when that is a tab -
+    /// written as one, or an instance of a template that is one. Wrapping a document in a tab is a
+    /// habit rather than a rule, so there may be none.
     labelOfCurrent() {
         try {
             const doc = this.app.currentDocument
             const first = Array.isArray(doc) ? doc[0] : null
-            if (!first || (first.node_type || first.type) !== 'tab') return ''
+            if (!first || !this.app.renderer.isTab(first)) return ''
             const label = this.app.renderer.getParameterValue(first, 'label')
             return label ? String(label).trim() : ''
         } catch (_) {
