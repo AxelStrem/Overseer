@@ -181,6 +181,25 @@ describe('a reader sorts a table by its columns', () => {
     expect(order()).toEqual(['d', 'b', 'a', 'c', 'e'])
   })
 
+  it('sorts by the values, not by the text a column is shown as', () => {
+    // Drawn so that the text runs the other way round from the numbers, and 1 as nothing.
+    app = new OverseerApp()
+    window.app = app
+    app.currentFile = 'project.os'
+    app.currentDocument = docOf()
+    for (const entry of app.currentDocument[0].children[2].children) {
+      const points = entry.children.find((c) => c.name === 'points')
+      const n = points.parameters.value.Integer
+      points.parameters.shown = { Formula: 'points == 1 ? "" : "?"' }
+      points.parameters._computed_shown = { String: n === 1 ? '' : String.fromCharCode(122 - n) }
+    }
+    app._currentText = 'TEXT'
+    app.renderer._filters = new Map()
+    app.renderer.renderDocument(app.currentDocument)
+    click('pts')
+    expect(order()).toEqual(['e', 'c', 'a', 'd', 'b'])
+  })
+
   it('keeps the sort for the tab, and sends nothing to the backend', () => {
     render()
     click('pts')

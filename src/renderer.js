@@ -4884,7 +4884,13 @@ export class OverseerRenderer {
             const vocabulary = this.tagVocabulary(node)
             const value = held()
             let chip
-            if (value) {
+            const shown = this.shownText(node)
+            if (shown !== null) {
+                // Its text in place of the chip, pressed as the chip would be.
+                chip = document.createElement('span')
+                chip.className = 'tag-chip enum-shown'
+                this.setTextWithIcons(chip, shown, node)
+            } else if (value) {
                 chip = this.tagChip(value, vocabulary.get(value), null)
                 if (!vocabulary.has(value)) chip.title = 'not one of the values this field lists'
             } else {
@@ -5392,7 +5398,7 @@ export class OverseerRenderer {
         
     const value = document.createElement('span')
     value.className = 'field-value'
-        this.setTextWithIcons(value, this.getNodeValue(node) || '', node)
+        this.setTextWithIcons(value, this.shownText(node) ?? (this.getNodeValue(node) || ''), node)
         
         // Make it editable on double-click (respect mutable)
         value.addEventListener('dblclick', () => {
@@ -5605,7 +5611,7 @@ export class OverseerRenderer {
     // Check if markdown is enabled for this text field. Default to true when not specified.
     const markdownParam = this.getParameterValue(node, 'markdown')
     const isMarkdownEnabled = (markdownParam === undefined || markdownParam === null) ? true : markdownParam === true
-        const textContent = this.getNodeValue(node) || ''
+        const textContent = this.shownText(node) ?? (this.getNodeValue(node) || '')
         
         if (isMarkdownEnabled) {
             // Use markdown rendering
@@ -5756,7 +5762,8 @@ export class OverseerRenderer {
             // Fallback to string
             return String(v)
         }
-        value.textContent = `${pref}${fmtNumber(rawVal)}${suf}`
+        const shown = this.shownText(node)
+        value.textContent = shown !== null ? shown : `${pref}${fmtNumber(rawVal)}${suf}`
         
         // Make it editable on double-click (respect mutable)
         value.addEventListener('dblclick', () => {
@@ -5792,7 +5799,7 @@ export class OverseerRenderer {
         
     const value = document.createElement('span')
     value.className = 'field-value'
-        this.setTextWithIcons(value, this.getNodeValue(node) || '', node)
+        this.setTextWithIcons(value, this.shownText(node) ?? (this.getNodeValue(node) || ''), node)
         
         container.appendChild(value)
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
@@ -5885,7 +5892,9 @@ export class OverseerRenderer {
         }
 
         let intervalId = null
+        const shown = this.shownText(node)
         const update = () => {
+            if (shown !== null) { value.textContent = shown; return }
             const ts = extractTs()
             if (!ts) { value.textContent = '\u2014'; return }
             if (!mode) {
@@ -5904,7 +5913,7 @@ export class OverseerRenderer {
             }
         }
         update()
-        if (mode === 'elapsed' || mode === 'remaining') {
+        if (shown === null && (mode === 'elapsed' || mode === 'remaining')) {
             intervalId = this._registerInterval(setInterval(update, 1000))
         }
 
@@ -8073,6 +8082,21 @@ export class OverseerRenderer {
     }
 
     // Helper function to extract parameter values from OverseerValue objects
+    /// The text `shown` says a field is drawn as, in place of its value, or null where it says
+    /// nothing. It is the whole of what is drawn - no precision, format, prefix or suffix is added
+    /// to it - and only drawn: the value, and the editor, stay what they are.
+    shownText(node) {
+        const params = node?.parameters
+        if (!params || params.shown === undefined) return null
+        // A formula that gives nothing comes back as the bare `Null`, which draws as nothing.
+        if (params._computed_shown === 'Null') return ''
+        const said = this.getParameterValue(node, 'shown')
+        if (said === null || said === undefined) return ''
+        // Nothing the formula could give that has no text of its own - a list, a null - is drawn.
+        if (typeof said === 'object') return ''
+        return String(said)
+    }
+
     getParameterValue(node, parameterName) {
         // Special-case: internal computed fields already include the prefix
         // e.g. '_computed_series', '_computed_x_min', etc. Read them directly.
@@ -8973,8 +8997,12 @@ export class OverseerRenderer {
                             const a = parseFloat(shown)
                             const b = parseFloat(want)
                             const eqNum3 = (!isNaN(a) && !isNaN(b) && Math.abs(a - b) < 1e-9)
+                            // A field drawn as its `shown` text does not show its value, so what
+                            // it shows says nothing about whether the value is already there.
+                            let drawnAsShown = false
+                            try { drawnAsShown = this.shownText(this.findNodeByPath(window.app.currentDocument, targetPathArr)) !== null } catch(_) {}
                             
-                            if (shown === want || eqNum3) {
+                            if (!drawnAsShown && (shown === want || eqNum3)) {
                                 
                                 // Nothing to mark. These are the branches taken when the entry has just been made and
                                 // the value shown is already the value typed - which used to mean the change existed
@@ -10822,7 +10850,7 @@ export class OverseerRenderer {
             if (DEBUG_MODE) console.log('⏭️ No inner text holder found; skipping container text update')
             return
         }
-        const computedValue = this.getNodeValue(newNode)
+        const computedValue = this.shownText(newNode) ?? this.getNodeValue(newNode)
         // If this is a markdown-enabled block, update innerHTML; otherwise textContent
         if (textElement.classList.contains('text-content') && textElement.classList.contains('markdown-enabled')) {
             const html = this.renderMarkdown(String(computedValue ?? ''), newNode)

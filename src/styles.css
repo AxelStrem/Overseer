@@ -2792,3 +2792,16 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     font-style: italic;
     opacity: 0.55;
 }
+
+/* An enum drawn as its `shown` text: the words, not a chip, and still a place to press. */
+.tag-chip.enum-shown {
+    background-color: transparent;
+    border-color: transparent;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+.tag-chip.enum-shown:empty {
+    min-width: 2em;
+    min-height: 16px;
+}

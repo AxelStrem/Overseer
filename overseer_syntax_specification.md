@@ -1133,6 +1133,21 @@ A `timestamp` is stored as a moment and shown in the viewer's own time zone: by 
 timestamp eaten (format="time", precision="minutes") = "2026-10-18T09:30:00+04:00"   // 09:30
 ```
 
+`shown` gives the text a field is drawn as in place of its value, on any field that holds one. A
+column of counts that is mostly zeros reads best with the zeros left blank:
+
+```overseer
+int main (label="Main", shown=$(main == 0 ? "" : main)) = 0
+string note (shown=$(note == "" ? "?" : note)) = ""
+```
+
+What `shown` gives is the whole text: no `precision`, `format`, `prefix` or `suffix` is added to
+it. A number it gives back is drawn as the formula gives it, so a formula that wants a precision
+writes it itself. An enum is drawn as the text instead of its chip, and is still pressed to pick.
+`shown` is only how the field looks. The value stays what it is in the file, in formulas, in the
+filter, when a list is sorted by it and when an entry is copied (`append` with `from=`), and
+editing the field opens on the value, not on the text.
+
 `freeze=true` keeps what a formula gave at the moment its entry was made: in a new entry the field
 is written with the value its formula works out, and from then on it states that value rather than
 following the formula. A day's target that starts as yesterday's, and stays what it was once
@@ -1852,7 +1867,7 @@ div Tasks {
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
 - **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`
-- **Values**: `precision`, `format`, `prefix`, `suffix`, `mode` (`elapsed`, `remaining`, on a `timestamp`)
+- **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`)
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
