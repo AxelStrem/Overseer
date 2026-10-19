@@ -62,6 +62,24 @@ const ICON_IN_TEXT = /<icon=([^<>]*)>/g
 const CHIP_IN_TEXT = /<#([^<>\s]+)>/g
 const CHIP_IN_HTML = /&lt;#([^<>&\s]+)&gt;/g
 /// The ways a button can answer hover, the theme's `button/hover`; each is a class in the stylesheet.
+// A grid's column by its letters, from 0: A..Z, AA.. - as the engine's `cell_name` names them.
+const gridColumnLetters = (column) => {
+    let letters = ''
+    for (let n = column + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+        letters = String.fromCharCode(65 + ((n - 1) % 26)) + letters
+    }
+    return letters
+}
+
+// The column and the row, from 0, a cell's name such as `C5` stands for, or null.
+const gridCellPlace = (name) => {
+    const m = /^([A-Z]+)([1-9][0-9]*)$/.exec(String(name || ''))
+    if (!m) return null
+    let column = 0
+    for (const c of m[1]) column = column * 26 + (c.charCodeAt(0) - 64)
+    return { column: column - 1, row: Number(m[2]) - 1 }
+}
+
 const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
 /// The ways a button can be drawn, the theme's `button/style`; `solid` is the stylesheet's own.
 const BUTTON_STYLES = ['outline', 'plain']
@@ -1147,6 +1165,15 @@ export class OverseerRenderer {
         
         // Hide plot nodes - they are configuration for chart nodes, not visual elements
         if (childType === 'plot') return false
+
+        // A grid draws its cells. What its block wrote for a place outside it is kept in the file
+        // and said as a problem on the grid, and has nowhere to be drawn.
+        if (parentType === 'grid') {
+            const place = gridCellPlace(childName)
+            const columns = Number(this.getParameterValue(parentNode, 'columns')) || 0
+            const rows = Number(this.getParameterValue(parentNode, 'rows')) || 0
+            if (!place || place.column >= columns || place.row >= rows) return false
+        }
 
         // A list entry the resolver left out of view. Not merely hidden: nothing was worked out
         // for it and no template was copied onto it, so there is nothing here to draw - such a
@@ -2372,6 +2399,7 @@ export class OverseerRenderer {
                         }
                     }
                     renderChildren()
+                    if (nodeTypeLower === 'grid') this.setUpGrid(element, node)
                     if (nodeTypeLower === 'list') {
                         this.setUpTable(element, node)
                         this.drawEntriesLeftOut(element, node)
@@ -2415,6 +2443,8 @@ export class OverseerRenderer {
                 return this.createDivElement(node)
             case 'list':
                 return this.createListElement(node)
+            case 'grid':
+                return this.createGridElement(node)
             case 'list_item':
                 return this.createListItemElement(node)
             case 'string':
@@ -3063,6 +3093,48 @@ export class OverseerRenderer {
         this.applyLayoutStyles(div, node)
         this.applyNodeStyles(div, node)
         return div
+    }
+
+    /// A grid: its cells in rows and columns, each drawn as its template is. The resolver gives
+    /// them in order, row by row, so the cells are placed by the order they are drawn in rather
+    /// than each by a place of its own, which a cell drawn again after an edit would lose.
+    createGridElement(node) {
+        const grid = document.createElement('div')
+        grid.className = 'overseer-grid'
+        if (node.name) grid.setAttribute('data-name', node.name)
+        this.applyLayoutStyles(grid, node)
+        this.applyNodeStyles(grid, node)
+        return grid
+    }
+
+    /// The grid's size, and its headings - column letters above, row numbers to the left -
+    /// unless it says `header=false`.
+    setUpGrid(element, node) {
+        const columns = Number(this.getParameterValue(node, 'columns')) || 0
+        if (columns <= 0) return
+        const header = this.getParameterValue(node, 'header')
+        const headed = !(header === false || String(header).toLowerCase() === 'false')
+        element.style.gridTemplateColumns = (headed ? 'auto ' : '') + `repeat(${columns}, minmax(0, 1fr))`
+        if (!headed) return
+        const heading = (text, kind) => {
+            const h = document.createElement('div')
+            h.className = `overseer-grid-heading ${kind}`
+            h.textContent = text
+            return h
+        }
+        const cells = Array.from(element.children).filter(el => el.dataset && el.dataset.path)
+        const first = cells[0] || null
+        element.insertBefore(heading('', 'corner'), first)
+        for (let c = 0; c < columns; c++) element.insertBefore(heading(gridColumnLetters(c), 'column'), first)
+        let row = null
+        for (const cell of cells) {
+            let name = ''
+            try { name = String(JSON.parse(cell.dataset.path).slice(-1)[0] || '') } catch (_) { /* no place */ }
+            const place = gridCellPlace(name)
+            if (!place || place.row === row) continue
+            row = place.row
+            element.insertBefore(heading(String(row + 1), 'row'), cell)
+        }
     }
 
     createListElement(node) {
@@ -8684,7 +8756,7 @@ export class OverseerRenderer {
         // told for a container by what it holds.
         const kind = String(node.node_type || node.type || '').toLowerCase()
         const holds = Array.isArray(node.children) && node.children.length > 0
-        if (holds || ['div', 'list', 'tab', 'table'].includes(kind)) {
+        if (holds || ['div', 'list', 'grid', 'tab', 'table'].includes(kind)) {
             const header = element.querySelector(':scope > .overseer-fold-header')
             element.insertBefore(line, header ? header.nextSibling : element.firstChild)
         } else if (element.parentNode === container) {
@@ -10417,6 +10489,7 @@ export class OverseerRenderer {
             const expectedClass = (() => {
                 switch (nodeType) {
                     case 'list': return 'overseer-list'
+                    case 'grid': return 'overseer-grid'
                     case 'list_item':
                     case '-': return 'overseer-list-item'
                     case 'div': return 'overseer-div'
@@ -10831,6 +10904,7 @@ export class OverseerRenderer {
                     }
                     break
                 case 'list':
+                case 'grid':
                 case 'tab':
                     // Re-render container subtree for lists and tabs
                     try {

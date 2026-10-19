@@ -1955,6 +1955,10 @@ fn resolve_node_templates(
         }
     }
 
+    if node.node_type == "grid" && make_grid_cells(node, all_nodes, missed) {
+        local_progress = true;
+    }
+
     // If this node is a direct template instance (e.g., <Colorful> Instance { ... }),
     // clone the template's parameters and children, then merge overrides from the instance.
     let mut instantiating: Option<String> = None;
@@ -2132,6 +2136,148 @@ fn resolve_node_templates(
         local_progress
     );
     local_progress
+}
+
+/// Set on a grid once its cells are made, so that a later pass leaves them as they are.
+pub const GRID_MADE: &str = "_grid_made";
+
+/// A grid's size, `columns` by `rows`, when both are whole numbers above 0.
+pub fn grid_size(node: &OverseerNode) -> Option<(usize, usize)> {
+    let size = |key: &str| match node.parameters.get(key) {
+        Some(OverseerValue::Integer(n)) if *n > 0 => Some(*n as usize),
+        _ => None,
+    };
+    Some((size("columns")?, size("rows")?))
+}
+
+/// The value a field of a plain type holds before anything is written to it.
+fn empty_value_of(type_name: &str) -> OverseerValue {
+    match type_name {
+        "int" => OverseerValue::Integer(0),
+        "float" => OverseerValue::Float(0.0),
+        "bool" | "checkbox" => OverseerValue::Boolean(false),
+        _ => OverseerValue::String(String::new()),
+    }
+}
+
+/// Fills a grid with its cells: `columns` x `rows` copies of its `entry=`, named `A1`, `B1`, ...
+/// row by row, with what the grid's block writes matched onto them by name, as an instance's
+/// block is matched onto its template. So a grid is an instance of a template made of its cells:
+/// only what the block wrote is saved, and a cell set since is written into the block as
+/// `- C5 { ... }`, as an instance's inherited field is.
+///
+/// Returns whether it made them. A template not there yet is waited for, as a list waits.
+fn make_grid_cells(
+    node: &mut OverseerNode,
+    all_nodes: &[OverseerNode],
+    missed: &mut Vec<String>,
+) -> bool {
+    if node.parameters.contains_key(GRID_MADE) {
+        return false;
+    }
+    let refuse = |node: &mut OverseerNode, why: String| {
+        node.parameters
+            .insert(crate::bases::ERROR.to_string(), OverseerValue::String(why));
+        node.parameters
+            .insert(GRID_MADE.to_string(), OverseerValue::Boolean(true));
+        true
+    };
+    let Some((columns, rows)) = grid_size(node) else {
+        return refuse(
+            node,
+            format!("grid '{}' needs columns= and rows=, each a whole number above 0", node.name),
+        );
+    };
+    let cell = match node.parameters.get("entry").cloned() {
+        Some(OverseerValue::Template(path)) => match crate::bases::find_or_why(all_nodes, &path) {
+            Err(why) => return refuse(node, why),
+            Ok(None) => {
+                if crate::bases::reference(&path).file.is_none() {
+                    missed.push(crate::bases::reference(&path).name.clone());
+                }
+                return false;
+            }
+            Ok(Some(found)) => {
+                let template = as_a_template(found, &path, all_nodes, missed);
+                let mut cell = template.clone();
+                cell.adopt_template_snapshot(&template);
+                cell.node_type = template.name.clone();
+                cell.parameters.insert(
+                    "_original_type".to_string(),
+                    OverseerValue::String(template.node_type.clone()),
+                );
+                cell
+            }
+        },
+        Some(OverseerValue::String(type_name)) if crate::bases::is_type(&type_name) => {
+            let mut cell = OverseerNode::new_with_type(type_name.clone(), None);
+            cell.parameters
+                .insert("value".to_string(), empty_value_of(&type_name));
+            cell
+        }
+        _ => {
+            return refuse(
+                node,
+                format!("grid '{}' needs entry=, a template or a field type", node.name),
+            )
+        }
+    };
+    let (indent_unit, newline) = node
+        .source_snapshot
+        .as_ref()
+        .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+        .unwrap_or((None, None));
+    let mut cells = Vec::with_capacity(columns * rows);
+    for row in 0..rows {
+        for column in 0..columns {
+            let mut one = cell.clone();
+            one.name = crate::addressing::cell_name(column, row);
+            one.is_hierarchy_transparent = false;
+            mark_template_child_recursive(&mut one);
+            one.parameters.remove("_explicit_child_override");
+            one.parameters.remove("_override_present");
+            if one.source_snapshot.is_none() {
+                one.synthesize_snapshot_with_style_recursive(indent_unit.clone(), newline.clone());
+            }
+            cells.push(one);
+        }
+    }
+
+    let written = std::mem::take(&mut node.children);
+    let outside: Vec<&str> = written
+        .iter()
+        .map(|w| w.name.as_str())
+        .filter(|name| {
+            !crate::addressing::cell_place(name)
+                .is_some_and(|(column, row)| column < columns && row < rows)
+        })
+        .collect();
+    if !outside.is_empty() {
+        node.parameters.insert(
+            crate::bases::ERROR.to_string(),
+            OverseerValue::String(format!(
+                "grid '{}' is {} by {}, and has no cell {}",
+                node.name,
+                columns,
+                rows,
+                outside.join(", ")
+            )),
+        );
+    }
+    node.children = cells;
+    node.parameters
+        .insert("_from_template".to_string(), OverseerValue::Boolean(true));
+    node.parameters
+        .insert(GRID_MADE.to_string(), OverseerValue::Boolean(true));
+    if !written.is_empty() {
+        let names: Vec<String> = written.iter().map(|w| w.name.clone()).collect();
+        node.parameters.insert(
+            "_explicit_overrides".to_string(),
+            OverseerValue::String(names.join(",")),
+        );
+        merge_node(node, &written);
+    }
+    true
 }
 
 /// Recursively infer '-' typed override children using the corresponding template node structure.

@@ -62,6 +62,37 @@ fn key_field(node: &OverseerNode) -> Option<&str> {
     }
 }
 
+/// The name of a grid's cell at a column and a row, both counted from 0: spreadsheet-style,
+/// column letters `A`..`Z`, `AA`.. and the row from 1, so `cell_name(2, 4)` is `C5`.
+pub fn cell_name(column: usize, row: usize) -> String {
+    let mut letters = Vec::new();
+    let mut n = column + 1;
+    while n > 0 {
+        let digit = (n - 1) % 26;
+        letters.push((b'A' + digit as u8) as char);
+        n = (n - 1) / 26;
+    }
+    letters.iter().rev().collect::<String>() + &(row + 1).to_string()
+}
+
+/// The column and the row, from 0, a cell's name stands for - `None` for any other name.
+pub fn cell_place(name: &str) -> Option<(usize, usize)> {
+    let split = name.find(|c: char| !c.is_ascii_uppercase())?;
+    let (letters, digits) = name.split_at(split);
+    if letters.is_empty() || digits.is_empty() || digits.starts_with('0') {
+        return None;
+    }
+    if !digits.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let mut column = 0usize;
+    for c in letters.chars() {
+        column = column.checked_mul(26)?.checked_add((c as u8 - b'A') as usize + 1)?;
+    }
+    let row: usize = digits.parse().ok()?;
+    Some((column - 1, row - 1))
+}
+
 /// The value a node carries for its list's key field.
 ///
 /// Through wrappers, because grouping an entry's fields for layout must not change what the

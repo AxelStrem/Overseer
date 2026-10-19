@@ -921,6 +921,35 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     border-radius: var(--ov-radius);
     padding-top: 8px; /* ensure content isn’t glued to top */
 }
+.overseer-grid {
+    display: grid;
+    gap: 4px;
+    align-items: stretch;
+    background: var(--ov-surface);
+    border: 1px solid var(--ov-line);
+    border-radius: var(--ov-radius);
+    padding: 8px;
+}
+.overseer-grid > * {
+    min-width: 0;
+    margin: 0;
+}
+.overseer-grid > .inherit-error,
+.overseer-grid > .overseer-fold-header {
+    grid-column: 1 / -1;
+}
+.overseer-grid-heading {
+    align-self: center;
+    color: var(--ov-muted);
+    font-size: 11px;
+    text-align: center;
+    user-select: none;
+}
+.overseer-grid-heading.row {
+    text-align: end;
+    padding-right: 4px;
+}
+
 /* Suppress top margin when container explicitly marked tight */
 .overseer-div[data-tight="1"].layout-vertical > :first-child,
 .overseer-list[data-tight="1"].layout-vertical > :first-child {

@@ -109,6 +109,8 @@ A line that cannot be read - a string without its closing quote, a `{` never clo
 - `list`: Collection with CRUD operations and two entry types:
   - **Template node entries**: `list Tasks (entry=<../TaskTemplate>)` - structured objects following a template
   - **Vanilla type entries**: `list Names (entry=string)` - simple primitive values
+- `grid`: A fixed number of cells in rows and columns, each made from one template or type - see
+  "Grids"
 - `tab`: One page of a tab system, anywhere a node can stand - in a div, a list, another tab.
   The tabs that share a parent are one system: a bar of their labels and one page showing at a
   time, drawn where the first of them stands. Two systems at one level are two divs. At the top of
@@ -425,6 +427,55 @@ and keeps its value.
 list Ranked (entry=<Food>, view="board", by="tier", layout="vertical", movable=true) { }
 list Unranked (entry=<Food>, layout="horizontal", movable=true) { }
 ```
+
+### 8. Grids
+
+A grid holds `columns` x `rows` cells, every one made from its `entry=` - a template, or a field
+type such as `int` - without being written. Each cell is named by its place, spreadsheet-style:
+column letters `A`..`Z`, `AA`.., and the row from 1, so `C5` is the third column of the fifth row.
+What the grid's block writes overrides only the cell it names, matched as an instance's block is
+matched onto its template:
+
+```overseer
+grid Rota (entry=<Shift>, columns=5, rows=3) {
+    - C2 {
+        - who = "Bob"
+        - hours = 6
+    }
+}
+grid Steps (entry=int, columns=7, rows=2) {
+    - A1 = 8200
+}
+```
+
+- **Only what is written is saved.** A cell set since - by an action, the API or a person in the
+  page - is written into the block as `- C5 { ... }` (or `- C5 = 3` for a grid of a type), among
+  the others in the order of their places.
+- **The size** is a whole number above 0 each, written as it is - not a formula. A cell written for
+  a place outside the grid, say after it was made smaller, stays in the file, is not drawn, and is
+  said as a problem on the grid.
+- **A cell's address** is a step like any other: `week/Rota/C2/who`. An action may also name a
+  cell by its place, column then row, each counted from 0 as `[n]` counts a list's entries:
+  `set (path="../Rota[2,1]/who")` is `set (path="../Rota/C2/who")`. A grid has no entries to
+  `append`, `remove` or `move`.
+- **A formula** reaches the cells through the grid's methods, which give a list the list methods
+  then work on, row by row:
+
+  | method | |
+  | --- | --- |
+  | `cells()` | every cell |
+  | `row(n)`, `column(n)` | the cells of one row, or one column, from 0 |
+  | `at(column, row)` | one cell, from 0 - its value, or `at(...)/field` one of its fields |
+
+  ```overseer
+  int hours = $(Rota.cells().sum(|s| s/hours))
+  int wednesday = $(Rota.column(2).sum(|s| s/hours))
+  int monday = $(Steps.at(0, 0))
+  ```
+
+  A place outside the grid is an error, as a field that is not there is.
+- **The page** draws the cells in their rows and columns, headed by the column letters and the row
+  numbers; `header=false` leaves the headings out.
 
 ## Advanced Features
 
@@ -1905,12 +1956,13 @@ div Tasks {
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
+- **Grids**: `entry`, `columns`, `rows`, `header`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`
 - **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on change`, `on load`, `on unload`
-- **Types** (not to be a template's name): `tab`, `div`, `list`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
+- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context)
 
 ---

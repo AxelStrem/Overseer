@@ -3614,6 +3614,24 @@ impl FormulaEvaluator {
         debug_evaluator!("[EVAL] Initial list size: {}", list.len());
 
         for (position, call) in calls.iter().enumerate() {
+            if position == 0 {
+                let grid = Self::eval_expr_to_node(base, context);
+                if let Some(picked) = grid.and_then(|grid| Self::grid_pick(grid, call, context)) {
+                    list = picked?.into_iter().map(ListItem::Node).collect();
+                    // A cell stands for its value, as `first()` gives one.
+                    if call.name == "at" && calls.len() == 1 {
+                        return Ok(list
+                            .first()
+                            .and_then(|item| match item {
+                                ListItem::Node(n) => Self::value_of_node(n),
+                                ListItem::Value(v) => Some(v.clone()),
+                            })
+                            .unwrap_or_else(|| OverseerValue::String("null".to_string())));
+                    }
+                    came_from = None;
+                    continue;
+                }
+            }
             match call.name.as_str() {
                 "map" => {
                     let lambda = call.args.get(0).ok_or_else(|| {
@@ -4110,6 +4128,79 @@ impl FormulaEvaluator {
         }
     }
 
+    /// What a grid's own methods pick out of its cells, row by row: `cells()` all of them,
+    /// `row(n)` and `column(n)` one line, `at(column, row)` one cell, each counted from 0. `None`
+    /// for any other method, or for a node that is not a grid. A place outside the grid is an
+    /// error, as a field that is not there is.
+    fn grid_pick<'a>(
+        grid: &'a OverseerNode,
+        call: &MethodCall,
+        context: &EvaluationContext,
+    ) -> Option<Result<Vec<&'a OverseerNode>, OverseerError>> {
+        if grid.node_type != "grid" || !matches!(call.name.as_str(), "cells" | "row" | "column" | "at")
+        {
+            return None;
+        }
+        let (columns, rows) = crate::resolver::grid_size(grid).unwrap_or((0, 0));
+        let wanted = call.args.len();
+        let expected = match call.name.as_str() {
+            "cells" => 0,
+            "at" => 2,
+            _ => 1,
+        };
+        if wanted != expected {
+            return Some(Err(OverseerError::FormulaError(format!(
+                "{}() takes {} argument(s)",
+                call.name, expected
+            ))));
+        }
+        let mut places = Vec::with_capacity(expected);
+        for arg in &call.args {
+            let place = match Self::evaluate_expression(arg, context) {
+                Ok(OverseerValue::Integer(n)) if n >= 0 => n as usize,
+                Ok(OverseerValue::Float(f)) if f >= 0.0 && f.fract() == 0.0 => f as usize,
+                Ok(other) => {
+                    return Some(Err(OverseerError::FormulaError(format!(
+                        "{}() wants a place from 0, not {:?}",
+                        call.name, other
+                    ))))
+                }
+                Err(e) => return Some(Err(e)),
+            };
+            places.push(place);
+        }
+        let outside = match call.name.as_str() {
+            "row" => places[0] >= rows,
+            "column" => places[0] >= columns,
+            "at" => places[0] >= columns || places[1] >= rows,
+            _ => false,
+        };
+        if outside {
+            return Some(Err(OverseerError::FormulaError(format!(
+                "grid '{}' is {} by {}, and has no {}{:?}",
+                grid.name, columns, rows, call.name, places
+            ))));
+        }
+        let picked = grid
+            .children
+            .iter()
+            .filter(|cell| {
+                let Some((column, row)) = crate::addressing::cell_place(&cell.name) else {
+                    return false;
+                };
+                column < columns
+                    && row < rows
+                    && match call.name.as_str() {
+                        "row" => row == places[0],
+                        "column" => column == places[0],
+                        "at" => column == places[0] && row == places[1],
+                        _ => true,
+                    }
+            })
+            .collect();
+        Some(Ok(picked))
+    }
+
     /// Every node an expression names, or nothing when the expression makes no sense here.
     ///
     /// The distinction matters where a field is read through a lookup. `Shops.filter(...)/name`
@@ -4211,6 +4302,15 @@ impl FormulaEvaluator {
                 // what the index was built against.
                 let came_from = base_node as *const OverseerNode as usize;
                 for (position, call) in calls.iter().enumerate() {
+                    if position == 0 {
+                        if let Some(picked) = Self::grid_pick(base_node, call, context) {
+                            nodes = picked.ok()?;
+                            if let [one] = nodes.as_slice() {
+                                current_container = one;
+                            }
+                            continue;
+                        }
+                    }
                     match call.name.as_str() {
                         "find" => {
                             // Evaluate key value to match

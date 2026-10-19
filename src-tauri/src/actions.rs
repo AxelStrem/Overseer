@@ -1722,6 +1722,16 @@ impl ActionExecutor {
         (segments, explicit_param, anchored)
     }
 
+    /// A segment naming a grid's cell by its place, `Board[2,4]` - the column and the row, from
+    /// 0 - as the grid's name and the cell's, `C5`.
+    fn split_cell_place(seg: &str) -> Option<(&str, String)> {
+        let open = seg.rfind('[').filter(|_| seg.ends_with(']'))?;
+        let (column, row) = seg[open + 1..seg.len() - 1].split_once(',')?;
+        let column: usize = column.trim().parse().ok()?;
+        let row: usize = row.trim().parse().ok()?;
+        Some((&seg[..open], crate::addressing::cell_name(column, row)))
+    }
+
     /// Resolve a mutable reference to a node given a base owner path and target path string.
     fn resolve_target_indices(
         nodes: &Vec<OverseerNode>,
@@ -1774,6 +1784,9 @@ impl ActionExecutor {
                     }
                 } else if seg.is_empty() {
                     continue;
+                } else if let Some((grid, cell)) = Self::split_cell_place(seg) {
+                    abs.push(grid.to_string());
+                    abs.push(cell);
                 } else {
                     abs.push(seg.clone());
                 }
