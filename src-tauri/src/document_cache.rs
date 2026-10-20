@@ -178,8 +178,8 @@ struct Entry {
     /// each stood then - see `actions::mounts_held` and `bases::held`. The text is not all a tree
     /// was worked out from.
     mounts: Vec<(String, String)>,
-    /// The minute what reads the clock was last worked out in - see `clock_caught_up`.
-    clock_minute: Option<i64>,
+    /// The minute what reads the clock in `nodes` was worked out in - see `WorkedOutIn`.
+    clock_minute: WorkedOutIn,
 }
 
 impl Entry {
@@ -377,32 +377,21 @@ pub fn nodes_for(text: &str) -> Option<Vec<OverseerNode>> {
     })
 }
 
-/// Whether what reads the clock in the document held for this text was worked out in this minute.
+/// The minute what reads the clock in a document held was worked out in.
 ///
 /// Every function a document asks the time with answers in minutes or coarser - the minute of the
 /// day, minutes since, days since, the same day - so within one minute there is nothing for the
 /// clock to have moved. Several writes in a row are the usual shape of things: four foods from one
 /// message, three tasks marked done, the sweep opening a morning's tasks. The first brings the
 /// document up to the minute and the rest find it there.
-pub fn clock_caught_up(text: &str, minute: i64) -> bool {
-    with(|store| found(store, text).is_some_and(|found| store[found].clock_minute == Some(minute)))
-}
-
-/// Say that what reads the clock in the document held for this text was worked out in this minute.
 ///
-/// Said of the document the entry holds, by whoever put it there knowing - after an open worked it
-/// out, after a write that brought it up to the minute and handed it back. Putting a document in
-/// unsays it, since a document put back can be one taken before it was brought up to date. It
-/// used to be said by whatever brought *a* document up to date, and an open does that to a copy:
-/// the sweep read the rules, the copy it was given was current, the one held was marked current and
-/// was not, and the press that followed within the minute read the night before's figures.
-pub fn clock_worked_out_in(text: &str, minute: i64) {
-    with(|store| {
-        if let Some(found) = at(store, text) {
-            store[found].clock_minute = Some(minute);
-        }
-    })
-}
+/// Held with the document, put in and taken out with it under one lock, because it is a fact about
+/// that document and no other. It used to be said in a step of its own after the document was put
+/// in, and the cache is shared by every thread: one put its document in, another put in its own
+/// from an earlier minute, and the first then marked the second's as current in its own. The next
+/// open in that minute was handed the earlier one's figures, as current. A document put in by whoever
+/// does not know how current it is - one taken and put back as it was - is put in with `None`.
+pub type WorkedOutIn = Option<i64>;
 
 /// The document this text produced, lent to `look` rather than copied out - for a question that
 /// decides whether to take it at all.
@@ -413,19 +402,20 @@ pub fn with_nodes<R>(text: &str, look: impl FnOnce(&[OverseerNode]) -> R) -> Opt
     })
 }
 
-/// The same, handed over rather than copied.
+/// The same, handed over rather than copied, with the minute it was worked out in.
 ///
 /// For a caller that is about to replace it anyway: on a large document a copy costs more than the
 /// diff it feeds.
-pub fn take_nodes(text: &str) -> Option<Vec<OverseerNode>> {
+pub fn take_nodes(text: &str) -> Option<(Vec<OverseerNode>, WorkedOutIn)> {
     with(|store| {
         let found = found(store, text)?;
         store[found].used = now();
         let taken = store[found].nodes.take();
+        let minute = store[found].clock_minute.take();
         if taken.is_some() {
             store[found].measure();
         }
-        taken
+        taken.map(|nodes| (nodes, minute))
     })
 }
 
@@ -482,7 +472,7 @@ fn read_from(nodes: &[OverseerNode]) -> Vec<(String, String)> {
     files
 }
 
-pub fn put_nodes(text: &str, nodes: &[OverseerNode]) {
+pub fn put_nodes(text: &str, nodes: &[OverseerNode], worked_out_in: WorkedOutIn) {
     // Nothing is kept at all when the budget is nothing, rather than a copy being made and
     // immediately dropped.
     if budget_bytes() == 0 {
@@ -491,21 +481,19 @@ pub fn put_nodes(text: &str, nodes: &[OverseerNode]) {
     put(text, |entry| {
         entry.mounts = read_from(nodes);
         entry.nodes = Some(nodes.to_vec());
-        // How current what reads the clock is, is for whoever knows to say - see
-        // `clock_worked_out_in`.
-        entry.clock_minute = None;
+        entry.clock_minute = worked_out_in;
     });
 }
 
 /// The same, when the caller has a document it no longer needs.
-pub fn own_nodes(text: &str, nodes: Vec<OverseerNode>) {
+pub fn own_nodes(text: &str, nodes: Vec<OverseerNode>, worked_out_in: WorkedOutIn) {
     if budget_bytes() == 0 {
         return;
     }
     put(text, |entry| {
         entry.mounts = read_from(&nodes);
         entry.nodes = Some(nodes);
-        entry.clock_minute = None;
+        entry.clock_minute = worked_out_in;
     });
 }
 

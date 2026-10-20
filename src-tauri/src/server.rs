@@ -1516,7 +1516,9 @@ impl DocumentRoot {
             // worked out, what reads the clock is as old as that - see
             // `app_api::catch_up_with_the_clock`. Without a graph to say what that is, the long way.
             let quick = if in_view { app_api::take_worked_out(&text) } else { None }
-                .and_then(|mut nodes| app_api::catch_up_with_the_clock(&text, &mut nodes).map(|()| nodes));
+                .and_then(|(mut nodes, worked_out_in)| {
+                    app_api::catch_up_with_the_clock(&text, &mut nodes, worked_out_in).map(|()| nodes)
+                });
             let quick_way = quick.is_some();
             // Then it holds the very document the graph for this text describes, so a change of
             // shape can be followed through the graph - see `app_api::settle_after_change`.
@@ -1547,7 +1549,7 @@ impl DocumentRoot {
                     // it may be half changed, and is let go.
                     let acted = crate::actions::take_report().is_some_and(|changed| changed.acted);
                     if quick_way && !acted {
-                        app_api::hold_again(&text, nodes);
+                        app_api::hold_again(&text, nodes, None);
                     }
                     return Err(refused);
                 }

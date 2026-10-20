@@ -342,15 +342,14 @@ pub fn load_document(content: String) -> Result<Vec<OverseerNode>> {
 fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
     // Brought up to the minute where it is held, and a copy handed out - so the next read, and a
     // write following it, find the one held current too, rather than a copy current and the one
-    // held still the night before's. See `document_cache::clock_worked_out_in`.
-    let mut held = take_worked_out(content)?;
-    if catch_up_with_the_clock(content, &mut held).is_none() {
-        hold_again(content, held);
+    // held still the night before's. See `document_cache::WorkedOutIn`.
+    let (mut held, worked_out_in) = take_worked_out(content)?;
+    if catch_up_with_the_clock(content, &mut held, worked_out_in).is_none() {
+        hold_again(content, held, worked_out_in);
         return None;
     }
     let copy = held.clone();
-    hold_again(content, held);
-    crate::document_cache::clock_worked_out_in(content, this_minute());
+    hold_again(content, held, Some(this_minute()));
     Some(copy)
 }
 
@@ -368,7 +367,14 @@ fn already_worked_out(content: &str) -> Option<Vec<OverseerNode>> {
 /// opens the morning's tasks read how many hours were left until each was due from the evening
 /// before, and every one of them opened already overdue - `Morning hygiene`, due by ten, due
 /// thirteen hours before it appeared.
-pub(crate) fn catch_up_with_the_clock(content: &str, nodes: &mut Vec<OverseerNode>) -> Option<()> {
+///
+/// `worked_out_in` is the minute these were worked out in, as they were taken - see
+/// `document_cache::WorkedOutIn`.
+pub(crate) fn catch_up_with_the_clock(
+    content: &str,
+    nodes: &mut Vec<OverseerNode>,
+    worked_out_in: crate::document_cache::WorkedOutIn,
+) -> Option<()> {
     let stale = crate::document_cache::with_graph(content, |graph| {
         if graph.is_empty() {
             None
@@ -382,9 +388,8 @@ pub(crate) fn catch_up_with_the_clock(content: &str, nodes: &mut Vec<OverseerNod
         return Some(());
     }
     // Nothing to do when it was brought up to this very minute already - see
-    // `document_cache::clock_caught_up`.
-    let minute = this_minute();
-    if crate::document_cache::clock_caught_up(content, minute) {
+    // `document_cache::WorkedOutIn`.
+    if worked_out_in == Some(this_minute()) {
         return Some(());
     }
     let targets: std::collections::HashSet<String> = stale.into_iter().collect();
@@ -395,7 +400,7 @@ pub(crate) fn catch_up_with_the_clock(content: &str, nodes: &mut Vec<OverseerNod
     resolver::compute_chart_series(nodes);
     // A task gone overdue reads through the other branch now - see `Graph::merge`. Not marked
     // current here: these may be a copy, and only the document held can be - whoever puts it back
-    // says so, see `document_cache::clock_worked_out_in`.
+    // says so, see `document_cache::WorkedOutIn`.
     crate::document_cache::add_to_graph(content, crate::dependencies::take_recording());
     Some(())
 }
@@ -457,8 +462,7 @@ fn load_document_maybe_recording(content: String, record: bool) -> Result<Vec<Ov
             // The caller holds this text and this document, so the next interaction
             // can be answered with a change rather than with the document.
             if ordinary {
-                remember(&content, &nodes);
-                crate::document_cache::clock_worked_out_in(&content, this_minute());
+                remember(&content, &nodes, Some(this_minute()));
             }
             Ok(nodes)
         }
@@ -573,8 +577,8 @@ fn carry_over_computed_at(
     true
 }
 
-fn remember(text: &str, nodes: &[OverseerNode]) {
-    crate::document_cache::put_nodes(text, nodes);
+fn remember(text: &str, nodes: &[OverseerNode], worked_out_in: crate::document_cache::WorkedOutIn) {
+    crate::document_cache::put_nodes(text, nodes, worked_out_in);
 }
 
 /// Drop every remembered document.
@@ -699,22 +703,23 @@ fn finish_update(
     let text = OverseerFileHandler::serialize_nodes(&resolved).map_err(|e| {
         OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
     })?;
-    finish_update_with(was, text, resolved, baseline)
+    finish_update_with(was, text, resolved, baseline, None)
 }
 
-/// The same, when the text has already been worked out.
+/// The same, when the text has already been worked out - in `worked_out_in`, when that is known.
 fn finish_update_with(
     was: &str,
     text: String,
     resolved: Vec<OverseerNode>,
     baseline: Option<Vec<OverseerNode>>,
+    worked_out_in: crate::document_cache::WorkedOutIn,
 ) -> Result<ResolvedUpdate> {
     match baseline.map(|before| crate::delta::diff(&before, &resolved)) {
         // The caller gets the changes, so the document itself can be handed to the cache
         // rather than copied into it.
         Some(changes) => {
             crate::document_cache::rekey(was, &text);
-            crate::document_cache::own_nodes(&text, resolved);
+            crate::document_cache::own_nodes(&text, resolved, worked_out_in);
             Ok(ResolvedUpdate {
                 text,
                 version: String::new(),
@@ -731,7 +736,7 @@ fn finish_update_with(
         }
         None => {
             crate::document_cache::rekey(was, &text);
-            remember(&text, &resolved);
+            remember(&text, &resolved, worked_out_in);
             Ok(ResolvedUpdate {
                 text,
                 version: String::new(),
@@ -875,7 +880,7 @@ pub fn execute_event_update(
         &nodes,
     );
     let phase = std::time::Instant::now();
-    let done = finish_update_with(&was, text, nodes, baseline).map(|mut update| {
+    let done = finish_update_with(&was, text, nodes, baseline, None).map(|mut update| {
         if let Some(fresh) = worked_out_whole {
             replace_graph(&update.text, fresh);
         }
@@ -1003,17 +1008,17 @@ fn change_document(
     let mut baseline = Baseline {
         put_back: held.is_some(),
         copy: match &held {
-            Some(nodes) => Some(nodes.clone()),
+            Some((nodes, _)) => Some(nodes.clone()),
             None => baseline_copy(&as_it_stood),
         },
         text: as_it_stood.clone(),
     };
     let mut nodes = if !looking_at.is_empty() {
         resolve_selective(as_it_stood.clone(), held_for_the_viewer.clone(), Some(looking_at))?
-    } else if let Some(mut held) = held {
+    } else if let Some((mut held, worked_out_in)) = held {
         // Brought up to the moment before anything reads it - see `catch_up_with_the_clock`. After
         // the copy above, so what moved with the clock is part of what the caller is told.
-        match catch_up_with_the_clock(&as_it_stood, &mut held) {
+        match catch_up_with_the_clock(&as_it_stood, &mut held, worked_out_in) {
             Some(()) => held,
             None => load_document(as_it_stood.clone())?,
         }
@@ -1101,14 +1106,13 @@ fn change_document(
     // against and has no other way to learn that this write moved the file.
     let to_edit = field_to_edit(report.as_ref(), &nodes);
     let to_fold = folds_to_do(report.as_ref(), &nodes);
-    let mut update = finish_update_with(&as_it_stood, serialized, nodes, baseline.used())?;
-    if let Some(fresh) = worked_out_whole {
-        replace_graph(&update.text, fresh);
-    }
     // Held now, and current: brought up to the minute before the change, or opened in it. Not for
     // a document worked out as one viewer sees it, which is not the one anyone else is handed.
-    if held_for_the_viewer.is_empty() {
-        crate::document_cache::clock_worked_out_in(&update.text, this_minute());
+    let worked_out_in = held_for_the_viewer.is_empty().then(this_minute);
+    let mut update =
+        finish_update_with(&as_it_stood, serialized, nodes, baseline.used(), worked_out_in)?;
+    if let Some(fresh) = worked_out_whole {
+        replace_graph(&update.text, fresh);
     }
     phase("answer");
     update.wrote = wrote;
@@ -1141,7 +1145,7 @@ impl Baseline {
 impl Drop for Baseline {
     fn drop(&mut self) {
         if let Some(copy) = self.copy.take().filter(|_| self.put_back) {
-            hold_again(&self.text, copy);
+            hold_again(&self.text, copy, None);
         }
     }
 }
@@ -1427,13 +1431,16 @@ fn follow_the_shape(
 /// to keep. A write that fails after changing it leaves nothing held, and the next one works the
 /// document out from its text - slower, and never wrong. See `hold_again` for one that failed
 /// before changing anything.
-pub(crate) fn take_worked_out(text: &str) -> Option<Vec<OverseerNode>> {
+pub(crate) fn take_worked_out(
+    text: &str,
+) -> Option<(Vec<OverseerNode>, crate::document_cache::WorkedOutIn)> {
     crate::document_cache::take_nodes(text)
 }
 
-/// Hold a document again under the text it was taken for, as it was taken.
-pub(crate) fn hold_again(text: &str, nodes: Vec<OverseerNode>) {
-    crate::document_cache::own_nodes(text, nodes);
+/// Hold a document again under the text it was taken for, with the minute it was worked out in -
+/// `None` when it is put back as it was taken and nobody knows.
+pub(crate) fn hold_again(text: &str, nodes: Vec<OverseerNode>, worked_out_in: crate::document_cache::WorkedOutIn) {
+    crate::document_cache::own_nodes(text, nodes, worked_out_in);
 }
 
 /// Hold a document worked out after a change, under the text it was written as.
@@ -1449,10 +1456,9 @@ pub(crate) fn keep_worked_out(
     whole: Option<Option<crate::dependencies::Graph>>,
 ) {
     crate::document_cache::rekey(was, now);
-    crate::document_cache::own_nodes(now, nodes);
     // Brought up to the minute before the write - see `catch_up_with_the_clock` - and worked out
     // since in the same minute.
-    crate::document_cache::clock_worked_out_in(now, this_minute());
+    crate::document_cache::own_nodes(now, nodes, Some(this_minute()));
     if let Some(fresh) = whole {
         replace_graph(now, fresh);
     }
@@ -2252,7 +2258,7 @@ fn with_text(nodes: Vec<OverseerNode>) -> Result<ResolvedDocument> {
     })?;
     // This pairing is what the caller now holds, and the baseline the next change
     // will be described against.
-    remember(&text, &nodes);
+    remember(&text, &nodes, None);
     Ok(ResolvedDocument { nodes, text })
 }
 
