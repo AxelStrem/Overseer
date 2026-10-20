@@ -48,8 +48,13 @@ Railway, Render, Fly, Heroku and the like can build the `Dockerfile` in this rep
      `Authorization: Bearer <token>` or as the `overseer_token` cookie. A browser gets the cookie
      by opening `https://<your-domain>/auth?token=<token>` once.
    - `OVERSEER_OPEN=1` serves without one, to anyone who finds the address.
+   - `OVERSEER_ACCOUNTS=/data/overseer-accounts.json` lets people sign in as themselves, and
+     `OVERSEER_ADMIN=<username>` names who may invite them: until that account exists, the
+     server's log holds a link to make it. Keep the file out of the documents folder - it holds
+     password hashes, and it need not travel with a backup of the documents. A token can be set
+     beside it, for a program such as a bot; see [API.md](API.md).
 
-   With neither, the server refuses to start and says which to set.
+   With none of these, the server refuses to start and says which to set.
 3. Nothing to do about the port: the host hands the container `PORT`, and the server listens on
    it.
 
@@ -91,6 +96,8 @@ A flag wins over its variable.
 | `--port N` | `OVERSEER_PORT`, then `PORT` | `4747` | the port |
 | `--token-file PATH` | `OVERSEER_TOKEN` | none | the token a request has to carry |
 | `--open` | `OVERSEER_OPEN=1` | off | serve beyond `127.0.0.1` without a token |
+| `--accounts PATH` | `OVERSEER_ACCOUNTS` | none | the file of accounts people sign in with; without it, nobody signs in |
+| `--admin NAME` | `OVERSEER_ADMIN` | none | the account that may invite others, made by a link printed at start-up |
 | | `OVERSEER_LIBRARY` | the checkout it was built from, else `library` beside the binary (`/app/library` in the image) | the templates shipped in `library/` |
 | | `OVERSEER_CACHE_MB` | `64` | see above |
 | | `OVERSEER_DISK_CACHE` | system temp folder | see above |

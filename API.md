@@ -23,6 +23,28 @@ With a token, every request carries it, as `Authorization: Bearer <token>` or as
 `overseer_token` cookie. A browser gets the cookie by visiting `/auth?token=<token>&next=/` once.
 Without it the answer is `401 {"error":"a token is required"}`.
 
+### Accounts
+
+Given an accounts file (`--accounts PATH` or `OVERSEER_ACCOUNTS`), people sign in as themselves.
+The token stays what it was: whoever holds it may do anything.
+
+- **Joining** is by invite. `/join?invite=<token>` is a form that asks for a username, a display
+  name and a password, then signs the person in. An invite is used once and lasts 7 days.
+  `--admin NAME` (`OVERSEER_ADMIN`) names the server's administrator: until that account exists,
+  the server prints a join link for it each time it starts, and only the last one printed works.
+- **Signing in**: `/signin` asks for the username and password and sets the `overseer_session`
+  cookie, good for 90 days. `/signout` ends it. A browser asking for a page without one is sent
+  to `/signin`, and back afterwards.
+- **`GET /account/me`** answers `{"username","name","admin"}` for whoever is signed in.
+  **`POST /account/me`** with `{"name": ...}`, or `{"password": ..., "current": ...}`, changes
+  their own display name or password.
+- **`POST /account/invite`**, for an admin or the token, answers `{"link": "/join?invite=...",
+  "expires": ...}`. With `{"reset": "<username>"}` the link sets a new password for that account
+  instead, and signs it out everywhere.
+- **Acting for someone**: a request with the token may add `X-Overseer-As: <username>` to be
+  that person - the bot does, for whoever is talking to it. From anyone else the header is
+  ignored, and naming no account is `403`.
+
 The examples below assume:
 
 ```bash
@@ -165,7 +187,8 @@ disk:
 | status | meaning |
 | --- | --- |
 | 400 | the request cannot be done as asked: a missing or ill-typed value, an unknown field, a duplicate key, a removal that does not match, a document name that leaves the root |
-| 401 | no token, or the wrong one |
+| 401 | no token, or the wrong one, and no session |
+| 403 | not allowed to whoever is asking: an invite by someone who is no admin, `X-Overseer-As` naming no account |
 | 404 | no such document, or nothing at that address |
 | 422 | the document refused the press (`refused` holds its sentence) |
 | 500 | the write failed |

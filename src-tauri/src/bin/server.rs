@@ -14,6 +14,10 @@
 //! (`OVERSEER_TOKEN` or `--token-file`) unless `--open` says that everyone who can reach it may
 //! read and write the documents. Every flag has an environment variable too, for a container;
 //! DEPLOYING.md lists them.
+//!
+//! Given an accounts file (`OVERSEER_ACCOUNTS` or `--accounts`), people sign in to it as
+//! themselves too - see `overseer::accounts`. The token goes on meaning the service: whoever
+//! holds it may do anything, and may say whom it acts for.
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -24,6 +28,8 @@ use axum::routing::post;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::{routing::get, Router};
+use axum::Extension;
+use overseer::accounts::{AccountError, Accounts, User};
 use overseer::server::{
     from_environment, is_loopback, is_switched_on, refuse_to_start, Access, DocumentRoot,
     RequestError,
@@ -38,6 +44,17 @@ struct Service {
     /// Where the built frontend lives, when one is being served.
     frontend: Option<Arc<std::path::PathBuf>>,
     access: Arc<Access>,
+    /// The people who may sign in, when the server keeps any.
+    accounts: Option<Arc<Accounts>>,
+}
+
+/// Who a request comes from, once the access check has let it in.
+#[derive(Clone)]
+enum Caller {
+    /// Holds the server's token, or the server asks for none: everything is open to it.
+    Service,
+    /// Someone signed in, or the service acting for them.
+    Person(User),
 }
 
 /// What lets the frontend run against this server rather than the desktop app.
@@ -148,23 +165,30 @@ async fn index(State(service): State<Service>) -> Response {
 /// The name of the cookie a browser carries once it has presented the token.
 const TOKEN_COOKIE: &str = "overseer_token";
 
+/// The name of the cookie a browser carries once someone has signed in.
+const SESSION_COOKIE: &str = "overseer_session";
+
 fn cookie_token(headers: &HeaderMap) -> Option<String> {
+    cookie_named(headers, TOKEN_COOKIE)
+}
+
+fn cookie_named(headers: &HeaderMap, wanted: &str) -> Option<String> {
     headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())?
         .split(';')
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == TOKEN_COOKIE)
+        .find(|(name, _)| *name == wanted)
         .map(|(_, value)| value.to_string())
 }
 
-/// Refuse anything that has not presented the token.
+/// Let in what has presented the token or signed in, and say who it is; refuse the rest.
 ///
 /// Applied to everything, including the frontend's own files: the point is that a stranger who
 /// finds the port learns nothing, and serving them the application would be a start.
 async fn require_access(
     State(service): State<Service>,
-    request: axum::extract::Request,
+    mut request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
     let headers = request.headers();
@@ -173,14 +197,63 @@ async fn require_access(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
     let cookie = cookie_token(headers);
-    if service.access.permits(bearer.as_deref(), cookie.as_deref()) {
+    let caller = if service.access.is_restricted()
+        && service.access.permits(bearer.as_deref(), cookie.as_deref())
+    {
+        // Only the token may say whom it acts for: from anyone else the header would be a way
+        // to become someone without their password.
+        match acting_for(headers) {
+            None => Some(Caller::Service),
+            Some(username) => match service.accounts.as_ref().and_then(|a| a.user(&username)) {
+                Some(user) => Some(Caller::Person(user)),
+                None => {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({ "error": "there is no account of that name" })),
+                    )
+                        .into_response()
+                }
+            },
+        }
+    } else if let Some(accounts) = service.accounts.as_ref() {
+        cookie_named(headers, SESSION_COOKIE)
+            .and_then(|token| accounts.session(&token, chrono::Utc::now()))
+            .map(Caller::Person)
+    } else if !service.access.is_restricted() {
+        Some(Caller::Service)
+    } else {
+        None
+    };
+    if let Some(caller) = caller {
+        request.extensions_mut().insert(caller);
         return next.run(request).await;
+    }
+    // A person who followed a link is better served by the way in than by an error.
+    if service.accounts.is_some()
+        && request.method() == axum::http::Method::GET
+        && wants_a_page(request.headers())
+    {
+        let here = request
+            .uri()
+            .path_and_query()
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_else(|| "/".into());
+        return redirect(&format!("/signin?next={}", escaped_for_query(&here)), None);
     }
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({ "error": "a token is required" })),
     )
         .into_response()
+}
+
+/// The account the token says it acts for, in `X-Overseer-As`.
+fn acting_for(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-overseer-as")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
 }
 
 /// Exchange a token in the address for a cookie, so a browser can follow links afterwards.
@@ -198,9 +271,7 @@ async fn sign_in(
         )
             .into_response();
     }
-    let next = params.get("next").map(|s| s.as_str()).unwrap_or("/");
-    // Refuse to bounce anywhere but back into this server.
-    let next = if next.starts_with('/') && !next.starts_with("//") { next } else { "/" };
+    let next = staying_here(params.get("next").map(|s| s.as_str()));
     let cookie = format!(
         // HttpOnly: no part of the page needs to read this, and nothing that cannot read it
         // can leak it. SameSite=Strict: another site must not be able to ride the session.
@@ -216,6 +287,370 @@ async fn sign_in(
         .expect("static response")
 }
 
+
+/// Refuse to bounce anywhere but back into this server.
+fn staying_here(next: Option<&str>) -> &str {
+    match next {
+        Some(next) if next.starts_with('/') && !next.starts_with("//") => next,
+        _ => "/",
+    }
+}
+
+/// Text as it may stand in a query string, every character but the plainest escaped.
+fn escaped_for_query(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
+}
+
+fn escaped_for_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn redirect(to: &str, cookie: Option<String>) -> Response {
+    let mut response = Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, to);
+    if let Some(cookie) = cookie {
+        response = response.header(header::SET_COOKIE, cookie);
+    }
+    response.body(Body::empty()).expect("static response")
+}
+
+/// The cookie that keeps someone signed in, or with no token, the one that ends it.
+///
+/// SameSite=Lax rather than the token cookie's Strict: a link to a document, followed from a
+/// message, should open it rather than ask to sign in again. Secure when the request came over
+/// HTTPS, as it does through Railway's proxy, and not otherwise, so that a server on a laptop
+/// can still be signed in to.
+fn session_cookie(headers: &HeaderMap, token: Option<&str>) -> String {
+    let secure = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("https"));
+    let lasts = match token {
+        Some(_) => overseer::accounts::SESSION_LASTS.num_seconds(),
+        None => 0,
+    };
+    format!(
+        "{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}",
+        SESSION_COOKIE,
+        token.unwrap_or_default(),
+        lasts,
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+/// A page of its own, needing nothing else from the server: it is shown to people who cannot
+/// yet be given anything else, the application's own styles included.
+fn form_page(status: StatusCode, title: &str, said: Option<&str>, body: &str) -> Response {
+    let said = said
+        .map(|s| format!("<p class=\"said\">{}</p>", escaped_for_html(s)))
+        .unwrap_or_default();
+    let html = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+<title>{title} - Overseer</title><style>\
+body{{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;display:flex;\
+justify-content:center;padding:12vh 16px;margin:0}}\
+main{{background:#fff;border-radius:12px;padding:28px;width:100%;max-width:340px;\
+box-shadow:0 1px 3px #0002}}\
+h1{{font-size:20px;margin:0 0 18px}}label{{display:block;font-size:13px;margin:12px 0 4px}}\
+input{{box-sizing:border-box;width:100%;padding:8px 10px;font:inherit;border:1px solid #cbd5e1;\
+border-radius:6px}}button{{margin-top:20px;width:100%;padding:9px;font:inherit;border:0;\
+border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}}\
+.said{{color:#b91c1c;font-size:14px}}.fixed{{font-weight:600}}\
+@media (prefers-color-scheme:dark){{body{{background:#0f172a;color:#e2e8f0}}\
+main{{background:#1e293b}}input{{background:#0f172a;color:inherit;border-color:#334155}}}}\
+</style></head><body><main><h1>{title}</h1>{said}{body}</main></body></html>",
+        title = escaped_for_html(title),
+        said = said,
+        body = body,
+    );
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(html))
+        .expect("static response")
+}
+
+fn no_accounts() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "error": "this server keeps no accounts" })),
+    )
+        .into_response()
+}
+
+type Fields = std::collections::HashMap<String, String>;
+
+fn field<'a>(fields: &'a Fields, name: &str) -> &'a str {
+    fields.get(name).map(|s| s.as_str()).unwrap_or("")
+}
+
+fn sign_in_form(status: StatusCode, next: &str, said: Option<&str>) -> Response {
+    form_page(
+        status,
+        "Sign in",
+        said,
+        &format!(
+            "<form method=\"post\" action=\"/signin\">\
+<input type=\"hidden\" name=\"next\" value=\"{next}\">\
+<label for=\"username\">Username</label>\
+<input id=\"username\" name=\"username\" autocomplete=\"username\" autocapitalize=\"none\" required autofocus>\
+<label for=\"password\">Password</label>\
+<input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required>\
+<button>Sign in</button></form>",
+            next = escaped_for_html(next)
+        ),
+    )
+}
+
+async fn sign_in_page(
+    State(service): State<Service>,
+    axum::extract::Query(params): axum::extract::Query<Fields>,
+) -> Response {
+    if service.accounts.is_none() {
+        return no_accounts();
+    }
+    sign_in_form(StatusCode::OK, staying_here(params.get("next").map(|s| s.as_str())), None)
+}
+
+// Hashing a password takes a few tens of milliseconds of one core. That is done where the
+// request is, rather than on the blocking pool, which is two threads wide and may be in the
+// middle of a long resolve: a sign-in should not wait half a minute behind someone's tracker.
+async fn sign_in_with_password(
+    State(service): State<Service>,
+    headers: HeaderMap,
+    axum::extract::Form(fields): axum::extract::Form<Fields>,
+) -> Response {
+    let Some(accounts) = service.accounts.as_ref() else {
+        return no_accounts();
+    };
+    let next = staying_here(fields.get("next").map(|s| s.as_str()));
+    match accounts.sign_in(field(&fields, "username"), field(&fields, "password"), chrono::Utc::now()) {
+        Ok((_, token)) => redirect(next, Some(session_cookie(&headers, Some(&token)))),
+        Err(AccountError::Refused(said)) => sign_in_form(StatusCode::UNAUTHORIZED, next, Some(&said)),
+        Err(AccountError::Failed(said)) => {
+            sign_in_form(StatusCode::INTERNAL_SERVER_ERROR, next, Some(&said))
+        }
+    }
+}
+
+async fn sign_out(State(service): State<Service>, headers: HeaderMap) -> Response {
+    if let (Some(accounts), Some(token)) =
+        (service.accounts.as_ref(), cookie_named(&headers, SESSION_COOKIE))
+    {
+        let _ = accounts.sign_out(&token, chrono::Utc::now());
+    }
+    redirect("/signin", Some(session_cookie(&headers, None)))
+}
+
+fn join_form(
+    status: StatusCode,
+    invite: &str,
+    invited: &overseer::accounts::Invited,
+    said: Option<&str>,
+) -> Response {
+    let (title, who) = match (&invited.username, invited.resets) {
+        (Some(username), true) => (
+            "A new password",
+            format!("<p>For <span class=\"fixed\">{}</span></p>", escaped_for_html(username)),
+        ),
+        (Some(username), false) => (
+            "Join",
+            format!(
+                "<p>As <span class=\"fixed\">{}</span></p>\
+<label for=\"name\">Display name</label><input id=\"name\" name=\"name\" required>",
+                escaped_for_html(username)
+            ),
+        ),
+        (None, _) => (
+            "Join",
+            "<label for=\"username\">Username</label>\
+<input id=\"username\" name=\"username\" autocomplete=\"username\" autocapitalize=\"none\" \
+pattern=\"[a-z0-9_\\-]+\" title=\"lower case letters, digits, - and _\" required autofocus>\
+<label for=\"name\">Display name</label><input id=\"name\" name=\"name\" required>"
+                .to_string(),
+        ),
+    };
+    form_page(
+        status,
+        title,
+        said,
+        &format!(
+            "<form method=\"post\" action=\"/join\">\
+<input type=\"hidden\" name=\"invite\" value=\"{invite}\">{who}\
+<label for=\"password\">Password</label>\
+<input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"new-password\" minlength=\"{shortest}\" required>\
+<button>{title}</button></form>",
+            invite = escaped_for_html(invite),
+            who = who,
+            shortest = overseer::accounts::SHORTEST_PASSWORD,
+            title = if invited.resets { "Set the password" } else { "Join" },
+        ),
+    )
+}
+
+fn invite_gone() -> Response {
+    form_page(
+        StatusCode::GONE,
+        "This invite cannot be used",
+        Some("It has been used already, or it has expired. Ask for a new one."),
+        "",
+    )
+}
+
+async fn join_page(
+    State(service): State<Service>,
+    axum::extract::Query(params): axum::extract::Query<Fields>,
+) -> Response {
+    let Some(accounts) = service.accounts.as_ref() else {
+        return no_accounts();
+    };
+    let invite = field(&params, "invite");
+    match accounts.invited(invite, chrono::Utc::now()) {
+        Some(invited) => join_form(StatusCode::OK, invite, &invited, None),
+        None => invite_gone(),
+    }
+}
+
+async fn join_with_invite(
+    State(service): State<Service>,
+    headers: HeaderMap,
+    axum::extract::Form(fields): axum::extract::Form<Fields>,
+) -> Response {
+    let Some(accounts) = service.accounts.as_ref() else {
+        return no_accounts();
+    };
+    let invite = field(&fields, "invite");
+    let now = chrono::Utc::now();
+    let Some(invited) = accounts.invited(invite, now) else {
+        return invite_gone();
+    };
+    match accounts.join(
+        invite,
+        field(&fields, "username"),
+        field(&fields, "name"),
+        field(&fields, "password"),
+        now,
+    ) {
+        Ok((_, token)) => redirect("/", Some(session_cookie(&headers, Some(&token)))),
+        Err(AccountError::Refused(said)) => {
+            join_form(StatusCode::BAD_REQUEST, invite, &invited, Some(&said))
+        }
+        Err(AccountError::Failed(said)) => {
+            join_form(StatusCode::INTERNAL_SERVER_ERROR, invite, &invited, Some(&said))
+        }
+    }
+}
+
+fn account_refusal(error: AccountError) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        AccountError::Refused(said) => (StatusCode::BAD_REQUEST, Json(json!({ "error": said }))),
+        AccountError::Failed(said) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": said })))
+        }
+    }
+}
+
+fn signed_in(caller: &Caller) -> Result<&User, (StatusCode, Json<serde_json::Value>)> {
+    match caller {
+        Caller::Person(user) => Ok(user),
+        Caller::Service => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "this is the server's token, not an account" })),
+        )),
+    }
+}
+
+/// Who is signed in.
+async fn me(Extension(caller): Extension<Caller>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    Ok(Json(json!(signed_in(&caller)?)))
+}
+
+#[derive(serde::Deserialize)]
+struct OwnChange {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    /// The password now, which a new one needs.
+    #[serde(default)]
+    current: Option<String>,
+}
+
+/// Change one's own display name or password.
+async fn change_me(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<OwnChange>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let accounts = service.accounts.as_ref().ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(json!({ "error": "this server keeps no accounts" })))
+    })?;
+    let user = signed_in(&caller)?;
+    let password = body
+        .password
+        .as_deref()
+        .map(|new| (body.current.as_deref().unwrap_or(""), new));
+    let changed = accounts
+        .change_own(&user.username, body.name.as_deref(), password, chrono::Utc::now())
+        .map_err(account_refusal)?;
+    Ok(Json(json!(changed)))
+}
+
+#[derive(serde::Deserialize)]
+struct InviteAsked {
+    /// The account to send a new password to; absent, an invite for someone new.
+    #[serde(default)]
+    reset: Option<String>,
+}
+
+/// Make an invite, or a link that sets a new password. Only an admin, or the token, may.
+async fn invite(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<InviteAsked>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let accounts = service.accounts.as_ref().ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(json!({ "error": "this server keeps no accounts" })))
+    })?;
+    if let Caller::Person(user) = &caller {
+        if !user.admin {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "only an admin may invite" })),
+            ));
+        }
+    }
+    if let Some(username) = body.reset.as_deref() {
+        if accounts.user(&username.trim().to_lowercase()).is_none() {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "there is no account of that name" })),
+            ));
+        }
+    }
+    let now = chrono::Utc::now();
+    let token = accounts
+        .invite(body.reset.as_deref(), false, now)
+        .map_err(account_refusal)?;
+    Ok(Json(json!({
+        "link": format!("/join?invite={}", token),
+        "expires": (now + overseer::accounts::INVITE_LASTS).to_rfc3339(),
+    })))
+}
 
 /// Which node an operation is about.
 ///
@@ -482,6 +917,8 @@ async fn serve() {
     let mut port: Option<String> = None;
     let mut bind: Option<String> = None;
     let mut open = false;
+    let mut accounts_file: Option<String> = None;
+    let mut admin: Option<String> = None;
     // Read from the environment or a file rather than an argument: a command line ends up in
     // shell history and in the process list, where a secret has no business being.
     let mut token = std::env::var("OVERSEER_TOKEN").ok().filter(|t| !t.is_empty());
@@ -493,6 +930,8 @@ async fn serve() {
             "--port" => port = args.next(),
             "--frontend" => frontend_dir = args.next(),
             "--open" => open = true,
+            "--accounts" => accounts_file = args.next(),
+            "--admin" => admin = args.next(),
             "--token-file" => {
                 if let Some(value) = args.next() {
                     match std::fs::read_to_string(&value) {
@@ -507,7 +946,7 @@ async fn serve() {
             other => {
                 eprintln!("unknown argument '{}'", other);
                 eprintln!(
-                    "usage: overseer-server [--root DIR] [--frontend DIR] [--bind ADDR] [--port N] [--token-file PATH] [--open]"
+                    "usage: overseer-server [--root DIR] [--frontend DIR] [--bind ADDR] [--port N] [--token-file PATH] [--accounts PATH] [--admin NAME] [--open]"
                 );
                 std::process::exit(2);
             }
@@ -560,17 +999,53 @@ async fn serve() {
         open = from_environment(&["OVERSEER_OPEN"], env).is_some_and(|(_, v)| is_switched_on(&v));
     }
 
+    let accounts = match setting(accounts_file, "--accounts", &["OVERSEER_ACCOUNTS"]) {
+        None => None,
+        Some((from, path)) => match Accounts::open(&path) {
+            Ok(accounts) => Some(Arc::new(accounts)),
+            Err(e) => {
+                eprintln!("cannot use the accounts that {} names: {}", from, e);
+                std::process::exit(1);
+            }
+        },
+    };
+    let admin = setting(admin, "--admin", &["OVERSEER_ADMIN"]);
+
     let access = match token {
         Some(t) => Access::with_token(t),
         None => Access::unrestricted(),
     };
-    if let Some(reason) = refuse_to_start(&bind, &access, open) {
+    // Accounts keep strangers out as a token does: nobody gets in without signing in.
+    if let Some(reason) = refuse_to_start(&bind, &access, open || accounts.is_some()) {
         eprintln!("{}", reason);
         std::process::exit(2);
     }
     // Only open matters when it is what let the server start: with a token, or on loopback, it
     // changes nothing and a warning would only teach people to ignore warnings.
-    let serving_open = open && !access.is_restricted() && !is_loopback(&bind);
+    let serving_open =
+        open && !access.is_restricted() && accounts.is_none() && !is_loopback(&bind);
+
+    match (&accounts, admin) {
+        (Some(accounts), Some((from, username))) => {
+            match accounts.bootstrap(&username, chrono::Utc::now()) {
+                Ok(Some(invite)) => println!(
+                    "there is no account '{}' yet; to make it, open /join?invite={} within 7 days",
+                    username.trim().to_lowercase(),
+                    invite
+                ),
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("{} names no account that can be made: {}", from, e);
+                    std::process::exit(2);
+                }
+            }
+        }
+        (None, Some((from, _))) => {
+            eprintln!("{} needs accounts to be kept: set OVERSEER_ACCOUNTS or --accounts", from);
+            std::process::exit(2);
+        }
+        _ => {}
+    }
 
     let documents = match DocumentRoot::new(&root) {
         Ok(r) => Arc::new(r),
@@ -601,6 +1076,7 @@ async fn serve() {
         documents: documents.clone(),
         frontend: frontend.clone(),
         access: access.clone(),
+        accounts: accounts.clone(),
     };
 
     let mut app = Router::new()
@@ -620,6 +1096,8 @@ async fn serve() {
         .route("/v1/event", post(run_event))
         .route("/v1/undo", post(undo))
         .route("/__overseer/bridge.js", get(bridge))
+        .route("/account/me", get(me).post(change_me))
+        .route("/account/invite", post(invite))
         .route("/", get(index));
     if let Some(dir) = frontend.as_ref() {
         // Everything else is the frontend's own assets.
@@ -643,13 +1121,25 @@ async fn serve() {
     // saves the server about 20 ms on the largest answer and sends 300 KB more for it.
     let app = Router::new()
         .route("/auth", get(sign_in))
+        // The ways in for people, which have to be reachable before anyone has signed in.
+        .route("/signin", get(sign_in_page).post(sign_in_with_password))
+        .route("/signout", get(sign_out).post(sign_out))
+        .route("/join", get(join_page).post(join_with_invite))
         .merge(app)
         .with_state(state)
         .layer(tower_http::compression::CompressionLayer::new());
 
     let addr = SocketAddr::new(bind, port);
+    if let Some(accounts) = accounts.as_ref() {
+        println!(
+            "people sign in at /signin, with the accounts kept in {}",
+            accounts.path().display()
+        );
+    }
     if access.is_restricted() {
         println!("a token is required; a browser can present it once at /auth?token=...");
+    } else if accounts.is_some() {
+        println!("no token set, so only people signed in may read these documents");
     } else if serving_open {
         println!(
             "warning: serving open with no token - anyone who can reach {} may read and change these documents",

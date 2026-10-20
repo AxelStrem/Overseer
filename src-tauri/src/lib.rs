@@ -1,3 +1,5 @@
+#[cfg(feature = "server")]
+pub mod accounts;
 pub mod actions;
 pub mod addressing;
 pub mod app_api;
