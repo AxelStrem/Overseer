@@ -218,9 +218,11 @@ impl DocumentRoot {
                 }
             }
         }
-        if relative.extension().and_then(|e| e.to_str()) != Some("os") {
+        // What counts as a document is said beside the settings of whoever is asking - see
+        // `bases::document_extensions`.
+        if !crate::environment::with_file(self.settings_file(), || crate::bases::is_document(relative)) {
             return Err(RequestError::Rejected(format!(
-                "'{}' is not an .os document",
+                "'{}' is not an Overseer document",
                 name
             )));
         }
@@ -278,23 +280,25 @@ impl DocumentRoot {
 
     /// Every document under the root, named as the service would ask for it.
     fn everything(&self) -> Vec<String> {
-        fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+        fn walk(dir: &Path, root: &Path, extensions: &[String], out: &mut Vec<String>) {
             let Ok(entries) = std::fs::read_dir(dir) else {
                 return;
             };
             for entry in entries.flatten() {
                 let path = entry.path();
+                let extension = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
                 if path.is_dir() {
-                    walk(&path, root, out);
-                } else if path.extension().and_then(|e| e.to_str()) == Some("os") {
+                    walk(&path, root, extensions, out);
+                } else if extension.is_some_and(|e| extensions.contains(&e)) {
                     if let Ok(relative) = path.strip_prefix(root) {
                         out.push(relative.to_string_lossy().replace('\\', "/"));
                     }
                 }
             }
         }
+        let extensions = crate::environment::with_file(self.settings_file(), crate::bases::document_extensions);
         let mut out = Vec::new();
-        walk(&self.root, &self.root, &mut out);
+        walk(&self.root, &self.root, &extensions, &mut out);
         out.sort();
         out
     }

@@ -108,6 +108,10 @@ included. Documents mount it to show people by name (see "Who is looking" in the
 `settings.os` at the root is the look the token and anyone not signed in see; each person's own is
 `settings.os` in their folder, which the drawer's choices are written to.
 
+A document is a `.os` file, or one under an extension that `extensions.txt`, beside the settings,
+names a line each (`brot`, for Brocessor's patches): it is listed, opened and written back under
+its own name like any other. Another name is refused with 400.
+
 The examples below assume:
 
 ```bash

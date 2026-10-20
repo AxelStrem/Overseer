@@ -1747,6 +1747,8 @@ pub struct Settings {
     pub theme: Option<String>,
     /// `light`, `dark` or `system`.
     pub mode: String,
+    /// The extensions a document may have, without the dot - see `bases::document_extensions`.
+    pub extensions: Vec<String>,
 }
 
 /// The settings kept in this file, or those every document is drawn through until there is one.
@@ -1775,7 +1777,10 @@ pub fn settings_in(file: &std::path::Path) -> Settings {
             _ => {}
         }
     }
-    Settings { themes: crate::environment::with_file(file.to_path_buf(), crate::environment::themes), theme, mode }
+    let (themes, extensions) = crate::environment::with_file(file.to_path_buf(), || {
+        (crate::environment::themes(), crate::bases::document_extensions())
+    });
+    Settings { themes, theme, mode, extensions }
 }
 
 /// The declarations a settings document makes at its top, as it wrote them.

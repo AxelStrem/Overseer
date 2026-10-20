@@ -197,6 +197,43 @@ pub fn libraries() -> Vec<PathBuf> {
     folders
 }
 
+/// The file a user names the extensions of their documents in, beside `libraries.txt` - see
+/// `document_extensions`.
+pub const EXTENSIONS: &str = "extensions.txt";
+
+/// The extensions a file holding an Overseer document may have, lower case and without the dot:
+/// `os`, and then those `extensions.txt` beside the settings names, a line each.
+///
+/// It is kept as `libraries.txt` is, so that a program that saves its own files as Overseer
+/// text under an extension of its own - Brocessor its `.brot` patches - adds a line for it when
+/// it is installed, and they open as any document does. A blank line and one that starts with `#`
+/// are passed over, and a leading dot is allowed. It is read each time.
+pub fn document_extensions() -> Vec<String> {
+    let mut extensions = vec!["os".to_string()];
+    let file = crate::environment::folder().map(|dir| dir.join(EXTENSIONS));
+    if let Some(text) = file.and_then(|file| std::fs::read_to_string(file).ok()) {
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let extension = line.trim_start_matches('.').to_ascii_lowercase();
+            if !extension.is_empty() && !extensions.contains(&extension) {
+                extensions.push(extension);
+            }
+        }
+    }
+    extensions
+}
+
+/// Whether a file's extension is one of `document_extensions`, whatever its case.
+pub fn is_document(path: &Path) -> bool {
+    let Some(extension) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    let extension = extension.to_ascii_lowercase();
+    document_extensions().contains(&extension)
+}
+
 /// The templates that ship with Overseer - its `library` folder - which any document can
 /// inherit from wherever it is. `OVERSEER_LIBRARY` names the folder where it is put somewhere of
 /// its own, as the server image does. Without it, the checkout the program was built from is

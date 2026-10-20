@@ -50,8 +50,4 @@ export class FileManager {
     getFileName(filePath) {
         return filePath.split(/[\\/]/).pop() || filePath
     }
-
-    validateFilePath(filePath) {
-        return filePath && typeof filePath === 'string' && filePath.endsWith('.os')
-    }
 }

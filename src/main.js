@@ -396,11 +396,15 @@ export class OverseerApp {
 
     async openFile() {
         try {
+            // A program can save its own files as Overseer text under an extension of its own,
+            // and name it in `extensions.txt` beside the settings; the settings hand them back.
+            const settings = await invoke('settings_read').catch(() => null)
+            const extensions = settings?.extensions?.length ? settings.extensions : ['os']
             const selected = await open({
                 filters: [
                     {
                         name: 'Overseer Files',
-                        extensions: ['os']
+                        extensions
                     },
                     {
                         name: 'All Files',
