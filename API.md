@@ -41,6 +41,9 @@ The token stays what it was: whoever holds it may do anything.
 - **`POST /account/invite`**, for an admin or the token, answers `{"link": "/join?invite=...",
   "expires": ...}`. With `{"reset": "<username>"}` the link sets a new password for that account
   instead, and signs it out everywhere.
+- **`POST /account/sharing`** makes the person's `sharing.os` (see below) when they have none,
+  with a form that adds an entry, and answers `{"document": "<username>/sharing.os"}`; one that
+  is there already is left as it is. The page's "Sharing" opens it.
 - **Acting for someone**: a request with the token may add `X-Overseer-As: <username>` to be
   that person - the bot does, for whoever is talking to it. From anyone else the header is
   ignored, and naming no account is `403`.
@@ -89,6 +92,11 @@ Nobody signed in reaches only what is shared with everyone; anything else, there
 {"error":"sign in"}`. Someone signed in is told `404 {"error":"no document '<name>'"}` of anything
 missing or not shared with them, so what is there cannot be told from what is not. A write to a
 document shared only to be read is `403`.
+
+The page asks the same with its `access` command, which answers who is asking (`person`,
+`stranger`, or `anyone` for the token), the person's account, and whether the open document is
+theirs to `edit` or only to `read`. A document shared to be read is drawn with nothing to change,
+whatever its own `mutable` says, and a stranger is offered none of what they would be refused.
 
 Two files at the root are the server's. `people.os` is the directory of everyone with an account,
 `list People` keyed by `tag` (the username) with each one's `name`: the server writes it whenever

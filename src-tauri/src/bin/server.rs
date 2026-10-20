@@ -107,6 +107,11 @@ async fn command(
     Json(body): Json<CommandBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let documents = service.documents.clone();
+    let person = match &caller {
+        Caller::Person(user) => Some(user.clone()),
+        _ => None,
+    };
+    let asked = cmd.clone();
     // Resolving is CPU work, long enough on a large document to block the thread it lands on.
     let outcome = tokio::task::spawn_blocking(move || {
         documents.as_asker(caller.asker(), || {
@@ -122,7 +127,14 @@ async fn command(
     })
     .await
     .map_err(|e| respond(RequestError::Failed(format!("command panicked: {}", e))))?;
-    Ok(Json(json!({ "result": outcome.map_err(respond)? })))
+    let mut result = outcome.map_err(respond)?;
+    // Who the person is lives in the accounts, which the documents know nothing of.
+    if asked == "access" {
+        if let Some(answer) = result.as_object_mut() {
+            answer.insert("person".into(), json!(person));
+        }
+    }
+    Ok(Json(json!({ "result": result })))
 }
 
 /// One address, two audiences: the rendered document for a browser, the data for a program.
@@ -656,6 +668,20 @@ async fn change_me(
         .change_own(&user.username, body.name.as_deref(), password, chrono::Utc::now())
         .map_err(account_refusal)?;
     Ok(Json(json!(changed)))
+}
+
+/// Make one's own `sharing.os`, unless there is one, and answer its full name.
+async fn start_sharing(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let user = signed_in(&caller)?;
+    let folder = service.documents.path().join(&user.username);
+    overseer::access::start_sharing(&folder)
+        .map_err(|e| respond(RequestError::Failed(format!("could not make the sharing document: {:?}", e.kind()))))?;
+    Ok(Json(json!({
+        "document": format!("{}/{}", user.username, overseer::access::SHARING),
+    })))
 }
 
 #[derive(serde::Deserialize)]
@@ -1192,6 +1218,7 @@ async fn serve() {
         .route("/__overseer/bridge.js", get(bridge))
         .route("/account/me", get(me).post(change_me))
         .route("/account/invite", post(invite))
+        .route("/account/sharing", post(start_sharing))
         .route("/", get(index));
     if let Some(dir) = frontend.as_ref() {
         // Everything else is the frontend's own assets.

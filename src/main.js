@@ -23,6 +23,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { OverseerRenderer, textWithoutIcons } from './renderer.js'
 import { FileManager } from './file-manager.js'
 import { Drawer } from './drawer.js'
+import { Account } from './account.js'
 
 // Shallow document equality check used to avoid unnecessary re-renders after scheduler ticks
 // If serialization fails, assume different to be safe and apply update.
@@ -475,6 +476,8 @@ export class OverseerApp {
 
             if (DEBUG_MODE) this.setStatus('DEBUG: About to call renderer...')
                         this._adoptDocumentPreserveRoot(overseerDocument) 
+            // Whether the document is the viewer's to change is known before it is drawn.
+            if (this.account) await this.account.ready
             // Render the document
             try {
                 this.renderer.renderDocument(this.currentDocument)
@@ -2040,7 +2043,9 @@ tab Main {
             filePathElement.style.display = 'block'
             
             // Update status bar with current file info
-            if (this.isDocumentModified) {
+            if (this.renderer && this.renderer.readOnly) {
+                this.setStatus(`Reading: ${fileName}`, 'Read only', 'success')
+            } else if (this.isDocumentModified) {
                 this.setStatus(`Editing: ${fileName}`, 'Unsaved changes', 'warning')
             } else if (this.hasUnreadText()) {
                 this.setStatus(`Editing: ${fileName}`, 'Parts of it could not be read - see the lines in red', 'warning')
@@ -2126,6 +2131,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Started here rather than with the app, so an app made in a test does not go and read a list
     // of documents nobody asked for.
+    try {
+        app.account = new Account(app)
+        app.account.start()
+    } catch (e) {
+        console.warn('[Overseer] could not tell who is looking', e)
+    }
     try {
         app.drawer = new Drawer(app)
         app.drawer.start()

@@ -861,6 +861,23 @@ impl DocumentRoot {
                 Ok(self.undo(&name)?)
             }
             "find_overseer_files" => as_json(self.list()),
+            // Who is asking, and whether the open document is theirs to change, so the page can
+            // draw it read-only and leave out what they may not do.
+            "access" => {
+                let asker = match crate::access::asker() {
+                    crate::access::Asker::Anyone => "anyone",
+                    crate::access::Asker::Person(_) => "person",
+                    crate::access::Asker::Stranger => "stranger",
+                };
+                let can = document.and_then(|name| {
+                    match self.resolve_for(name, crate::access::Need::Edit) {
+                        Ok(_) => Some("edit"),
+                        Err(RequestError::ReadOnly(_)) => Some("read"),
+                        Err(_) => None,
+                    }
+                });
+                Ok(serde_json::json!({ "asker": asker, "can": can }))
+            }
             // The documents kept to hand - see `menu`. The server's list lives in its own folder
             // and names documents as this server does, so whichever document the page is showing
             // has nothing to do with it.

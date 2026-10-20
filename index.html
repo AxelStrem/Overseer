@@ -17,20 +17,22 @@
 
             <section class="drawer-section">
                 <div class="drawer-heading">Documents</div>
-                <ul id="drawer-places" class="drawer-places"></ul>
-                <button id="drawer-keep" class="drawer-action" hidden>+ Keep this document here</button>
-                <button id="drawer-edit-list" class="drawer-action quiet">Edit this list</button>
+                <ul id="drawer-places" class="drawer-places not-for-strangers"></ul>
+                <button id="drawer-keep" class="drawer-action not-for-strangers" hidden>+ Keep this document here</button>
+                <button id="drawer-edit-list" class="drawer-action quiet not-for-strangers">Edit this list</button>
+                <a id="drawer-all-documents" class="drawer-action quiet browser-only" href="/">All documents</a>
+                <a id="drawer-sign-in" class="drawer-action" hidden>Sign in</a>
             </section>
 
             <section class="drawer-section">
                 <div class="drawer-heading">This document</div>
                 <div id="file-path" class="drawer-path"></div>
-                <button id="undo-file-btn" class="drawer-action" title="Take back the last change (Ctrl+Z)" disabled>Undo</button>
+                <button id="undo-file-btn" class="drawer-action not-for-strangers" title="Take back the last change (Ctrl+Z)" disabled>Undo</button>
                 <button id="open-file-btn" class="drawer-action desktop-only">Open a file&hellip;</button>
                 <button id="new-file-btn" class="drawer-action desktop-only">New file&hellip;</button>
             </section>
 
-            <section class="drawer-section">
+            <section class="drawer-section not-for-strangers">
                 <div class="drawer-heading">Look</div>
                 <select id="drawer-theme" class="drawer-theme" aria-label="Theme"></select>
                 <div id="drawer-mode" class="drawer-mode" role="group" aria-label="Light or dark">
@@ -38,6 +40,34 @@
                     <button data-mode="dark">Dark</button>
                     <button data-mode="system">System</button>
                 </div>
+            </section>
+
+            <!-- Who is signed in, on a server that keeps accounts - see account.js. -->
+            <section id="drawer-account" class="drawer-section" hidden>
+                <div class="drawer-heading">Signed in as <span id="account-who"></span></div>
+                <button id="account-sharing" class="drawer-action">Sharing</button>
+                <details class="account-profile">
+                    <summary class="drawer-action quiet">Profile</summary>
+                    <label class="account-field">Display name <input id="account-name" type="text" autocomplete="name"></label>
+                    <button id="account-save-name" class="drawer-action">Save the name</button>
+                    <div id="account-name-said" class="account-said" role="status"></div>
+                    <label class="account-field">Current password <input id="account-current" type="password" autocomplete="current-password"></label>
+                    <label class="account-field">New password <input id="account-password" type="password" autocomplete="new-password"></label>
+                    <button id="account-save-password" class="drawer-action">Change the password</button>
+                    <div id="account-password-said" class="account-said" role="status"></div>
+                </details>
+                <details id="account-admin" class="account-profile" hidden>
+                    <summary class="drawer-action quiet">People</summary>
+                    <button id="account-invite" class="drawer-action">Invite someone</button>
+                    <label class="account-field">Username <input id="account-reset-username" type="text" autocomplete="off"></label>
+                    <button id="account-reset" class="drawer-action">Send a new password</button>
+                    <div id="account-invite-said" class="account-said" role="status"></div>
+                    <div id="account-link-row" class="account-link" hidden>
+                        <input id="account-link" type="text" readonly aria-label="The link">
+                        <button id="account-copy" class="drawer-action">Copy</button>
+                    </div>
+                </details>
+                <button id="account-sign-out" class="drawer-action quiet">Sign out</button>
             </section>
 
             <div id="status-bar" class="drawer-foot">
@@ -61,6 +91,7 @@
                         <button class="primary" id="welcome-open-btn">Open Existing File</button>
                         <button class="secondary" id="welcome-new-btn">Create New File</button>
                     </div>
+                    <div id="document-list" class="document-list" hidden></div>
                 </div>
 
                 <div id="editor-screen" class="screen">

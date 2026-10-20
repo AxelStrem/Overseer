@@ -165,6 +165,47 @@ pub fn allows(root: &Path, asker: &Asker, relative: &Path, need: Need) -> bool {
     })
 }
 
+/// What a person's `sharing.os` says before they have shared anything.
+pub const SHARING_STARTER: &str = "div (hidden=true) {\r
+    div Share (layout=\"horizontal\") {\r
+        string document (label=\"Document\") = \"\"\r
+        string with (label=\"With\") = \"\"\r
+        string can (label=\"Can\") = \"read\"\r
+    }\r
+}\r
+\r
+tab sharing (label=\"Sharing\", mutable=true) {\r
+    text about = \"Each entry shares a document of yours: *with* a username, or `everyone` for anyone at all, signed in or not; *can* is `read` or `edit`.\"\r
+\r
+    div (layout=\"horizontal\") {\r
+        textbox document (placeholder=\"a document of yours, as tasks.os\") = \"\"\r
+        textbox with (placeholder=\"a username, or everyone\") = \"\"\r
+        textbox can (placeholder=\"read or edit\") = \"\"\r
+\r
+        button add (label=\"Share\") {\r
+            on click {\r
+                append (list=\"/sharing/Shares\", from=\"..\")\r
+            }\r
+        }\r
+    }\r
+\r
+    list Shares (entry=<Share>, layout=\"vertical\") { }\r
+}\r
+";
+
+/// Make the `sharing.os` in a person's folder, unless they have one, and answer its file.
+pub fn start_sharing(folder: &Path) -> std::io::Result<PathBuf> {
+    let file = folder.join(SHARING);
+    if !file.exists() {
+        std::fs::create_dir_all(folder)?;
+        // Written beside it and moved into place, so a reader never meets half a file.
+        let fresh = file.with_extension("tmp");
+        std::fs::write(&fresh, SHARING_STARTER.as_bytes())?;
+        std::fs::rename(&fresh, &file)?;
+    }
+    Ok(file)
+}
+
 /// One entry of a `sharing.os`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Share {

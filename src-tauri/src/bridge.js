@@ -61,6 +61,12 @@
             body: JSON.stringify({ document: documentName, session, scheme: scheme(), args: args || {} }),
         })
         const body = await response.json().catch(() => null)
+        // A session that ran out while the page was open: the way back in, and back here after,
+        // rather than a page whose every call now fails.
+        if (response.status === 401) {
+            const here = window.location.pathname + window.location.search
+            window.location.assign('/signin?next=' + encodeURIComponent(here))
+        }
         if (!response.ok) {
             const error = new Error((body && body.error) || `${cmd} failed (${response.status})`)
             // A press the document refused, with its sentence for whoever pressed.
