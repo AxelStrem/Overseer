@@ -797,6 +797,7 @@ pub enum OverseerValue {
     Null, // Explicit null sentinel used for fallback formulas and empty values
     String(String),
     Integer(i64),
+    #[serde(serialize_with = "float_out", deserialize_with = "float_in")]
     Float(f64),
     Boolean(bool),
     Date(String),             // We'll use string representation for now
@@ -806,6 +807,30 @@ pub enum OverseerValue {
     Color(Color),             // Colors in various formats
     CssSize(CssSize),         // CSS size units (px, em, %, etc.)
     BorderStyle(BorderStyle), // Border styling options
+}
+
+/// JSON has no infinity and no NaN: serde would send them as `null`, and the page would show an
+/// empty field. They go as the words a document writes them with, `"inf"`, `"-inf"`, `"nan"`.
+fn float_out<S: serde::Serializer>(f: &f64, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    if f.is_finite() {
+        serializer.serialize_f64(*f)
+    } else {
+        serializer.serialize_str(&crate::numbers::write_float(*f))
+    }
+}
+
+fn float_in<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<f64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Number(f64),
+        Word(String),
+    }
+    match Written::deserialize(deserializer)? {
+        Written::Number(f) => Ok(f),
+        Written::Word(word) => crate::numbers::float_of(&word)
+            .ok_or_else(|| serde::de::Error::custom("not a number")),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

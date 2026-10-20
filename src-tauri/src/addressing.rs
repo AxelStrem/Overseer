@@ -43,7 +43,7 @@ fn key_text(value: &OverseerValue) -> Option<String> {
     match value {
         OverseerValue::String(s) => Some(s.clone()),
         OverseerValue::Integer(i) => Some(i.to_string()),
-        OverseerValue::Float(f) => Some(format!("{}", f)),
+        OverseerValue::Float(f) => Some(crate::numbers::write_float(*f)),
         OverseerValue::Boolean(b) => Some(b.to_string()),
         OverseerValue::Date(d) => Some(d.clone()),
         OverseerValue::Timestamp(t) => Some(t.clone()),

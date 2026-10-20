@@ -61,7 +61,9 @@ Both the document and the address go in the query string, not the path - both co
 
 Values travel with their type, as the engine stores them: `{"String": "milk"}`,
 `{"Integer": 2}`, `{"Float": 2.5}`, `{"Boolean": true}`, `{"Date": "2026-10-18"}`,
-`{"Timestamp": "2026-10-18T12:00:00Z"}`. A bare `2` is refused with a 400. Nodes in an answer carry their value the same way, in `parameters.value`, beside the
+`{"Timestamp": "2026-10-18T12:00:00Z"}`. JSON has no infinity or NaN, so a float that is one
+travels as the word a document writes it with: `{"Float": "inf"}`, `"-inf"`, `"nan"`. A bare `2` is
+refused with a 400. Nodes in an answer carry their value the same way, in `parameters.value`, beside the
 parameters the document gave them.
 
 ## Reading: `GET /v1/node`
@@ -70,7 +72,7 @@ parameters the document gave them.
 curl -H "$A" -G $B/v1/node --data-urlencode document=$D \
      --data-urlencode 'address=shopping/List/[2026-08-11T09:01:00Z]/amount'
 # {"address":"shopping/List/[2026-08-11T09:01:00Z]/amount","child_addresses":[],
-#  "node":{"name":"amount","node_type":"float","parameters":{"value":{"Integer":1}, ...}, ...}}
+#  "node":{"name":"amount","node_type":"float","parameters":{"value":{"Float":1.0}, ...}, ...}}
 ```
 
 Every answer below has this shape: the `address` it describes, the `node` there with its

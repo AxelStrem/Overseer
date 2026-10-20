@@ -1,3 +1,4 @@
+use crate::numbers;
 use crate::source_registry::SourceRegistry;
 use crate::types::{
     BorderStyle, Color, CssSize, NodeBodySnapshot, NodeHeaderSnapshot, NodeSourceSnapshot,
@@ -1060,15 +1061,9 @@ fn parse_number_value_with_raw(input: &str) -> IResult<&str, (OverseerValue, Opt
     let start_len = input.len();
     let (remaining, val) = parse_number_value(input)?; // reuse existing logic
     let consumed = &input[..start_len - remaining.len()];
-    // Only keep raw if float with trailing zeros preserved in source but lost by f64 to_string
+    // Kept when the float would be written back differently - `1.50`, `1.`, `2e3`.
     let raw = match &val {
-        OverseerValue::Float(_f) => {
-            if consumed.contains('.') && consumed.ends_with('0') {
-                Some(consumed.to_string())
-            } else {
-                None
-            }
-        }
+        OverseerValue::Float(f) if numbers::write_float(*f) != consumed => Some(consumed.to_string()),
         _ => None,
     };
     Ok((remaining, (val, raw)))
@@ -1326,24 +1321,21 @@ fn parse_quoted_string_value(input: &str) -> IResult<&str, OverseerValue> {
     )))
 }
 
-/// Parse numbers (int or float)
+/// Parse numbers (int or float), in the shapes `numbers::number_at_start` knows: a point, an
+/// exponent, `inf` or `nan` make a float.
 fn parse_number_value(input: &str) -> IResult<&str, OverseerValue> {
-    // Recognize a number pattern first to avoid ambiguity between int and float.
-    // This is more robust than alt((double, i64)) because i64 could partially
-    // parse a float, and double could parse an integer as a float.
-    let (remaining, number_str) = recognize(pair(
-        opt(char('-')),
-        pair(
-            nom::character::complete::digit1,
-            opt(preceded(char('.'), nom::character::complete::digit1)),
-        ),
-    ))(input)?;
-
-    // If the recognized string contains a '.', it's a float. Otherwise, it's an integer.
-    if number_str.contains('.') {
-        match number_str.parse::<f64>() {
-            Ok(f) => Ok((remaining, OverseerValue::Float(f))),
-            Err(_) => Err(nom::Err::Failure(nom::error::Error::new(
+    let fail = |kind| nom::Err::Error(nom::error::Error::new(input, kind));
+    let (len, is_float) = numbers::number_at_start(input).ok_or_else(|| fail(nom::error::ErrorKind::Digit))?;
+    let (number_str, remaining) = input.split_at(len);
+    // A value's unquoted words run on through `.`, `/` and `-`, so `inf-norm` is a word here.
+    let is_word = number_str.ends_with(|c: char| c.is_ascii_alphabetic());
+    if is_word && remaining.starts_with(['.', '/', '-']) {
+        return Err(fail(nom::error::ErrorKind::Digit));
+    }
+    if is_float {
+        match numbers::float_of(number_str) {
+            Some(f) => Ok((remaining, OverseerValue::Float(f))),
+            None => Err(nom::Err::Failure(nom::error::Error::new(
                 input,
                 nom::error::ErrorKind::Float,
             ))),

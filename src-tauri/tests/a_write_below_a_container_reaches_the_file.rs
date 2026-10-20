@@ -89,7 +89,7 @@ fn a_field_inside_a_named_container_is_written() {
     let address = format!("{}/targets/goal", KEY);
     assert_eq!(
         write_and_read_back(&root, &address, 42.0),
-        Some(OverseerValue::Integer(42)),
+        Some(OverseerValue::Float(42.0)),
         "the write did not survive being written out:
 {}",
         on_disk(&root)
@@ -102,7 +102,7 @@ fn so_is_one_two_containers_down() {
     let address = format!("{}/targets/inner/deeper", KEY);
     assert_eq!(
         write_and_read_back(&root, &address, 7.0),
-        Some(OverseerValue::Integer(7)),
+        Some(OverseerValue::Float(7.0)),
         "a second container was one too many:
 {}",
         on_disk(&root)
@@ -115,7 +115,7 @@ fn a_field_the_entry_holds_directly_still_is() {
     // one does not look like a pass.
     let root = a_root("direct");
     let address = format!("{}/flat", KEY);
-    assert_eq!(write_and_read_back(&root, &address, 3.0), Some(OverseerValue::Integer(3)));
+    assert_eq!(write_and_read_back(&root, &address, 3.0), Some(OverseerValue::Float(3.0)));
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn a_wrapper_is_still_not_named() {
     // inside it is written as the entry's own - which is what it did before this and still does.
     let root = a_root("wrapper");
     let address = format!("{}/under_wrapper", KEY);
-    assert_eq!(write_and_read_back(&root, &address, 9.0), Some(OverseerValue::Integer(9)));
+    assert_eq!(write_and_read_back(&root, &address, 9.0), Some(OverseerValue::Float(9.0)));
     let text = on_disk(&root);
     assert!(
         text.contains("- under_wrapper = 9"),
@@ -141,7 +141,7 @@ fn writing_twice_replaces_rather_than_repeats() {
     let root = a_root("twice");
     let address = format!("{}/targets/goal", KEY);
     write_and_read_back(&root, &address, 42.0);
-    assert_eq!(write_and_read_back(&root, &address, 43.0), Some(OverseerValue::Integer(43)));
+    assert_eq!(write_and_read_back(&root, &address, 43.0), Some(OverseerValue::Float(43.0)));
     assert_eq!(
         on_disk(&root).matches("div targets {").count(),
         1,

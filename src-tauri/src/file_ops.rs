@@ -3314,7 +3314,7 @@ impl FileOperations {
             OverseerValue::Null => "null".to_string(),
             OverseerValue::String(s) => format!("\"{}\"", Self::escape_string(s)),
             OverseerValue::Integer(i) => i.to_string(),
-            OverseerValue::Float(f) => f.to_string(),
+            OverseerValue::Float(f) => crate::numbers::write_float(*f),
             OverseerValue::Boolean(b) => b.to_string(),
             OverseerValue::Date(d) => format!("\"{}\"", d),
             OverseerValue::Timestamp(ts) => format!("\"{}\"", ts),

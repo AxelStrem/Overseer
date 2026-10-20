@@ -5808,7 +5808,7 @@ button Add { on click {
             .unwrap();
         assert_eq!(
             cal.parameters.get("value"),
-            Some(&OverseerValue::Integer(120))
+            Some(&OverseerValue::Float(120.0))
         );
         let wt = per_item
             .children
@@ -5817,7 +5817,7 @@ button Add { on click {
             .unwrap();
         assert_eq!(
             wt.parameters.get("value"),
-            Some(&OverseerValue::Integer(60))
+            Some(&OverseerValue::Float(60.0))
         );
         // Serialize and check that the per_item block is emitted with nested overrides
     let s = OverseerFileHandler::serialize_nodes(&nodes).unwrap();
@@ -5858,7 +5858,7 @@ button Add { on click {
             .unwrap();
         assert_eq!(
             cal2.parameters.get("value"),
-            Some(&OverseerValue::Integer(120))
+            Some(&OverseerValue::Float(120.0))
         );
         let wt2 = per_item2
             .children
@@ -5867,7 +5867,7 @@ button Add { on click {
             .unwrap();
         assert_eq!(
             wt2.parameters.get("value"),
-            Some(&OverseerValue::Integer(60))
+            Some(&OverseerValue::Float(60.0))
         );
     }
 }

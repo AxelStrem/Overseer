@@ -6,7 +6,6 @@ use nom::{
     character::complete::{char, multispace0},
     combinator::{map, opt, peek},
     multi::many0,
-    number::complete::double,
     sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
@@ -3423,9 +3422,17 @@ fn parenthesized_expression(input: &str) -> IResult<&str, FormulaExpression> {
     delimited(char('('), expression, char(')'))(input)
 }
 
-/// Parse numbers (integers and floats)
+/// Parse numbers (integers and floats), written as a document's values write them. `inf` and
+/// `nan` are numbers only as whole words: `info` is a field.
 fn number(input: &str) -> IResult<&str, FormulaExpression> {
-    map(double, FormulaExpression::Number)(input)
+    let unsigned = input.strip_prefix('+').unwrap_or(input);
+    let (len, _) = crate::numbers::number_at_start(unsigned)
+        .ok_or_else(|| nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Float)))?;
+    let (literal, rest) = unsigned.split_at(len);
+    match crate::numbers::float_of(literal) {
+        Some(n) => Ok((rest, FormulaExpression::Number(n))),
+        None => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Float))),
+    }
 }
 
 /// Parse field references (simple identifiers)
