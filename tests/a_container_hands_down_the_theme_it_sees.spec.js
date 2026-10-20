@@ -69,6 +69,25 @@ describe('the theme', () => {
     expect(root.dataset.ovMode).toBe('dark')
   })
 
+  it('writes the colours a mode keeps under light and dark only through the keys that pick them', () => {
+    const app = new OverseerApp()
+    const held = (name, keys) => ({ name, node_type: '-', children: keys, is_hierarchy_transparent: false, parameters: {} })
+    app.currentDocument = [
+      { name: 't', node_type: 'tab', parameters: {}, is_hierarchy_transparent: true, children: [field('shown', 'x')] },
+      theme([
+        held('light', [key('background', '#f8fafc')]),
+        held('dark', [key('background', '#000000')]),
+        key('background', '#000000', true),
+      ]),
+      mode('dark'),
+    ]
+    app.renderer.renderDocument(app.currentDocument)
+    const root = document.documentElement
+    expect(root.style.getPropertyValue('--ov-background')).toBe('#000000')
+    expect(root.style.getPropertyValue('--ov-light-background')).toBe('')
+    expect(root.style.getPropertyValue('--ov-dark-background')).toBe('')
+  })
+
   it('a container changes for what is inside it, and leaves its neighbours to the page\'s', () => {
     const app = new OverseerApp()
     app.currentDocument = [
