@@ -103,6 +103,16 @@ pub fn file() -> Option<PathBuf> {
         .or_else(|| FILE_HERE.lock().ok().and_then(|held| held.clone()))
 }
 
+/// The folder the settings are kept in, whether or not the document at hand is seen through them -
+/// where the user's own files are, such as the `libraries.txt` a mounted document's bases are
+/// looked for through as much as any other's.
+pub fn folder() -> Option<PathBuf> {
+    SCOPED_FILE
+        .with(|held| held.borrow().clone())
+        .or_else(|| FILE_HERE.lock().ok().and_then(|held| held.clone()))
+        .and_then(|file| file.parent().map(Path::to_path_buf))
+}
+
 /// The scheme `"system"` stands for here: `"dark"` when that was reported, `"light"` otherwise.
 pub fn scheme() -> &'static str {
     let reported = SCOPED_SCHEME
@@ -201,9 +211,10 @@ pub fn held() -> Vec<(String, String)> {
     out
 }
 
-/// The themes there are to choose from: those that ship with Overseer and those in a `themes`
-/// folder beside the settings, by name. One beside the settings takes the place of a shipped one
-/// of the same name, as a base beside a document does.
+/// The themes there are to choose from, by name: those in a `themes` folder beside the settings,
+/// in one of the user's libraries and in the library that ships with Overseer. One met first in
+/// `theme_folders` takes the place of one of the same name further on, as a base beside a
+/// document does.
 pub fn themes() -> Vec<String> {
     let mut names = Vec::new();
     for folder in theme_folders() {
@@ -226,16 +237,16 @@ pub fn themes() -> Vec<String> {
     names
 }
 
-/// The folders themes are kept in: the `themes` folder beside the settings first, then the one
-/// that ships with Overseer - the order a name is looked for in, so that one beside the settings
-/// takes the place of a shipped one. What a theme keeps beside it, its fonts, is looked for in
-/// the same order.
+/// The folders themes are kept in: the `themes` folder beside the settings first, then each
+/// library's, the user's before the one that ships with Overseer - the order a base
+/// `<themes/x.os/theme>` is looked for in, so that one met first takes the place of one of the
+/// same name further on. What a theme keeps beside it, its fonts, is looked for in the same order.
 pub fn theme_folders() -> Vec<PathBuf> {
     let mut folders = Vec::new();
     if let Some(dir) = file().as_deref().and_then(Path::parent) {
         folders.push(dir.join("themes"));
     }
-    if let Some(library) = crate::bases::library() {
+    for library in crate::bases::libraries() {
         folders.push(library.join("themes"));
     }
     folders

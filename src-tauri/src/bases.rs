@@ -125,8 +125,9 @@ fn by_name<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode
 }
 
 /// Where a file a reference names is. The one place a base is looked for: next to the document
-/// that names it, or next to the base that does, and failing that in the templates that ship
-/// with Overseer - see `library`. A file beside the document always comes first.
+/// that names it, or next to the base that does, and failing that in the user's libraries and
+/// then the templates that ship with Overseer - see `libraries`. A file beside the document
+/// always comes first.
 fn locate(file: &str, beside: Option<&Path>) -> PathBuf {
     let path = Path::new(file);
     if path.is_absolute() {
@@ -147,15 +148,53 @@ fn nearby(file: &str, beside: Option<&Path>) -> PathBuf {
     }
 }
 
-/// The file in the library, if it is there. A path that climbs out of a folder (`../x.os`) is
-/// written relative to the document and never means a library file.
+/// The file in the first library that has it, if one does. A path that climbs out of a folder
+/// (`../x.os`) is written relative to the document and never means a library file.
 fn in_library(file: &str) -> Option<PathBuf> {
+    in_libraries(file).into_iter().find(|found| found.exists())
+}
+
+/// Where a file would be in each library, in the order they are looked in. Nothing for a path
+/// that climbs out of a folder.
+fn in_libraries(file: &str) -> Vec<PathBuf> {
     let path = Path::new(file);
     if path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
-        return None;
+        return Vec::new();
     }
-    let found = library()?.join(path);
-    found.exists().then_some(found)
+    libraries().into_iter().map(|dir| dir.join(path)).collect()
+}
+
+/// The file a user names their own library folders in, beside the settings - see `libraries`.
+pub const LIBRARIES: &str = "libraries.txt";
+
+/// Where the user's `libraries.txt` is, or would be: beside the settings.
+pub fn libraries_file() -> Option<PathBuf> {
+    crate::environment::folder().map(|dir| dir.join(LIBRARIES))
+}
+
+/// The folders bases are looked for in once they are not beside the document: the user's own,
+/// in the order `libraries.txt` names them, and then the templates that ship with Overseer.
+///
+/// `libraries.txt` names a folder a line - so that a program that ships bases of its own, as
+/// Brocessor does its patches', adds a line for its folder when it is installed and takes it off
+/// when it goes. A blank line and one that starts with `#` are passed over, and a folder not
+/// written in full is beside the file. It is read each time, as the files it lists are looked
+/// for each time.
+pub fn libraries() -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    if let Some(file) = libraries_file() {
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            let beside = file.parent().map(Path::to_path_buf).unwrap_or_default();
+            for line in text.lines().map(str::trim) {
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                folders.push(beside.join(line));
+            }
+        }
+    }
+    folders.extend(library());
+    folders
 }
 
 /// The templates that ship with Overseer - its `library` folder - which any document can
@@ -269,10 +308,12 @@ pub fn held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
     fn named(path: &str, out: &mut Vec<String>) {
         if let Some(file) = reference(path).file {
             let found = path_of(&file);
-            // A base taken from the library gives way to a file of that name put beside the
-            // document later, so where that file would be is watched as a missing base is.
+            // A base taken from a library gives way to a file of that name put beside the
+            // document later, or in a library looked in before, so where each of those would be
+            // is watched as a missing base is.
             let near = as_key(&nearby(&file, None));
-            for file in [found, near] {
+            let elsewhere = in_libraries(&file).into_iter().map(|path| as_key(&path));
+            for file in [found, near].into_iter().chain(elsewhere) {
                 if !out.contains(&file) {
                     out.push(file);
                 }
@@ -311,6 +352,12 @@ pub fn held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
             walk(&base, &mut files);
         }
         next += 1;
+    }
+    // A folder named in `libraries.txt`, or taken off it, changes where a base is found.
+    if !files.is_empty() {
+        if let Some(list) = libraries_file() {
+            files.push(as_key(&list));
+        }
     }
     files
         .into_iter()
