@@ -360,7 +360,12 @@ fn override_with(
                 }
             }
             if !declaration.children.is_empty() {
-                crate::resolver::merge_node(&mut copy, &declaration.children);
+                crate::resolver::merge_node(&mut copy, &declaration.children, root);
+            }
+            // An element of it that names a node to start from that is not there is said on the
+            // copy, as a `base=` of the context's own is, rather than deep inside it.
+            if refused.is_none() {
+                refused = take_refusal(&mut copy.children);
             }
             copy
         }
@@ -385,6 +390,19 @@ fn override_with(
     crate::environment::settle_mode(&mut worked_out);
     forget_the_text(&mut worked_out);
     worked_out
+}
+
+/// The first reason an element inside a copy could not start from the node it named, taken off it.
+fn take_refusal(nodes: &mut [OverseerNode]) -> Option<String> {
+    for node in nodes {
+        if let Some(OverseerValue::String(why)) = node.parameters.remove(crate::bases::ERROR) {
+            return Some(why);
+        }
+        if let Some(why) = take_refusal(&mut node.children) {
+            return Some(why);
+        }
+    }
+    None
 }
 
 /// A copy is no text of the document's: nothing of it is to be written, or found by the writer as
