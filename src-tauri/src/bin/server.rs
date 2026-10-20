@@ -1090,7 +1090,8 @@ async fn serve() {
 
     let accounts = match setting(accounts_file, "--accounts", &["OVERSEER_ACCOUNTS"]) {
         None => None,
-        Some((from, path)) => match Accounts::open(&path) {
+        // The documents name people by username, and draw their names from the directory.
+        Some((from, path)) => match Accounts::open(&path).and_then(|a| a.with_directory(&root)) {
             Ok(accounts) => Some(Arc::new(accounts)),
             Err(e) => {
                 eprintln!("cannot use the accounts that {} names: {}", from, e);

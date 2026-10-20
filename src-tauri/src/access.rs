@@ -79,6 +79,11 @@ pub fn asker() -> Asker {
     })
 }
 
+/// The folder the people's folders are in, where a server said.
+pub fn root() -> Option<PathBuf> {
+    ASKING.with(|held| held.borrow().as_ref().map(|asking| asking.root.clone()))
+}
+
 /// Whether something this request reached was kept from it. A document worked out without a
 /// file its asker may not read is not the document as its owner sees it, and is not kept for
 /// anyone else to be handed - see `document_cache`.
@@ -97,15 +102,20 @@ pub fn may(file: &Path, need: Need) -> bool {
         let Some(asking) = held.as_ref() else {
             return true;
         };
-        if asking.asker == Asker::Anyone {
-            return true;
-        }
         let Ok(file) = file.canonicalize() else {
             return true;
         };
         let Ok(within_root) = file.strip_prefix(&asking.root) else {
             return true;
         };
+        // The directory of people is the server's to write, from its accounts, and nobody's
+        // through a document - the token's included, or a name could be changed past the profile.
+        if need == Need::Edit && within_root == Path::new(crate::people::FILE) {
+            return false;
+        }
+        if asking.asker == Asker::Anyone {
+            return true;
+        }
         allows(&asking.root, &asking.asker, within_root, need)
     });
     if !allowed {
@@ -129,9 +139,11 @@ pub fn allows(root: &Path, asker: &Asker, relative: &Path, need: Need) -> bool {
         return false;
     };
     let inside: Vec<String> = parts.collect();
-    // A file at the root itself - the server's own settings, its journal - is no one's.
+    // A file at the root itself - the server's own settings, its journal - is no one's. The
+    // directory of people and the settings a stranger is drawn in are read by everyone.
     if inside.is_empty() {
-        return false;
+        return need == Need::Read
+            && (owner == crate::people::FILE || owner == crate::environment::FILE);
     }
     if let Asker::Person(me) = asker {
         if *me == owner {

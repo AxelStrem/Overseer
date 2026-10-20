@@ -33,6 +33,10 @@ pub const MODE: &str = "mode";
 /// What `mode` says to follow the system.
 pub const SYSTEM: &str = "system";
 
+/// The context that says who is looking: `me/handle`, their username, and `me/name`, what they
+/// are called. Both are empty for whoever has no account - see `people`.
+pub const ME: &str = "me";
+
 static FILE_HERE: Mutex<Option<PathBuf>> = Mutex::new(None);
 static SCHEME_HERE: Mutex<Option<String>> = Mutex::new(None);
 
@@ -146,7 +150,42 @@ pub fn declarations() -> Vec<OverseerNode> {
     };
     let mut out = Vec::new();
     gather(&nodes, &mut out);
+    out.push(me());
     out
+}
+
+/// Who is looking, by username: the person a server is answering, and nobody otherwise.
+fn looking() -> Option<String> {
+    match crate::access::asker() {
+        crate::access::Asker::Person(handle) => Some(handle),
+        _ => None,
+    }
+}
+
+/// `context me`, for whoever is looking. Their name is read from the server's directory of
+/// people, so a new one is seen at once, in every document.
+fn me() -> OverseerNode {
+    let (handle, name) = match looking() {
+        Some(handle) => {
+            let name = crate::access::root()
+                .and_then(|root| crate::people::name_of(&root, &handle))
+                .unwrap_or_else(|| handle.clone());
+            (handle, name)
+        }
+        None => (String::new(), String::new()),
+    };
+    let quoted =
+        |s: &str| crate::file_ops::FileOperations::serialize_value(&OverseerValue::String(s.to_string()));
+    let text = format!(
+        "context {} {{\n    string handle = {}\n    string name = {}\n}}\n",
+        ME,
+        quoted(&handle),
+        quoted(&name)
+    );
+    crate::parser::parse_document(&text)
+        .ok()
+        .and_then(|(_, mut nodes)| nodes.pop())
+        .expect("the context of who is looking is a document")
 }
 
 /// The declarations of the settings' top level, looked through its wrappers as a container's are.
@@ -191,7 +230,11 @@ pub fn key() -> String {
             }
         })
         .unwrap_or_default();
-    format!("mode={}", mode)
+    // Two people never share a copy: each sees their own `me`, and their own settings.
+    match looking() {
+        Some(handle) => format!("mode={};me={}", mode, handle),
+        None => format!("mode={}", mode),
+    }
 }
 
 /// Every file the environment was read from, and how each stood: the settings - or where they
@@ -203,6 +246,12 @@ pub fn held() -> Vec<(String, String)> {
     };
     let key = file.to_string_lossy().replace('\\', "/");
     let mut out = vec![(key.clone(), crate::actions::mount_stamp(&key))];
+    // The directory `me/name` is read from, so that a new name is not shown the old copy.
+    if let (Some(_), Some(root)) = (looking(), crate::access::root()) {
+        let people = root.join(crate::people::FILE).to_string_lossy().replace('\\', "/");
+        let stamp = crate::actions::mount_stamp(&people);
+        out.push((people, stamp));
+    }
     for found in crate::bases::held(&declarations()) {
         if !out.contains(&found) {
             out.push(found);

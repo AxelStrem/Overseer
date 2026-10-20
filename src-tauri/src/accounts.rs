@@ -103,6 +103,8 @@ struct Invite {
 pub struct Accounts {
     path: PathBuf,
     store: Mutex<Store>,
+    /// The folder whose `people.os` is kept in step with the accounts - see `people`.
+    directory: Option<PathBuf>,
 }
 
 fn hashed(token: &str) -> String {
@@ -227,6 +229,36 @@ impl Accounts {
         Ok(Self {
             path,
             store: Mutex::new(store),
+            directory: None,
+        })
+    }
+
+    /// Keep `people.os` in `root` saying who has an account and what they are called, from now
+    /// on and after every change - see `people`.
+    pub fn with_directory(mut self, root: impl Into<PathBuf>) -> Result<Self, AccountError> {
+        self.directory = Some(root.into());
+        self.write_directory()?;
+        Ok(self)
+    }
+
+    /// Everyone with an account, as `(username, display name)`, in the order they joined.
+    pub fn people(&self) -> Vec<(String, String)> {
+        self.read(|store| {
+            store
+                .accounts
+                .iter()
+                .map(|a| (a.username.clone(), a.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    fn write_directory(&self) -> Result<(), AccountError> {
+        let Some(root) = &self.directory else {
+            return Ok(());
+        };
+        crate::people::write(root, &self.people()).map_err(|e| {
+            AccountError::Failed(format!("the directory of people could not be written: {}", e.kind()))
         })
     }
 
@@ -261,6 +293,12 @@ impl Accounts {
                 AccountError::Failed(format!("the accounts could not be written: {}", e.kind()))
             })?;
         *held = store;
+        drop(held);
+        // The accounts are kept whatever happens to the directory: it is written again after the
+        // next change, and at the next start.
+        if let Err(e) = self.write_directory() {
+            eprintln!("{}", e);
+        }
         Ok(outcome)
     }
 

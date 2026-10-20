@@ -3309,7 +3309,7 @@ impl FileOperations {
         out
     }
 
-    fn serialize_value(value: &OverseerValue) -> String {
+    pub(crate) fn serialize_value(value: &OverseerValue) -> String {
         match value {
             OverseerValue::Null => "null".to_string(),
             OverseerValue::String(s) => format!("\"{}\"", Self::escape_string(s)),

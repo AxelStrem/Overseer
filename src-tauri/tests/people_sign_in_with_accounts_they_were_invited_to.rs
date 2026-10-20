@@ -28,10 +28,11 @@ impl Drop for Server {
 }
 
 fn start(port: u16, name: &str) -> Server {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
     let dir = std::env::temp_dir().join(format!("overseer-signin-{}-{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    // A root of its own: a server with accounts writes its directory of people there.
+    let root = dir.join("root");
+    std::fs::create_dir_all(&root).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_overseer-server"))
         .args([
             "--root",

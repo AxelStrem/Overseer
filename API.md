@@ -90,6 +90,13 @@ Nobody signed in reaches only what is shared with everyone; anything else, there
 missing or not shared with them, so what is there cannot be told from what is not. A write to a
 document shared only to be read is `403`.
 
+Two files at the root are the server's. `people.os` is the directory of everyone with an account,
+`list People` keyed by `tag` (the username) with each one's `name`: the server writes it whenever
+someone joins or changes their name, anyone may read it, and no request writes it, the token's
+included. Documents mount it to show people by name (see "Who is looking" in the specification).
+`settings.os` at the root is the look the token and anyone not signed in see; each person's own is
+`settings.os` in their folder, which the drawer's choices are written to.
+
 The examples below assume:
 
 ```bash

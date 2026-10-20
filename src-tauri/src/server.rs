@@ -147,9 +147,14 @@ impl DocumentRoot {
         }
     }
 
-    /// Where the settings every document here is worked out under are kept.
+    /// Where the settings whoever is asking sees every document through are kept: a person's in
+    /// their own folder, beside their documents; the server's own, at the root, for the token
+    /// and for a stranger.
     pub fn settings_file(&self) -> PathBuf {
-        self.root.join(crate::environment::FILE)
+        match crate::access::asker() {
+            crate::access::Asker::Person(me) => self.root.join(me).join(crate::environment::FILE),
+            _ => self.root.join(crate::environment::FILE),
+        }
     }
 
     /// The file a requested name refers to.
@@ -243,6 +248,11 @@ impl DocumentRoot {
         let asker = crate::access::asker();
         let mut listing = Listing::default();
         for name in self.everything() {
+            // A file at the root is the server's - its directory of people, its settings - and
+            // read by everyone, but nobody's document to open from the list.
+            if asker != Asker::Anyone && !name.contains('/') {
+                continue;
+            }
             let relative = Path::new(&name);
             let owner = name.split('/').next().unwrap_or_default().to_string();
             let public = allows(&self.root, &Asker::Stranger, relative, Need::Read);
@@ -882,14 +892,18 @@ impl DocumentRoot {
             // How every document here is drawn - see `environment`. Kept beside the documents, as
             // the menu is, whichever document the page is showing.
             "settings_read" => as_json(app_api::settings_in(&self.settings_file())),
-            // The settings are the server's until each person has their own, and no stranger's
-            // to change.
+            // Each person changes their own; the server's are no stranger's to change.
             "settings_choose" if crate::access::asker() == crate::access::Asker::Stranger => {
                 Err(RequestError::SignIn)
             }
             "settings_choose" => {
                 let theme = arg_str(args, &["theme"]);
                 let mode = arg_str(args, &["mode"]);
+                // Someone who has only just joined may have no folder yet.
+                if let Some(folder) = self.settings_file().parent() {
+                    std::fs::create_dir_all(folder)
+                        .map_err(|e| RequestError::Failed(format!("the settings: {}", e.kind())))?;
+                }
                 as_json(
                     app_api::choose_settings(&self.settings_file(), theme, mode)
                         .map_err(|e| RequestError::Failed(format!("the settings: {:?}", e)))?,
