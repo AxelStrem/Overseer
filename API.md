@@ -33,8 +33,8 @@ The token stays what it was: whoever holds it may do anything.
   `--admin NAME` (`OVERSEER_ADMIN`) names the server's administrator: until that account exists,
   the server prints a join link for it each time it starts, and only the last one printed works.
 - **Signing in**: `/signin` asks for the username and password and sets the `overseer_session`
-  cookie, good for 90 days. `/signout` ends it. A browser asking for a page without one is sent
-  to `/signin`, and back afterwards.
+  cookie, good for 90 days. `/signout` ends it. A browser asking without one for a page that is
+  not shared with everyone is sent to `/signin`, and back afterwards.
 - **`GET /account/me`** answers `{"username","name","admin"}` for whoever is signed in.
   **`POST /account/me`** with `{"name": ...}`, or `{"password": ..., "current": ...}`, changes
   their own display name or password.
@@ -44,6 +44,51 @@ The token stays what it was: whoever holds it may do anything.
 - **Acting for someone**: a request with the token may add `X-Overseer-As: <username>` to be
   that person - the bot does, for whoever is talking to it. From anyone else the header is
   ignored, and naming no account is `403`.
+
+### Whose documents
+
+With accounts, the root holds a folder per person, named by their username, and what is in it is
+theirs. A name whose first part is a username is in that person's folder: `alice/weight.os`. Any
+other name a person gives is in their own, so `tasks.os` is each person's own tasks and
+`projects/plan.os` is `<me>/projects/plan.os`. The token alone works in the whole root, as without
+accounts; with `X-Overseer-As` it names documents as that person does.
+
+What a person lets others reach is their `sharing.os`, an ordinary document beside their others:
+a list whose entries each say a `document` in their folder, who it is `with` - a username, or
+`everyone` for anyone at all, signed in or not - and what they `can` do, `read` or `edit`.
+`sharing.os` itself is never shared, whatever it says.
+
+```overseer
+div (hidden=true) {
+    div Share {
+        string document = ""
+        string with = ""
+        string can = "read"
+    }
+}
+
+list Shares (entry=<Share>) {
+    - {
+        - document = "shopping.os"
+        - with = "alice"
+        - can = "edit"
+    }
+    - {
+        - document = "recipes.os"
+        - with = "everyone"
+    }
+}
+```
+
+This is asked of every file a request reaches: the document named, what it mounts and the files
+its templates come from. A mount of something its reader may not read loads as a missing file
+would, and the rest of the document is drawn. A write needs `edit` on the document written; a
+press that only moves what the viewer is looking at needs only `read`.
+
+Nobody signed in reaches only what is shared with everyone; anything else, there or not, is `401
+{"error":"sign in"}`. Someone signed in is told `404 {"error":"no document '<name>'"}` of anything
+missing or not shared with them, so what is there cannot be told from what is not. A write to a
+document shared only to be read is `403`.
 
 The examples below assume:
 
@@ -60,8 +105,12 @@ A document is named by its path under the root, with forward slashes:
 
 ```bash
 curl -H "$A" $B/documents
-# {"documents":["basic/actions_feature_test.os", ..., "shopping/shopping.os", "tasks/tasks.os"]}
+# {"documents":["basic/actions_feature_test.os", ..., "shopping/shopping.os", "tasks/tasks.os"], ...}
 ```
+
+For a person, `documents` is everything they can reach, by full name, and the same is grouped:
+`mine`, `shared` (by owner: `{"alice": ["alice/shopping.os"]}`) and `public`, what is shared with
+everyone. Nobody signed in has no list.
 
 `GET /doc/<name>` gives the whole resolved document as `{"nodes": [...]}`; the routes below work
 on one part of it.
@@ -187,9 +236,9 @@ disk:
 | status | meaning |
 | --- | --- |
 | 400 | the request cannot be done as asked: a missing or ill-typed value, an unknown field, a duplicate key, a removal that does not match, a document name that leaves the root |
-| 401 | no token, or the wrong one, and no session |
-| 403 | not allowed to whoever is asking: an invite by someone who is no admin, `X-Overseer-As` naming no account |
-| 404 | no such document, or nothing at that address |
+| 401 | no token, or the wrong one, and no session - with accounts, `sign in`, for anything not shared with everyone |
+| 403 | not allowed to whoever is asking: an invite by someone who is no admin, `X-Overseer-As` naming no account, a write to a document shared to be read |
+| 404 | no such document, or one not shared with whoever is asking, or nothing at that address |
 | 422 | the document refused the press (`refused` holds its sentence) |
 | 500 | the write failed |
 

@@ -2002,6 +2002,14 @@ pub fn for_the_page(mut update: ResolvedUpdate) -> ResolvedUpdate {
 /// Both keep the history beside the file - see `undo::beside`.
 pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result<()> {
     let at = std::path::Path::new(path);
+    // Every write the page's instructions make comes through here, on a server for someone it
+    // may not let change this document - see `access`.
+    if !crate::access::may(at, crate::access::Need::Edit) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            crate::access::READ_ONLY,
+        ));
+    }
     if let Some((beside, named)) = crate::undo::beside(at) {
         if let Ok(previous) = std::fs::read_to_string(at) {
             // A write that says what the file already says is not a change, and recording a step

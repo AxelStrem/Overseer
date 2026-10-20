@@ -52,7 +52,9 @@ Railway, Render, Fly, Heroku and the like can build the `Dockerfile` in this rep
      `OVERSEER_ADMIN=<username>` names who may invite them: until that account exists, the
      server's log holds a link to make it. Keep the file out of the documents folder - it holds
      password hashes, and it need not travel with a backup of the documents. A token can be set
-     beside it, for a program such as a bot; see [API.md](API.md).
+     beside it, for a program such as a bot; see [API.md](API.md). With accounts, each person's
+     documents are in a folder of the documents named by their username, and they share them
+     through a `sharing.os` there - see "Whose documents" in [API.md](API.md).
 
    With none of these, the server refuses to start and says which to set.
 3. Nothing to do about the port: the host hands the container `PORT`, and the server listens on

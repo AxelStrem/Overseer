@@ -12,9 +12,34 @@ use crate::types::*;
 use std::path::{Component, Path, PathBuf};
 
 /// The directory documents are served from. Nothing outside it is reachable.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DocumentRoot {
     root: PathBuf,
+    /// Whether a name is someone's username, when the server keeps accounts: the first part of a
+    /// document's name that is one names that person's folder - see `named`.
+    accounts: Option<std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+}
+
+impl std::fmt::Debug for DocumentRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocumentRoot")
+            .field("root", &self.root)
+            .field("accounts", &self.accounts.is_some())
+            .finish()
+    }
+}
+
+/// The documents whoever asks can reach, as `DocumentRoot::listing` answers.
+#[derive(Debug, Default, PartialEq, serde::Serialize)]
+pub struct Listing {
+    /// Every one of them, each by its full name.
+    pub documents: Vec<String>,
+    /// Their own.
+    pub mine: Vec<String>,
+    /// What others share with them, by owner.
+    pub shared: std::collections::BTreeMap<String, Vec<String>>,
+    /// What is shared with everyone, theirs included.
+    pub public: Vec<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -25,6 +50,11 @@ pub enum RequestError {
     Failed(String),
     /// A press the document said no to, with the sentence it gave - see `refuse`.
     Refused(String),
+    /// Nobody is signed in, and what was asked for is not shared with everyone - or is not
+    /// there, which is answered the same way.
+    SignIn,
+    /// The document is shared with whoever asked to read, and they asked to change it.
+    ReadOnly(String),
 }
 
 impl std::fmt::Display for RequestError {
@@ -33,7 +63,9 @@ impl std::fmt::Display for RequestError {
             RequestError::Rejected(m)
             | RequestError::NotFound(m)
             | RequestError::Failed(m)
-            | RequestError::Refused(m) => write!(f, "{}", m),
+            | RequestError::Refused(m)
+            | RequestError::ReadOnly(m) => write!(f, "{}", m),
+            RequestError::SignIn => write!(f, "sign in"),
         }
     }
 }
@@ -57,6 +89,7 @@ impl DocumentRoot {
     pub fn new(root: impl AsRef<Path>) -> std::io::Result<Self> {
         let documents = Self {
             root: root.as_ref().canonicalize()?,
+            accounts: None,
         };
         crate::environment::set_file(Some(documents.settings_file()));
         Ok(documents)
@@ -66,10 +99,52 @@ impl DocumentRoot {
         &self.root
     }
 
+    /// The same, with each person's documents in a folder of their own: `is_account` says
+    /// whether a name is someone's username - see `access`.
+    pub fn with_accounts(mut self, is_account: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        self.accounts = Some(std::sync::Arc::new(is_account));
+        self
+    }
+
+    /// Work as `asker`: every name is then theirs to resolve, and every file reached - mounts and
+    /// bases included - one they may read, or change - see `access`.
+    pub fn as_asker<T>(&self, asker: crate::access::Asker, f: impl FnOnce() -> T) -> T {
+        crate::access::within(asker, &self.root, f)
+    }
+
+    /// The name a document has under the root, as whoever is asking means it.
+    ///
+    /// A name whose first part is someone's username is in that person's folder; anything else a
+    /// person names is in their own, so `tasks.os` is each person's own tasks and a subfolder of
+    /// theirs stays theirs. The full name always works, so a subfolder that happens to share a
+    /// username is still reached as `me/that/x.os`.
+    pub fn named(&self, name: &str) -> String {
+        match crate::access::asker() {
+            crate::access::Asker::Person(me) => {
+                let is_account = |first: &str| self.accounts.as_ref().is_some_and(|f| f(first));
+                match name.split_once('/') {
+                    Some((first, _)) if is_account(first) => name.to_string(),
+                    _ => format!("{}/{}", me, name),
+                }
+            }
+            _ => name.to_string(),
+        }
+    }
+
     /// Work in a document's folder, under the settings this server keeps beside its documents -
     /// see `environment`. Every document it works out is drawn through them.
     fn within<T>(&self, dir: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
         crate::environment::with_file(self.settings_file(), || DocumentManager::with_document(dir, f))
+    }
+
+    /// The list of documents kept to hand for whoever is asking: the server's own, or a person's
+    /// in their folder - see `menu`.
+    fn menu_file(&self) -> std::result::Result<PathBuf, RequestError> {
+        match crate::access::asker() {
+            crate::access::Asker::Anyone => Ok(self.root.join(crate::menu::FILE)),
+            crate::access::Asker::Person(me) => Ok(self.root.join(me).join(crate::menu::FILE)),
+            crate::access::Asker::Stranger => Err(RequestError::SignIn),
+        }
     }
 
     /// Where the settings every document here is worked out under are kept.
@@ -85,6 +160,38 @@ impl DocumentRoot {
     /// The resolved path is then confirmed to still sit under the root, which is what catches
     /// a symlink pointing somewhere else entirely.
     pub fn resolve(&self, name: &str) -> std::result::Result<PathBuf, RequestError> {
+        self.resolve_for(name, crate::access::Need::Read)
+    }
+
+    /// The same, for whoever is asking, to do `need` with it - see `access`.
+    ///
+    /// What is refused answers as what is missing does, so nobody learns from an error what is
+    /// there and not shared with them: "sign in" to a stranger, "no document" to a person. Only
+    /// a document someone may read, and asked to change, says why it is refused.
+    pub fn resolve_for(
+        &self,
+        name: &str,
+        need: crate::access::Need,
+    ) -> std::result::Result<PathBuf, RequestError> {
+        let asker = crate::access::asker();
+        let hidden = || match asker {
+            crate::access::Asker::Stranger => RequestError::SignIn,
+            _ => RequestError::NotFound(format!("no document '{}'", name)),
+        };
+        let path = self.resolve_name(&self.named(name)).map_err(|e| match e {
+            RequestError::NotFound(_) => hidden(),
+            other => other,
+        })?;
+        if crate::access::may(&path, need) {
+            return Ok(path);
+        }
+        if need == crate::access::Need::Edit && crate::access::may(&path, crate::access::Need::Read) {
+            return Err(RequestError::ReadOnly(crate::access::READ_ONLY.into()));
+        }
+        Err(hidden())
+    }
+
+    fn resolve_name(&self, name: &str) -> std::result::Result<PathBuf, RequestError> {
         if name.is_empty() {
             return Err(RequestError::Rejected("no document named".into()));
         }
@@ -125,8 +232,42 @@ impl DocumentRoot {
         Ok(resolved)
     }
 
-    /// Every document under the root, named as a caller would ask for it.
+    /// Every document whoever is asking may read, each by its full name.
     pub fn list(&self) -> Vec<String> {
+        self.listing().documents
+    }
+
+    /// The documents whoever is asking may read, theirs and others', and what is public.
+    pub fn listing(&self) -> Listing {
+        use crate::access::{allows, Asker, Need};
+        let asker = crate::access::asker();
+        let mut listing = Listing::default();
+        for name in self.everything() {
+            let relative = Path::new(&name);
+            let owner = name.split('/').next().unwrap_or_default().to_string();
+            let public = allows(&self.root, &Asker::Stranger, relative, Need::Read);
+            if public && asker != Asker::Anyone {
+                listing.public.push(name.clone());
+            }
+            match &asker {
+                Asker::Anyone => listing.documents.push(name),
+                Asker::Person(me) if *me == owner => {
+                    listing.mine.push(name.clone());
+                    listing.documents.push(name);
+                }
+                Asker::Person(_) if allows(&self.root, &asker, relative, Need::Read) => {
+                    listing.shared.entry(owner).or_default().push(name.clone());
+                    listing.documents.push(name);
+                }
+                Asker::Stranger if public => listing.documents.push(name),
+                _ => {}
+            }
+        }
+        listing
+    }
+
+    /// Every document under the root, named as the service would ask for it.
+    fn everything(&self) -> Vec<String> {
         fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
             let Ok(entries) = std::fs::read_dir(dir) else {
                 return;
@@ -363,6 +504,24 @@ impl DocumentRoot {
         cmd: &str,
         args: &serde_json::Value,
     ) -> std::result::Result<serde_json::Value, RequestError> {
+        // The page's instructions write through `app_api`, which refuses a document shared only
+        // to be read in words of its own, inside whatever the instruction failed with - see
+        // `access`. Said here as the refusal it is.
+        self.answer(session, document, cmd, args).map_err(|e| match e {
+            RequestError::Failed(said) if said.contains(crate::access::READ_ONLY) => {
+                RequestError::ReadOnly(crate::access::READ_ONLY.into())
+            }
+            other => other,
+        })
+    }
+
+    fn answer(
+        &self,
+        session: &str,
+        document: Option<&str>,
+        cmd: &str,
+        args: &serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, RequestError> {
         let _ = session;
         // Saving is the browser's way of writing: it runs the action, serializes the whole
         // document, and sends the text back. The write API the bot uses is finer-grained and
@@ -456,7 +615,7 @@ impl DocumentRoot {
                     .ok_or_else(|| RequestError::Rejected("'mime' is required".into()))?;
                 let data = arg_str(args, &["data"])
                     .ok_or_else(|| RequestError::Rejected("'data' is required".into()))?;
-                let file = self.resolve(&path)?;
+                let file = self.resolve_for(&path, crate::access::Need::Edit)?;
                 app_api::save_image_beside(&file, &mime, &data)
                     .map(serde_json::Value::String)
                     .map_err(|refused| match refused {
@@ -695,8 +854,12 @@ impl DocumentRoot {
             // The documents kept to hand - see `menu`. The server's list lives in its own folder
             // and names documents as this server does, so whichever document the page is showing
             // has nothing to do with it.
+            // Nobody signed in has no documents kept to hand, and keeps none.
+            "menu_places" if crate::access::asker() == crate::access::Asker::Stranger => {
+                Ok(serde_json::json!([]))
+            }
             "menu_places" | "menu_keep" | "menu_drop" | "menu_location" => {
-                let file = self.root.join(crate::menu::FILE);
+                let file = self.menu_file()?;
                 let failed = |e: OverseerError| RequestError::Failed(format!("the menu: {:?}", e));
                 // Each named as this server names documents, and only those under its folder read.
                 let labelled = |places| crate::menu::labelled(places, |path| self.resolve(path).ok());
@@ -719,6 +882,11 @@ impl DocumentRoot {
             // How every document here is drawn - see `environment`. Kept beside the documents, as
             // the menu is, whichever document the page is showing.
             "settings_read" => as_json(app_api::settings_in(&self.settings_file())),
+            // The settings are the server's until each person has their own, and no stranger's
+            // to change.
+            "settings_choose" if crate::access::asker() == crate::access::Asker::Stranger => {
+                Err(RequestError::SignIn)
+            }
             "settings_choose" => {
                 let theme = arg_str(args, &["theme"]);
                 let mode = arg_str(args, &["mode"]);
@@ -1173,7 +1341,7 @@ impl DocumentRoot {
     ) -> std::result::Result<serde_json::Value, RequestError> {
         let name = arg_str(args, &["path"])
             .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
-        let path = self.resolve(&name)?;
+        let path = self.resolve_for(&name, crate::access::Need::Edit)?;
 
         let text = match cmd {
             "save_overseer_file_with_original" => {
@@ -1382,11 +1550,17 @@ impl DocumentRoot {
             &held_for_the_viewer,
             report.as_ref(),
         );
+        // A press that only moves what the viewer is looking at is for anyone who may read the
+        // document; one that changes the file, only for whoever may change it. Asked before the
+        // viewer's values are kept, so a refused press leaves nothing behind.
+        let wrote = settled.worth_writing && settled.text != text_before;
+        if wrote && !crate::access::may(&path, crate::access::Need::Edit) {
+            return Err(RequestError::ReadOnly(crate::access::READ_ONLY.into()));
+        }
         for (address, value) in settled.viewers {
             crate::viewstate::set(session, name, &address, value);
         }
         phase("edit viewers", &mut since);
-        let wrote = settled.worth_writing && settled.text != text_before;
         if wrote {
             self.write_document(&path, name, &settled.text)?;
         }
@@ -1454,7 +1628,7 @@ impl DocumentRoot {
     /// This write does not record an undo point of its own: the state it is taking back would
     /// otherwise become the newest step, and the history would never move.
     pub fn undo(&self, name: &str) -> std::result::Result<serde_json::Value, RequestError> {
-        let path = self.resolve(name)?;
+        let path = self.resolve_for(name, crate::access::Need::Edit)?;
         // Beside the file, where every writer keeps it - see `undo::beside`.
         let (folder, file) = crate::undo::beside(&path)
             .ok_or_else(|| RequestError::Rejected(format!("'{}' is not a document", name)))?;
@@ -1494,6 +1668,10 @@ impl DocumentRoot {
         name: &str,
         text: &str,
     ) -> std::result::Result<(), RequestError> {
+        // Every write the server makes itself comes through here - see `access`.
+        if !crate::access::may(path, crate::access::Need::Edit) {
+            return Err(RequestError::ReadOnly(crate::access::READ_ONLY.into()));
+        }
         // Before the write, and only when there is something to keep: a document being created
         // has nothing to go back to.
         if let Ok(previous) = std::fs::read_to_string(path) {

@@ -29,6 +29,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::{routing::get, Router};
 use axum::Extension;
+use overseer::access::Asker;
 use overseer::accounts::{AccountError, Accounts, User};
 use overseer::server::{
     from_environment, is_loopback, is_switched_on, refuse_to_start, Access, DocumentRoot,
@@ -55,6 +56,24 @@ enum Caller {
     Service,
     /// Someone signed in, or the service acting for them.
     Person(User),
+    /// Nobody signed in, on a server that keeps accounts: what is shared with everyone is
+    /// theirs to read, and nothing else - see `overseer::access`.
+    Stranger,
+}
+
+impl Caller {
+    fn asker(&self) -> Asker {
+        match self {
+            Caller::Service => Asker::Anyone,
+            Caller::Person(user) => Asker::Person(user.username.clone()),
+            Caller::Stranger => Asker::Stranger,
+        }
+    }
+}
+
+/// What a stranger is told of anything not shared with everyone, there or not.
+fn sign_in_first() -> (StatusCode, Json<serde_json::Value>) {
+    respond(RequestError::SignIn)
 }
 
 /// What lets the frontend run against this server rather than the desktop app.
@@ -83,19 +102,22 @@ struct CommandBody {
 
 async fn command(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     Path(cmd): Path<String>,
     Json(body): Json<CommandBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let documents = service.documents.clone();
     // Resolving is CPU work, long enough on a large document to block the thread it lands on.
     let outcome = tokio::task::spawn_blocking(move || {
-        overseer::environment::seen_as(body.scheme.as_deref(), || {
-            documents.command_for(
-                body.session.as_deref().unwrap_or(""),
-                body.document.as_deref(),
-                &cmd,
-                &body.args,
-            )
+        documents.as_asker(caller.asker(), || {
+            overseer::environment::seen_as(body.scheme.as_deref(), || {
+                documents.command_for(
+                    body.session.as_deref().unwrap_or(""),
+                    body.document.as_deref(),
+                    &cmd,
+                    &body.args,
+                )
+            })
         })
     })
     .await
@@ -106,13 +128,29 @@ async fn command(
 /// One address, two audiences: the rendered document for a browser, the data for a program.
 async fn document_or_page(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     headers: HeaderMap,
+    uri: axum::http::Uri,
     Path(name): Path<String>,
 ) -> Response {
-    if wants_a_page(&headers) && service.frontend.is_some() {
-        return index(State(service)).await;
+    // A stranger following a link to what is not shared with everyone is better served by the
+    // way in than by a page that cannot open it.
+    if wants_a_page(&headers) && matches!(caller, Caller::Stranger) {
+        let documents = service.documents.clone();
+        let asked = name.clone();
+        let public = tokio::task::spawn_blocking(move || {
+            documents.as_asker(Asker::Stranger, || documents.resolve(&asked).is_ok())
+        })
+        .await
+        .unwrap_or(false);
+        if !public {
+            return to_sign_in(&uri);
+        }
     }
-    match document(State(service), Path(name)).await {
+    if wants_a_page(&headers) && service.frontend.is_some() {
+        return index(State(service), Extension(caller), uri).await;
+    }
+    match document(State(service), Extension(caller), Path(name)).await {
         Ok(json) => json.into_response(),
         Err(err) => err.into_response(),
     }
@@ -132,7 +170,15 @@ async fn bridge() -> Response {
 ///
 /// Injected here rather than committed into the page so the built frontend stays exactly what
 /// the desktop app ships - one build, serving both.
-async fn index(State(service): State<Service>) -> Response {
+async fn index(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    uri: axum::http::Uri,
+) -> Response {
+    // The list of documents is no stranger's: what is shared with everyone is reached by its link.
+    if matches!(caller, Caller::Stranger) && uri.path() == "/" {
+        return to_sign_in(&uri);
+    }
     let Some(frontend) = service.frontend.as_ref() else {
         return Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -216,9 +262,13 @@ async fn require_access(
             },
         }
     } else if let Some(accounts) = service.accounts.as_ref() {
-        cookie_named(headers, SESSION_COOKIE)
-            .and_then(|token| accounts.session(&token, chrono::Utc::now()))
-            .map(Caller::Person)
+        // Nobody signed in is still let through, as a stranger: each document says whether it
+        // is shared with everyone, and the page has to load for one that is to be drawn.
+        Some(
+            cookie_named(headers, SESSION_COOKIE)
+                .and_then(|token| accounts.session(&token, chrono::Utc::now()))
+                .map_or(Caller::Stranger, Caller::Person),
+        )
     } else if !service.access.is_restricted() {
         Some(Caller::Service)
     } else {
@@ -228,23 +278,20 @@ async fn require_access(
         request.extensions_mut().insert(caller);
         return next.run(request).await;
     }
-    // A person who followed a link is better served by the way in than by an error.
-    if service.accounts.is_some()
-        && request.method() == axum::http::Method::GET
-        && wants_a_page(request.headers())
-    {
-        let here = request
-            .uri()
-            .path_and_query()
-            .map(|p| p.as_str().to_string())
-            .unwrap_or_else(|| "/".into());
-        return redirect(&format!("/signin?next={}", escaped_for_query(&here)), None);
-    }
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({ "error": "a token is required" })),
     )
         .into_response()
+}
+
+/// Send a browser to sign in, and back here afterwards.
+fn to_sign_in(uri: &axum::http::Uri) -> Response {
+    let here = uri
+        .path_and_query()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_else(|| "/".into());
+    redirect(&format!("/signin?next={}", escaped_for_query(&here)), None)
 }
 
 /// The account the token says it acts for, in `X-Overseer-As`.
@@ -571,6 +618,7 @@ fn signed_in(caller: &Caller) -> Result<&User, (StatusCode, Json<serde_json::Val
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "this is the server's token, not an account" })),
         )),
+        Caller::Stranger => Err(sign_in_first()),
     }
 }
 
@@ -626,13 +674,15 @@ async fn invite(
     let accounts = service.accounts.as_ref().ok_or_else(|| {
         (StatusCode::NOT_FOUND, Json(json!({ "error": "this server keeps no accounts" })))
     })?;
-    if let Caller::Person(user) = &caller {
-        if !user.admin {
+    match &caller {
+        Caller::Person(user) if !user.admin => {
             return Err((
                 StatusCode::FORBIDDEN,
                 Json(json!({ "error": "only an admin may invite" })),
             ));
         }
+        Caller::Stranger => return Err(sign_in_first()),
+        _ => {}
     }
     if let Some(username) = body.reset.as_deref() {
         if accounts.user(&username.trim().to_lowercase()).is_none() {
@@ -675,10 +725,13 @@ struct WriteBody {
 /// Read the subtree at an address: a catalogue, a day, one food's portion weight.
 async fn read_at(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     axum::extract::Query(target): axum::extract::Query<Target>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let documents = service.documents.clone();
-    let view = tokio::task::spawn_blocking(move || documents.read_at(&target.document, &target.address))
+    let view = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.read_at(&target.document, &target.address))
+    })
         .await
         .map_err(|e| respond(RequestError::Failed(format!("reading panicked: {}", e))))?
         .map_err(respond)?;
@@ -691,11 +744,16 @@ async fn read_at(
 /// Append an entry to the list at an address.
 async fn append_at(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     axum::extract::Query(target): axum::extract::Query<Target>,
     Json(body): Json<WriteBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let documents = service.documents.clone();
-    let outcome = tokio::task::spawn_blocking(move || documents.append_at(&target.document, &target.address, &body.fields))
+    let outcome = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || {
+            documents.append_at(&target.document, &target.address, &body.fields)
+        })
+    })
         .await
         .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
         .map_err(respond)?;
@@ -705,6 +763,7 @@ async fn append_at(
 /// Set the value at an address.
 async fn set_at(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     axum::extract::Query(target): axum::extract::Query<Target>,
     Json(body): Json<WriteBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -712,7 +771,9 @@ async fn set_at(
         return Err(respond(RequestError::Rejected("'value' is required".into())));
     };
     let documents = service.documents.clone();
-    let outcome = tokio::task::spawn_blocking(move || documents.set_at(&target.document, &target.address, value))
+    let outcome = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.set_at(&target.document, &target.address, value))
+    })
         .await
         .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
         .map_err(respond)?;
@@ -723,6 +784,7 @@ async fn set_at(
 /// Remove the entry at an address.
 async fn remove_at(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     axum::extract::Query(target): axum::extract::Query<Target>,
     // Optional, and optional on purpose: a list with a key addresses its entries by that key
     // and cannot go stale, so insisting would be noise. Sent, it is checked - see `remove_at`.
@@ -731,7 +793,9 @@ async fn remove_at(
     let documents = service.documents.clone();
     let expect = body.map(|Json(b)| b.fields).unwrap_or_default();
     let outcome = tokio::task::spawn_blocking(move || {
-        documents.remove_at(&target.document, &target.address, &expect)
+        documents.as_asker(caller.asker(), || {
+            documents.remove_at(&target.document, &target.address, &expect)
+        })
     })
         .await
         .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
@@ -748,12 +812,15 @@ struct EventBody {
 /// Press something the document declares - a button's `on click`, say.
 async fn run_event(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     axum::extract::Query(target): axum::extract::Query<Target>,
     Json(body): Json<EventBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let documents = service.documents.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        documents.run_event(&target.document, &target.address, &body.event)
+        documents.as_asker(caller.asker(), || {
+            documents.run_event(&target.document, &target.address, &body.event)
+        })
     })
     .await
     .map_err(|e| respond(RequestError::Failed(format!("the event panicked: {}", e))))?
@@ -764,10 +831,13 @@ async fn run_event(
 /// Take back the last write to a document.
 async fn undo(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     axum::extract::Query(which): axum::extract::Query<Which>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let documents = service.documents.clone();
-    let outcome = tokio::task::spawn_blocking(move || documents.undo(&which.document))
+    let outcome = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.undo(&which.document))
+    })
         .await
         .map_err(|e| respond(RequestError::Failed(format!("the undo panicked: {}", e))))?
         .map_err(respond)?;
@@ -789,6 +859,8 @@ fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
         RequestError::NotFound(_) => StatusCode::NOT_FOUND,
         RequestError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
         RequestError::Refused(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        RequestError::SignIn => StatusCode::UNAUTHORIZED,
+        RequestError::ReadOnly(_) => StatusCode::FORBIDDEN,
     };
     match error {
         RequestError::Refused(said) => (status, Json(json!({ "error": said, "refused": said }))),
@@ -796,8 +868,22 @@ fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
     }
 }
 
-async fn list(State(service): State<Service>) -> impl IntoResponse {
-    Json(json!({ "documents": service.documents.list() }))
+/// What whoever asks can reach: `documents`, every one by its full name, and the same grouped
+/// into `mine`, `shared` (by owner) and `public` - see `DocumentRoot::listing`.
+async fn list(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if matches!(caller, Caller::Stranger) {
+        return Err(sign_in_first());
+    }
+    let documents = service.documents.clone();
+    let listing = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.listing())
+    })
+    .await
+    .map_err(|e| respond(RequestError::Failed(format!("listing panicked: {}", e))))?;
+    Ok(Json(json!(listing)))
 }
 
 /// Whether the caller is a browser asking to look at something.
@@ -816,12 +902,15 @@ fn wants_a_page(headers: &HeaderMap) -> bool {
 
 async fn document(
     State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Resolving is CPU work rather than IO, and long enough on a large document to block the
     // runtime thread it lands on, so it runs where blocking is expected.
     let documents = service.documents.clone();
-    let resolved = tokio::task::spawn_blocking(move || documents.open(&name))
+    let resolved = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.open(&name))
+    })
         .await
         .map_err(|e| respond(RequestError::Failed(format!("resolving panicked: {}", e))))?
         .map_err(respond)?;
@@ -1048,7 +1137,11 @@ async fn serve() {
     }
 
     let documents = match DocumentRoot::new(&root) {
-        Ok(r) => Arc::new(r),
+        // With accounts, each person's documents are in a folder named for them.
+        Ok(r) => Arc::new(match accounts.clone() {
+            Some(accounts) => r.with_accounts(move |name| accounts.user(name).is_some()),
+            None => r,
+        }),
         Err(e) => {
             eprintln!("cannot serve '{}': {}", root.display(), e);
             std::process::exit(1);

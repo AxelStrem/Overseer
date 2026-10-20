@@ -2308,6 +2308,17 @@ impl ActionExecutor {
         static CACHE: LazyLock<Mutex<std::collections::HashMap<String, (Stamp, Vec<OverseerNode>)>>> =
             LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
+        // Asked before what is held is handed out: one person having read a file is no reason
+        // for the next to. Refused, it fails as a file that is not there does, so that what a
+        // person may not read cannot be told apart from what does not exist.
+        if !crate::access::may_read(path) {
+            return Err(format!(
+                "Failed to read mount file '{}': {}",
+                path,
+                std::io::Error::from_raw_os_error(2)
+            ));
+        }
+
         let stamp = file_stamp(path);
 
         if let Some(stamp) = stamp {

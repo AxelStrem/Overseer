@@ -192,6 +192,20 @@ impl Entry {
             .iter()
             .all(|(file, stamp)| crate::actions::mount_stamp(file) == *stamp)
     }
+
+    /// Whether whoever is asking may read every file it was worked out from - see `access`. What
+    /// one person was shown, with a catalogue mounted they may read, is not for someone who may
+    /// not. The settings it was drawn in are the server's, and read for everyone.
+    fn readable(&self) -> bool {
+        if crate::access::asker() == crate::access::Asker::Anyone {
+            return true;
+        }
+        let settings = crate::environment::held();
+        self.mounts
+            .iter()
+            .filter(|held| !settings.contains(held))
+            .all(|(file, _)| crate::access::may_read(file))
+    }
 }
 
 impl Entry {
@@ -273,6 +287,13 @@ fn here() -> Option<std::path::PathBuf> {
 /// mounts were read from has changed: then what it holds is let go, tree and graph, and whoever
 /// asked works the document out from the files as though it had never been held.
 fn at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
+    let found = held_at(store, text)?;
+    store[found].readable().then_some(found)
+}
+
+/// The same, whoever is asking: for putting something in the entry's place, which is no reading
+/// of what it holds.
+fn held_at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
     let base = here();
     let seen = crate::environment::key();
     let found = store
@@ -315,8 +336,9 @@ fn found(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
         return None;
     }
     entry.measure();
+    let readable = entry.readable();
     store.push(entry);
-    Some(store.len() - 1)
+    readable.then_some(store.len() - 1)
 }
 
 /// The graph held for this text, lent to `look` rather than copied out.
@@ -417,8 +439,13 @@ pub fn graph_for(text: &str) -> Option<crate::dependencies::Graph> {
 }
 
 fn put(text: &str, work: impl FnOnce(&mut Entry)) {
+    // Worked out without a file its asker may not read, it is not the document as anyone else
+    // would be shown it - see `access::refused_any`.
+    if crate::access::refused_any() {
+        return;
+    }
     with(|store| {
-        let found = match at(store, text) {
+        let found = match held_at(store, text) {
             Some(found) => found,
             None => {
                 store.push(Entry {

@@ -256,6 +256,10 @@ static CACHE: LazyLock<Mutex<std::collections::HashMap<String, (Stamp, Arc<Vec<O
 /// it asks for the same base.
 pub fn load(file: &str) -> Result<Arc<Vec<OverseerNode>>, String> {
     let key = as_key(&locate(file, None));
+    // A base in someone else's folder is read on the same terms as a mount of it - see `access`.
+    if !crate::access::may_read(&key) {
+        return Err(format!("{} could not be read", file_name(file)));
+    }
     let now = stamp(&key);
     if let Some(now) = now {
         if let Ok(cache) = CACHE.lock() {
