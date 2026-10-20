@@ -356,8 +356,8 @@ async fn parse_overseer_content_selective_update(
 /// Put the document back the way it was before the last write.
 #[command]
 async fn undo_overseer_file(path: String) -> Result<serde_json::Value> {
-    let left = app_api::undo_document(&path)?;
-    Ok(serde_json::json!({ "undone": path, "steps_left": left }))
+    let (left, left_alone) = app_api::undo_document(&path)?;
+    Ok(serde_json::json!({ "undone": path, "steps_left": left, "left_alone": left_alone }))
 }
 
 #[command]

@@ -88,7 +88,45 @@ pub fn remember(root: &Path, document: &str, text: &str) {
     let held = snapshots(root, document);
     for stale in held.iter().take(held.len().saturating_sub(KEPT)) {
         let _ = std::fs::remove_file(stale);
+        let _ = std::fs::remove_file(stale.with_extension("along"));
     }
+}
+
+/// Another file a write changed along with the document - one it mounts, written through the
+/// mount - and the text it left there.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Along {
+    pub file: String,
+    pub wrote: String,
+}
+
+/// Say that the document's newest step changed these files too, so taking it back takes them back.
+///
+/// A press in one document that adds to a list another file holds writes that file, and its
+/// step is kept with that file. Undo in the document the person pressed in has to find it, or it
+/// takes back whatever that document did before - see `app_api::take_back_along`.
+pub fn along_with_newest(root: &Path, document: &str, along: &[Along]) {
+    if along.is_empty() {
+        return;
+    }
+    let Some(newest) = snapshots(root, document).pop() else { return };
+    if let Ok(said) = serde_json::to_string(along) {
+        let _ = std::fs::write(newest.with_extension("along"), said);
+    }
+}
+
+/// As `take`, with the files that step changed along with it.
+pub fn take_along(root: &Path, document: &str) -> Option<(String, Vec<Along>)> {
+    let newest = snapshots(root, document).pop()?;
+    let text = std::fs::read_to_string(&newest).ok()?;
+    let besides = newest.with_extension("along");
+    let along = std::fs::read_to_string(&besides)
+        .ok()
+        .and_then(|said| serde_json::from_str(&said).ok())
+        .unwrap_or_default();
+    let _ = std::fs::remove_file(&newest);
+    let _ = std::fs::remove_file(&besides);
+    Some((text, along))
 }
 
 /// The text before the most recent write, taken off the history.
@@ -97,10 +135,7 @@ pub fn remember(root: &Path, document: &str, text: &str) {
 /// same two states forever. The caller writes it, and does not record an undo point for that
 /// write - otherwise the step it just took back would immediately be the newest one.
 pub fn take(root: &Path, document: &str) -> Option<String> {
-    let newest = snapshots(root, document).pop()?;
-    let text = std::fs::read_to_string(&newest).ok()?;
-    let _ = std::fs::remove_file(&newest);
-    Some(text)
+    take_along(root, document).map(|(text, _)| text)
 }
 
 /// How many writes can still be taken back.

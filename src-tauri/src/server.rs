@@ -1496,7 +1496,7 @@ impl DocumentRoot {
             }
             *since = std::time::Instant::now();
         }
-        let (outcome, nodes, serialized, report, settled_quickly) = self.within(dir.clone(), || {
+        let (outcome, nodes, serialized, report, settled_quickly, through_mounts) = self.within(dir.clone(), || {
             // The quick way, taken whenever it can be: the document as it was last worked out for
             // this very text, when what the write is about is in view there. A write then works
             // out what it reaches and no more, as the page's writes do - see
@@ -1550,6 +1550,10 @@ impl DocumentRoot {
             };
             let report = crate::actions::take_report();
             phase("edit work", &mut since);
+            // What landed inside a mount is another file's, and is written there - or refused,
+            // before anything is written anywhere.
+            let through_mounts = crate::actions::mounts_written(&nodes, report.as_ref());
+            app_api::refuse_writing_through(&through_mounts).map_err(RequestError::ReadOnly)?;
             // What was written changes what derives from it, and the caller is about to be shown
             // the result.
             let settled_quickly = if quick_way {
@@ -1562,7 +1566,7 @@ impl DocumentRoot {
             let serialized = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
                 .map_err(|e| RequestError::Failed(format!("could not serialize: {}", e)))?;
             phase("edit serialize", &mut since);
-            Ok::<_, RequestError>((outcome, nodes, serialized, report, settled_quickly))
+            Ok::<_, RequestError>((outcome, nodes, serialized, report, settled_quickly, through_mounts))
         })?;
 
         // Whatever the work said belongs to the viewer is kept against this session, and taken
@@ -1592,9 +1596,14 @@ impl DocumentRoot {
             crate::viewstate::set(session, name, &address, value);
         }
         phase("edit viewers", &mut since);
+        let along = app_api::write_through_mounts(through_mounts).map_err(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied => RequestError::ReadOnly(crate::access::READ_ONLY.into()),
+            _ => RequestError::Failed(format!("could not write what '{}' mounts: {}", name, e)),
+        })?;
         if wrote {
             self.write_document(&path, name, &settled.text)?;
         }
+        app_api::one_step_with(&path, wrote, &text_before, &along);
         phase("edit write", &mut since);
         // Kept for the text the file now holds, so the next write - the bot's, or the page
         // reopening what the bot just changed - starts from it rather than from nothing. Only when
@@ -1663,7 +1672,7 @@ impl DocumentRoot {
         // Beside the file, where every writer keeps it - see `undo::beside`.
         let (folder, file) = crate::undo::beside(&path)
             .ok_or_else(|| RequestError::Rejected(format!("'{}' is not a document", name)))?;
-        let Some(previous) = crate::undo::take(&folder, &file) else {
+        let Some((previous, along)) = crate::undo::take_along(&folder, &file) else {
             return Err(RequestError::Rejected(format!(
                 "there is nothing to take back for '{}'",
                 name
@@ -1676,6 +1685,8 @@ impl DocumentRoot {
             let _ = std::fs::remove_file(&temporary);
             RequestError::Failed(format!("could not replace '{}': {}", name, e))
         })?;
+        // What the step wrote through the document's mounts goes back with it.
+        let left_alone = app_api::take_back_along(along);
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
             "document": name,
@@ -1684,6 +1695,7 @@ impl DocumentRoot {
         Ok(serde_json::json!({
             "undone": name,
             "steps_left": crate::undo::depth(&folder, &file),
+            "left_alone": left_alone,
         }))
     }
 

@@ -86,7 +86,10 @@ list Shares (entry=<Share>) {
 This is asked of every file a request reaches: the document named, what it mounts and the files
 its templates come from. A mount of something its reader may not read loads as a missing file
 would, and the rest of the document is drawn. A write needs `edit` on the document written; a
-press that only moves what the viewer is looking at needs only `read`.
+press that only moves what the viewer is looking at needs only `read`. A write that lands inside a
+mount is written to the mounted file, and needs `edit` on that file: with `edit` on
+`bob/weight.os` and `read` on `ap31/foods.os`, Bob records meals of the foods there, and adding
+a food through the mount is `403`.
 
 Nobody signed in reaches only what is shared with everyone; anything else, there or not, is `401
 {"error":"sign in"}`. Someone signed in is told `404 {"error":"no document '<name>'"}` of anything

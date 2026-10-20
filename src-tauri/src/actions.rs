@@ -46,6 +46,13 @@ pub const MOUNT_FILE: &str = "_mount_file";
 /// How that file stood when it was read - see `mount_stamp`.
 pub const MOUNT_STAMP: &str = "_mount_stamp";
 
+/// Each mounted file as it was last parsed and resolved, and how it stood then - see
+/// `ActionExecutor::load_mounted_document`.
+type FileStamp = (std::time::SystemTime, u64);
+static MOUNTED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, (FileStamp, Vec<OverseerNode>)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
 /// When a file was last written and how long it is: what decides whether something read from it
 /// is still what it says. Anything that changes the file changes at least one of them.
 fn file_stamp(path: &str) -> Option<(std::time::SystemTime, u64)> {
@@ -98,6 +105,150 @@ pub fn mounts_held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     walk(nodes, &mut out);
     out
+}
+
+/// What a write left inside a mount: the file it belongs to, and that file's text with it in.
+///
+/// A mount's children are another file's, and the writer gives a mount nothing but `{ }`, so a
+/// write that landed in one used to change the copy in memory and be lost. This is what the doors
+/// write instead - see `app_api::write_through_mounts`.
+#[derive(Debug, Clone)]
+pub struct MountWrite {
+    /// The mount, as the document names it, for whoever is told the write was refused.
+    pub mount: String,
+    /// The file it was read from - see `MOUNT_FILE`.
+    pub file: String,
+    /// What that file says with the change in.
+    pub text: String,
+    /// Whether the mount says writes may go through it: `mutable=true`, and nothing else.
+    pub writable: bool,
+}
+
+/// The file a mount's `source` names, if any, and the path to the node inside it.
+fn split_mount_source(source: &str) -> (Option<String>, Vec<String>) {
+    let segments = |rest: &str| -> Vec<String> {
+        rest.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
+    };
+    match source.to_lowercase().find(".os") {
+        Some(pos) => (Some(source[..pos + 3].to_string()), segments(&source[pos + 3..])),
+        None => (None, segments(source)),
+    }
+}
+
+/// Every mount a write changed what it holds, each with the text its file should now say.
+///
+/// Which mounts to look at is said by the report: those under an address a value moved at or a
+/// list changed shape in. Every loaded mount when the shape moved some way the report cannot say,
+/// or when there is no report. Each is then put back where its `source` names in its own file,
+/// and the file written out; a mount whose file comes out the same was not written into. Its own
+/// file, because a list there is written with that file's templates, which the host has not got.
+///
+/// Compared with the same file written out untouched rather than with the text on disk, so a
+/// file the writer would reformat is not taken for one that was written into.
+pub fn mounts_written(nodes: &Vec<OverseerNode>, report: Option<&Changed>) -> Vec<MountWrite> {
+    fn walk(nodes: &[OverseerNode], trail: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        for (at, node) in nodes.iter().enumerate() {
+            trail.push(at);
+            if node.node_type == "mount" {
+                if node.parameters.contains_key(MOUNT_FILE) && !node.children.is_empty() {
+                    out.push(trail.clone());
+                }
+                // What it brought in mounts nothing: a mounted file's own mounts are not loaded.
+            } else {
+                walk(&node.children, trail, out);
+            }
+            trail.pop();
+        }
+    }
+    let mut loaded = Vec::new();
+    walk(nodes, &mut Vec::new(), &mut loaded);
+    if loaded.is_empty() {
+        return Vec::new();
+    }
+    let document = nodes;
+    let every_one = report.is_none_or(|changed| changed.shape_unknown);
+    let mut out = Vec::new();
+    for indices in loaded {
+        let Some(mount) = ActionExecutor::get_node_ref_by_indices(document, &indices) else { continue };
+        if !every_one {
+            let address = ActionExecutor::build_disambiguated_path(document, &indices).join("/");
+            let under = |reached: &str| reached == address || reached.starts_with(&format!("{}/", address));
+            let changed = report.expect("a report, or every mount is looked at");
+            if !changed.fields.iter().any(|f| under(f)) && !changed.shapes.iter().any(|s| under(s.list())) {
+                continue;
+            }
+        }
+        let Some(OverseerValue::String(file)) = mount.parameters.get(MOUNT_FILE) else { continue };
+        let source = match mount.parameters.get("_computed_source").or_else(|| mount.parameters.get("source")) {
+            Some(OverseerValue::String(s)) => s.clone(),
+            _ => continue,
+        };
+        let (Some(_), inside) = split_mount_source(&source) else { continue };
+        // Most writes that make the report lose track of the shape - a day added to a sorted
+        // history - are nowhere near a mount, and writing out the food catalog twice to learn
+        // that was a tenth of logging a meal. What was brought in is held as it was read, and a
+        // mount that still holds the same is passed over without writing anything out.
+        let embed = &mount.children[0];
+        if every_one && ActionExecutor::with_mounted_document(file, |theirs| {
+            node_at_names_ref(theirs, &inside).is_some_and(|was| same_as_written(was, embed))
+        }) == Some(true)
+        {
+            continue;
+        }
+        let Ok(theirs) = ActionExecutor::load_mounted_document(file) else { continue };
+        let Ok(untouched) = crate::file_ops::OverseerFileHandler::serialize_nodes(&theirs) else { continue };
+        let mut changed = theirs;
+        let Some(place) = node_at_names(&mut changed, &inside) else { continue };
+        *place = embed.clone();
+        let Ok(text) = crate::file_ops::OverseerFileHandler::serialize_nodes(&changed) else { continue };
+        if text == untouched {
+            continue;
+        }
+        let writable = match mount.parameters.get("_computed_mutable").or_else(|| mount.parameters.get("mutable")) {
+            Some(OverseerValue::Boolean(said)) => *said,
+            Some(OverseerValue::String(said)) => said.trim().eq_ignore_ascii_case("true"),
+            _ => false,
+        };
+        out.push(MountWrite { mount: mount.name.clone(), file: file.clone(), text, writable });
+    }
+    out
+}
+
+/// Whether two nodes say the same in a file: their names, types, values and parameters, and the
+/// same of every child. What resolving puts beside them - every parameter that starts with `_` -
+/// is not written, and is worked out differently in a host than in the file on its own.
+fn same_as_written(a: &OverseerNode, b: &OverseerNode) -> bool {
+    fn written(n: &OverseerNode) -> impl Iterator<Item = (&String, &OverseerValue)> {
+        n.parameters.iter().filter(|(k, _)| !k.starts_with('_'))
+    }
+    a.name == b.name
+        && a.node_type == b.node_type
+        && a.children.len() == b.children.len()
+        && written(a).eq(written(b))
+        && a.children.iter().zip(&b.children).all(|(x, y)| same_as_written(x, y))
+}
+
+fn node_at_names_ref<'a>(nodes: &'a [OverseerNode], names: &[String]) -> Option<&'a OverseerNode> {
+    let Some((first, rest)) = names.split_first() else {
+        return nodes.first();
+    };
+    let mut here = nodes.iter().find(|n| &n.name == first)?;
+    for name in rest {
+        here = here.children.iter().find(|c| &c.name == name)?;
+    }
+    Some(here)
+}
+
+/// The node a mount's path names inside its file, found as loading the mount finds it.
+fn node_at_names<'a>(nodes: &'a mut [OverseerNode], names: &[String]) -> Option<&'a mut OverseerNode> {
+    let Some((first, rest)) = names.split_first() else {
+        return nodes.first_mut();
+    };
+    let mut here = nodes.iter_mut().find(|n| &n.name == first)?;
+    for name in rest {
+        here = here.children.iter_mut().find(|c| &c.name == name)?;
+    }
+    Some(here)
 }
 
 /// What an action touched.
@@ -2294,6 +2445,38 @@ impl ActionExecutor {
         Self::execute_unload_mount(nodes, owner_indices, &Vec::new(), &action_stub)
     }
 
+    /// The template an entry of the list at `indices` is made from.
+    ///
+    /// A list a mount brought in was written with its own file's templates, and the host has
+    /// none of them, so appending to it failed for want of one. Looked for there first, because
+    /// that is the template the entry will be written back against - see `mounts_written`.
+    fn template_for(document: &Vec<OverseerNode>, indices: &[usize], name: &str) -> Option<OverseerNode> {
+        let mut level: &[OverseerNode] = document;
+        let mut mounted_from = None;
+        for &at in indices {
+            let Some(node) = level.get(at) else { break };
+            if node.node_type == "mount" {
+                if let Some(OverseerValue::String(file)) = node.parameters.get(MOUNT_FILE) {
+                    mounted_from = Some(file.clone());
+                }
+            }
+            level = &node.children;
+        }
+        mounted_from
+            .and_then(|file| Self::load_mounted_document(&file).ok())
+            .and_then(|theirs| crate::bases::find(&theirs, name))
+            .or_else(|| crate::bases::find(document, name))
+    }
+
+    /// Look at a mounted file as it was last read, without a copy of it - `None` when it is not
+    /// held as it stands now. A copy of the food catalog is most of what reading one costs.
+    fn with_mounted_document<T>(path: &str, look: impl FnOnce(&[OverseerNode]) -> T) -> Option<T> {
+        let stamp = file_stamp(path)?;
+        let cache = MOUNTED.lock().ok()?;
+        let (held, nodes) = cache.get(path)?;
+        (*held == stamp).then(|| look(nodes))
+    }
+
     /// Parse and resolve a mounted document, reusing the last result while the file on disk
     /// is unchanged.
     ///
@@ -2302,11 +2485,8 @@ impl ActionExecutor {
     /// each keystroke - work that produces an identical answer every time. The file's
     /// modification time and length decide whether the cached copy still applies; anything
     /// that changed the file changes at least one of them.
-    fn load_mounted_document(path: &str) -> std::result::Result<Vec<OverseerNode>, String> {
-        use std::sync::{LazyLock, Mutex};
-        type Stamp = (std::time::SystemTime, u64);
-        static CACHE: LazyLock<Mutex<std::collections::HashMap<String, (Stamp, Vec<OverseerNode>)>>> =
-            LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+    pub(crate) fn load_mounted_document(path: &str) -> std::result::Result<Vec<OverseerNode>, String> {
+        let cache = &MOUNTED;
 
         // Asked before what is held is handed out: one person having read a file is no reason
         // for the next to. Refused, it fails as a file that is not there does, so that what a
@@ -2320,10 +2500,13 @@ impl ActionExecutor {
         }
 
         let stamp = file_stamp(path);
+        // Under the name a mount keeps for its file, so a write through it finds it - see
+        // `with_mounted_document`.
+        let key = std::fs::canonicalize(path).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| path.to_string());
 
         if let Some(stamp) = stamp {
-            if let Ok(cache) = CACHE.lock() {
-                if let Some((cached_stamp, nodes)) = cache.get(path) {
+            if let Ok(cache) = cache.lock() {
+                if let Some((cached_stamp, nodes)) = cache.get(&key) {
                     if *cached_stamp == stamp {
                         return Ok(nodes.clone());
                     }
@@ -2340,8 +2523,8 @@ impl ActionExecutor {
         crate::environment::without(|| crate::resolver::resolve_document(&mut ext_nodes));
 
         if let Some(stamp) = stamp {
-            if let Ok(mut cache) = CACHE.lock() {
-                cache.insert(path.to_string(), (stamp, ext_nodes.clone()));
+            if let Ok(mut cache) = cache.lock() {
+                cache.insert(key, (stamp, ext_nodes.clone()));
             }
         }
         Ok(ext_nodes)
@@ -3169,7 +3352,7 @@ impl ActionExecutor {
             } else {
                 template_name
             };
-            let template_def = crate::bases::find(document, tn).ok_or_else(|| {
+            let template_def = Self::template_for(document, &indices, tn).ok_or_else(|| {
                 OverseerError::ValidationError(format!("Template not found: {}", template_name))
             })?;
             let template_def = &template_def;
@@ -3999,7 +4182,7 @@ impl ActionExecutor {
                     } else {
                         crate::bases::short(t)
                     };
-                    let template_def = crate::bases::find(document, &chosen_template_name)
+                    let template_def = Self::template_for(document, &indices, &chosen_template_name)
                         .ok_or_else(|| {
                             OverseerError::ValidationError(format!(
                                 "Template not found: {}",

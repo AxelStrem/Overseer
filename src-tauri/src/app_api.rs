@@ -1066,6 +1066,10 @@ fn change_document(
             emptied: Vec::new(),
         });
     }
+    // What landed inside a mount is another file's, and is written there - or refused, before
+    // anything is written anywhere.
+    let through_mounts = crate::actions::mounts_written(&nodes, report.as_ref());
+    refuse_writing_through(&through_mounts).map_err(OverseerError::ValidationError)?;
     let worked_out_whole = settle_after_change(&mut nodes, &as_it_stood, report.as_ref());
     phase("settle");
 
@@ -1083,10 +1087,13 @@ fn change_document(
         crate::viewstate::set(session, document, &address, value);
     }
     let wrote = settled.worth_writing && settled.text != as_it_stood;
+    let along = write_through_mounts(through_mounts)
+        .map_err(|e| OverseerError::IoError(format!("could not write what it mounts: {}", e)))?;
     if wrote {
         write_file_keeping_a_step_back(path, &settled.text)
             .map_err(|e| OverseerError::IoError(format!("could not write the document: {}", e)))?;
     }
+    one_step_with(std::path::Path::new(path), wrote, &as_it_stood, &along);
     phase("write");
 
     // The caller is shown what it asked for, viewer's values and all. Only the file goes
@@ -2030,16 +2037,95 @@ pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result
     })
 }
 
-/// Put a document back the way it was before the last write. Answers with the steps remaining.
+/// Refuse a write that reached into a mount it may not go through.
+///
+/// `mutable=true` on the mount is what lets a write through, and on a server the person must
+/// also be able to change the file it was read from - see `access`. Asked of every mount before
+/// any file is written, so a refused write leaves every file as it was. The answer is the
+/// sentence to give whoever asked.
+pub fn refuse_writing_through(writes: &[crate::actions::MountWrite]) -> std::result::Result<(), String> {
+    for write in writes {
+        if !write.writable {
+            return Err(format!(
+                "'{}' is mounted read-only here, so nothing can be written through it",
+                write.mount
+            ));
+        }
+        if !crate::access::may(std::path::Path::new(&write.file), crate::access::Need::Edit) {
+            return Err(crate::access::READ_ONLY.into());
+        }
+    }
+    Ok(())
+}
+
+/// Write what a write left in mounts to the files they were read from, each keeping its own step.
+pub fn write_through_mounts(
+    writes: Vec<crate::actions::MountWrite>,
+) -> std::io::Result<Vec<crate::undo::Along>> {
+    let mut along = Vec::new();
+    for write in writes {
+        write_file_keeping_a_step_back(&write.file, &write.text)?;
+        along.push(crate::undo::Along { file: write.file, wrote: write.text });
+    }
+    Ok(along)
+}
+
+/// Make the document's newest step the one that takes back what went through its mounts.
+///
+/// One press is one step for the person who pressed, though it wrote two files. When the
+/// document's own text did not move there is no step of its own to hang that on, so one is made
+/// that puts back the same text: undoing it takes back only what the mounts wrote.
+pub fn one_step_with(path: &std::path::Path, wrote_itself: bool, text_now: &str, along: &[crate::undo::Along]) {
+    if along.is_empty() {
+        return;
+    }
+    let Some((beside, named)) = crate::undo::beside(path) else { return };
+    if !wrote_itself {
+        crate::undo::remember(&beside, &named, text_now);
+    }
+    crate::undo::along_with_newest(&beside, &named, along);
+}
+
+/// Take back what a step wrote through mounts, each file only while it still says what was
+/// written there. Answers with the files left alone.
+///
+/// A mounted file is often somebody else's - a shopping list two people share - and putting back
+/// what it said before would throw away whatever they have written since.
+pub fn take_back_along(along: Vec<crate::undo::Along>) -> Vec<String> {
+    let mut left_alone = Vec::new();
+    for went in along {
+        let at = std::path::Path::new(&went.file);
+        let named = at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let still = std::fs::read_to_string(at).is_ok_and(|now| now == went.wrote);
+        let taken = still && crate::access::may(at, crate::access::Need::Edit) && {
+            match crate::undo::beside(at).and_then(|(beside, file)| crate::undo::take(&beside, &file)) {
+                Some(previous) => {
+                    let temporary = at.with_extension("os.writing");
+                    std::fs::write(&temporary, previous.as_bytes())
+                        .and_then(|_| std::fs::rename(&temporary, at))
+                        .is_ok()
+                }
+                None => false,
+            }
+        };
+        if !taken {
+            left_alone.push(named);
+        }
+    }
+    left_alone
+}
+
+/// Put a document back the way it was before the last write. Answers with the steps remaining,
+/// and the mounted files whose part of that step was left alone - see `take_back_along`.
 ///
 /// The undo write records no step of its own, so undoing twice walks back two writes rather than
 /// swapping between the same two states.
-pub fn undo_document(path: &str) -> Result<usize> {
+pub fn undo_document(path: &str) -> Result<(usize, Vec<String>)> {
     let at = std::path::Path::new(path);
     let Some((beside, named)) = crate::undo::beside(at) else {
         return Err(OverseerError::ValidationError(format!("'{}' has no directory", path)));
     };
-    let Some(previous) = crate::undo::take(&beside, &named) else {
+    let Some((previous, along)) = crate::undo::take_along(&beside, &named) else {
         return Err(OverseerError::ValidationError(format!(
             "there is nothing to take back for '{}'",
             named
@@ -2049,7 +2135,8 @@ pub fn undo_document(path: &str) -> Result<usize> {
     std::fs::write(&temporary, previous.as_bytes())
         .and_then(|_| std::fs::rename(&temporary, at))
         .map_err(|e| OverseerError::IoError(format!("could not write '{}': {}", named, e)))?;
-    Ok(crate::undo::depth(&beside, &named))
+    let left_alone = take_back_along(along);
+    Ok((crate::undo::depth(&beside, &named), left_alone))
 }
 
 /// What a document's text says at one address, without working the whole thing out.
