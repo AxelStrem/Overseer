@@ -102,6 +102,7 @@ describe('a colour string', () => {
     await pick(picker('Label', 'colour'), '#1d4ed8')
     expect(invoke).toHaveBeenCalledWith('write_overseer_values', {
       path: 'p.os',
+      ...app.showing(),
       values: [{ node_path: ['p', 'Label', 'colour'], value: { String: '#1d4ed8' } }],
     })
   })

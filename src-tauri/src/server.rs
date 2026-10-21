@@ -560,6 +560,9 @@ impl DocumentRoot {
             None => None,
         };
         let named = document.is_some();
+        // Which text the page is showing, so a change it sends is described against that - see
+        // `app_api::describing_for`. Only a change reads it.
+        let _showing = app_api::describing_for(arg_str(args, &["shown_version", "shownVersion"]));
 
         self.within(dir, || match cmd {
             "load_overseer_file" => {

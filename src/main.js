@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { profileMark, profiled, now } from './profile.js'
+import { versionOf } from './text_version.js'
 
 // Debug is opt-in only via ?debug=1; localStorage flag is ignored to avoid accidental noise
 const DEBUG_MODE = (() => {
@@ -1299,6 +1300,7 @@ tab Main {
             const instruction = (this.currentFile && named.length >= 1)
                 ? {
                     path: this.currentFile,
+                    ...this.showing(),
                     values: named.map((path) => ({
                         node_path: path.split('/').filter(Boolean),
                         value: changedValuesMap[path]
@@ -1307,8 +1309,8 @@ tab Main {
                 : null
             // The backend keeps the document it last produced, so it can describe the edit
             // against it - a couple of nodes instead of the ~14 MB the whole document costs to
-            // move and to rebuild. It answers with the document only when it has no such
-            // baseline, which is the case right after something else changed it underneath.
+            // move and to rebuild. It answers with the document when that is not the one this
+            // page shows - something else wrote since, see `showing` - or when it has none.
             let update = null
             if (instruction) {
                 this._writingByInstruction = (this._writingByInstruction || 0) + 1
@@ -1885,6 +1887,22 @@ tab Main {
         this._textVersion = typeof update?.version === 'string' && this._currentText === null
             ? update.version
             : null
+    }
+
+    /// The text this page is showing, named for a change it sends: the answer is applied to what
+    /// the page holds by child index, so the backend has to describe it against that and not
+    /// against whatever the file says by now - the bot may have written since. Both spellings,
+    /// as every other argument a command takes; none at all when the page has neither the text
+    /// nor its version, and the change is described as it always was.
+    showing() {
+        let version = this._textVersion
+        if (!version && typeof this._currentText === 'string') {
+            if (this._versionOfText?.text !== this._currentText) {
+                this._versionOfText = { text: this._currentText, version: versionOf(this._currentText) }
+            }
+            version = this._versionOfText.version
+        }
+        return version ? { shown_version: version, shownVersion: version } : {}
     }
 
     /// The text of the document as this page has it, fetched by its version if an answer only

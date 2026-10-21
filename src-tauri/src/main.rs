@@ -223,7 +223,9 @@ const THE_WINDOW: &str = "desktop";
 async fn write_overseer_values(
     path: String,
     values: Vec<app_api::ValueWrite>,
+    shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    let _showing = app_api::describing_for(shown_version);
     app_api::write_values_at(&path, &path, values, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
@@ -252,7 +254,9 @@ async fn append_overseer_entry(
 async fn ensure_overseer_entry(
     path: String,
     wanted: app_api::EntryWanted,
+    shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    let _showing = app_api::describing_for(shown_version);
     app_api::ensure_entry_at(&path, &path, wanted, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
@@ -273,7 +277,9 @@ async fn move_overseer_entry(
     to_list_path: Vec<String>,
     before: Option<Vec<String>>,
     setting: Option<app_api::ValueWrite>,
+    shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    let _showing = app_api::describing_for(shown_version);
     app_api::move_entry_at(&path, &path, entry_path, to_list_path, before, setting, THE_WINDOW)
         .map(app_api::for_the_page).map(ForThePage)
 }
@@ -286,7 +292,9 @@ async fn run_overseer_event(
     event_name: String,
     typed: Option<Vec<app_api::ValueWrite>>,
     writing: Option<Vec<app_api::ValueWrite>>,
+    shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    let _showing = app_api::describing_for(shown_version);
     app_api::run_event_at(
         &path,
         &path,

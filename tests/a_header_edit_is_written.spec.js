@@ -71,6 +71,7 @@ describe('a header edit', () => {
     await settle()
     expect(calls('write_overseer_values')).toEqual([['write_overseer_values', {
       path: 'doc.os',
+      ...app.showing(),
       values: [{ node_path: ['doc', 'text_header'], value: { String: 'Chores' } }],
     }]])
   })

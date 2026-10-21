@@ -966,6 +966,31 @@ pub fn settle_the_viewers_values(
     WhatToWrite { text, worth_writing: !only_the_viewers, viewers: reported }
 }
 
+thread_local! {
+    static SHOWN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The version of the text the caller is showing, for the change it is about to send to be
+/// described against - see `change_document`. Held until the guard goes.
+///
+/// Said around the call rather than passed to it, because every change a caller sends goes through
+/// the same few functions, and those have callers that hold no document - the bot, the tests.
+pub fn describing_for(shown: Option<String>) -> Showing {
+    let before = SHOWN.with(|s| s.replace(shown));
+    Showing { before }
+}
+
+pub struct Showing {
+    before: Option<String>,
+}
+
+impl Drop for Showing {
+    fn drop(&mut self) {
+        let before = self.before.take();
+        SHOWN.with(|s| *s.borrow_mut() = before);
+    }
+}
+
 /// Make one change to a document on disk, and answer with what the caller should now show.
 ///
 /// The page used to send the whole document back with every change and have that text written
@@ -1003,15 +1028,33 @@ fn change_document(
     // tasks.os was most of the second every edit took; the cache is keyed by the text, so a hit
     // means the file has not moved since, and the graph for it is held under the same key.
     let held = if looking_at.is_empty() { take_worked_out(&as_it_stood) } else { None };
+    // The text the caller is showing, when it said and that is not the text the file holds. The
+    // caller applies the answer to what it holds, by child index, so that is what the answer has
+    // to be described against: something else wrote since it last heard - the bot, through this
+    // same server, which leaves its own document held for the file's text. Described against
+    // that, the page's change was applied to a tree without the bot's entry in it.
+    let shown_elsewhere: Option<Option<String>> = SHOWN
+        .with(|s| s.borrow().clone())
+        .filter(|shown| *shown != version_of(&as_it_stood))
+        .map(|shown| text_of_version(path, &shown));
     // What the change is described against, which needs a copy: the one copy this makes. It was
     // two, one to describe against and another to work on.
-    let mut baseline = Baseline {
-        put_back: held.is_some(),
-        copy: match &held {
-            Some((nodes, _)) => Some(nodes.clone()),
-            None => baseline_copy(&as_it_stood),
+    let mut baseline = match &shown_elsewhere {
+        // The document worked out for the caller's text, if it is still held; if not, there is
+        // nothing to describe against, and the caller is sent the whole document.
+        Some(shown) => Baseline {
+            put_back: false,
+            copy: shown.as_deref().and_then(baseline_copy),
+            text: shown.clone().unwrap_or_default(),
         },
-        text: as_it_stood.clone(),
+        None => Baseline {
+            put_back: held.is_some(),
+            copy: match &held {
+                Some((nodes, _)) => Some(nodes.clone()),
+                None => baseline_copy(&as_it_stood),
+            },
+            text: as_it_stood.clone(),
+        },
     };
     let mut nodes = if !looking_at.is_empty() {
         resolve_selective(as_it_stood.clone(), held_for_the_viewer.clone(), Some(looking_at))?
@@ -1056,7 +1099,7 @@ fn change_document(
     // baseline is. So the answer is that nothing changed, and which field to open, without
     // writing the document out and comparing it with itself: that was most of what such a press
     // still cost on tasks.os once nothing was worked out again.
-    if ran_nothing && held_for_the_viewer.is_empty() && baseline.copy.is_some() {
+    if ran_nothing && held_for_the_viewer.is_empty() && shown_elsewhere.is_none() && baseline.copy.is_some() {
         return Ok(ResolvedUpdate {
             start_editing: field_to_edit(report.as_ref(), &nodes),
             folds: folds_to_do(report.as_ref(), &nodes),
