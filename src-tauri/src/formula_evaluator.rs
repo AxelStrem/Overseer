@@ -506,10 +506,7 @@ impl FormulaEvaluator {
                             let mut found: Option<&OverseerNode> = None;
                             let target = Self::evaluate_expression(key_val_expr, context)?;
                             for n in list.into_iter() {
-                                if let Some(ch) = n
-                                    .get_accessible_children()
-                                    .into_iter()
-                                    .find(|c| c.name == key_field)
+                                if let Some(ch) = Self::key_of(n, &key_field)
                                 {
                                     if let Some(v) = Self::value_of_node(ch).as_ref()
                                     {
@@ -524,7 +521,10 @@ impl FormulaEvaluator {
                                 }
                             }
                             list = match found {
-                                Some(n) => vec![n],
+                                Some(n) => {
+                                    crate::resolver::note_reached(n);
+                                    vec![n]
+                                }
                                 None => vec![],
                             };
                         }
@@ -889,7 +889,7 @@ impl FormulaEvaluator {
                         // Left out of view, nor anything under it: the resolver works out none of
                         // it, and a read works out none of it either - it reads such an entry as
                         // it always has. Nor is that in doubt, since no pass will store more.
-                        if crate::resolver::out_of_view(n) {
+                        if crate::resolver::not_worked_out(n) {
                             continue;
                         }
                         if crate::addressing::is_wrapper(n) {
@@ -3690,10 +3690,7 @@ impl FormulaEvaluator {
                     for item in list.into_iter() {
                         match &item {
                             ListItem::Node(n) => {
-                                if let Some(child) = n
-                                    .get_accessible_children()
-                                    .into_iter()
-                                    .find(|c| c.name == key_field)
+                                if let Some(child) = Self::key_of(n, &key_field)
                                 {
                                     if let Some(v) = Self::value_of_node(child).as_ref()
                                     {
@@ -3710,6 +3707,9 @@ impl FormulaEvaluator {
                             }
                             ListItem::Value(_) => { /* skip values for find over nodes */ }
                         }
+                    }
+                    if let Some(ListItem::Node(n)) = &found {
+                        crate::resolver::note_reached(n);
                     }
                     list = match found {
                         Some(x) => vec![x],
@@ -4334,10 +4334,7 @@ impl FormulaEvaluator {
                             // Find first child whose key_field child value == target
                             let mut found: Option<&OverseerNode> = None;
                             for n in nodes.into_iter() {
-                                if let Some(ch) = n
-                                    .get_accessible_children()
-                                    .into_iter()
-                                    .find(|c| &c.name == key_field)
+                                if let Some(ch) = Self::key_of(n, &key_field)
                                 {
                                     if let Some(v) = Self::value_of_node(ch).as_ref()
                                     {
@@ -4353,6 +4350,7 @@ impl FormulaEvaluator {
                                 }
                             }
                             if let Some(f) = found {
+                                crate::resolver::note_reached(f);
                                 // After find, treat result as a singleton list and container becomes the found node
                                 nodes = vec![f];
                                 current_container = f;
@@ -4747,6 +4745,13 @@ impl FormulaEvaluator {
             }
             other => out.push(other),
         }
+    }
+
+    /// The field of an entry a keyed lookup compares, read without counting as reaching the
+    /// entry: a lookup reads every entry's key to find one, and only the one found is reached -
+    /// see `resolver::note_reached`.
+    fn key_of<'n>(entry: &'n OverseerNode, key: &str) -> Option<&'n OverseerNode> {
+        Self::accessible_child(entry, key)
     }
 
     fn field_already_known(node: &OverseerNode, field: &str) -> Option<OverseerValue> {

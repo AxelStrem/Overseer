@@ -436,6 +436,8 @@ impl OverseerNode {
     }
 
     pub fn get_accessible_children(&self) -> Vec<&OverseerNode> {
+        // Asking what an entry holds is reaching it - see `resolver::note_reached`.
+        crate::resolver::note_reached(self);
         let mut result = Vec::new();
 
         for child in &self.children {

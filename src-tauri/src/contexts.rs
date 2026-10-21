@@ -313,7 +313,7 @@ fn walk_scope(
         // Not into what is out of view, which nothing works out, nor into what a press runs,
         // which is never drawn - a context copied into an action would be copied with it into
         // whatever the action makes.
-        if crate::resolver::out_of_view(node) || node.node_type == "on" {
+        if crate::resolver::not_worked_out(node) || node.node_type == "on" {
             continue;
         }
         match hides {

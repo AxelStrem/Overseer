@@ -444,7 +444,7 @@ fn wholly_in_view(nodes: &[OverseerNode], address: &str) -> bool {
     let parts: Vec<&str> = address.split('/').collect();
     (1..=parts.len()).all(|reach| {
         crate::addressing::find(nodes, &parts[..reach].join("/"))
-            .is_some_and(|node| !crate::resolver::out_of_view(node))
+            .is_some_and(|node| !crate::resolver::not_worked_out(node))
     })
 }
 
@@ -1775,7 +1775,14 @@ impl DocumentRoot {
         name: &str,
         address: &str,
     ) -> std::result::Result<NodeView, RequestError> {
-        let nodes = self.open(name)?;
+        let mut nodes = self.open(name)?;
+        // A read reaches what it names as a write does: an old day the window leaves out is
+        // answered worked out, not as it was written - see `resolver::keeping_in_view`. Opened
+        // again only then, since a document holding something in view is not the one cached.
+        if !wholly_in_view(&nodes, address) {
+            let _in_view = crate::resolver::keeping_in_view(address);
+            nodes = self.open(name)?;
+        }
         let node = crate::addressing::find(&nodes, address)
             .map(answered)
             .ok_or_else(|| {

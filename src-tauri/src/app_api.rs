@@ -1371,7 +1371,7 @@ fn follow_the_shape(
     }
     for list in &lists {
         let node = crate::addressing::node_at_path(nodes, list)?;
-        if node.node_type != "list" || resolver::is_windowed(node) || resolver::out_of_view(node) {
+        if node.node_type != "list" || resolver::is_windowed(node) || resolver::not_worked_out(node) {
             return None;
         }
         let mut names = HashSet::new();
