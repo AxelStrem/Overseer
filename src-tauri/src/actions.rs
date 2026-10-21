@@ -881,7 +881,44 @@ impl ActionExecutor {
         )
     }
 
+    /// Run the actions an event names on a node.
+    ///
+    /// An action can reach an entry a list's window leaves unworked - a button writing to an old
+    /// day, or reading one - and finds it as it was written, without the fields its template
+    /// gives. Such a press is run again from where it started, with the document worked out
+    /// holding what it reached - see `resolver::note_reached`. Only a document with such entries
+    /// pays for keeping where it started.
     pub fn execute_event(
+        nodes: &mut Vec<OverseerNode>,
+        node_path: &[String],
+        event_name: &str,
+    ) -> Result<(), OverseerError> {
+        if !resolver::leaves_anything_unworked(nodes) {
+            return Self::execute_event_once(nodes, node_path, event_name);
+        }
+        let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
+        let before = nodes.clone();
+        let reported = REPORT.with(|r| r.borrow().clone());
+        let reaching = resolver::Reaching::start();
+        let first = resolver::reads_reach(|| Self::execute_event_once(nodes, node_path, event_name));
+        let reached = reaching.take_new();
+        if reached.is_empty() {
+            return first;
+        }
+        drop(reaching);
+        *nodes = before;
+        REPORT.with(|r| *r.borrow_mut() = reported);
+        {
+            let _held = resolver::holding(reached);
+            resolver::resolve_document(nodes);
+        }
+        // Entries came into the document that nothing held for it knows about, so whoever
+        // settles it afterwards has to work it out whole.
+        note_structural();
+        Self::execute_event_once(nodes, node_path, event_name)
+    }
+
+    fn execute_event_once(
         nodes: &mut Vec<OverseerNode>,
         node_path: &[String],
         event_name: &str,
@@ -2093,6 +2130,9 @@ impl ActionExecutor {
             cur = &cur.children[at];
         }
         for seg in &path[1..] {
+            // A path going on into an entry the window left unworked reaches it - see
+            // `resolver::note_reached`.
+            crate::resolver::note_reached(cur);
             let (seg, position) = split_position(seg);
             let (base, ord) = parse_seg(seg);
             if eff_name(cur) == base && ord.is_none() && position.is_none() {
@@ -3067,6 +3107,10 @@ impl ActionExecutor {
         // Also clear computed params at the root clone
         Self::clear_computed_recursive(&mut node);
         node.adopt_template_snapshot(template);
+        // The entry itself was never written, whatever its fields were given by the template. With
+        // the template's fingerprint it read to the writer as text already in the file and
+        // unchanged since, and an entry that said nothing of its own was never written at all.
+        node.source_fingerprint = None;
         if node.source_snapshot.is_none() {
             let (indent_unit, newline) = template
                 .source_snapshot

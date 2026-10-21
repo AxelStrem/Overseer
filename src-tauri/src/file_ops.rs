@@ -1045,6 +1045,7 @@ impl FileOperations {
                 } else {
                     output.push_str("{\n");
                 }
+                let body_start = output.len();
                 // Suppress template-derived children for instances and emit concise overrides
                 let suppress_template_children = node.template.is_some()
                     || matches!(
@@ -1301,6 +1302,14 @@ impl FileOperations {
                     {
                         Self::push_trivia(output, &body_text);
                     }
+                }
+                // An entry that says nothing of its own - every field the template's - is `- { }`,
+                // as an empty list is, rather than a brace on a line of its own.
+                if output[body_start..].trim().is_empty() {
+                    output.truncate(body_start - 1);
+                    output.push_str(" }\n");
+                    Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
+                    return Ok(());
                 }
                 while output.ends_with(' ') || output.ends_with('\t') {
                     output.pop();

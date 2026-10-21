@@ -85,8 +85,12 @@ fn names_a_node(nodes: &[OverseerNode], name: &str) -> bool {
 
 /// Public entry point to resolve all templates in a document AST.
 
-/// The parameter marking an entry as out of view, and therefore not worth working out.
+/// The parameter marking an entry the window does not draw.
 pub const OUT_OF_VIEW: &str = "_out_of_view";
+
+/// The parameter marking an entry out of view that nothing reaches, and so nothing works out. It
+/// holds the name its list is reached by - see `note_reached`.
+pub const NOT_WORKED_OUT: &str = "_not_worked_out";
 
 /// How many of a list's entries were left out of view.
 pub const LEFT_OUT: &str = "_left_out_of_view";
@@ -167,9 +171,8 @@ fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
 /// only names an entry that has none, so one named here keeps that name, and the number comes
 /// from the same place - its index among the list's children.
 ///
-/// This does not make an out-of-view entry *readable*: its fields are still uninstantiated, so a
-/// formula reaching one finds nothing. That is `viewreach`, and it is the larger job. What this
-/// fixes is the entry having no name to be reached by.
+/// This gives an out-of-view entry a name to be reached by; what reaches it then has it worked out
+/// - see `note_reached`.
 fn name_the_entries(list: &mut OverseerNode) {
     let Some(OverseerValue::Template(path)) = list.parameters.get("entry") else {
         return;
@@ -356,6 +359,7 @@ fn narrow(
     if entries.len() <= window {
         for at in entries {
             node.children[at].parameters.remove(OUT_OF_VIEW);
+            node.children[at].parameters.remove(NOT_WORKED_OUT);
         }
         node.parameters.remove(LEFT_OUT);
         return;
@@ -409,18 +413,29 @@ fn narrow(
 
     // Both ways, since a document worked out again has been narrowed before: what is in the window
     // now may have been out of it last time.
+    let list = trail.join("/");
     let mut left_out = 0;
     for (rank, (at, _)) in order.into_iter().enumerate() {
         // Named by this interaction, so it stays - see `keeping_in_view`.
         let in_view = rank < window || addressable.get(at).is_some_and(|segment| is_wanted(segment));
         if in_view {
             node.children[at].parameters.remove(OUT_OF_VIEW);
+            node.children[at].parameters.remove(NOT_WORKED_OUT);
             continue;
         }
-        node.children[at]
+        let entry = &mut node.children[at];
+        entry
             .parameters
             .insert(OUT_OF_VIEW.to_string(), OverseerValue::Boolean(true));
         left_out += 1;
+        // Not drawn, and worked out all the same when something reaches it - see `note_reached`.
+        if is_held(&list, &entry.name) {
+            entry.parameters.remove(NOT_WORKED_OUT);
+        } else {
+            entry
+                .parameters
+                .insert(NOT_WORKED_OUT.to_string(), OverseerValue::String(list.clone()));
+        }
     }
     node.parameters.insert(
         LEFT_OUT.to_string(),
@@ -479,15 +494,313 @@ fn is_wanted(segment: &str) -> bool {
     })
 }
 
-/// Whether this node was left out of view, and so should be walked past entirely.
-///
-/// Entirely is the operative word: a day left out holds a list of meals of its own, and expanding
-/// those would give back most of the cost the window was for.
+/// Whether the window leaves this entry undrawn - worked out or not, see `not_worked_out`.
 pub fn out_of_view(node: &OverseerNode) -> bool {
     matches!(
         node.parameters.get(OUT_OF_VIEW),
         Some(OverseerValue::Boolean(true))
     )
+}
+
+/// Whether this node was left out of view with nothing reaching it, and so should be walked past
+/// entirely.
+///
+/// Entirely is the operative word: a day left out holds a list of meals of its own, and expanding
+/// those would give back most of the cost the window was for.
+pub fn not_worked_out(node: &OverseerNode) -> bool {
+    node.parameters.contains_key(NOT_WORKED_OUT)
+}
+
+// What reaches past a window.
+//
+// A window decides what is drawn, not what the document holds: a total over the whole history, a
+// lookup of an old day by its date, a button writing to one - each has to find the entry as it
+// would be in view. Which entries those are is only known by working the formulas out, so a read
+// that lands on an entry nothing worked out notes it, and the document is worked out again with
+// the entries it noted held - see `resolve_document`. A document that reaches nothing past its
+// windows pays nothing for this; one that reaches a day pays for that day.
+//
+// Noted only while formulas and actions read the document. The resolver's own walks - the window
+// working out which entries come first, the order a list is drawn in - read every entry, and would
+// bring the whole list in for reading what it was always going to read.
+thread_local! {
+    static REACHING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static COLLECTING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static REACHED: std::cell::RefCell<std::collections::HashSet<(String, String)>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+    static HELD: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Note that a read went into this node, if it is an entry nothing has worked out.
+pub fn note_reached(node: &OverseerNode) {
+    if !REACHING.with(std::cell::Cell::get) || COLLECTING.with(std::cell::Cell::get) == 0 {
+        return;
+    }
+    if let Some(OverseerValue::String(list)) = node.parameters.get(NOT_WORKED_OUT) {
+        REACHED.with(|reached| {
+            reached.borrow_mut().insert((list.clone(), node.name.clone()));
+        });
+    }
+}
+
+/// Note what this work reaches past a window - see `note_reached`.
+pub fn reads_reach<T>(work: impl FnOnce() -> T) -> T {
+    let was = REACHING.with(|on| on.replace(true));
+    let out = work();
+    REACHING.with(|on| on.set(was));
+    out
+}
+
+/// What reads reached past a window while this lives, apart from what anything around it reached.
+pub struct Reaching {
+    outer: std::collections::HashSet<(String, String)>,
+}
+
+impl Reaching {
+    pub fn start() -> Self {
+        COLLECTING.with(|c| c.set(c.get() + 1));
+        Reaching { outer: REACHED.with(|r| std::mem::take(&mut *r.borrow_mut())) }
+    }
+
+    /// What was reached since this started, or since this was last asked, that nothing holds yet.
+    pub fn take_new(&self) -> Vec<(String, String)> {
+        let reached = REACHED.with(|r| std::mem::take(&mut *r.borrow_mut()));
+        let mut new: Vec<(String, String)> = reached
+            .into_iter()
+            .filter(|(list, entry)| !is_held(list, entry))
+            .collect();
+        new.sort();
+        new
+    }
+}
+
+impl Drop for Reaching {
+    fn drop(&mut self) {
+        COLLECTING.with(|c| c.set(c.get().saturating_sub(1)));
+        let outer = std::mem::take(&mut self.outer);
+        REACHED.with(|r| *r.borrow_mut() = outer);
+    }
+}
+
+/// Work these entries out, though their windows leave them out, for as long as this lives.
+pub fn holding(entries: Vec<(String, String)>) -> Holding {
+    let count = entries.len();
+    HELD.with(|held| held.borrow_mut().extend(entries));
+    Holding(count)
+}
+
+pub struct Holding(usize);
+
+impl Drop for Holding {
+    fn drop(&mut self) {
+        HELD.with(|held| {
+            let mut held = held.borrow_mut();
+            let keep = held.len().saturating_sub(self.0);
+            held.truncate(keep);
+        });
+    }
+}
+
+fn is_held(list: &str, entry: &str) -> bool {
+    HELD.with(|held| held.borrow().iter().any(|(l, e)| l == list && e == entry))
+}
+
+/// Whether any list in the document shows only part of itself.
+pub fn has_a_window(nodes: &[OverseerNode]) -> bool {
+    nodes
+        .iter()
+        .any(|node| (node.node_type == "list" && is_windowed(node)) || has_a_window(&node.children))
+}
+
+/// Whether the document holds an entry nothing has worked out.
+pub fn leaves_anything_unworked(nodes: &[OverseerNode]) -> bool {
+    nodes.iter().any(|node| {
+        node.node_type == "list"
+            && is_windowed(node)
+            && matches!(node.parameters.get(LEFT_OUT), Some(OverseerValue::Integer(n)) if *n > 0)
+            && node.children.iter().any(not_worked_out)
+            || !not_worked_out(node) && leaves_anything_unworked(&node.children)
+    })
+}
+
+/// Note the entries the document's links name, as a formula reading them would.
+///
+/// A `link="/doc/History[key=$(../selected_date)]"` is followed by the page, in the document it is
+/// sent, so the entry it names has to be in it worked out even when the list's window leaves it
+/// out. The key is found the way the page finds it - each `$(...)` worked out from the link's own
+/// node, then compared as the list's `keyPrecision` reads it - and only that entry is reached.
+fn reach_links(nodes: &[OverseerNode]) {
+    if !leaves_anything_unworked(nodes) {
+        return;
+    }
+    for node in nodes {
+        let mut ancestors = Vec::new();
+        let mut path = vec![node.name.clone()];
+        reach_links_under(node, None, &mut ancestors, &mut path, nodes, &mut crate::addressing::Level::default());
+    }
+}
+
+fn reach_links_under<'a>(
+    node: &'a OverseerNode,
+    parent: Option<&'a OverseerNode>,
+    // The named nodes above this one, outermost first - what `..` steps through.
+    ancestors: &mut Vec<&'a OverseerNode>,
+    current_path: &mut Vec<String>,
+    document_root: &'a [OverseerNode],
+    level: &mut crate::addressing::Level,
+) {
+    if not_worked_out(node) || node.node_type == "on" || crate::contexts::is_declaration(node) {
+        return;
+    }
+    if let Some(OverseerValue::String(link)) = node.parameters.get("link") {
+        if let Some(entry) = linked_entry(link, node, parent, ancestors, current_path, document_root) {
+            note_reached(entry);
+        }
+    }
+    let named = !crate::addressing::is_wrapper(node);
+    if named {
+        ancestors.push(node);
+    }
+    for child in &node.children {
+        if crate::addressing::is_wrapper(child) {
+            reach_links_under(child, Some(node), ancestors, current_path, document_root, level);
+        } else {
+            current_path.push(level.segment(&child.name));
+            reach_links_under(
+                child,
+                Some(node),
+                ancestors,
+                current_path,
+                document_root,
+                &mut crate::addressing::Level::default(),
+            );
+            current_path.pop();
+        }
+    }
+    if named {
+        ancestors.pop();
+    }
+}
+
+/// The entry of a list a link's `List[key=...]` step names, if it has one.
+fn linked_entry<'a>(
+    link: &str,
+    node: &'a OverseerNode,
+    parent: Option<&'a OverseerNode>,
+    ancestors: &[&'a OverseerNode],
+    current_path: &[String],
+    document_root: &'a [OverseerNode],
+) -> Option<&'a OverseerNode> {
+    use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
+    if !link.contains('[') {
+        return None;
+    }
+    // Each `$(...)` worked out from the link's node, so `../selected_date` is its sibling.
+    let mut said = String::new();
+    let mut rest = link;
+    while let Some(open) = rest.find("$(") {
+        said.push_str(&rest[..open]);
+        let inner = &rest[open + 2..];
+        let mut depth = 1;
+        let close = inner.char_indices().find_map(|(i, c)| {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(i)
+        })?;
+        let context =
+            EvaluationContext::new_with_current_and_parent(node, parent, current_path.to_vec(), document_root);
+        let value = FormulaEvaluator::evaluate_formula(&inner[..close], &context).ok()?;
+        said.push_str(&plain_key(&value)?);
+        rest = &inner[close + 1..];
+    }
+    said.push_str(rest);
+
+    // Followed as the page follows it: from the top when it starts with `/`, else from the link's
+    // parent, `..` a step up.
+    let mut here: Option<&'a OverseerNode> = None;
+    let mut up = ancestors.len();
+    let mut absolute = said.starts_with('/');
+    for step in said.split('/').filter(|s| !s.is_empty()) {
+        if step == "." {
+            continue;
+        }
+        if step == ".." {
+            if here.is_some() {
+                return None;
+            }
+            up = up.checked_sub(1)?;
+            absolute = false;
+            continue;
+        }
+        let among: &'a [OverseerNode] = match here {
+            Some(n) => &n.children,
+            None if absolute => document_root,
+            None if up == 0 => document_root,
+            None => &ancestors[up - 1].children,
+        };
+        let (name, selector) = match step.find('[') {
+            Some(at) if step.ends_with(']') => (&step[..at], Some(&step[at + 1..step.len() - 1])),
+            _ => (step, None),
+        };
+        let found = crate::addressing::step_among(among, name)?;
+        let Some(selector) = selector else {
+            here = Some(found);
+            continue;
+        };
+        let (field, wanted) = selector.split_once('=')?;
+        let field = field.trim();
+        let field = if field.eq_ignore_ascii_case("key") {
+            match found.parameters.get("key") {
+                Some(OverseerValue::String(k)) => k.as_str(),
+                _ => return None,
+            }
+        } else {
+            field
+        };
+        let wanted = wanted.trim().trim_matches(|c| c == '"' || c == '\'');
+        let precision = match found.parameters.get("keyPrecision").or_else(|| found.parameters.get("key_precision")) {
+            Some(OverseerValue::String(p)) => p.as_str(),
+            _ => "",
+        };
+        let wanted = key_reads_as(precision, wanted);
+        let entry = found.children.iter().find(|entry| {
+            crate::addressing::step_among(&entry.children, field)
+                .and_then(|f| f.parameters.get("_computed_value").or_else(|| f.parameters.get("value")))
+                .and_then(plain_key)
+                .is_some_and(|held| key_reads_as(precision, &held) == wanted)
+        })?;
+        // Only the entry is reached here; what comes after it is the page's to follow in it.
+        return Some(entry);
+    }
+    None
+}
+
+fn plain_key(value: &OverseerValue) -> Option<String> {
+    Some(match value {
+        OverseerValue::String(s) | OverseerValue::Timestamp(s) | OverseerValue::Date(s) => s.clone(),
+        OverseerValue::Integer(i) => i.to_string(),
+        OverseerValue::Float(f) if f.fract() == 0.0 => (*f as i64).to_string(),
+        OverseerValue::Float(f) => f.to_string(),
+        OverseerValue::Boolean(b) => b.to_string(),
+        _ => return None,
+    })
+}
+
+/// A key as a list keyed by the day reads it: the date it starts with - as the page's `keyReadsAs`.
+fn key_reads_as(precision: &str, key: &str) -> String {
+    if precision.eq_ignore_ascii_case("day") || precision.eq_ignore_ascii_case("days") {
+        let b = key.as_bytes();
+        let sep = |c: u8| matches!(c, b'.' | b'/' | b'-');
+        if b.len() >= 10 && b[..4].iter().all(u8::is_ascii_digit) && sep(b[4]) && b[5..7].iter().all(u8::is_ascii_digit)
+            && sep(b[7]) && b[8..10].iter().all(u8::is_ascii_digit)
+        {
+            return format!("{}-{}-{}", &key[..4], &key[5..7], &key[8..10]);
+        }
+    }
+    key.to_string()
 }
 
 /// Structural resolution: templates and layout, but no formula evaluation.
@@ -509,6 +822,8 @@ pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
     if profiling {
         eprintln!("[PHASE]   templates {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
+    // After the templates, so that an entry's field has the type its template declares.
+    hold_numbers_as_declared(nodes);
     // After the templates, so that a context an entry's template declares is in every entry.
     let t = std::time::Instant::now();
     crate::contexts::resolve_contexts(nodes);
@@ -522,6 +837,30 @@ pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
     }
 }
 
+/// A number written in a field holds the field's type: `float x = 1` is the float 1, and
+/// `int x = 1e3` the whole number 1000. The parser reads a literal before it knows the field it is
+/// in, and an entry's field gets its type only from its template. A float that is not whole stays
+/// a float in an `int` field, as written, rather than being cut short.
+fn hold_numbers_as_declared(nodes: &mut [OverseerNode]) {
+    for node in nodes.iter_mut() {
+        let declared = match node.parameters.get("_original_type") {
+            Some(OverseerValue::String(original)) => original.as_str(),
+            _ => node.node_type.as_str(),
+        };
+        let held = match (declared, node.parameters.get("value")) {
+            ("float", Some(OverseerValue::Integer(n))) => Some(OverseerValue::Float(*n as f64)),
+            ("int", Some(OverseerValue::Float(f))) if f.fract() == 0.0 && f.abs() < 9e15 => {
+                Some(OverseerValue::Integer(*f as i64))
+            }
+            _ => None,
+        };
+        if let Some(value) = held {
+            node.parameters.insert("value".to_string(), value);
+        }
+        hold_numbers_as_declared(&mut node.children);
+    }
+}
+
 /// Recompute everything derived from values: formulas, chart series and list sort keys.
 ///
 /// Writing a value cannot add or remove nodes, so a caller that has already resolved the
@@ -532,13 +871,26 @@ pub fn resolve_values(nodes: &mut Vec<OverseerNode>) {
     let profiling = profile_enabled();
 
     let t = std::time::Instant::now();
-    evaluate_formulas_in_document_multi_pass(nodes);
+    let reaching = Reaching::start();
+    reads_reach(|| evaluate_formulas_in_document_multi_pass(nodes));
     if profiling {
         eprintln!("[PHASE]   formulas {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
 
+    // And what the page will follow a link to - see `reach_links`.
+    reads_reach(|| reach_links(nodes));
+
+    // What the values written reach past a window has never been worked out - see
+    // `resolve_document`, which this then is.
+    let reached = reaching.take_new();
+    if !reached.is_empty() {
+        let _held = holding(reached);
+        resolve_document(nodes);
+        return;
+    }
+
     let t = std::time::Instant::now();
-    compute_chart_series(nodes);
+    reads_reach(|| compute_chart_series(nodes));
     if profiling {
         eprintln!("[PHASE]   charts {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
@@ -553,23 +905,52 @@ pub fn resolve_values(nodes: &mut Vec<OverseerNode>) {
 pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
     let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
+    // What the formulas reach past a window is worked out too, and found out by working them out:
+    // so a document that reaches past one is worked out again, from what it was before, with what
+    // they reached held - see `note_reached`. Again from the start rather than bringing the entries
+    // in afterwards, which would work out a second time what the first time already had - the
+    // template's own `$(today())` over a day's written date among them, see `keeping_in_view`.
+    let before = has_a_window(nodes).then(|| nodes.clone());
+    let reaching = Reaching::start();
+    resolve_document_once(nodes);
+    let Some(before) = before else {
+        return;
+    };
+    let mut held = Vec::new();
+    // Each round brings more in, and only what the round before brought in can reach further: a
+    // day read for a total whose own formulas read an older one. A few rounds settle any document,
+    // and a document that keeps reaching further than that has its entries worked out as they are.
+    for _ in 0..8 {
+        let reached = reaching.take_new();
+        if reached.is_empty() {
+            break;
+        }
+        held.push(holding(reached));
+        *nodes = before.clone();
+        resolve_document_once(nodes);
+    }
+}
+
+fn resolve_document_once(nodes: &mut Vec<OverseerNode>) {
     WORKED_OUT_WHOLE.with(|n| n.set(n.get() + 1));
     let profiling = profile_enabled();
     resolve_structure(nodes);
 
     // Then evaluate formulas (multi-pass so aggregates whose inputs appear later update)
     let t = std::time::Instant::now();
-    evaluate_formulas_in_document_multi_pass(nodes);
+    reads_reach(|| evaluate_formulas_in_document_multi_pass(nodes));
     if profiling {
         eprintln!("[PHASE]   formulas {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
 
     // After formulas, compute chart series for charts/plots (MVP)
     let t = std::time::Instant::now();
-    compute_chart_series(nodes);
+    reads_reach(|| compute_chart_series(nodes));
     if profiling {
         eprintln!("[PHASE]   charts {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
+    // What the page will follow a link to - see `reach_links`.
+    reads_reach(|| reach_links(nodes));
 
     // After formulas, compute UI sort keys for lists (presentation-only; do not reorder children)
     let t = std::time::Instant::now();
@@ -601,10 +982,22 @@ pub fn resolve_specific_fields(
     // 3. Skip template resolution and layout (those don't change)
 
     // Only evaluate formulas for the specific field paths
-    evaluate_formulas_for_specific_fields(nodes, field_paths);
+    let reaching = Reaching::start();
+    reads_reach(|| evaluate_formulas_for_specific_fields(nodes, field_paths));
 
     // Only recompute charts that contain references to the changed fields
-    compute_chart_series_for_specific_fields(nodes, field_paths);
+    reads_reach(|| compute_chart_series_for_specific_fields(nodes, field_paths));
+    reads_reach(|| reach_links(nodes));
+
+    // A change can make a formula reach past a window where it did not before - a lookup of
+    // another day. The entry it reached has never been worked out, and nothing short of working
+    // the document out again with it held will do - see `resolve_document`.
+    let reached = reaching.take_new();
+    if !reached.is_empty() {
+        let _held = holding(reached);
+        resolve_document(nodes);
+        return;
+    }
 
     // And the order of any sorted list holding what moved - see `refresh_sort_keys_holding`.
     refresh_sort_keys_holding(nodes, field_paths);
@@ -667,7 +1060,7 @@ fn refresh_sort_keys_holding(
         level: &mut crate::addressing::Level,
     ) {
         for (i, node) in children.iter().enumerate() {
-            if out_of_view(node) {
+            if not_worked_out(node) {
                 continue;
             }
             at.push(i);
@@ -1403,7 +1796,7 @@ fn resolve_node_templates(
 
     // Out of view: neither this nor anything under it is instantiated. Returning before the
     // recursion is what makes the saving real - a day left out holds its own list of meals.
-    if out_of_view(node) {
+    if not_worked_out(node) {
         return false;
     }
 
@@ -1476,7 +1869,7 @@ fn resolve_node_templates(
                             // `resolve_node_templates` only stops the walk from *descending*
                             // into such an entry, and a list instantiates its own children here
                             // rather than by walking into them.
-                            if out_of_view(list_item) {
+                            if not_worked_out(list_item) {
                                 resolved_children.push(list_item.clone());
                                 continue;
                             }
@@ -1585,7 +1978,7 @@ fn resolve_node_templates(
                                         // Assign ordering index after authored children (authored indices assigned at parse time). Since these are cloned now, just use sequence.
                                         child.child_original_index = Some(c_idx);
                                     }
-                                    merge_node(&mut resolved_item, &list_item.children);
+                                    merge_node(&mut resolved_item, &list_item.children, all_nodes);
                                     // The entry's own text, rather than its template's: what it
                                     // wrote is given back from it, as an instance's is - see
                                     // `file_ops::rewrite_written`.
@@ -1883,7 +2276,7 @@ fn resolve_node_templates(
                     // Handle simple type entries like entry=string
                     let mut resolved_children = Vec::new();
                     for (_i, list_item) in node.children.iter().enumerate() {
-                        if out_of_view(list_item) {
+                        if not_worked_out(list_item) {
                             resolved_children.push(list_item.clone());
                             continue;
                         }
@@ -2084,7 +2477,7 @@ fn resolve_node_templates(
                     "_explicit_overrides".to_string(),
                     OverseerValue::String(override_names.join(",")),
                 );
-                merge_node(node, &instance_children);
+                merge_node(node, &instance_children, all_nodes);
             }
 
             // Recursively infer '-' types based on template structure
@@ -2275,7 +2668,7 @@ fn make_grid_cells(
             "_explicit_overrides".to_string(),
             OverseerValue::String(names.join(",")),
         );
-        merge_node(node, &written);
+        merge_node(node, &written, all_nodes);
     }
     true
 }
@@ -2564,7 +2957,7 @@ fn after(path: &[usize]) -> Vec<usize> {
 /// reaches the second tab's div, and a `+` after `- name = ...` lands right after `name`. An element
 /// that matches nothing is kept, after the inherited elements of its own block, and does not move
 /// the cursor.
-pub(crate) fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]) {
+pub(crate) fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode], root: &[OverseerNode]) {
     debug_resolver!(
         "[RESOLVER] Merging overrides into template with {} fields (transparent-aware)",
         template.children.len()
@@ -2613,7 +3006,7 @@ pub(crate) fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]
         match path {
             Some(path) => {
                 if let Some(template_field) = get_child_mut_by_path(template, &path) {
-                    merge_into_field(template_field, override_field);
+                    merge_into_field(template_field, override_field, root);
                     mark_written(template_field, position, path.len() - 1);
                 }
                 cursor = after(&path);
@@ -2664,9 +3057,19 @@ fn writes_a_block(node: &OverseerNode) -> bool {
         .is_some_and(|snapshot| snapshot.body.child_envelope.open.is_some())
 }
 
+/// Whether an element of an override says `base=none`. A bare `none` reads as the border style of
+/// that name, which is the word written all the same.
+pub(crate) fn starts_over(node: &OverseerNode) -> bool {
+    match node.parameters.get("base") {
+        Some(OverseerValue::BorderStyle(crate::types::BorderStyle::None)) => true,
+        Some(OverseerValue::String(word)) => word.trim() == "none",
+        _ => false,
+    }
+}
+
 /// Applies one override to the template field it matched: its value, its own parameters, and its
 /// block, merged by the same walk.
-fn merge_into_field(template_field: &mut OverseerNode, override_field: &OverseerNode) {
+fn merge_into_field(template_field: &mut OverseerNode, override_field: &OverseerNode, root: &[OverseerNode]) {
     debug_resolver!(
         "[RESOLVER]   Merging field: {} (template type: {}, override type: {})",
         template_field.name,
@@ -2723,6 +3126,40 @@ fn merge_into_field(template_field: &mut OverseerNode, override_field: &Overseer
             && override_field.child_original_index.is_some()
         {
             template_field.child_original_index = override_field.child_original_index;
+        }
+    }
+
+    // `base=none` starts the element over: what it inherited inside it goes, and its own block,
+    // merged below, is all it holds - so a part of a document can drop a block it was handed, a
+    // theme's every backdrop layer, without naming each thing in it. `base=<node>` starts it from
+    // that node's block instead, found as a context's `base=` is.
+    if starts_over(override_field) {
+        template_field.children.clear();
+    } else if let Some(OverseerValue::Template(path)) = override_field.parameters.get("base") {
+        let refused = match crate::bases::find_or_why(root, path) {
+            Ok(Some(start)) => {
+                // Given, as a template's children are: the writer leaves them to the node they
+                // came from.
+                template_field.children = start.children;
+                for child in template_field.children.iter_mut() {
+                    mark_template_child_recursive(child);
+                }
+                None
+            }
+            Ok(None) => Some(format!("no '{}' to start from", crate::bases::reference(path).name)),
+            Err(why) => Some(why),
+        };
+        if let Some(why) = refused {
+            template_field
+                .parameters
+                .insert(crate::bases::ERROR.to_string(), OverseerValue::String(why));
+        }
+        // What it holds now is no template's, so the writer is told the element is the
+        // instance's own, to be written as it was.
+        for marker in ["_override_present", "_explicit_child_override"] {
+            template_field
+                .parameters
+                .insert(marker.to_string(), OverseerValue::Boolean(true));
         }
     }
 
@@ -2789,7 +3226,7 @@ fn merge_into_field(template_field: &mut OverseerNode, override_field: &Overseer
             template_field.name
         );
         // Recursively merge into this container field
-        merge_node(template_field, &override_field.children);
+        merge_node(template_field, &override_field.children, root);
         let overridden = override_field.children.len();
         // If the override container itself was dash-authored, propagate to template_field
         if override_field.authored_dash {
@@ -3824,7 +4261,7 @@ unsafe fn recursively_evaluate_node_formulas_selective(
     {
         let node: &OverseerNode = &*node_ptr;
         // Out of view, so not worked out. Nothing under it either - see `apply_list_windows`.
-        if out_of_view(node) {
+        if not_worked_out(node) {
             return false;
         }
         // A context as written is worked out in its copies, where it is used - see `contexts`.
@@ -4097,7 +4534,7 @@ fn collect_sort_keys(
 ) {
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
 
-    if out_of_view(node) {
+    if not_worked_out(node) {
         return;
     }
 

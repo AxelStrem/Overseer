@@ -45,6 +45,8 @@ body {
     margin: 0;
     font-family: var(--ov-font);
     background-color: var(--ov-background);
+    /* The theme's `backdrop`, over the page's colour - see `backdropCss` in renderer.js. */
+    background-image: var(--ov-backdrop, none);
     color: var(--ov-text);
     /* The theme's `size`, `leading` and `numerals`. A key no theme says leaves the variable
        unset, and the property is then inherited as though nothing were written. */
@@ -363,6 +365,124 @@ body.drawer-folded #main {
 /* Opening a file and making one are the desktop's; a browser opens documents from the list. */
 body.in-browser .desktop-only {
     display: none !important;
+}
+
+/* The list of every document is the server's; the desktop app opens files. */
+body:not(.in-browser) .browser-only {
+    display: none !important;
+}
+
+/* What the server refuses someone not signed in is not offered to them. */
+body.viewer-stranger .not-for-strangers {
+    display: none !important;
+}
+
+/* Nothing of a document shared only to be read is the viewer's to take back. */
+body.document-read-only #undo-file-btn {
+    display: none;
+}
+
+/* A section of the drawer, or a part of one, that is not for whoever is looking. */
+#drawer [hidden] {
+    display: none !important;
+}
+
+a.drawer-action {
+    text-decoration: none;
+}
+
+.account-profile summary {
+    list-style: none;
+}
+
+.account-profile[open] {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-bottom: 6px;
+}
+
+.account-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 2px 8px;
+    font-size: 12px;
+    color: var(--ov-muted);
+}
+
+.account-field input,
+.account-link input {
+    font: inherit;
+    font-size: 14px;
+    padding: 4px 6px;
+    color: var(--ov-text);
+    background: var(--ov-surface);
+    border: 1px solid var(--ov-line);
+    border-radius: 6px;
+}
+
+.account-said {
+    margin: 0 8px;
+    font-size: 12px;
+    color: var(--ov-muted);
+}
+
+.account-said:empty {
+    display: none;
+}
+
+.account-said.error {
+    color: #dc2626;
+}
+
+.account-link {
+    display: flex;
+    gap: 4px;
+    margin: 2px 8px;
+}
+
+.account-link input {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Every document there is to open, at the root of a server. */
+.document-list {
+    margin-top: 24px;
+    width: 100%;
+    max-width: 560px;
+    text-align: left;
+}
+
+.document-list h3 {
+    margin: 20px 0 6px;
+    font-size: 16px;
+}
+
+.document-list h4 {
+    margin: 10px 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ov-muted);
+}
+
+.document-list ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.document-list a {
+    display: block;
+    padding: 4px 8px;
+    border-radius: 6px;
+    color: var(--ov-text);
+    text-decoration: none;
+}
+
+.document-list a:hover {
+    background: var(--ov-surface);
 }
 
 /* The row above the document: the button that brings the drawer back while it is folded, and the
@@ -2115,6 +2235,11 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .ov-themed-background {
     background-color: var(--ov-background);
+}
+
+/* The layers a theme's `backdrop` paints over the background colour, written by `backdropCss`. */
+.ov-themed-backdrop {
+    background-image: var(--ov-backdrop);
 }
 
 /* A kind of element in the theme: `context theme { - button { - accent = ... } }` gives the

@@ -104,6 +104,18 @@ A line that cannot be read - a string without its closing quote, a `{` never clo
 - `tags`: Several labels out of a list of them, drawn as chips - see "Tags"
 - `enum`: One value out of a list of them, drawn as a chip and picked from that list - see "Enum"
 
+#### Numbers
+
+A number is written `12` or `-3`; a point or an exponent makes it a float: `1.5`, `1.`, `.5`,
+`2e3`, `1.5E-7`. `inf`, `-inf` and `nan` are floats too, as whole words - like `true`, they are
+values, not text, so a string that says `inf` is quoted; `info` is still a word. Formulas read
+numbers the same way.
+
+The field's type has the last word: `float x = 1` holds the float 1, and `int x = 1e3` the whole
+number 1000. A float that is not whole stays one in an `int` field, as written. A float the engine
+writes into a document is written so that it reads back the same: `1e20` and `1e-9` with an
+exponent, infinity as `inf`.
+
 #### Container Types:
 - `div`: Generic container for grouping and visual placement and styling
 - `list`: Collection with CRUD operations and two entry types:
@@ -335,6 +347,12 @@ list History (entry=<Day>, key="day", window=3,
 What is left out is still in the file and still saved; it is simply not resolved. A note under
 the list says how many entries that was.
 
+A window decides what is drawn, not what the list holds. Anything that reaches an entry left out
+finds it as it would be in view, with its template and its formulas worked out: a total over the
+whole list, a `find` of an old entry by its key, a read of one by its address, a button writing
+to one, a div whose `link=` names one by its key. Only what is reached is worked out - a `find` pays for the entry it finds, a sum for every
+entry it adds up - and the list still draws its window.
+
 #### Moving entries by hand
 
 `movable=true` lets a list's entries be dragged: to another place in the list, or into another
@@ -542,6 +560,10 @@ What an instance writes is matched onto the copy:
   lands right after `name`, and a `+` written first lands before everything.
 - An element that matches nothing, written without `+`, is kept after the inherited elements of
   its own block.
+- An element that says **`base=none`** starts over: what the template had inside it goes, and its
+  own block, if it writes one, is all it holds. `- parts (base=none)` empties `parts` and keeps the
+  rest of the instance as the template has it. **`base=<node>`** starts it from that node's block
+  instead, found as a template is, and its own block is matched onto that.
 
 ```overseer
 div (hidden=true) {
@@ -614,12 +636,39 @@ several, is refused, as is a reference to a file that is not there or a node it 
 the instance is then kept as written. A document is worked out again once a base it was made from
 changes, or a file that base was made from, or a missing base appears.
 
-A file that is not next to the document is looked for in the templates that ship with Overseer -
-its `library` folder - so any document, wherever it is, can be made from one of them:
-`<projects/project_template.os/project>`. A file of the same name next to the document is used
-first, and one put there later takes over. A path that climbs out of the folder (`../`) is never
-looked for there, and nothing a document does writes to the library. The server and the desktop
-app carry the folder with them; `OVERSEER_LIBRARY` names another.
+An instance brings the base's node into the document, with all it holds. A template inside that
+node is then one of the document's own, named as any is - `<Synth>` or `<patch/Synth>`, inside
+the instance or anywhere after it - so a file names the base once, at the top:
+
+```overseer
+<brocessor/v200.os/patch> patch {
+    - Processors {
+        <Synth> {
+            - vol = 0.5
+        }
+    }
+}
+```
+
+What the base keeps outside the node the instance names is not brought in.
+
+A file that is not next to the document is looked for in libraries: first the user's own, then
+the templates that ship with Overseer - its `library` folder - so any document, wherever it is,
+can be made from one of them: `<projects/project_template.os/project>`. The user's libraries are
+the folders `libraries.txt`, beside `settings.os`, names a line each, looked in in that order; a
+line that is blank or starts with `#` is passed over, and a folder not written in full is beside
+the file. A program that ships bases of its own adds its folder there, and the user's documents
+inherit from them without anything being copied. A file of the same name next to the document is
+used first, and one put there later takes over, as one put in a library looked in earlier does;
+a change to `libraries.txt` is followed too. A path that climbs out of the folder (`../`) is never
+looked for in a library, and nothing a document does writes to one. The server and the desktop
+app carry the shipped folder with them; `OVERSEER_LIBRARY` names another.
+
+A document is usually a `.os` file. A program that saves its own files as Overseer text under an
+extension of its own, as Brocessor does its `.brot` patches, names that extension in
+`extensions.txt`, also beside `settings.os`: one a line, with or without the dot, and lines that
+are blank or start with `#` passed over. Such a file then opens, is listed and is saved back under
+its own name as any document is. A base or a mount still names a `.os` file.
 
 Unnamed instances need no block: `<project_base.os/tab1>` on three lines gives three tabs. Being
 wrappers, they put what they hold at their parent's address, so a `<tags.os/tag_list>` panel in
@@ -665,8 +714,12 @@ tab project (label="Project") {
   written there does. The ones written at the top of a document cover the whole document.
 - **An override changes only what it names**, the way an instance changes its template: a named
   element replaces the one it matches, `+` adds one, a value replaces the value, and `base=<node>`
-  starts from another node rather than from the context above. Two declarations of one name in the
-  same container merge in the order they are written.
+  starts from another node rather than from the context above. An element inside it can start over
+  too, as an instance's can (see "How an instance is matched onto its template"): `context theme {
+  - backdrop (base=none) }` drops every layer of the backdrop above without naming one, and
+  `- backdrop (base=<sunset>)` takes the layers of a node `sunset` - a `context sunset { ... }` at
+  the document's top, say - in their place. Two declarations of one name in the same container
+  merge in the order they are written.
 - **Its formulas are worked out where it is used.** In the example the sidebar's `line` is worked
   out from the sidebar's `text`, though only the outer theme says how. A container that declares a
   context has every context that reads it worked out again there - and every context that reads
@@ -681,6 +734,9 @@ tab project (label="Project") {
   one the document declared, a node of the same name is refused, saying why.
 - **It is saved as written**: the declarations are the document's text, and what a container sees
   is worked out from them each time the document is.
+- **It is addressed by its declaration**, once: `project/Sidebar/theme/surface` is the line the
+  document wrote, and a write there changes it. What a container sees, worked out, has no address
+  of its own, and a node read over the server does not list it among its children.
 - **Some names the page reads itself**: `theme` (below), and `vocabulary`, `hide-labels` and
   `hover-text`, which say how the fields inside a container are drawn (see "Tags", "Hiding Labels"
   and "Saying More When Asked"). A field's own parameter of the same name is that field's alone, and
@@ -705,22 +761,24 @@ context mode = "system"
   that mounts it. Where there is no `settings.os` yet, it is as though it held
   `context theme (base=<themes/default.os/theme>) { }` and `context mode = "system"`.
 - **A theme is a `context theme`** in a file of its own. Those that ship with Overseer are in its
-  library's `themes` folder; one in a `themes` folder beside `settings.os` is offered beside them,
-  and takes the place of a shipped one of the same name. Its keys are `background`, `surface`,
+  library's `themes` folder; one in a `themes` folder beside `settings.os`, or in a user's library,
+  is offered beside them, and takes the place of a shipped one of the same name. Its keys are `background`, `surface`,
   `text`, `muted`, `line`, `accent`, `success`, `warning`, `danger`, `font`, `mono`, `radius`,
-  `size`, `leading` and `numerals`. `font` is the font of the page, and `mono` the one the values
-  of `string` and number fields, code in markdown and the markdown editor are drawn in - a
-  monospace font, unless a theme says otherwise: `- mono = $(font)` draws values in the page's
-  font. `size` is the size of the text (`14px`), which values and text follow and labels,
+  `size`, `leading`, `numerals` and `backdrop` (below). `font` is the font of the page, and `mono`
+  the one the values of `string` and number fields, code in markdown and the markdown editor are
+  drawn in - a monospace font, unless a theme says otherwise: `- mono = $(font)` draws values in
+  the page's font. `size` is the size of the text (`14px`), which values and text follow and labels,
   headings, chips and buttons do not - their kinds say theirs; `leading` the height of a line, as
   a factor of the size (`1.5`); `numerals` is `proportional` or `tabular`, digits of one width so
-  that figures line up down a column. The shipped theme works each colour out from `mode`, as
-  `$(mode == "dark" ? "#1e293b" : "#ffffff")`. A theme that leaves a key out leaves that part of
-  the page as it is drawn without one.
+  that figures line up down a column. The shipped theme keeps each mode's colours under `light`
+  and `dark` and picks one by `mode`, as `- surface = $(mode == "dark" ? dark/surface :
+  light/surface)`, so `context theme { - dark { - surface = "#000" } }` changes the dark colour
+  alone and the light one stays as it was. `light` and `dark` are keys of the theme, not kinds of
+  element. A theme that leaves a key out leaves that part of the page as it is drawn without one.
 - **A theme can bring its own fonts**, so that `font` and `mono` need not name one installed where
   the page is opened. `fonts` holds a key for each family, its name the one `font` and `mono` call
   it by and its value a font file - `.woff2`, `.woff`, `.ttf` or `.otf` - by a path relative to the
-  `themes` folders, the one beside `settings.os` looked in first and then the library's:
+  `themes` folders, the one beside `settings.os` looked in first and then the libraries':
 
   ```overseer
   context theme {
@@ -790,6 +848,41 @@ context mode = "system"
   `separator` and `filter`. Each of them changes what its look takes from the theme, and nothing
   it draws in a fixed way: a solid button's label is light or dark to read on its colour whatever
   its `text`, and `button/label` says otherwise.
+- **`backdrop` is what is painted over `background`**: layers, each a key of its own, drawn in the
+  order written with the first on top, and the `background` colour under them all. A layer has a
+  `kind`; one of a kind the page does not draw, `none` among them, is left out.
+
+  ```overseer
+  context theme {
+      - backdrop {
+          - glow {
+              - kind = "gradient"
+              - from = $(accent + "55")
+              - to = "transparent"
+              - angle = 135
+              - center = "20%"
+          }
+          - base {
+              - kind = "gradient"
+              - from = $(background)
+              - to = $(surface)
+          }
+      }
+  }
+  ```
+
+  A `gradient` goes from `from` to `to` in a straight line along `angle`, in degrees (`180`, top to
+  bottom, where it says none). `center` is where along that line the middle of the blend falls
+  (`50%`), and `sharpness` how short the blend is: `0%` across the whole length, `100%` a hard edge
+  between the two colours. A layer's colours are formulas like any of the theme's, so they follow
+  `mode`. Being keys, layers are overridden by name - `- backdrop { - glow { - to = "red" } }`
+  changes one and keeps the others, `+` adds one, `- glow { - kind = "none" }` hides one - and
+  `- backdrop (base=none)` starts over with none, or with only the layers its own block writes;
+  `- backdrop (base=<sunset>)` with the layers of `sunset`, written once and used anywhere. The
+  page is painted with the document's backdrop, and a container whose theme makes a backdrop other
+  than the one it sits in is painted with its own, on its own background colour, so the one around
+  it does not show through. A `button` key can hold a `backdrop` of its own, painted over the
+  button's colour in whatever state it is in.
 - **`mode` is `"light"`, `"dark"` or `"system"`**, and `"system"` is the scheme the page is in -
   the browser's, or the computer's - sent with every request, and light where nothing says.
 - **`theme` is the name the page draws through.** The resolved theme of the document's top is the
@@ -802,6 +895,41 @@ context mode = "system"
 - **The drawer chooses them**: a theme from those there are, and Light, Dark or System. The mode is
   written to `settings.os` as a value; the theme as the `base=` of its `context theme`, so the keys
   the user changed inside the block stay as they were, now changing the theme chosen.
+- **On a server that keeps accounts, each person has their own**: `settings.os` in their folder,
+  beside their documents, so each sees every document - another's included - in their own look.
+  Nobody signed in sees the server's, at its root.
+
+#### Who is looking
+
+`me` is a context of the environment beside the theme and the mode: `me/handle` is the username of
+whoever is looking, and `me/name` what they are called. Both are empty where nobody is signed in,
+and in the desktop app.
+
+A document names people by username and shows them by name through the server's directory,
+`people.os` at its root: a list `People` keyed by `tag`, one entry per account with its `name`. The
+server writes it from its accounts, everyone may read it, and nobody changes it through a document
+- a person changes their own name in their profile. Mounted, it is a vocabulary like any other, so
+a field holding `ap31` and a `<#ap31>` in any text draw that person's chip with the name they have
+now; renamed, they are shown by the new name everywhere, and no document is written for it:
+
+```overseer
+mount people (source="../people.os/People", lazy=false, hidden=true, mutable=false) { }
+
+tab notes (mutable=true) {
+    context vocabulary = "/people/People"
+    enum author (vocabulary="/people/People") = ""
+    string by = $(/people/People.find(author)/name)
+
+    button sign {
+        on click {
+            set (path="../author") = $(me/handle)
+        }
+    }
+}
+```
+
+The mount's `source` is relative to the document, as always: `../people.os` from a document in a
+person's folder, `../../people.os` from one in a folder of theirs.
 
 ### 3. Actions and Events
 
@@ -1906,10 +2034,18 @@ string name = $(FOODS.filter(|f| f/handle == ../food).map(|f| f/name).first())
 | --- | --- |
 | `source` | the file, then the path to the node inside it |
 | `lazy` | resolve it when something asks rather than on open |
-| `mutable` | whether writes through the mount are allowed |
+| `mutable` | `true` lets writes through the mount, to the mounted file |
 | `hidden` | mount it without drawing it, which is usual for a catalogue |
 
 `source` is relative to the document that declares the mount, not to the working directory.
+
+What a mount holds is addressed under the mount's name and then the node `source` names:
+`FOODS/Catalog/[apple]/kcal`. A write that lands there - a press, a field edited in the page, an
+append over the API - is written to the mounted file, at that node, and the host's own text is
+left as it was. Only a mount with `mutable=true` lets it through; on any other the write is
+refused, and neither file changes. A new entry of a mounted list is made from the mounted file's
+template. Undo in the host takes the write back, unless the mounted file has been written to since,
+in which case that file is left as it is.
 
 A lazy mount brings in what it names once something asks for it; `load_mount` brings it in from a
 press and `unload_mount` lets it go again (see "Actions and Events").
@@ -1963,7 +2099,7 @@ div Tasks {
 - **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on change`, `on load`, `on unload`
 - **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
-- **Contexts**: `context` (in a type's place), `base` (on a context)
+- **Contexts**: `context` (in a type's place), `base` (on a context, and `base=none` or `base=<node>` on an element of an override)
 
 ---
 

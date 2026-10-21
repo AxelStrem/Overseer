@@ -51,6 +51,11 @@ function refusalIn(e) {
  * HTML is shown as the text it is, but for the span the colour syntax becomes, and a link or an
  * image goes only somewhere a page may send someone: the web, mail, or this document's own server.
  */
+// A float as a number. JSON has no infinity or NaN, so the server sends those as the words a
+// document writes them with.
+const FLOAT_WORDS = { inf: Infinity, '-inf': -Infinity, nan: NaN }
+const floatOf = (f) => (typeof f === 'string' && f in FLOAT_WORDS) ? FLOAT_WORDS[f] : Number(f)
+
 const escapeHtml = (s) => String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const COLOR_VALUE = '(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}|[a-zA-Z]+|rgba?\\([0-9.,\\s+%-]*\\)|hsla?\\([0-9.,\\s+%-]*\\))'
@@ -394,6 +399,8 @@ export class OverseerRenderer {
         // Track newly materialized targets so updates apply to the exact node, not a loosely-resolved path
     // Default top-level mutability: disabled by default (can be enabled per-node via mutable=true or inherited)
     this._defaultTopLevelMutable = false
+    // Set for a document shared with whoever is looking only to read - see `getEffectiveMutableMode`.
+    this.readOnly = false
         // What is typed into textboxes, by path - see `createTextboxElement`.
         this._typed = new Map()
     }
@@ -572,7 +579,15 @@ export class OverseerRenderer {
         return null
     }
 
+    // What a person may change in a field, as the document says it - unless the document is
+    // shared with them only to read, when nothing is, whatever it says. A guarded field still
+    // changes, since it is never written.
     getEffectiveMutableMode(node, elementHint = null) {
+        const mode = this._declaredMutableMode(node, elementHint)
+        return this.readOnly && mode === 'true' ? 'false' : mode
+    }
+
+    _declaredMutableMode(node, elementHint = null) {
         const parseMode = (v) => this._parseMutableMode(v)
         const readMutableParam = (n) => this._readMutableParam(n)
         // 1) If the node itself declares an explicit mode, honor it immediately (works for phantom previews as well)
@@ -1008,6 +1023,7 @@ export class OverseerRenderer {
             try {
                 update = await invoke('ensure_overseer_entry', {
                     path: window.app.currentFile,
+                    ...window.app.showing?.(),
                     wanted,
                 }).catch((e) => {
                     if (DEBUG_MODE) console.warn('[Overseer] the entry was refused', e)
@@ -1579,7 +1595,7 @@ export class OverseerRenderer {
         if (raw && typeof raw === 'object') {
             if (raw.Null !== undefined) return null
             if (raw.Integer !== undefined) return Number(raw.Integer)
-            if (raw.Float !== undefined) return Number(raw.Float)
+            if (raw.Float !== undefined) return floatOf(raw.Float)
             if (raw.Boolean !== undefined) return raw.Boolean ? 1 : 0
             raw = raw.String ?? raw.Date ?? raw.Timestamp ?? null
         }
@@ -2587,7 +2603,7 @@ export class OverseerRenderer {
             if (typeof val !== 'object') return val
             if ('String' in val) return String(val.String)
             if ('Integer' in val) return Number(val.Integer)
-            if ('Float' in val) return Number(val.Float)
+            if ('Float' in val) return floatOf(val.Float)
             if ('Boolean' in val) return !!val.Boolean
             if ('Date' in val) return String(val.Date)
             if ('Timestamp' in val) return String(val.Timestamp)
@@ -3643,7 +3659,7 @@ export class OverseerRenderer {
         // If OverseerValue serialized object, try common shapes
         if (typeof key === 'object') {
             if (key.Integer !== undefined) return Number(key.Integer)
-            if (key.Float !== undefined) return Number(key.Float)
+            if (key.Float !== undefined) return floatOf(key.Float)
             if (key.String !== undefined) return String(key.String)
             // try toString last
             try { return String(key) } catch (_) { return Number.MAX_SAFE_INTEGER }
@@ -4277,6 +4293,7 @@ export class OverseerRenderer {
         try {
             update = await invoke('move_overseer_entry', {
                 path: app.currentFile,
+                ...app.showing?.(),
                 entry_path: entryPath,
                 entryPath,
                 to_list_path: toListPath,
@@ -7515,6 +7532,7 @@ export class OverseerRenderer {
                 }
                 // What it was above, to tell whether this container's background is its own.
                 const above = this.themeAbove(element, 'background')
+                const backdropAbove = this.themeAbove(element, 'backdrop') || 'none'
                 this.writeTheme(element, child)
                 // The text's colour is worked out where it is said - the page's body - and handed
                 // down as a colour, not as the variable: so a container with a theme of its own
@@ -7522,7 +7540,13 @@ export class OverseerRenderer {
                 // on, so a container that changes something else keeps what is behind it showing.
                 element.classList.add('ov-themed')
                 const background = this.contextValue((child.children || []).find((k) => k?.name === 'background'))
-                element.classList.toggle('ov-themed-background', background !== null && background !== above)
+                // A backdrop of its own is painted on its background colour, so that what it
+                // leaves out - all of it, for one started over with `base=none` - does not show
+                // the one around it through.
+                const backdrop = element.style.getPropertyValue('--ov-backdrop').trim() || backdropAbove
+                const ownBackdrop = backdrop !== backdropAbove
+                element.classList.toggle('ov-themed-backdrop', ownBackdrop)
+                element.classList.toggle('ov-themed-background', ownBackdrop || (background !== null && background !== above))
             } else if (child.name === 'mode') {
                 const mode = this.contextValue(child)
                 if (mode === 'dark' || mode === 'light') element.dataset.ovMode = mode
@@ -7543,9 +7567,17 @@ export class OverseerRenderer {
     writeTheme(element, theme, prefix = '--ov-') {
         for (const key of theme.children || []) {
             if (!key?.name || key.name.startsWith('_')) continue
+            // Each mode's colours, which the theme's own keys pick from by `mode`: read through
+            // them, not by the stylesheet, and no kind of element.
+            if (prefix === '--ov-' && (key.name === 'light' || key.name === 'dark')) continue
             // Files to load, not values the stylesheet reads - see `nameThemeFonts`.
             if (key.name === 'fonts' && prefix === '--ov-') {
                 this.nameThemeFonts(key)
+                continue
+            }
+            // Layers painted over the background colour, as one CSS background - see `backdropCss`.
+            if (key.name === 'backdrop') {
+                element.style.setProperty(`${prefix}backdrop`, this.backdropCss(key))
                 continue
             }
             const value = this.contextValue(key)
@@ -7567,6 +7599,38 @@ export class OverseerRenderer {
                 this.writeTheme(element, key, `${prefix}${key.name}-`)
             }
         }
+    }
+
+    /**
+     * A theme's `backdrop` as a CSS `background-image` list: each layer in the order written, the
+     * first drawn on top, as CSS draws a list of backgrounds. A layer of a kind the page does not
+     * draw - `none`, to hide one handed down, or one yet to come - is left out, and a backdrop
+     * with nothing left is `none`.
+     *
+     * A `gradient` goes from `from` to `to` along `angle` (degrees, 180 top to bottom). The blend
+     * is centred on `center`, a place along that direction, and is as wide as `sharpness` leaves
+     * it: 0% across the whole length, 100% a hard edge.
+     */
+    backdropCss(backdrop) {
+        const layers = []
+        const number = (node, otherwise) => {
+            const said = parseFloat(this.contextValue(node))
+            return Number.isFinite(said) ? said : otherwise
+        }
+        for (const layer of backdrop.children || []) {
+            if (!layer?.name || layer.name.startsWith('_')) continue
+            const key = (name) => (layer.children || []).find((k) => k?.name === name)
+            if (this.contextValue(key('kind')) !== 'gradient') continue
+            const from = this.contextValue(key('from'))
+            const to = this.contextValue(key('to'))
+            if (from === null || to === null) continue
+            const angle = number(key('angle'), 180)
+            const center = number(key('center'), 50)
+            const width = 100 - Math.max(0, Math.min(100, number(key('sharpness'), 0)))
+            const round = (n) => Math.round(n * 100) / 100
+            layers.push(`linear-gradient(${round(angle)}deg, ${from} ${round(center - width / 2)}%, ${to} ${round(center + width / 2)}%)`)
+        }
+        return layers.length ? layers.join(', ') : 'none'
     }
 
     /**
@@ -7628,6 +7692,10 @@ export class OverseerRenderer {
                 for (const way of BUTTON_STYLES) box.classList.toggle(`ov-style-${way}`, way === style)
                 const label = this.themeAbove(box, 'button-label')
                 if (label && !BUTTON_STYLES.includes(style) && !box.dataset.ownText) box.style.color = label
+                // The theme's `button/backdrop`, over whatever colour the button's state gives
+                // it. Inline, because every state the stylesheet gives a button sets its whole
+                // `background`; a variable, so that it follows the theme it is drawn in.
+                if (this.themeAbove(box, 'button-backdrop')) box.style.backgroundImage = 'var(--ov-button-backdrop)'
             } else if (box.matches('input[type="checkbox"]')) {
                 box.classList.toggle('ov-switch', this.themeAbove(box, 'checkbox-style') === 'switch')
             }
@@ -9926,6 +9994,7 @@ export class OverseerRenderer {
             const asAnInstruction = window.app.currentFile
                 ? {
                     path: window.app.currentFile,
+                    ...window.app.showing?.(),
                     node_path: path,
                     nodePath: path,
                     event_name: eventName,
