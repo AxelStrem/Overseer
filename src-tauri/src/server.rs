@@ -402,7 +402,7 @@ impl DocumentRoot {
             // surrounded by its list, which stays, and it answered that nothing had gone.
             let gone = crate::addressing::find(nodes, address).is_none();
             let found = crate::addressing::find(nodes, reported)
-                .map(|node| (child_addresses(reported, node), node.clone()));
+                .map(|node| (child_addresses(reported, node), answered(node)));
             (gone, found)
         })?;
 
@@ -1354,6 +1354,15 @@ pub struct NodeView {
     pub child_addresses: Vec<String>,
 }
 
+/// A node as an answer gives it: without the worked-out copies of contexts, which have no address
+/// and are no part of what the document holds - see `contexts`. The declarations stay, so a
+/// caller sees what the document says, and the children line up with `child_addresses`.
+fn answered(node: &OverseerNode) -> OverseerNode {
+    let mut node = node.clone();
+    crate::contexts::leave_out_copies(&mut node.children);
+    node
+}
+
 /// The address of each immediate child of a node sitting at `address`.
 fn child_addresses(address: &str, node: &OverseerNode) -> Vec<String> {
     crate::addressing::child_segments(node)
@@ -1765,7 +1774,7 @@ impl DocumentRoot {
     ) -> std::result::Result<NodeView, RequestError> {
         let nodes = self.open(name)?;
         let node = crate::addressing::find(&nodes, address)
-            .cloned()
+            .map(answered)
             .ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
             })?;
@@ -1817,7 +1826,7 @@ impl DocumentRoot {
             reject_duplicate_key(target, fields)?;
             ActionExecutor::append_entry(nodes, &format!("/{}", path.join("/")), &overrides)
                 .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))
-        }, |nodes| crate::addressing::find(nodes, address).cloned())?;
+        }, |nodes| crate::addressing::find(nodes, address).map(answered))?;
 
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
@@ -1849,7 +1858,7 @@ impl DocumentRoot {
             })?;
             ActionExecutor::assign_value(nodes, &format!("/{}", path.join("/")), value.clone())
                 .map_err(|e| RequestError::Failed(format!("could not set the value: {:?}", e)))
-        }, |nodes| crate::addressing::find(nodes, address).cloned())?;
+        }, |nodes| crate::addressing::find(nodes, address).map(answered))?;
 
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
@@ -1921,7 +1930,7 @@ impl DocumentRoot {
             }
             ActionExecutor::remove_entry(nodes, &format!("/{}", path.join("/")))
                 .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))
-        }, |nodes| crate::addressing::find(nodes, &parent_address).cloned())?;
+        }, |nodes| crate::addressing::find(nodes, &parent_address).map(answered))?;
 
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),

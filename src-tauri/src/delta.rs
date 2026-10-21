@@ -7,7 +7,9 @@
 //! what actually moved.
 //!
 //! Nodes are matched by the addresses in [`crate::addressing`], which survive a resolve, so
-//! "the node at this address now reads 3" is meaningful across two separate parses.
+//! "the node at this address now reads 3" is meaningful across two separate parses. The copies of
+//! contexts, which have no address but which the page holds and reads, are matched by the steps
+//! [`crate::addressing::drawn_children`] gives them.
 //!
 //! A list whose entries came, went or moved is reported as its entries in their new order, each
 //! one either kept from where it was in the recipient's document or sent whole - see
@@ -105,7 +107,7 @@ fn join(prefix: &str, segment: &str) -> String {
 /// An empty result means the two render identically.
 pub fn diff(before: &[OverseerNode], after: &[OverseerNode]) -> Vec<DocumentChange> {
     let mut previous: HashMap<String, &OverseerNode> = HashMap::new();
-    addressing::walk(before, &mut |address, node| {
+    addressing::walk_drawn(before, &mut |address, node| {
         previous.insert(address.to_string(), node);
     });
     let previous_paths = index_paths(before);
@@ -122,7 +124,7 @@ pub fn diff(before: &[OverseerNode], after: &[OverseerNode]) -> Vec<DocumentChan
     );
     compare(
         None,
-        &addressing::effective_roots(after),
+        &addressing::drawn_roots(after),
         "",
         &[],
         &previous,
@@ -198,7 +200,7 @@ fn index_paths(nodes: &[OverseerNode]) -> HashMap<String, Vec<usize>> {
             out.insert(address.clone(), here.clone());
             go(
                 Some(node),
-                &addressing::effective_children(node),
+                &addressing::drawn_children(node),
                 &address,
                 &here,
                 out,
@@ -206,7 +208,7 @@ fn index_paths(nodes: &[OverseerNode]) -> HashMap<String, Vec<usize>> {
         }
     }
     let mut out = HashMap::new();
-    go(None, &addressing::effective_roots(nodes), "", &[], &mut out);
+    go(None, &addressing::drawn_roots(nodes), "", &[], &mut out);
     out
 }
 
@@ -250,8 +252,8 @@ fn compare_one(
         return;
     };
 
-    let before_children = addressing::child_segments(was);
-    let after_children = addressing::child_segments(node);
+    let before_children = addressing::drawn_child_segments(was);
+    let after_children = addressing::drawn_child_segments(node);
     // Two entries at one address - a keyed list where two entries hold the same key - cannot be
     // told apart by address, and address is how everything here is matched. Described entry by
     // entry, all of them were matched to the same one: four project tasks sharing an `added`
@@ -298,7 +300,7 @@ fn compare_one(
         });
     }
     compare_wrappers(&was.children, &node.children, &address, &here, walk);
-    compare(Some(node), &addressing::effective_children(node), &address, &here, previous, walk);
+    compare(Some(node), &addressing::drawn_children(node), &address, &here, previous, walk);
 }
 
 /// What changed on the wrappers among these children, and on wrappers inside those.

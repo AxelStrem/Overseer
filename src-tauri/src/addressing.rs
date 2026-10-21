@@ -213,29 +213,59 @@ pub fn node_at_path<'a>(nodes: &'a [OverseerNode], path: &str) -> Option<&'a Ove
 ///
 /// A wrapper contributes what is inside it rather than itself, so the path to a node under one
 /// is longer than its address - which is why both are returned together.
+///
+/// A context's worked-out copy is left out: it is what a formula inside the container meets, not
+/// one of the container's contents, and the context is addressed by its declaration - see
+/// `contexts`.
 pub fn effective_children(parent: &OverseerNode) -> Vec<(Vec<usize>, &OverseerNode)> {
     let mut out = Vec::new();
-    collect(&parent.children, &[], &mut out);
+    collect(&parent.children, &[], false, &mut out);
     out
 }
 
 /// The same, for the document's roots.
 pub fn effective_roots(nodes: &[OverseerNode]) -> Vec<(Vec<usize>, &OverseerNode)> {
     let mut out = Vec::new();
-    collect(nodes, &[], &mut out);
+    collect(nodes, &[], false, &mut out);
     out
+}
+
+/// The children a node has for the page, which holds the copies of contexts too and reads them:
+/// what a change to the resolved tree is described against - see `delta`. A copy's step is
+/// `(name)`, which no address has.
+pub fn drawn_children(parent: &OverseerNode) -> Vec<(Vec<usize>, &OverseerNode)> {
+    let mut out = Vec::new();
+    collect(&parent.children, &[], true, &mut out);
+    out
+}
+
+/// The same, for the document's roots.
+pub fn drawn_roots(nodes: &[OverseerNode]) -> Vec<(Vec<usize>, &OverseerNode)> {
+    let mut out = Vec::new();
+    collect(nodes, &[], true, &mut out);
+    out
+}
+
+/// The step of each immediate child of `parent` the page holds, copies of contexts included.
+pub fn drawn_child_segments(parent: &OverseerNode) -> Vec<String> {
+    segments_for(Some(parent), &drawn_children(parent))
 }
 
 fn collect<'a>(
     nodes: &'a [OverseerNode],
     prefix: &[usize],
+    copies: bool,
     out: &mut Vec<(Vec<usize>, &'a OverseerNode)>,
 ) {
     for (index, node) in nodes.iter().enumerate() {
         let mut path = prefix.to_vec();
         path.push(index);
-        if is_wrapper(node) {
-            collect(&node.children, &path, out);
+        if crate::contexts::is_copy(node) {
+            if copies {
+                out.push((path, node));
+            }
+        } else if is_wrapper(node) {
+            collect(&node.children, &path, copies, out);
         } else {
             out.push((path, node));
         }
@@ -258,9 +288,16 @@ pub fn segments_for(
                 continue;
             }
         }
+        if crate::contexts::is_copy(node) {
+            out.push(format!("({})", escape(&node.name)));
+            continue;
+        }
         // Counted across the effective siblings, so two wrappers holding same-named children
         // still produce one address each.
-        let ordinal = children[..i].iter().filter(|(_, s)| s.name == node.name).count();
+        let ordinal = children[..i]
+            .iter()
+            .filter(|(_, s)| s.name == node.name && !crate::contexts::is_copy(s))
+            .count();
         out.push(if ordinal == 0 {
             escape(&node.name)
         } else {
@@ -277,10 +314,24 @@ pub fn child_segments(parent: &OverseerNode) -> Vec<String> {
 
 /// Visit every node with its address, outermost first.
 pub fn walk<'a, F: FnMut(&str, &'a OverseerNode)>(nodes: &'a [OverseerNode], visit: &mut F) {
+    walk_with(nodes, false, visit)
+}
+
+/// The same, through everything the page holds: the copies of contexts too, at `(name)`.
+pub fn walk_drawn<'a, F: FnMut(&str, &'a OverseerNode)>(nodes: &'a [OverseerNode], visit: &mut F) {
+    walk_with(nodes, true, visit)
+}
+
+fn walk_with<'a, F: FnMut(&str, &'a OverseerNode)>(
+    nodes: &'a [OverseerNode],
+    copies: bool,
+    visit: &mut F,
+) {
     fn go<'a, F: FnMut(&str, &'a OverseerNode)>(
         parent: Option<&'a OverseerNode>,
         children: &[(Vec<usize>, &'a OverseerNode)],
         prefix: &str,
+        copies: bool,
         visit: &mut F,
     ) {
         let segments = segments_for(parent, children);
@@ -291,10 +342,14 @@ pub fn walk<'a, F: FnMut(&str, &'a OverseerNode)>(nodes: &'a [OverseerNode], vis
                 format!("{}/{}", prefix, segment)
             };
             visit(&address, node);
-            go(Some(node), &effective_children(node), &address, visit);
+            let mut inside = Vec::new();
+            collect(&node.children, &[], copies, &mut inside);
+            go(Some(node), &inside, &address, copies, visit);
         }
     }
-    go(None, &effective_roots(nodes), "", visit);
+    let mut roots = Vec::new();
+    collect(nodes, &[], copies, &mut roots);
+    go(None, &roots, "", copies, visit);
 }
 
 /// Every address in the document, in document order.
@@ -327,9 +382,11 @@ pub fn name_path(nodes: &[OverseerNode], address: &str) -> Option<Vec<String>> {
         let mut level = children;
         for &index in path {
             let node = &level[index];
+            // Without the copies of contexts, which a path of names does not reach either - see
+            // `ActionExecutor::find_indices_by_name_path`.
             let ordinal = level[..index]
                 .iter()
-                .filter(|sibling| sibling.name == node.name)
+                .filter(|sibling| sibling.name == node.name && !crate::contexts::is_copy(sibling))
                 .count();
             out.push(if ordinal == 0 {
                 node.name.clone()
