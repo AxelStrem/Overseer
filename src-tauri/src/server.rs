@@ -791,6 +791,22 @@ impl DocumentRoot {
                     .map_err(|e| RequestError::Failed(format!("could not write: {:?}", e)))?),
                 )
             }
+            // What the page should show now that something else wrote the file - see `watch`.
+            // Only read, so a document shared to be read is caught up as well.
+            "catch_up_overseer_document" => {
+                let named = document.ok_or_else(|| {
+                    RequestError::Rejected("'document' is required".into())
+                })?;
+                let at = self.resolve(named)?;
+                as_json(
+                    app_api::for_the_page(app_api::catch_up_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        session,
+                    )
+                    .map_err(|e| RequestError::Failed(format!("could not catch up: {:?}", e)))?),
+                )
+            }
             "run_overseer_event" => {
                 let named = document.ok_or_else(|| {
                     RequestError::Rejected("'document' is required".into())
@@ -1703,6 +1719,7 @@ impl DocumentRoot {
             let _ = std::fs::remove_file(&temporary);
             RequestError::Failed(format!("could not replace '{}': {}", name, e))
         })?;
+        crate::watch::wrote(&path);
         // What the step wrote through the document's mounts goes back with it.
         let left_alone = app_api::take_back_along(along);
         self.journal(serde_json::json!({
@@ -1752,7 +1769,9 @@ impl DocumentRoot {
         std::fs::rename(&temporary, path).map_err(|e| {
             let _ = std::fs::remove_file(&temporary);
             RequestError::Failed(format!("could not replace '{}': {}", name, e))
-        })
+        })?;
+        crate::watch::wrote(path);
+        Ok(())
     }
 
     /// One line per write, next to the documents. Not a transaction log - the document itself

@@ -1007,6 +1007,33 @@ fn change_document(
     session: &str,
     work: impl FnOnce(&mut Vec<OverseerNode>) -> Result<()>,
 ) -> Result<ResolvedUpdate> {
+    change_or_look(path, document, session, true, work)
+}
+
+/// What the caller should show of a document something else has written since it last heard,
+/// described against the text it holds - see `describing_for` - and never written.
+///
+/// A change that changes nothing: the page asks for this when it is told the file moved - see
+/// `watch` - and it is answered the way an edit is, so the page takes it the way it takes one.
+/// Worked out as this viewer sees it, so what is theirs comes back as they left it.
+pub fn catch_up_at(path: &str, document: &str, session: &str) -> Result<ResolvedUpdate> {
+    let as_it_stands = std::fs::read_to_string(path)
+        .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
+    let mut update = change_or_look(path, document, session, false, |_| Ok(()))?;
+    // Said the way a write says it, for a later save to be checked against the file as it is now.
+    if update.text != as_it_stands {
+        update.file_text = Some(as_it_stands);
+    }
+    Ok(update)
+}
+
+fn change_or_look(
+    path: &str,
+    document: &str,
+    session: &str,
+    writing: bool,
+    work: impl FnOnce(&mut Vec<OverseerNode>) -> Result<()>,
+) -> Result<ResolvedUpdate> {
     // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
     let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
     // Where the time goes, with OVERSEER_PROFILE=1.
@@ -1116,7 +1143,11 @@ fn change_document(
     }
     // What landed inside a mount is another file's, and is written there - or refused, before
     // anything is written anywhere.
-    let through_mounts = crate::actions::mounts_written(&nodes, report.as_ref());
+    let through_mounts = if writing {
+        crate::actions::mounts_written(&nodes, report.as_ref())
+    } else {
+        Vec::new()
+    };
     refuse_writing_through(&through_mounts).map_err(OverseerError::ValidationError)?;
     let worked_out_whole = settle_after_change(&mut nodes, &as_it_stood, report.as_ref());
     phase("settle");
@@ -1134,7 +1165,7 @@ fn change_document(
     for (address, value) in settled.viewers {
         crate::viewstate::set(session, document, &address, value);
     }
-    let wrote = settled.worth_writing && settled.text != as_it_stood;
+    let wrote = writing && settled.worth_writing && settled.text != as_it_stood;
     let along = write_through_mounts(through_mounts)
         .map_err(|e| OverseerError::IoError(format!("could not write what it mounts: {}", e)))?;
     if wrote {
@@ -2088,7 +2119,9 @@ pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result
     std::fs::write(&temporary, text.as_bytes())?;
     std::fs::rename(&temporary, at).inspect_err(|_| {
         let _ = std::fs::remove_file(&temporary);
-    })
+    })?;
+    crate::watch::wrote(at);
+    Ok(())
 }
 
 /// Refuse a write that reached into a mount it may not go through.
@@ -2157,6 +2190,7 @@ pub fn take_back_along(along: Vec<crate::undo::Along>) -> Vec<String> {
                     let temporary = at.with_extension("os.writing");
                     std::fs::write(&temporary, previous.as_bytes())
                         .and_then(|_| std::fs::rename(&temporary, at))
+                        .inspect(|_| crate::watch::wrote(at))
                         .is_ok()
                 }
                 None => false,
@@ -2189,6 +2223,7 @@ pub fn undo_document(path: &str) -> Result<(usize, Vec<String>)> {
     std::fs::write(&temporary, previous.as_bytes())
         .and_then(|_| std::fs::rename(&temporary, at))
         .map_err(|e| OverseerError::IoError(format!("could not write '{}': {}", named, e)))?;
+    crate::watch::wrote(at);
     let left_alone = take_back_along(along);
     Ok((crate::undo::depth(&beside, &named), left_alone))
 }

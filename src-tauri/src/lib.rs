@@ -25,6 +25,7 @@ pub mod source_registry;
 pub mod types;
 pub mod undo;
 pub mod viewstate;
+pub mod watch;
 
 // Re-export common types for convenience in integration tests
 pub use file_ops::OverseerFileHandler;

@@ -1857,9 +1857,15 @@ tab Main {
         // happened: a third edit in a row, or a second tag, and the page insisted the document
         // had changed since it was opened.
         //
-        // Nothing was written means the baseline still stands. `file_text` appears only when
-        // the file differs from what is being shown, which is when a guarded field is in play.
+        // Nothing was written means the baseline still stands.
         if (!update || update.wrote !== true) return
+        this.tookTheFile(update)
+    }
+
+    /// Take on what an answer says the file holds, as the baseline a later save is checked
+    /// against. `file_text` appears only when the file differs from what is being shown, which is
+    /// when a guarded field is in play.
+    tookTheFile(update) {
         if (typeof update.file_text === 'string') {
             this._originalText = update.file_text
             this._originalVersion = null
@@ -1903,6 +1909,107 @@ tab Main {
             version = this._versionOfText.version
         }
         return version ? { shown_version: version, shownVersion: version } : {}
+    }
+
+    /// The version of what the file held when this page last heard, worked out from the text when
+    /// it was given that - see `tookTheFile`. Null when it has neither.
+    fileVersion() {
+        if (this._originalVersion) return this._originalVersion
+        if (typeof this._originalText !== 'string') return null
+        if (this._versionOfFile?.text !== this._originalText) {
+            this._versionOfFile = { text: this._originalText, version: versionOf(this._originalText) }
+        }
+        return this._versionOfFile.version
+    }
+
+    /// The file is now `version`: told by the server each time something writes it - the bot, a
+    /// backup, this page itself - and once as the page starts listening. See `watch` and the
+    /// bridge.
+    ///
+    /// The page's own write is told back to it too, and is recognised by the version its answer
+    /// gave; anything else is caught up with once nothing here is part-way through - see
+    /// `catchUpSoon`.
+    heardTheFile(version) {
+        if (!this.currentFile || typeof version !== 'string' || !version) return
+        this._fileHeardAt = version
+        if (version === this.fileVersion()) return
+        this.catchUpSoon()
+    }
+
+    /// Whether something here is part-way through and must not be drawn over: a change on its way
+    /// to the file, or a field open for editing. Its own answer brings what else was written, so
+    /// catching up waits for it - and finds, more often than not, there is nothing left to do.
+    busyForCatchingUp() {
+        if (this._writingByInstruction > 0 || this._saving || this._rereading || this.isDocumentModified) return true
+        const shown = document.getElementById('content-display')
+        return !!(shown && shown.querySelector('.field-editor, .markdown-editor-container, .tag-picker'))
+    }
+
+    /// Catch up with the file once nothing is in the way, asked again until then. However many
+    /// writes are heard meanwhile, it is one catch-up, to the last.
+    catchUpSoon(wait = 0) {
+        if (this._catchingUp || this._catchUpTimer) return
+        this._catchUpTimer = setTimeout(() => {
+            this._catchUpTimer = null
+            if (!this.currentFile || !this._fileHeardAt || this._fileHeardAt === this.fileVersion()) return
+            if (this.busyForCatchingUp()) { this.catchUpSoon(300); return }
+            this._catchingUp = true
+            let failed = false
+            Promise.resolve(this.catchUp())
+                .then(() => { this._catchUpFailures = 0 })
+                .catch((e) => {
+                    failed = true
+                    this._catchUpFailures = (this._catchUpFailures || 0) + 1
+                    if (DEBUG_MODE) console.warn('[Overseer] could not catch up', e)
+                })
+                .finally(() => {
+                    this._catchingUp = false
+                    // Written again while this was on its way, or dropped for something begun
+                    // meanwhile - or refused, and asked again less and less often.
+                    const wait = failed ? Math.min(60000, 1000 * 2 ** this._catchUpFailures) : 300
+                    if (this._fileHeardAt && this._fileHeardAt !== this.fileVersion()) this.catchUpSoon(wait)
+                })
+        }, wait)
+    }
+
+    /// Show what the file says now, described against what this page holds - the answer an edit
+    /// gets, for an edit that changed nothing - and taken the way an edit's answer is.
+    ///
+    /// What is typed into a textbox is kept by the renderer and drawn back into it; what is this
+    /// viewer's - a guarded field, the day a calendar shows - comes back as they left it, since
+    /// the server works the document out as they see it. An answer that arrives after something
+    /// here began is dropped, since it describes the page as it was before that: the change on
+    /// its way brings the file with it, and the catch-up is asked again after.
+    async catchUp() {
+        const shown = this.showing()
+        const file = this.currentFile
+        const update = await invoke('catch_up_overseer_document', { path: file, ...shown })
+        if (!update || file !== this.currentFile) return
+        if (this.busyForCatchingUp() || JSON.stringify(this.showing()) !== JSON.stringify(shown)) return
+        // A reevaluation still on its way was worked out from the page as it was before this.
+        this._reevaluationTicket = (this._reevaluationTicket || 0) + 1
+        if (Array.isArray(update.changes)) {
+            this.tookTheText(update)
+            this.tookTheFile(update)
+            if (update.changes.length === 0) return
+            const touched = this.applyDocumentChanges(this.currentDocument, update.changes)
+            try {
+                this.renderer.repaintNodes(touched, this.currentDocument)
+            } catch (e) {
+                console.error('Render error (catching up):', e)
+                try { this.renderer.renderDocument(this.currentDocument) } catch (_) { /* best-effort */ }
+            }
+        } else if (Array.isArray(update.nodes)) {
+            this.tookTheText(update)
+            this.tookTheFile(update)
+            // Drawn again whole, and left scrolled where it was.
+            const display = document.getElementById('content-display')
+            const scrolled = { page: window.scrollY, display: display ? display.scrollTop : 0 }
+            this._applyResolvedDocumentWithFormulaPreservation(update.nodes)
+            this.renderer.renderDocument(this.currentDocument)
+            if (display) display.scrollTop = scrolled.display
+            if (window.scrollY !== scrolled.page) window.scrollTo(window.scrollX, scrolled.page)
+        }
     }
 
     /// The text of the document as this page has it, fetched by its version if an answer only
@@ -2028,10 +2135,17 @@ tab Main {
     /// there is nothing to discard, which is what removed the question rather than fixing it.
     async rereadFromDisk() {
         if (!this.currentFile) return
-        await this.loadFile(this.currentFile)
+        // Read whole, so there is nothing for a catch-up to add meanwhile - see `catchUpSoon`.
+        this._rereading = true
         try {
-            this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
-        } catch (_) { /* non-fatal */ }
+            await this.loadFile(this.currentFile)
+            try {
+                this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                this._originalVersion = null
+            } catch (_) { /* non-fatal */ }
+        } finally {
+            this._rereading = false
+        }
     }
 
     /// The window's title, and a browser tab's: the open document by the name the drawer calls it,

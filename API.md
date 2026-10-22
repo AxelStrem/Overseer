@@ -243,6 +243,20 @@ curl -H "$A" -X POST $B/v1/undo --url-query document=$D
 Puts the document back as it was before its last write, whoever made it. With nothing left to
 take back: `400 {"error":"there is nothing to take back for 'shopping/shopping.os'"}`.
 
+## Watching: `GET /v1/watch`
+
+```bash
+curl -N -H "$A" $B/v1/watch --url-query document=$D
+# event: changed
+# data: 3f1c9a0d27e4b8a1-10446
+```
+
+A stream of server-sent events, one `changed` for each new version of the document's file: first
+the version it has now, then one each time something writes it - a write through this server at
+once, one made from outside (a sync, a hand edit) within a couple of seconds. Only the version: a
+page that hears one asks to be caught up, and is answered against what it shows, as its own edits
+are. Reading the document is enough to watch it.
+
 ## Writes
 
 Every write goes through the same writer as the page's edits: the document is re-written in place,

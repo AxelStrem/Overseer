@@ -875,6 +875,53 @@ struct Which {
     document: String,
 }
 
+/// Hear each time a document's file changes, as its version - see `overseer::watch`.
+///
+/// One `changed` event with the version it has now, then one per version after. Only versions:
+/// what a page shows depends on who is looking, so each asks for its own catch-up. Reading is
+/// enough to listen, since a document shared only to be read still moves.
+async fn watch(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    axum::extract::Query(which): axum::extract::Query<Which>,
+) -> Result<
+    axum::response::sse::Sse<
+        impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+    (StatusCode, Json<serde_json::Value>),
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio::sync::broadcast::error::RecvError;
+    let documents = service.documents.clone();
+    let (now, listening) = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || {
+            documents.resolve(&which.document).map(|path| overseer::watch::listen(&path))
+        })
+    })
+    .await
+    .map_err(|e| respond(RequestError::Failed(format!("watching panicked: {}", e))))?
+    .map_err(respond)?;
+    let changed = |version: String| Ok(Event::default().event("changed").data(version));
+    let stream = futures_util::stream::unfold(
+        (Some(now), listening),
+        move |(first, mut listening)| async move {
+            if let Some(version) = first {
+                return Some((changed(version), (None, listening)));
+            }
+            loop {
+                match listening.recv().await {
+                    Ok(version) => return Some((changed(version), (None, listening))),
+                    // Versions missed only mean the next one is newer still.
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => return None,
+                }
+            }
+        },
+    );
+    // Kept alive, or a proxy in front of the server closes a quiet stream.
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
 /// Report what went wrong without describing the filesystem to whoever asked.
 ///
 /// A press the document refused says so in `refused` as well as `error`, so a caller can tell
@@ -1215,6 +1262,7 @@ async fn serve() {
         .route("/v1/remove", post(remove_at))
         .route("/v1/event", post(run_event))
         .route("/v1/undo", post(undo))
+        .route("/v1/watch", get(watch))
         .route("/__overseer/bridge.js", get(bridge))
         .route("/account/me", get(me).post(change_me))
         .route("/account/invite", post(invite))

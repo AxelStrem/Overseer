@@ -109,10 +109,29 @@
             if (!window.app || typeof window.app.loadFile !== 'function') {
                 return setTimeout(open, 20)
             }
-            window.app.loadFile(documentName).catch((e) => {
+            window.app.loadFile(documentName).then(listen).catch((e) => {
                 console.error('could not open', documentName, e)
             })
         }
         open()
     })
+
+    // Told each time the document's file changes - the bot writing to it, most of the day - so
+    // the page catches up without a reload: see `heardTheFile`. The browser reconnects by itself
+    // after a dropped connection, and the server then says the version as it is, so a write made
+    // in between is caught up with too. A refused or failed answer - a deploy, say - ends the
+    // stream, and it is opened again a little later.
+    function listen() {
+        if (typeof EventSource !== 'function') return
+        const source = new EventSource(`/v1/watch?document=${encodeURIComponent(documentName)}`)
+        source.addEventListener('changed', (event) => {
+            try { window.app && window.app.heardTheFile && window.app.heardTheFile(event.data) } catch (e) {
+                console.warn('could not take a change made elsewhere', e)
+            }
+        })
+        source.onerror = () => {
+            if (source.readyState !== EventSource.CLOSED) return
+            setTimeout(listen, 10000)
+        }
+    }
 })()

@@ -229,6 +229,18 @@ async fn write_overseer_values(
     app_api::write_values_at(&path, &path, values, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
+/// What the page should show now that something else wrote the file, described against what it
+/// shows - see `app_api::catch_up_at`. Nothing here tells the page a file moved yet; offered so
+/// the page asks both hosts the same things.
+#[command]
+async fn catch_up_overseer_document(
+    path: String,
+    shown_version: Option<String>,
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    let _showing = app_api::describing_for(shown_version);
+    app_api::catch_up_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+}
+
 /// Add an entry to a list, with whatever fields the page has for it.
 #[command]
 async fn append_overseer_entry(
@@ -470,6 +482,7 @@ fn main() {
             execute_overseer_event_with_text,
             execute_overseer_event_update,
             write_overseer_values,
+            catch_up_overseer_document,
             run_overseer_event,
             append_overseer_entry,
             remove_overseer_entry,

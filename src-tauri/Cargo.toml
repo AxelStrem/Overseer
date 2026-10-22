@@ -40,6 +40,8 @@ nom = "7.1"
 # Only for the `server` binary; see the feature above.
 axum = { version = "0.7", optional = true }
 tower-http = { version = "0.5", features = ["fs", "trace", "compression-gzip"], optional = true }
+# Only for the `server` binary: a watched document's versions, as a stream - see `watch`.
+futures-util = { version = "0.3", default-features = false, optional = true }
 
 # Regular expressions for dependency extraction
 regex = "1.10"
@@ -80,7 +82,7 @@ debug-evaluator = []
 
 # Serving documents over HTTP. Off by default and confined to its own binary, so the desktop
 # app neither compiles nor ships an HTTP stack it has no use for.
-server = ["dep:axum", "dep:tower-http", "dep:argon2", "dep:sha2", "dep:getrandom"]
+server = ["dep:axum", "dep:tower-http", "dep:futures-util", "dep:argon2", "dep:sha2", "dep:getrandom"]
 
 # The backend does heavy tree work on every interaction, and an unoptimized build makes that
 # take seconds rather than milliseconds - `tauri dev` is unusable for editing documents
