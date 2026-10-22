@@ -6,8 +6,8 @@ import { invoke } from '@tauri-apps/api/core'
  * The server answers `access` with who is asking - a person, a stranger, or the token (`anyone`) -
  * and whether the open document is theirs to change. From that the page draws a document shared
  * only to be read as read-only, keeps from a stranger what the server would refuse them, and gives
- * a person their profile: their name and password, their sharing document, signing out, and for an
- * admin the links that invite someone or set a new password.
+ * a person their profile: their name and password, their sharing document, the keys programs act
+ * as them with, signing out, and for an admin the links that invite someone or set a new password.
  *
  * With no document open it lists what the person may open: their own, what others share with them,
  * and what is public.
@@ -20,6 +20,7 @@ export class Account {
         this.app = app
         this.inBrowser = typeof window !== 'undefined' && window.__OVERSEER_HOST__ === 'browser'
         this.navigate = (url) => window.location.assign(url)
+        this.confirm = (question) => window.confirm(question)
         this.asker = 'anyone'
         this.person = null
         this.can = null
@@ -87,6 +88,10 @@ export class Account {
         on('account-invite', () => this.invite())
         on('account-reset', () => this.invite(this.valueOf('account-reset-username')))
         on('account-copy', () => this.copy())
+        on('account-make-key', () => this.makeKey())
+        on('account-key-copy', () => this.copyKey())
+        const keys = document.getElementById('account-keys')
+        if (keys) keys.addEventListener('toggle', () => { if (keys.open) this.listKeys() })
         const signIn = document.getElementById('drawer-sign-in')
         if (signIn) {
             const here = window.location.pathname + window.location.search
@@ -124,11 +129,16 @@ export class Account {
 
     /// A call to the server's account routes, which are no command of the page's.
     async post(url, body) {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body || {}),
-        })
+        return this.call('POST', url, body || {})
+    }
+
+    async call(method, url, body) {
+        const options = { method, headers: {} }
+        if (body !== undefined) {
+            options.headers['Content-Type'] = 'application/json'
+            options.body = JSON.stringify(body)
+        }
+        const response = await fetch(url, options)
         const answer = await response.json().catch(() => null)
         if (!response.ok) throw new Error((answer && answer.error) || `failed (${response.status})`)
         return answer
@@ -202,6 +212,77 @@ export class Account {
             this.say('account-invite-said', 'Copied.')
         } catch (_) {
             link.select()
+        }
+    }
+
+    /// The person's keys, by name and last use, each with a way to revoke it.
+    async listKeys() {
+        const target = document.getElementById('account-key-list')
+        if (!target) return
+        let keys = []
+        try {
+            keys = (await this.call('GET', '/account/keys')).keys || []
+        } catch (e) {
+            return this.say('account-key-said', e.message, true)
+        }
+        target.textContent = ''
+        for (const key of keys) {
+            const item = document.createElement('li')
+            const name = document.createElement('span')
+            name.className = 'account-key-name'
+            name.textContent = key.name
+            const used = document.createElement('span')
+            used.className = 'account-key-used'
+            used.textContent = key.used ? 'used ' + String(key.used).slice(0, 10) : 'never used'
+            const revoke = document.createElement('button')
+            revoke.className = 'drawer-action quiet'
+            revoke.textContent = 'Revoke'
+            revoke.addEventListener('click', () => this.revokeKey(key.name))
+            item.append(name, used, revoke)
+            target.appendChild(item)
+        }
+    }
+
+    /// Make a key, and show it the only time the server gives it.
+    async makeKey() {
+        const name = this.valueOf('account-key-name')
+        if (!name) return this.say('account-key-said', 'A key needs a name.', true)
+        try {
+            const made = await this.post('/account/keys', { name })
+            const key = document.getElementById('account-key')
+            const row = document.getElementById('account-key-row')
+            if (key) key.value = made.key
+            if (row) row.hidden = false
+            const field = document.getElementById('account-key-name')
+            if (field) field.value = ''
+            this.say('account-key-said', `The key "${made.name}". Copy it now: it is not shown again.`)
+            await this.listKeys()
+        } catch (e) {
+            this.say('account-key-said', e.message, true)
+        }
+    }
+
+    async revokeKey(name) {
+        if (!this.confirm(`Revoke the key "${name}"? Whatever uses it is refused from now on.`)) return
+        try {
+            await this.call('DELETE', '/account/keys/' + encodeURIComponent(name))
+            const row = document.getElementById('account-key-row')
+            if (row) row.hidden = true
+            this.say('account-key-said', `Revoked "${name}".`)
+            await this.listKeys()
+        } catch (e) {
+            this.say('account-key-said', e.message, true)
+        }
+    }
+
+    async copyKey() {
+        const key = document.getElementById('account-key')
+        if (!key || !key.value) return
+        try {
+            await navigator.clipboard.writeText(key.value)
+            this.say('account-key-said', 'Copied.')
+        } catch (_) {
+            key.select()
         }
     }
 

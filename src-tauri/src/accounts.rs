@@ -1,4 +1,4 @@
-//! The people who may sign in to the server, and the invites and sessions that let them.
+//! The people who may sign in to the server, and the invites, sessions and keys that let them.
 //!
 //! One JSON file holds it all, written by nobody but the server. It is kept apart from the
 //! documents on purpose: the documents are backed up to a repository, and password hashes have
@@ -6,8 +6,8 @@
 //! people it named join again by invite.
 //!
 //! Nobody is let in by a secret kept as it was given. A password is kept as its argon2 hash; an
-//! invite and a session are random tokens, kept as their SHA-256, which is enough for a value
-//! nobody chose and nobody could guess.
+//! invite, a session and a key are random tokens, kept as their SHA-256, which is enough for a
+//! value nobody chose and nobody could guess.
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -27,6 +27,12 @@ pub const SESSION_LASTS: Duration = Duration::days(90);
 pub const SHORTEST_PASSWORD: usize = 8;
 const LONGEST_USERNAME: usize = 32;
 const LONGEST_NAME: usize = 64;
+/// What every key begins with, so that one pasted somewhere is recognisable for what it is.
+pub const KEY_PREFIX: &str = "osk_";
+/// How stale a key's last use may be before it is written down again: often enough to tell a
+/// key still in use from one forgotten, seldom enough that a program's every request does not
+/// rewrite the file.
+pub const KEY_USE_NOTED_EVERY: Duration = Duration::hours(1);
 
 /// Someone who has signed in.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -45,6 +51,15 @@ pub struct Invited {
     pub username: Option<String>,
     /// Whether that account exists already, so that using the invite only sets a new password.
     pub resets: bool,
+}
+
+/// A key, as its owner is shown it: never the key itself, which is seen once, when it is made.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct KeyShown {
+    pub name: String,
+    pub made: DateTime<Utc>,
+    /// When it was last used, to within `KEY_USE_NOTED_EVERY`.
+    pub used: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug)]
@@ -81,6 +96,18 @@ struct Account {
     admin: bool,
     #[serde(default)]
     sessions: Vec<Secret>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    keys: Vec<Key>,
+}
+
+/// A key a program uses to be its account, kept until its owner revokes it.
+#[derive(Clone, Serialize, Deserialize)]
+struct Key {
+    name: String,
+    hash: String,
+    made: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    used: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -173,6 +200,17 @@ fn valid_password(password: &str) -> Result<(), AccountError> {
         )));
     }
     Ok(())
+}
+
+fn valid_key_name(name: &str) -> Result<String, AccountError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > LONGEST_NAME {
+        return Err(AccountError::Refused(format!(
+            "a key's name is 1 to {} characters",
+            LONGEST_NAME
+        )));
+    }
+    Ok(name.to_string())
 }
 
 fn as_user(account: &Account) -> User {
@@ -379,6 +417,8 @@ impl Accounts {
             match store.account_mut(&username) {
                 Some(account) if invite_resets(&invite.username, &username) => {
                     account.password = password_hash;
+                    // Keys stay: each was made on purpose for a program, and is revoked on
+                    // its own from the account page if it is the one that leaked.
                     account.sessions.clear();
                     account.admin |= invite.admin;
                 }
@@ -394,6 +434,7 @@ impl Accounts {
                     password: password_hash,
                     admin: invite.admin,
                     sessions: Vec::new(),
+                    keys: Vec::new(),
                 }),
             }
             let session = store
@@ -456,6 +497,90 @@ impl Accounts {
             }
             Ok(())
         })
+    }
+
+    /// Make a key for a program to act as `username` with, and give it back - the only time it
+    /// is seen. The name tells it from the others when it is listed or revoked.
+    pub fn make_key(&self, username: &str, name: &str, now: DateTime<Utc>) -> Result<String, AccountError> {
+        let name = valid_key_name(name)?;
+        let token = format!("{}{}", KEY_PREFIX, new_token());
+        self.change(now, |store| {
+            let account = store
+                .account_mut(username)
+                .ok_or_else(|| AccountError::Refused("there is no such account".into()))?;
+            if account.keys.iter().any(|k| k.name == name) {
+                return Err(AccountError::Refused(format!("there is a key named '{}' already", name)));
+            }
+            account.keys.push(Key {
+                name,
+                hash: hashed(&token),
+                made: now,
+                used: None,
+            });
+            Ok(())
+        })?;
+        Ok(token)
+    }
+
+    /// The keys of an account, in the order they were made.
+    pub fn keys(&self, username: &str) -> Vec<KeyShown> {
+        self.read(|store| {
+            store.account(username).map(|account| {
+                account
+                    .keys
+                    .iter()
+                    .map(|k| KeyShown {
+                        name: k.name.clone(),
+                        made: k.made,
+                        used: k.used,
+                    })
+                    .collect()
+            })
+        })
+        .flatten()
+        .unwrap_or_default()
+    }
+
+    /// Revoke a key by its name; whether there was one.
+    pub fn revoke_key(&self, username: &str, name: &str, now: DateTime<Utc>) -> Result<bool, AccountError> {
+        self.change(now, |store| {
+            let account = store
+                .account_mut(username)
+                .ok_or_else(|| AccountError::Refused("there is no such account".into()))?;
+            let before = account.keys.len();
+            account.keys.retain(|k| k.name != name);
+            Ok(account.keys.len() != before)
+        })
+    }
+
+    /// Who a key belongs to, while it is not revoked. Its use is written down when what was
+    /// written last is older than `KEY_USE_NOTED_EVERY`.
+    pub fn by_key(&self, token: &str, now: DateTime<Utc>) -> Option<User> {
+        let hash = hashed(token);
+        let (user, stale) = self
+            .read(|store| {
+                store.accounts.iter().find_map(|a| {
+                    let key = a.keys.iter().find(|k| k.hash == hash)?;
+                    let stale = key.used.map_or(true, |used| now - used >= KEY_USE_NOTED_EVERY);
+                    Some((as_user(a), stale))
+                })
+            })
+            .flatten()?;
+        if stale {
+            // A key that works is let in whether or not its use could be written down.
+            let noted = self.change(now, |store| {
+                for account in &mut store.accounts {
+                    for key in account.keys.iter_mut().filter(|k| k.hash == hash) {
+                        key.used = Some(now);
+                    }
+                }
+                Ok(())
+            });
+            if let Err(e) = noted {
+                eprintln!("{}", e);
+            }
+        }
+        Some(user)
     }
 
     /// Change one's own display name, password, or both. A new password needs the current one:

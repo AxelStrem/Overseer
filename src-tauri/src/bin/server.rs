@@ -274,6 +274,22 @@ async fn require_access(
             },
         }
     } else if let Some(accounts) = service.accounts.as_ref() {
+        // A program presents a key of the account it acts as. A key that is not one - revoked,
+        // or mistyped - is refused outright rather than let in as a stranger, so the program
+        // learns of it instead of quietly seeing only what is public.
+        if let Some(key) = bearer.as_deref().and_then(bearer_secret) {
+            return match accounts.by_key(key, chrono::Utc::now()) {
+                Some(user) => {
+                    request.extensions_mut().insert(Caller::Person(user));
+                    next.run(request).await
+                }
+                None => (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({ "error": "the key is not known" })),
+                )
+                    .into_response(),
+            };
+        }
         // Nobody signed in is still let through, as a stranger: each document says whether it
         // is shared with everyone, and the page has to load for one that is to be drawn.
         Some(
@@ -307,6 +323,15 @@ fn to_sign_in(uri: &axum::http::Uri) -> Response {
 }
 
 /// The account the token says it acts for, in `X-Overseer-As`.
+/// What an `Authorization: Bearer ...` header presents.
+fn bearer_secret(value: &str) -> Option<&str> {
+    value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+}
+
 fn acting_for(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-overseer-as")
@@ -668,6 +693,61 @@ async fn change_me(
         .change_own(&user.username, body.name.as_deref(), password, chrono::Utc::now())
         .map_err(account_refusal)?;
     Ok(Json(json!(changed)))
+}
+
+fn keeps_accounts(service: &Service) -> Result<&Accounts, (StatusCode, Json<serde_json::Value>)> {
+    service.accounts.as_deref().ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(json!({ "error": "this server keeps no accounts" })))
+    })
+}
+
+/// One's own keys, by name, when each was made and last used.
+async fn keys(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let accounts = keeps_accounts(&service)?;
+    let user = signed_in(&caller)?;
+    Ok(Json(json!({ "keys": accounts.keys(&user.username) })))
+}
+
+#[derive(serde::Deserialize)]
+struct KeyAsked {
+    name: String,
+}
+
+/// Make a key for a program to act as oneself with, and answer it - the only time it is shown.
+async fn make_key(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<KeyAsked>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let accounts = keeps_accounts(&service)?;
+    let user = signed_in(&caller)?;
+    let key = accounts
+        .make_key(&user.username, &body.name, chrono::Utc::now())
+        .map_err(account_refusal)?;
+    Ok(Json(json!({ "name": body.name.trim(), "key": key })))
+}
+
+/// Revoke one of one's own keys.
+async fn revoke_key(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let accounts = keeps_accounts(&service)?;
+    let user = signed_in(&caller)?;
+    if !accounts
+        .revoke_key(&user.username, &name, chrono::Utc::now())
+        .map_err(account_refusal)?
+    {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "there is no key of that name" })),
+        ));
+    }
+    Ok(Json(json!({ "revoked": name })))
 }
 
 /// Make one's own `sharing.os`, unless there is one, and answer its full name.
@@ -1267,6 +1347,8 @@ async fn serve() {
         .route("/account/me", get(me).post(change_me))
         .route("/account/invite", post(invite))
         .route("/account/sharing", post(start_sharing))
+        .route("/account/keys", get(keys).post(make_key))
+        .route("/account/keys/:name", axum::routing::delete(revoke_key))
         .route("/", get(index));
     if let Some(dir) = frontend.as_ref() {
         // Everything else is the frontend's own assets.

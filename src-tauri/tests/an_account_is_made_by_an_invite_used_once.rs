@@ -5,7 +5,7 @@
 #![cfg(feature = "server")]
 
 use chrono::{Duration, Utc};
-use overseer::accounts::{AccountError, Accounts, INVITE_LASTS, SESSION_LASTS};
+use overseer::accounts::{AccountError, Accounts, INVITE_LASTS, KEY_PREFIX, KEY_USE_NOTED_EVERY, SESSION_LASTS};
 use std::path::PathBuf;
 
 fn fresh_file(name: &str) -> PathBuf {
@@ -140,4 +140,58 @@ fn a_person_changes_their_own_name_and_password() {
         .change_own("alice", None, Some(("a good password", "a new password")), now)
         .unwrap();
     accounts.sign_in("alice", "a new password", now).unwrap();
+}
+
+#[test]
+fn a_key_is_its_account_until_revoked() {
+    let file = fresh_file("keys");
+    let accounts = Accounts::open(&file).unwrap();
+    let now = Utc::now();
+    let invite = accounts.invite(None, false, now).unwrap();
+    accounts.join(&invite, "alice", "Alice", "a good password", now).unwrap();
+
+    let key = accounts.make_key("alice", " desktop bot ", now).unwrap();
+    assert!(key.starts_with(KEY_PREFIX), "{}", key);
+    assert_eq!(accounts.by_key(&key, now).unwrap().username, "alice");
+    assert!(accounts.by_key("osk_made-up", now).is_none());
+    assert!(accounts.session(&key, now).is_none(), "a key is no session");
+    assert!(refused(accounts.make_key("alice", "desktop bot", now)).contains("already"));
+    refused(accounts.make_key("alice", "  ", now));
+
+    let listed = accounts.keys("alice");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "desktop bot");
+    assert_eq!(listed[0].used, Some(now));
+    assert!(!std::fs::read_to_string(&file).unwrap().contains(&key), "only its hash is kept");
+
+    // A use soon after is not written down again; one later is.
+    let soon = now + Duration::minutes(5);
+    accounts.by_key(&key, soon).unwrap();
+    assert_eq!(accounts.keys("alice")[0].used, Some(now));
+    let later = now + KEY_USE_NOTED_EVERY + Duration::minutes(1);
+    accounts.by_key(&key, later).unwrap();
+    assert_eq!(accounts.keys("alice")[0].used, Some(later));
+
+    // A reset of the password leaves keys alone; revoking ends one.
+    let reset = accounts.invite(Some("alice"), false, now).unwrap();
+    accounts.join(&reset, "alice", "", "a new password", now).unwrap();
+    assert!(accounts.by_key(&key, now).is_some());
+    assert!(Accounts::open(&file).unwrap().by_key(&key, now).is_some(), "keys are kept");
+    assert!(accounts.revoke_key("alice", "desktop bot", now).unwrap());
+    assert!(!accounts.revoke_key("alice", "desktop bot", now).unwrap());
+    assert!(accounts.by_key(&key, now).is_none());
+    assert!(accounts.keys("alice").is_empty());
+}
+
+#[test]
+fn an_accounts_file_from_before_keys_still_opens() {
+    let file = fresh_file("before-keys");
+    std::fs::write(
+        &file,
+        r#"{"accounts":[{"username":"ap31","name":"Dmitrii","password":"x","admin":true,"sessions":[]}],"invites":[]}"#,
+    )
+    .unwrap();
+    let accounts = Accounts::open(&file).unwrap();
+    assert!(accounts.keys("ap31").is_empty());
+    accounts.make_key("ap31", "bot", Utc::now()).unwrap();
 }

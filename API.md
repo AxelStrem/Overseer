@@ -48,6 +48,29 @@ The token stays what it was: whoever holds it may do anything.
   that person - the bot does, for whoever is talking to it. From anyone else the header is
   ignored, and naming no account is `403`.
 
+### Keys
+
+A program that is to act as one person - a bot on someone's desktop, an agent that leaves
+comments under its own name - is given a key of that person's account. It sends
+`Authorization: Bearer <key>` and is that person, signed in: it reaches what they may and nothing
+else, and `sharing.os` restricts it as it restricts them. A program that should see only some of
+someone's documents gets an account of its own, by invite, and those documents are shared with it.
+
+- **`POST /account/keys`** with `{"name": ...}`, signed in, makes one and answers
+  `{"name", "key"}`. The key begins `osk_` and is shown this once; only its hash is kept. Each of
+  a person's keys has a name of its own.
+- **`GET /account/keys`** answers `{"keys": [{"name", "made", "used"}]}`, `used` being when it
+  was last used, to within an hour, or `null`.
+- **`DELETE /account/keys/<name>`** revokes one. A key lasts until it is revoked; a new password
+  leaves keys as they are.
+
+The page's "Keys", in the account drawer, does all three. A key that is not one - revoked, or
+mistyped - is answered `401 {"error":"the key is not known"}`, never let in as a stranger. The
+token is no account and makes no keys; only the token may send `X-Overseer-As`.
+
+The server reached at its public address takes keys as it does on this machine, so a program
+anywhere can use the deployed one this way, as long as the server is bound beyond loopback.
+
 ### Whose documents
 
 With accounts, the root holds a folder per person, named by their username, and what is in it is

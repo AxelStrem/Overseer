@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // Who is looking, on a server that keeps accounts. The server says who is asking and whether the
 // open document is theirs to change; the page lists what they may open under whose it is, draws a
 // document shared only to be read as read-only, keeps from a stranger what would be refused them,
-// and gives a person their profile, and an admin the links that let others in.
+// and gives a person their profile and their keys, and an admin the links that let others in.
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { invoke } from '@tauri-apps/api/core'
@@ -20,6 +20,12 @@ function setupDOM() {
       <button id="account-save-name"></button><div id="account-name-said"></div>
       <input id="account-current"><input id="account-password">
       <button id="account-save-password"></button><div id="account-password-said"></div>
+      <details id="account-keys">
+        <ul id="account-key-list"></ul>
+        <input id="account-key-name"><button id="account-make-key"></button>
+        <div id="account-key-said"></div>
+        <div id="account-key-row" hidden><input id="account-key"><button id="account-key-copy"></button></div>
+      </details>
       <details id="account-admin" hidden>
         <button id="account-invite"></button>
         <input id="account-reset-username">
@@ -161,5 +167,41 @@ describe('a viewer is offered what they may do', () => {
     document.getElementById('account-reset').click()
     await vi.waitFor(() => expect(document.getElementById('account-invite-said').textContent).toBe('only an admin may invite'))
     expect(fetched).toContainEqual({ url: '/account/invite', body: { reset: 'bob' } })
+  })
+
+  it('makes a key and shows it once, lists the keys, and revokes one when asked twice', async () => {
+    let keys = [{ name: 'laptop', made: '2026-10-01T10:00:00Z', used: '2026-10-20T08:00:00Z' }]
+    const calls = []
+    globalThis.fetch = vi.fn(async (url, options) => {
+      const method = (options && options.method) || 'GET'
+      calls.push([method, url, options && options.body ? JSON.parse(options.body) : null])
+      let answer = { keys }
+      if (method === 'POST' && url === '/account/keys') {
+        keys = [...keys, { name: 'desktop bot', made: '2026-10-22T10:00:00Z', used: null }]
+        answer = { name: 'desktop bot', key: 'osk_secret' }
+      } else if (method === 'DELETE') {
+        keys = keys.filter((k) => '/account/keys/' + encodeURIComponent(k.name) !== url)
+        answer = { revoked: 'desktop bot' }
+      }
+      return { ok: true, status: 200, json: async () => answer }
+    })
+    const { account } = await started({ asker: 'person', person: BOB, can: 'edit' })
+    const listed = () => Array.from(document.querySelectorAll('#account-key-list li')).map((li) => li.textContent)
+
+    document.getElementById('account-key-name').value = 'desktop bot'
+    document.getElementById('account-make-key').click()
+    await vi.waitFor(() => expect(document.getElementById('account-key-row').hidden).toBe(false))
+    expect(document.getElementById('account-key').value).toBe('osk_secret')
+    expect(calls).toContainEqual(['POST', '/account/keys', { name: 'desktop bot' }])
+    await vi.waitFor(() => expect(listed()).toEqual(['laptopused 2026-10-20Revoke', 'desktop botnever usedRevoke']))
+
+    account.confirm = vi.fn(() => false)
+    document.querySelectorAll('#account-key-list button')[1].click()
+    expect(calls.some(([method]) => method === 'DELETE')).toBe(false)
+    account.confirm = vi.fn(() => true)
+    document.querySelectorAll('#account-key-list button')[1].click()
+    await vi.waitFor(() => expect(listed()).toEqual(['laptopused 2026-10-20Revoke']))
+    expect(calls).toContainEqual(['DELETE', '/account/keys/desktop%20bot', null])
+    expect(document.getElementById('account-key-row').hidden).toBe(true)
   })
 })

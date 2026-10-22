@@ -56,6 +56,18 @@
                     <button id="account-save-password" class="drawer-action">Change the password</button>
                     <div id="account-password-said" class="account-said" role="status"></div>
                 </details>
+                <details id="account-keys" class="account-profile">
+                    <summary class="drawer-action quiet">Keys</summary>
+                    <div class="account-said">A key lets a program act as you through the API.</div>
+                    <ul id="account-key-list" class="account-key-list"></ul>
+                    <label class="account-field">Name <input id="account-key-name" type="text" autocomplete="off" placeholder="desktop bot"></label>
+                    <button id="account-make-key" class="drawer-action">Make a key</button>
+                    <div id="account-key-said" class="account-said" role="status"></div>
+                    <div id="account-key-row" class="account-link" hidden>
+                        <input id="account-key" type="text" readonly aria-label="The key">
+                        <button id="account-key-copy" class="drawer-action">Copy</button>
+                    </div>
+                </details>
                 <details id="account-admin" class="account-profile" hidden>
                     <summary class="drawer-action quiet">People</summary>
                     <button id="account-invite" class="drawer-action">Invite someone</button>

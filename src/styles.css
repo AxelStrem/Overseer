@@ -447,6 +447,35 @@ a.drawer-action {
     min-width: 0;
 }
 
+.account-key-list {
+    list-style: none;
+    margin: 2px 8px;
+    padding: 0;
+}
+
+.account-key-list:empty {
+    display: none;
+}
+
+.account-key-list li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.account-key-list .account-key-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.account-key-list .account-key-used {
+    font-size: 11px;
+    color: var(--ov-muted);
+}
+
 /* Every document there is to open, at the root of a server. */
 .document-list {
     margin-top: 24px;
