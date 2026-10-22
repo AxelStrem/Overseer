@@ -5,7 +5,7 @@ edition = "2021"
 # The app. Naming it explicitly because the package also builds `overseer-server`, and
 # `cargo run` - which `tauri dev` uses - refuses to guess between two binaries.
 default-run = "overseer"
-rust-version = "1.70"
+rust-version = "1.85"
 description = "A minimalistic personal data management framework"
 authors = ["Dmitrii XL <axelstrem@gmail.com>"]
 license = "MIT OR Apache-2.0"
