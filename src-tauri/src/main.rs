@@ -241,6 +241,15 @@ async fn catch_up_overseer_document(
     app_api::catch_up_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
+/// One window more of a list, for this window alone - see `app_api::show_more_at`.
+#[command]
+async fn show_more_of_overseer_list(
+    path: String,
+    list_path: Vec<String>,
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    app_api::show_more_at(&path, &path, list_path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+}
+
 /// Add an entry to a list, with whatever fields the page has for it.
 #[command]
 async fn append_overseer_entry(
@@ -483,6 +492,7 @@ fn main() {
             execute_overseer_event_update,
             write_overseer_values,
             catch_up_overseer_document,
+            show_more_of_overseer_list,
             run_overseer_event,
             append_overseer_entry,
             remove_overseer_entry,

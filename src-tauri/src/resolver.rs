@@ -144,7 +144,9 @@ fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
             if node.node_type == "list" {
                 if let Some(window) = window_of(node) {
                     name_the_entries(node);
-                    narrow(node, window, root, trail);
+                    // One window more for each time this reader asked - see `reading_more`.
+                    let asked = asked_for_more(&trail.join("/"));
+                    narrow(node, window.saturating_mul(1 + asked), root, trail);
                 }
             }
             if wrapper {
@@ -441,6 +443,65 @@ fn narrow(
         LEFT_OUT.to_string(),
         OverseerValue::Integer(left_out as i64),
     );
+}
+
+// How many windows more of each list the reader this work is for asked to see, by the list's
+// address.
+//
+// A window is the document's reading decision, and one person wanting to read further back is
+// not a change to the document: written into the file it would widen the list for everyone, the
+// bot included, and be committed by the backup. So it is kept against the viewer - see
+// `viewstate::ask_for_more` - and held here for as long as their work is being resolved.
+//
+// A document worked out this way is not the one anybody else is handed, so the cache keeps it
+// apart - see `reading_more_key`.
+thread_local! {
+    static MORE: std::cell::RefCell<Vec<std::collections::HashMap<String, usize>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Show this reader's lists as far as they asked, for as long as the guard lives.
+pub fn reading_more(asked: std::collections::HashMap<String, usize>) -> ReadingMore {
+    MORE.with(|more| more.borrow_mut().push(asked));
+    ReadingMore
+}
+
+pub struct ReadingMore;
+
+impl Drop for ReadingMore {
+    fn drop(&mut self) {
+        MORE.with(|more| {
+            more.borrow_mut().pop();
+        });
+    }
+}
+
+/// How many windows more of this list were asked for.
+fn asked_for_more(list: &str) -> usize {
+    MORE.with(|more| {
+        more.borrow()
+            .last()
+            .and_then(|asked| asked.get(list).copied())
+            .unwrap_or(0)
+    })
+}
+
+/// What tells a document worked out for a reader who asked for more from one worked out for
+/// anyone else - empty when nothing was asked, so nothing else is keyed any differently.
+pub fn reading_more_key() -> String {
+    MORE.with(|more| {
+        let more = more.borrow();
+        let Some(asked) = more.last() else {
+            return String::new();
+        };
+        let mut lists: Vec<_> = asked.iter().filter(|(_, n)| **n > 0).collect();
+        if lists.is_empty() {
+            return String::new();
+        }
+        lists.sort();
+        let said: Vec<String> = lists.iter().map(|(list, n)| format!("{list}={n}")).collect();
+        format!(";more={}", said.join(","))
+    })
 }
 
 // Addresses this interaction is about, which stay in view whatever the window says.

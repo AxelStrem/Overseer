@@ -328,6 +328,7 @@ impl DocumentRoot {
         // what keeps two documents being served at once from deciding for each other.
         let dir = path.parent().map(|d| d.to_path_buf());
         let looking_at = crate::viewstate::overlay(session, name);
+        let _more = crate::viewstate::reading_more(session, name);
         self.within(dir, || {
             if looking_at.is_empty() {
                 app_api::load_document(text)
@@ -805,6 +806,27 @@ impl DocumentRoot {
                         session,
                     )
                     .map_err(|e| RequestError::Failed(format!("could not catch up: {:?}", e)))?),
+                )
+            }
+            // One window more of a list, for this viewer alone - see `app_api::show_more_at`.
+            // Only read, so a document shared to be read can be read further back too.
+            "show_more_of_overseer_list" => {
+                let named = document.ok_or_else(|| {
+                    RequestError::Rejected("'document' is required".into())
+                })?;
+                let at = self.resolve(named)?;
+                let list = arg_strings(args, &["list_path", "listPath"]);
+                if list.is_empty() {
+                    return Err(RequestError::Rejected("'list_path' is required".into()));
+                }
+                as_json(
+                    app_api::for_the_page(app_api::show_more_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        list,
+                        session,
+                    )
+                    .map_err(|e| RequestError::Failed(format!("could not show more: {:?}", e)))?),
                 )
             }
             "run_overseer_event" => {
@@ -1515,6 +1537,7 @@ impl DocumentRoot {
         let dir = path.parent().map(|d| d.to_path_buf());
         let looking_at = crate::viewstate::overlay(session, name);
         let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
+        let _more = crate::viewstate::reading_more(session, name);
 
         // One reading of the clock for the work and what it reaches - see
         // `FormulaEvaluator::pin_the_clock`.

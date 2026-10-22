@@ -2000,16 +2000,33 @@ tab Main {
                 try { this.renderer.renderDocument(this.currentDocument) } catch (_) { /* best-effort */ }
             }
         } else if (Array.isArray(update.nodes)) {
-            this.tookTheText(update)
-            this.tookTheFile(update)
-            // Drawn again whole, and left scrolled where it was.
-            const display = document.getElementById('content-display')
-            const scrolled = { page: window.scrollY, display: display ? display.scrollTop : 0 }
-            this._applyResolvedDocumentWithFormulaPreservation(update.nodes)
-            this.renderer.renderDocument(this.currentDocument)
-            if (display) display.scrollTop = scrolled.display
-            if (window.scrollY !== scrolled.page) window.scrollTo(window.scrollX, scrolled.page)
+            this.showWhole(update)
         }
+    }
+
+    /// Take an answer that is the whole document, and draw it again left scrolled where it was.
+    showWhole(update) {
+        this.tookTheText(update)
+        this.tookTheFile(update)
+        const display = document.getElementById('content-display')
+        const scrolled = { page: window.scrollY, display: display ? display.scrollTop : 0 }
+        this._applyResolvedDocumentWithFormulaPreservation(update.nodes)
+        this.renderer.renderDocument(this.currentDocument)
+        if (display) display.scrollTop = scrolled.display
+        if (window.scrollY !== scrolled.page) window.scrollTo(window.scrollX, scrolled.page)
+    }
+
+    /// Show one window more of a list, for this page alone.
+    ///
+    /// Nothing is written: how far back somebody reads is kept against their session, so the
+    /// file, the bot and every other page still see the window the document states. The answer is
+    /// the whole document, worked out with the wider window.
+    async showMoreOf(listPath) {
+        const file = this.currentFile
+        if (!file) return
+        const update = await invoke('show_more_of_overseer_list', { path: file, listPath })
+        if (!update || file !== this.currentFile || !Array.isArray(update.nodes)) return
+        this.showWhole(update)
     }
 
     /// The text of the document as this page has it, fetched by its version if an answer only

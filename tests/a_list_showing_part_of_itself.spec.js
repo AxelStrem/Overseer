@@ -108,7 +108,7 @@ describe('a list showing part of itself', () => {
 
   it('says it in the singular when there is one', () => {
     render([inView(12), outOfView(3)], { _left_out_of_view: { Integer: 1 } })
-    expect(note().textContent).toBe('1 earlier entry not shown')
+    expect(note().querySelector('.overseer-entries-left-out-count').textContent).toBe('1 earlier entry not shown')
   })
 
   it('says nothing when everything is in view', () => {

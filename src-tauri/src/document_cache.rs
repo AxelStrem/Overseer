@@ -278,6 +278,13 @@ fn with<R>(work: impl FnOnce(&mut Vec<Entry>) -> R) -> R {
     work(&mut store)
 }
 
+/// What tells two worked-out copies of one text in one folder apart besides the folder: the
+/// environment it was drawn in, and how much of its windowed lists the reader asked to see - see
+/// `resolver::reading_more`.
+fn seen() -> String {
+    crate::environment::key() + &crate::resolver::reading_more_key()
+}
+
 /// The folder whoever is asking is working in - see `Entry::base`.
 fn here() -> Option<std::path::PathBuf> {
     crate::docmgr::manager::DocumentManager::base_dir()
@@ -295,7 +302,7 @@ fn at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
 /// of what it holds.
 fn held_at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
     let base = here();
-    let seen = crate::environment::key();
+    let seen = seen();
     let found = store
         .iter()
         .position(|entry| entry.text == text && entry.base == base && entry.seen == seen)?;
@@ -319,7 +326,7 @@ fn found(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
         return None;
     }
     let base = here();
-    let seen = crate::environment::key();
+    let seen = seen();
     let held = crate::document_disk::take(text, &base, &seen)?;
     let mut entry = Entry {
         text: text.to_string(),
@@ -441,7 +448,7 @@ fn put(text: &str, work: impl FnOnce(&mut Entry)) {
                 store.push(Entry {
                     text: text.to_string(),
                     base: here(),
-                    seen: crate::environment::key(),
+                    seen: seen(),
                     nodes: None,
                     graph: None,
                     bytes: 0,

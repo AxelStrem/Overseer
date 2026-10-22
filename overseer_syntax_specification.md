@@ -353,6 +353,10 @@ whole list, a `find` of an old entry by its key, a read of one by its address, a
 to one, a div whose `link=` names one by its key. Only what is reached is worked out - a `find` pays for the entry it finds, a sum for every
 entry it adds up - and the list still draws its window.
 
+A reader can ask for more: the note under the list offers one window more each time it is
+pressed. That is kept for the reader alone, as long as they are looking - the file, every other
+page and the bot still see the window the document states, and nothing is written or taken back.
+
 #### Moving entries by hand
 
 `movable=true` lets a list's entries be dragged: to another place in the list, or into another

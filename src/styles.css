@@ -2979,6 +2979,23 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     opacity: 0.55;
 }
 
+/* Asking for more reads as a link in the footnote, not as a button competing with the list's own. */
+.overseer-show-more {
+    margin-left: 8px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.overseer-show-more:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
 /* An enum drawn as its `shown` text: the words, not a chip, and still a place to press. */
 .tag-chip.enum-shown {
     background-color: transparent;

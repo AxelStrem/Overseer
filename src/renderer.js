@@ -1156,7 +1156,9 @@ export class OverseerRenderer {
     /// look deleted. The count comes from the resolver, which is the only thing that knows: the
     /// entries are in the document but nothing was worked out for them, so counting the rows on
     /// screen would not find them.
-    drawEntriesLeftOut(element, node) {
+    ///
+    /// And offer one window more of them, for this reader alone - see `showMoreOf`.
+    drawEntriesLeftOut(element, node, path) {
         try {
             element.querySelector(':scope > .overseer-entries-left-out')?.remove()
             const raw = node?.parameters?.['_left_out_of_view']
@@ -1165,7 +1167,28 @@ export class OverseerRenderer {
             if (!Number.isFinite(count) || count <= 0) return
             const note = document.createElement('div')
             note.className = 'overseer-entries-left-out'
-            note.textContent = count === 1 ? '1 earlier entry not shown' : `${count} earlier entries not shown`
+            const said = document.createElement('span')
+            said.className = 'overseer-entries-left-out-count'
+            said.textContent = count === 1 ? '1 earlier entry not shown' : `${count} earlier entries not shown`
+            note.appendChild(said)
+            const app = typeof window !== 'undefined' ? window.app : null
+            if (Array.isArray(path) && app && typeof app.showMoreOf === 'function') {
+                const window_ = Number(this.getParameterValue(node, 'window')) || count
+                const more = Math.min(window_, count)
+                const ask = document.createElement('button')
+                ask.type = 'button'
+                ask.className = 'overseer-show-more'
+                ask.textContent = `show ${more} more`
+                ask.addEventListener('click', (event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    ask.disabled = true
+                    Promise.resolve(app.showMoreOf(path))
+                        .catch((err) => console.warn('Could not show more:', err))
+                        .finally(() => { ask.disabled = false })
+                })
+                note.appendChild(ask)
+            }
             element.appendChild(note)
         } catch (_) { /* a missing note is not worth failing a render over */ }
     }
@@ -2418,7 +2441,7 @@ export class OverseerRenderer {
                     if (nodeTypeLower === 'grid') this.setUpGrid(element, node)
                     if (nodeTypeLower === 'list') {
                         this.setUpTable(element, node)
-                        this.drawEntriesLeftOut(element, node)
+                        this.drawEntriesLeftOut(element, node, path)
                         this.setUpBoard(element, node)
                         this.makeEntriesMovable(element, node)
                     }

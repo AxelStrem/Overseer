@@ -1036,6 +1036,9 @@ fn change_or_look(
 ) -> Result<ResolvedUpdate> {
     // One reading of the clock for all of it - see `FormulaEvaluator::pin_the_clock`.
     let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
+    // As far down its lists as this viewer asked to read, or the change would answer with them
+    // narrowed back to the document's window.
+    let _more = crate::viewstate::reading_more(session, document);
     // Where the time goes, with OVERSEER_PROFILE=1.
     let mut since = std::time::Instant::now();
     let mut phase = |what: &str| {
@@ -1547,12 +1550,53 @@ pub(crate) fn keep_worked_out(
 /// *that* and the display jumped. What they are looking at has to be applied on the way in as
 /// well as on the way out.
 pub fn load_document_for(content: String, document: &str, session: &str) -> Result<Vec<OverseerNode>> {
+    let _more = crate::viewstate::reading_more(session, document);
     let looking_at = crate::viewstate::overlay(session, document);
     if looking_at.is_empty() {
         return load_document(content);
     }
     let addresses = looking_at.keys().cloned().collect();
     resolve_selective(content, addresses, Some(looking_at))
+}
+
+/// Show this viewer one window more of a list, and answer with the document as they now see it.
+///
+/// Nothing is written and nothing can be taken back: how far back somebody reads is theirs, not
+/// the document's - see `resolver::reading_more`. The whole document comes back rather than what
+/// changed, because what the page holds was worked out with the narrower window, and a copy held
+/// for the wider one may be another viewer's.
+pub fn show_more_at(
+    path: &str,
+    document: &str,
+    list_path: Vec<String>,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
+    crate::viewstate::ask_for_more(session, document, &list_path.join("/"));
+    let nodes = load_document_for(text.clone(), document, session)?;
+    // What the viewer has set is in what they are shown, and so in the text they hold - as a
+    // change answers it - with the file told apart when it differs.
+    let shown = if crate::viewstate::overlay(session, document).is_empty() {
+        text.clone()
+    } else {
+        OverseerFileHandler::serialize_nodes(&nodes)
+            .map_err(|e| OverseerError::SerializationError(format!("could not serialize: {}", e)))?
+    };
+    let file_text = (shown != text).then_some(text);
+    Ok(ResolvedUpdate {
+        text: shown,
+        version: String::new(),
+        file_version: None,
+        changes: None,
+        nodes: Some(nodes),
+        view_state: Vec::new(),
+        wrote: false,
+        file_text,
+        emptied: Vec::new(),
+        start_editing: None,
+        folds: Vec::new(),
+    })
 }
 
 /// The override nodes for an entry, from a map of field name to value.

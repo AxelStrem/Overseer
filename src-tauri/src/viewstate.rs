@@ -29,7 +29,15 @@ const KEPT_FOR: Duration = Duration::from_secs(60 * 60 * 6);
 
 struct Overlay {
     values: HashMap<String, OverseerValue>,
+    /// How many times more of each windowed list this viewer asked to see, by the list's address.
+    more: HashMap<String, usize>,
     used: Instant,
+}
+
+impl Overlay {
+    fn new() -> Self {
+        Overlay { values: HashMap::new(), more: HashMap::new(), used: Instant::now() }
+    }
 }
 
 fn store() -> &'static Mutex<HashMap<(String, String), Overlay>> {
@@ -48,7 +56,7 @@ pub fn set(session: &str, document: &str, address: &str, value: OverseerValue) {
     with(|held| {
         let overlay = held
             .entry((session.to_string(), document.to_string()))
-            .or_insert_with(|| Overlay { values: HashMap::new(), used: Instant::now() });
+            .or_insert_with(Overlay::new);
         overlay.values.insert(address.to_string(), value);
         overlay.used = Instant::now();
     });
@@ -65,6 +73,36 @@ pub fn overlay(session: &str, document: &str) -> HashMap<String, OverseerValue> 
             None => HashMap::new(),
         }
     })
+}
+
+/// This viewer asks a windowed list for one window more of its entries.
+///
+/// Counted in windows rather than entries, so nothing here has to know how wide the document
+/// says the window is - see `resolver::reading_more`.
+pub fn ask_for_more(session: &str, document: &str, list: &str) {
+    with(|held| {
+        let overlay = held
+            .entry((session.to_string(), document.to_string()))
+            .or_insert_with(Overlay::new);
+        *overlay.more.entry(list.to_string()).or_insert(0) += 1;
+        overlay.used = Instant::now();
+    });
+}
+
+/// How many windows more of each list this viewer asked for.
+pub fn more(session: &str, document: &str) -> HashMap<String, usize> {
+    with(|held| match held.get_mut(&(session.to_string(), document.to_string())) {
+        Some(overlay) => {
+            overlay.used = Instant::now();
+            overlay.more.clone()
+        }
+        None => HashMap::new(),
+    })
+}
+
+/// The same, held for whatever this viewer's work is about to resolve.
+pub fn reading_more(session: &str, document: &str) -> crate::resolver::ReadingMore {
+    crate::resolver::reading_more(more(session, document))
 }
 
 /// Forget what a viewer was looking at - a page closed, or a document renamed out from under one.
