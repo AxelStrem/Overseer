@@ -14,9 +14,12 @@ const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Run as the server and the app run a document: under settings - here the default, there being
+/// no file - which is also where `me` is declared, that the template's "add comment" signs with.
 fn serialised<T>(body: impl FnOnce() -> T) -> T {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let out = body();
+    let settings = std::env::temp_dir().join(format!("overseer_moved_time_settings_{}.os", std::process::id()));
+    let out = overseer::environment::with_file(settings, body);
     drop(guard);
     FormulaEvaluator::set_time_override(None);
     out

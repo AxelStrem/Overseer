@@ -134,7 +134,10 @@ tab project (label="Project", mutable=true) {
             div (layout="horizontal", margin=0, spacing=8, alignment="center") {
                 timestamp at (format="datetime", precision="minutes", font-size=11px, font-color="#9ca3af", margin=0) =
                     "2026-01-01T00:00:00Z"
-                string author (font-size=11px, font-weight="bold", margin=0) = ""
+                string author (hidden=true) = ""
+                text by (font-size=11px, font-weight="bold", margin=0, mutable=false,
+                         vocabulary="/project/people/People") =
+                    $(/project/people/People.filter(|p| p/tag == ../author).count() > 0 ? "<#" + ../author + ">" : ../author)
                 button drop (icon="trash-2", margin=0, hover-text="Remove this comment") {
                     on click {
                         set (path="../../../../touched_at", mode="value") = $(now())
@@ -274,7 +277,7 @@ tab project (label="Project", mutable=true) {
                         set (path="../../touched_at", mode="value") = $(now())
                         append (list="../Comments") {
                             - at = $(now())
-                            - author = "owner"
+                            - author = $(me/handle == "" ? "owner" : me/handle)
                         }
                         start_editing (path="../Comments[-1]/body")
                     }
