@@ -138,6 +138,8 @@ tab project (label="Project", mutable=true) {
                 text by (font-size=11px, font-weight="bold", margin=0, mutable=false,
                          vocabulary="/project/people/People") =
                     $(/project/people/People.filter(|p| p/tag == ../author).count() > 0 ? "<#" + ../author + ">" : ../author)
+                string status (font-size=11px, font-color="#9ca3af", margin=0, hover-text="What the author wrote it as",
+                               hidden=$(../status == "")) = ""
                 button drop (icon="trash-2", margin=0, hover-text="Remove this comment") {
                     on click {
                         set (path="../../../../touched_at", mode="value") = $(now())

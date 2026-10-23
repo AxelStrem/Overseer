@@ -194,6 +194,19 @@ curl -H "$A" -G $B/v1/node --data-urlencode document=$D \
 Every answer below has this shape: the `address` it describes, the `node` there with its
 subtree, and `child_addresses`, the address of each of its children.
 
+## Reading the text: `GET /v1/source`
+
+```bash
+curl -H "$A" -G $B/v1/source --data-urlencode document=$D
+# {"document":"shopping/shopping.os","version":"3f1c9a0d27e4b8a1-10446","text":"tab shopping (...) {\r\n ..."}
+```
+
+The document's text as it is written - its own layout, comments and line endings, with what it
+leaves to its templates left out - for a program that reads documents with a parser of its own.
+`version` is the one `watch` reports. It reaches what any read reaches; a document's mounts and
+bases are not read with it. It is only for reading: changes go through the writes below, which
+keep the text's layout.
+
 ## Setting a value: `POST /v1/node`
 
 ```bash

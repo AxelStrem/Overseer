@@ -1387,6 +1387,14 @@ pub struct WriteOutcome {
     pub child_addresses: Vec<String>,
 }
 
+/// A document's text, by its full name, with the version `watch` reports for it.
+#[derive(serde::Serialize)]
+pub struct Source {
+    pub document: String,
+    pub version: String,
+    pub text: String,
+}
+
 /// A node, with the addresses of what is under it.
 #[derive(serde::Serialize)]
 pub struct NodeView {
@@ -1835,6 +1843,16 @@ impl DocumentRoot {
             address: address.to_string(),
             node,
         })
+    }
+
+    /// A document's text as it is written, and its version - for a program that reads documents
+    /// as text, with a parser of its own. Only to read: changes go through the writes, which keep
+    /// the document's layout. Asked of the document alone, its mounts and bases are not read.
+    pub fn source(&self, name: &str) -> std::result::Result<Source, RequestError> {
+        let path = self.resolve(name)?;
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
+        Ok(Source { document: self.named(name), version: crate::app_api::version_of(&text), text })
     }
 
     /// Append an entry to the list at an address, with the given fields.

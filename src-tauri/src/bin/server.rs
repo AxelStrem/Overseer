@@ -847,6 +847,22 @@ async fn read_at(
     Ok(Json(json!(view)))
 }
 
+/// A document's text as it is written - see `DocumentRoot::source`.
+async fn read_source(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    axum::extract::Query(which): axum::extract::Query<Which>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let source = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.source(&which.document))
+    })
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("reading panicked: {}", e))))?
+        .map_err(respond)?;
+    Ok(Json(json!(source)))
+}
+
 /// Append an entry to the list at an address.
 async fn append_at(
     State(service): State<Service>,
@@ -1343,6 +1359,7 @@ async fn serve() {
         .route("/v1/event", post(run_event))
         .route("/v1/undo", post(undo))
         .route("/v1/watch", get(watch))
+        .route("/v1/source", get(read_source))
         .route("/__overseer/bridge.js", get(bridge))
         .route("/account/me", get(me).post(change_me))
         .route("/account/invite", post(invite))
