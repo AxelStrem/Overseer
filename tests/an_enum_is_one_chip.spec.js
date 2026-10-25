@@ -190,6 +190,39 @@ describe('an enum field', () => {
     invoke.mockReset()
   })
 
+  it('sends its own value with its handler from inside an unnamed div of an entry', async () => {
+    // Found building a board whose cards put the field in a row: the handler's write reached
+    // the file and the value picked was said to be missing beside it.
+    const handler = Object.assign(base('change', 'on'), { children: [base('set', 'set')] })
+    const row = Object.assign(base('div', 'div'), {
+      is_hierarchy_transparent: true,
+      children: [valued('handle', 'string', 'String', 'X1'),
+                 Object.assign(enumField('filed'), { children: [handler] })],
+    })
+    const doc = docWith('filed')
+    doc[0].children[1] = Object.assign(base('Items', 'list'), {
+      parameters: { key: { String: 'handle' } },
+      children: [Object.assign(base('Item__1', 'div'), { children: [row] })],
+    })
+    render(doc)
+    app.currentFile = 'p.os'
+    const sent = []
+    invoke.mockImplementation(async (cmd, args) => { sent.push([cmd, args]); return null })
+    app.reevaluateDocumentSelective = vi.fn(async () => {})
+    press(chips()[0])
+    press(Array.from(document.querySelectorAll('.tag-picker .tag-option'))
+      .find(o => o.textContent.trim() === 'testing'))
+    await vi.waitFor(() => expect(sent.some(([cmd]) => cmd === 'run_overseer_event')).toBe(true))
+
+    const events = sent.filter(([cmd]) => cmd === 'run_overseer_event')
+    expect(events).toHaveLength(1)
+    const [, args] = events[0]
+    expect(args.node_path).toEqual(['project', 'Items', 'Item__1', 'stage'])
+    expect(args.writing).toEqual([{ node_path: args.node_path, value: { String: 'testing' } }])
+    expect(sent.some(([cmd]) => cmd === 'write_overseer_values')).toBe(false)
+    invoke.mockReset()
+  })
+
   it('holds back the values it is told to', () => {
     const doc = docWith('filed')
     doc[0].children[1].parameters.withhold = { String: 'testing' }
