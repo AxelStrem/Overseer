@@ -11,6 +11,12 @@
 //! also looked at every couple of seconds. Either way the version is worked out from what the
 //! file says, so two writes in quick succession announce the last, and a write that changed
 //! nothing announces nothing.
+//!
+//! A document that mounts another shows that file's content too, and the bot writes to those as
+//! well - a food added to the catalogue the food tracker mounts. So what a document was last
+//! worked out from is reported here each time it is (`reads`), those files are looked at with it,
+//! and what they say is announced beside the version as `read_from`, named as an answer names it -
+//! see `app_api::reads_version`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,8 +27,16 @@ use tokio::sync::broadcast;
 /// How often a watched file is looked at for a write made from outside.
 pub const LOOKED_AT_EVERY: Duration = Duration::from_secs(2);
 
+/// What a page is told: the version of the document's file, and what the files its mounts read
+/// say - empty for a document that mounts nothing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Heard {
+    pub version: String,
+    pub read_from: String,
+}
+
 struct Watched {
-    to: broadcast::Sender<String>,
+    to: broadcast::Sender<Heard>,
     seen: Mutex<Seen>,
 }
 
@@ -30,7 +44,49 @@ struct Watched {
 struct Seen {
     modified: Option<SystemTime>,
     len: u64,
-    version: String,
+    heard: Heard,
+}
+
+/// The files each document's mounts were read from when it was last worked out, and how each
+/// stood then - see `reads`.
+fn reading() -> &'static Mutex<HashMap<PathBuf, Vec<(String, String)>>> {
+    static READING: OnceLock<Mutex<HashMap<PathBuf, Vec<(String, String)>>>> = OnceLock::new();
+    READING.get_or_init(Default::default)
+}
+
+/// The document at `path` was just worked out from these mounted files, as they stood - see
+/// `actions::mounts_held`. Kept whether anyone watches it or not, since a page works its document
+/// out before it starts listening.
+pub fn reads(path: &Path, files: &[(String, String)]) {
+    let mut all = reading().lock().unwrap_or_else(|e| e.into_inner());
+    if files.is_empty() {
+        if !all.is_empty() {
+            all.remove(&key(path));
+        }
+        return;
+    }
+    let key = key(path);
+    if all.get(&key).map(|held| held.as_slice()) != Some(files) {
+        all.insert(key, files.to_vec());
+    }
+}
+
+/// What the files the document was last worked out from say now, named as an answer names them -
+/// or, `as_read`, as they stood when it was.
+fn read_from(path: &Path, as_read: bool) -> String {
+    let files = reading().lock().unwrap_or_else(|e| e.into_inner()).get(&key(path)).cloned();
+    let Some(files) = files else { return String::new() };
+    if as_read {
+        return crate::app_api::reads_version(&files);
+    }
+    let now: Vec<(String, String)> = files
+        .into_iter()
+        .map(|(file, _)| {
+            let stamp = crate::actions::mount_stamp(&file);
+            (file, stamp)
+        })
+        .collect();
+    crate::app_api::reads_version(&now)
 }
 
 fn watched() -> &'static Mutex<HashMap<PathBuf, Arc<Watched>>> {
@@ -44,7 +100,11 @@ fn key(path: &Path) -> PathBuf {
 }
 
 /// Listen for a document: its version now, and each new one as it comes.
-pub fn listen(path: &Path) -> (String, broadcast::Receiver<String>) {
+///
+/// What its mounts read is said as the document was last worked out - most likely for the page
+/// that is about to listen, a moment ago - and a mounted file that has moved since is announced
+/// straight after, so a write in between is not missed.
+pub fn listen(path: &Path) -> (Heard, broadcast::Receiver<Heard>) {
     // Subscribed under the lock, or the next look could forget the entry as nobody's before
     // this listener is counted.
     let (watched_now, listening) = {
@@ -52,53 +112,66 @@ pub fn listen(path: &Path) -> (String, broadcast::Receiver<String>) {
         let one = all
             .entry(key(path))
             .or_insert_with(|| {
-                Arc::new(Watched { to: broadcast::channel(16).0, seen: Mutex::new(Seen::default()) })
+                let seen = Seen {
+                    heard: Heard { version: String::new(), read_from: read_from(path, true) },
+                    ..Seen::default()
+                };
+                Arc::new(Watched { to: broadcast::channel(16).0, seen: Mutex::new(seen) })
             })
             .clone();
         let listening = one.to.subscribe();
         (one, listening)
     };
+    // The text first, which the first look only learns, and then what the mounts read now.
     look_again(path, &watched_now);
-    let version = watched_now.seen.lock().unwrap_or_else(|e| e.into_inner()).version.clone();
+    let now = watched_now.seen.lock().unwrap_or_else(|e| e.into_inner()).heard.clone();
+    look_again(path, &watched_now);
     keep_looking();
-    (version, listening)
+    (now, listening)
 }
 
-/// Something here wrote this file: tell whoever listens now, rather than at the next look.
-pub fn wrote(path: &Path) {
-    let one = {
+/// Something here wrote this file: tell whoever listens now, rather than at the next look. The
+/// file may be one another document mounts, so every document watched is looked at again - a
+/// look at one that has not moved costs a few stamps.
+pub fn wrote(_path: &Path) {
+    let now: Vec<(PathBuf, Arc<Watched>)> = {
         let all = watched().lock().unwrap_or_else(|e| e.into_inner());
-        if all.is_empty() {
-            return;
-        }
-        all.get(&key(path)).cloned()
+        all.iter().map(|(path, one)| (path.clone(), one.clone())).collect()
     };
-    if let Some(one) = one {
-        look_again(path, &one);
+    for (path, one) in now {
+        look_again(&path, &one);
     }
 }
 
-/// Read the file again if it moved, and announce its version if that is new.
+/// Read the file again if it moved, look at what its mounts read, and announce what is new.
 fn look_again(path: &Path, watched: &Watched) {
     let mut seen = watched.seen.lock().unwrap_or_else(|e| e.into_inner());
+    let first = seen.heard.version.is_empty();
+    let mut moved = false;
     let meta = std::fs::metadata(path).ok();
     let modified = meta.as_ref().and_then(|m| m.modified().ok());
     let len = meta.as_ref().map_or(0, |m| m.len());
-    if !seen.version.is_empty() && seen.modified == modified && seen.len == len {
-        return;
+    if first || seen.modified != modified || seen.len != len {
+        seen.modified = modified;
+        seen.len = len;
+        let Ok(text) = std::fs::read_to_string(path) else { return };
+        let version = crate::app_api::version_of(&text);
+        if version != seen.heard.version {
+            seen.heard.version = version;
+            moved = true;
+        }
     }
-    seen.modified = modified;
-    seen.len = len;
-    let Ok(text) = std::fs::read_to_string(path) else { return };
-    let version = crate::app_api::version_of(&text);
-    if version == seen.version {
-        return;
-    }
-    let first = seen.version.is_empty();
-    seen.version = version.clone();
     // The first look only learns what the file says; whoever asked is told that in reply.
-    if !first {
-        let _ = watched.to.send(version);
+    if first {
+        return;
+    }
+    let read_from = read_from(path, false);
+    if read_from != seen.heard.read_from {
+        seen.heard.read_from = read_from;
+        moved = true;
+    }
+    if moved {
+        let _ = watched.to.send(seen.heard.clone());
     }
 }
 

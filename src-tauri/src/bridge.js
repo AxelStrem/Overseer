@@ -124,6 +124,12 @@
     function listen() {
         if (typeof EventSource !== 'function') return
         const source = new EventSource(`/v1/watch?document=${encodeURIComponent(documentName)}`)
+        // What the files the document mounts say, just before each version - see `heardItReads`.
+        source.addEventListener('read', (event) => {
+            try { window.app && window.app.heardItReads && window.app.heardItReads(event.data) } catch (e) {
+                console.warn('could not take a change made elsewhere', e)
+            }
+        })
         source.addEventListener('changed', (event) => {
             try { window.app && window.app.heardTheFile && window.app.heardTheFile(event.data) } catch (e) {
                 console.warn('could not take a change made elsewhere', e)

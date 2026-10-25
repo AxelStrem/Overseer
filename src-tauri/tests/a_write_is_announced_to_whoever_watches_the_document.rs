@@ -73,11 +73,11 @@ fn the_bot_appends(path: &str) {
     .expect("the bot's append");
 }
 
-fn heard(listening: &mut tokio::sync::broadcast::Receiver<String>, within: Duration) -> Option<String> {
+fn heard(listening: &mut tokio::sync::broadcast::Receiver<overseer::watch::Heard>, within: Duration) -> Option<String> {
     let until = std::time::Instant::now() + within;
     loop {
         match listening.try_recv() {
-            Ok(version) => return Some(version),
+            Ok(heard) => return Some(heard.version),
             Err(tokio::sync::broadcast::error::TryRecvError::Empty) if std::time::Instant::now() < until => {
                 std::thread::sleep(Duration::from_millis(50))
             }
@@ -140,7 +140,7 @@ fn a_write_made_here_is_heard_at_once_with_the_files_new_version() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let path = a_file("here");
     let (now, mut listening) = overseer::watch::listen(std::path::Path::new(&path));
-    assert_eq!(now, app_api::version_of(DOCUMENT), "listening does not say the version the file has");
+    assert_eq!(now.version, app_api::version_of(DOCUMENT), "listening does not say the version the file has");
 
     the_bot_sets(&path, "b", 4);
     let written = std::fs::read_to_string(&path).unwrap();

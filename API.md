@@ -293,6 +293,12 @@ once, one made from outside (a sync, a hand edit) within a couple of seconds. On
 page that hears one asks to be caught up, and is answered against what it shows, as its own edits
 are. Reading the document is enough to watch it.
 
+A document that mounts other files also gets a `read` event just before each `changed` one. Its
+data names those files as they stand now, so a write to one of them is heard even though the
+document's own file did not move - the version in the `changed` that follows is then the same as
+before. The page's answers name the same thing as `read_from`, and a page sends it back as
+`shown_read_from` when it asks to catch up, so that it is described against what it shows.
+
 ## Writes
 
 Every write goes through the same writer as the page's edits: the document is re-written in place,

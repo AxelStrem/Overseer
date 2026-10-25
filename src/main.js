@@ -437,6 +437,9 @@ export class OverseerApp {
             // The text a resolve starts from, so the first edit need not upload the document.
             this._currentText = content
             this._textVersion = null
+            // What another document's mounts read means nothing for this one.
+            this._readFromShown = null
+            this._readFromHeard = null
             if (DEBUG_MODE) this.setStatus(`DEBUG: Document parsed, type: ${typeof overseerDocument}, length: ${overseerDocument?.length || 'unknown'}`)
             
             // Debug: Check if any chart nodes have computed series
@@ -1893,13 +1896,16 @@ tab Main {
         this._textVersion = typeof update?.version === 'string' && this._currentText === null
             ? update.version
             : null
+        // What the files the document mounts said when this was worked out - see `heardItReads`.
+        if (typeof update?.read_from === 'string' && update.read_from) this._readFromShown = update.read_from
     }
 
     /// The text this page is showing, named for a change it sends: the answer is applied to what
     /// the page holds by child index, so the backend has to describe it against that and not
     /// against whatever the file says by now - the bot may have written since. Both spellings,
     /// as every other argument a command takes; none at all when the page has neither the text
-    /// nor its version, and the change is described as it always was.
+    /// nor its version, and the change is described as it always was. What its mounts read goes
+    /// with it the same way, for a change made since to a file it mounts.
     showing() {
         let version = this._textVersion
         if (!version && typeof this._currentText === 'string') {
@@ -1908,7 +1914,12 @@ tab Main {
             }
             version = this._versionOfText.version
         }
-        return version ? { shown_version: version, shownVersion: version } : {}
+        const shown = version ? { shown_version: version, shownVersion: version } : {}
+        if (version && this._readFromShown) {
+            shown.shown_read_from = this._readFromShown
+            shown.shownReadFrom = this._readFromShown
+        }
+        return shown
     }
 
     /// The version of what the file held when this page last heard, worked out from the text when
@@ -1932,8 +1943,26 @@ tab Main {
     heardTheFile(version) {
         if (!this.currentFile || typeof version !== 'string' || !version) return
         this._fileHeardAt = version
-        if (version === this.fileVersion()) return
+        if (!this.behindTheFile()) return
         this.catchUpSoon()
+    }
+
+    /// The files the document mounts now say `readFrom`: told just before the file's version, by
+    /// a server that knows which files those are - see `watch`. The first this page hears is what
+    /// it was shown, since it is said as the document was last worked out: the document opened a
+    /// moment ago. From then on what it was shown is what its answers say, in `tookTheText`, and a
+    /// difference is caught up with - the bot added a food to the catalogue a tracker mounts.
+    heardItReads(readFrom) {
+        if (!this.currentFile || typeof readFrom !== 'string' || !readFrom) return
+        this._readFromHeard = readFrom
+        if (!this._readFromShown) this._readFromShown = readFrom
+        if (this.behindTheFile()) this.catchUpSoon()
+    }
+
+    /// Whether what this page shows is behind what it last heard: the file, or what it mounts.
+    behindTheFile() {
+        if (this._fileHeardAt && this._fileHeardAt !== this.fileVersion()) return true
+        return !!(this._readFromHeard && this._readFromShown && this._readFromHeard !== this._readFromShown)
     }
 
     /// Whether something here is part-way through and must not be drawn over: a change on its way
@@ -1951,12 +1980,19 @@ tab Main {
         if (this._catchingUp || this._catchUpTimer) return
         this._catchUpTimer = setTimeout(() => {
             this._catchUpTimer = null
-            if (!this.currentFile || !this._fileHeardAt || this._fileHeardAt === this.fileVersion()) return
+            if (!this.currentFile || !this.behindTheFile()) return
             if (this.busyForCatchingUp()) { this.catchUpSoon(300); return }
             this._catchingUp = true
             let failed = false
+            const readFrom = this._readFromHeard
             Promise.resolve(this.catchUp())
-                .then(() => { this._catchUpFailures = 0 })
+                .then((took) => {
+                    this._catchUpFailures = 0
+                    // Caught up, and still not what was heard: the server names what the mounts
+                    // read in some other way than the watch does. Asking again would get the same
+                    // answer, as often as the page can ask.
+                    if (took && readFrom && this._readFromHeard === readFrom) this._readFromShown = readFrom
+                })
                 .catch((e) => {
                     failed = true
                     this._catchUpFailures = (this._catchUpFailures || 0) + 1
@@ -1967,7 +2003,7 @@ tab Main {
                     // Written again while this was on its way, or dropped for something begun
                     // meanwhile - or refused, and asked again less and less often.
                     const wait = failed ? Math.min(60000, 1000 * 2 ** this._catchUpFailures) : 300
-                    if (this._fileHeardAt && this._fileHeardAt !== this.fileVersion()) this.catchUpSoon(wait)
+                    if (this.behindTheFile()) this.catchUpSoon(wait)
                 })
         }, wait)
     }
@@ -1979,7 +2015,8 @@ tab Main {
     /// viewer's - a guarded field, the day a calendar shows - comes back as they left it, since
     /// the server works the document out as they see it. An answer that arrives after something
     /// here began is dropped, since it describes the page as it was before that: the change on
-    /// its way brings the file with it, and the catch-up is asked again after.
+    /// its way brings the file with it, and the catch-up is asked again after. True when the
+    /// answer was taken.
     async catchUp() {
         const shown = this.showing()
         const file = this.currentFile
@@ -1991,7 +2028,7 @@ tab Main {
         if (Array.isArray(update.changes)) {
             this.tookTheText(update)
             this.tookTheFile(update)
-            if (update.changes.length === 0) return
+            if (update.changes.length === 0) return true
             const touched = this.applyDocumentChanges(this.currentDocument, update.changes)
             try {
                 this.renderer.repaintNodes(touched, this.currentDocument)
@@ -1999,8 +2036,10 @@ tab Main {
                 console.error('Render error (catching up):', e)
                 try { this.renderer.renderDocument(this.currentDocument) } catch (_) { /* best-effort */ }
             }
+            return true
         } else if (Array.isArray(update.nodes)) {
             this.showWhole(update)
+            return true
         }
     }
 

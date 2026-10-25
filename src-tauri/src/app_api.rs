@@ -647,6 +647,12 @@ pub struct ResolvedUpdate {
     /// The divs a press asked to have folded, unfolded or toggled, in order - see `actions::fold`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub folds: Vec<FoldToDo>,
+    /// The files the document's mounts were read from, and how each stood then, named in a few
+    /// bytes - see `reads_version`. A page shows a document worked out from these as well as from
+    /// its own text, and says which when it asks to catch up, as it says which text - see `watch`.
+    /// Left out for a document that mounts nothing.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub read_from: String,
 }
 
 /// A div to fold, unfold or toggle, named the way a field to open is - see `FieldToEdit`.
@@ -732,6 +738,7 @@ fn finish_update_with(
                 emptied: Vec::new(),
                 start_editing: None,
                 folds: Vec::new(),
+                read_from: String::new(),
             })
         }
         None => {
@@ -749,6 +756,7 @@ fn finish_update_with(
                 emptied: Vec::new(),
                 start_editing: None,
                 folds: Vec::new(),
+                read_from: String::new(),
             })
         }
     }
@@ -968,6 +976,7 @@ pub fn settle_the_viewers_values(
 
 thread_local! {
     static SHOWN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static SHOWN_READING: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The version of the text the caller is showing, for the change it is about to send to be
@@ -988,6 +997,25 @@ impl Drop for Showing {
     fn drop(&mut self) {
         let before = self.before.take();
         SHOWN.with(|s| *s.borrow_mut() = before);
+    }
+}
+
+/// What the files the caller's document mounts said when it was last answered - its `read_from`
+/// - for a catch-up to be described against the document as it was worked out then, when only a
+/// mounted file has moved since. Held until the guard goes, as `describing_for` holds the text.
+pub fn reading_for(shown: Option<String>) -> ShowingReads {
+    let before = SHOWN_READING.with(|s| s.replace(shown.filter(|s| !s.is_empty())));
+    ShowingReads { before }
+}
+
+pub struct ShowingReads {
+    before: Option<String>,
+}
+
+impl Drop for ShowingReads {
+    fn drop(&mut self) {
+        let before = self.before.take();
+        SHOWN_READING.with(|s| *s.borrow_mut() = before);
     }
 }
 
@@ -1086,6 +1114,24 @@ fn change_or_look(
             text: as_it_stood.clone(),
         },
     };
+    // The caller holds this text, but worked out from what a file it mounts said before - the
+    // bot added a food to the catalogue the food tracker mounts. The document held for the text
+    // now is the newer one, or none at all, so the caller is described against the tree it was
+    // shown, while that is still kept; failing that it is sent the whole document.
+    let shown_reading = SHOWN_READING.with(|s| s.borrow().clone());
+    let behind_its_mounts = match (&shown_reading, &shown_elsewhere) {
+        (Some(reading), None) => {
+            let held_reads = baseline.copy.as_deref().map(|n| reads_version(&crate::actions::mounts_held(n)));
+            held_reads.as_deref() != Some(reading.as_str())
+        }
+        _ => false,
+    };
+    if behind_its_mounts {
+        baseline.copy = shown_reading
+            .as_deref()
+            .and_then(|reading| crate::document_cache::worked_out_from(&as_it_stood, reading));
+        baseline.put_back = false;
+    }
     let mut nodes = if !looking_at.is_empty() {
         resolve_selective(as_it_stood.clone(), held_for_the_viewer.clone(), Some(looking_at))?
     } else if let Some((mut held, worked_out_in)) = held {
@@ -1129,8 +1175,16 @@ fn change_or_look(
     // baseline is. So the answer is that nothing changed, and which field to open, without
     // writing the document out and comparing it with itself: that was most of what such a press
     // still cost on tasks.os once nothing was worked out again.
-    if ran_nothing && held_for_the_viewer.is_empty() && shown_elsewhere.is_none() && baseline.copy.is_some() {
+    if ran_nothing
+        && held_for_the_viewer.is_empty()
+        && shown_elsewhere.is_none()
+        && !behind_its_mounts
+        && baseline.copy.is_some()
+    {
+        let reads = crate::actions::mounts_held(&nodes);
+        crate::watch::reads(std::path::Path::new(path), &reads);
         return Ok(ResolvedUpdate {
+            read_from: reads_version(&reads),
             start_editing: field_to_edit(report.as_ref(), &nodes),
             folds: folds_to_do(report.as_ref(), &nodes),
             text: as_it_stood,
@@ -1186,8 +1240,11 @@ fn change_or_look(
     // Held now, and current: brought up to the minute before the change, or opened in it. Not for
     // a document worked out as one viewer sees it, which is not the one anyone else is handed.
     let worked_out_in = held_for_the_viewer.is_empty().then(this_minute);
+    let reads = crate::actions::mounts_held(&nodes);
+    crate::watch::reads(std::path::Path::new(path), &reads);
     let mut update =
         finish_update_with(&as_it_stood, serialized, nodes, baseline.used(), worked_out_in)?;
+    update.read_from = reads_version(&reads);
     if let Some(fresh) = worked_out_whole {
         replace_graph(&update.text, fresh);
     }
@@ -1584,7 +1641,10 @@ pub fn show_more_at(
             .map_err(|e| OverseerError::SerializationError(format!("could not serialize: {}", e)))?
     };
     let file_text = (shown != text).then_some(text);
+    let reads = crate::actions::mounts_held(&nodes);
+    crate::watch::reads(std::path::Path::new(path), &reads);
     Ok(ResolvedUpdate {
+        read_from: reads_version(&reads),
         text: shown,
         version: String::new(),
         file_version: None,
@@ -2075,6 +2135,19 @@ pub fn version_of(text: &str) -> String {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{:016x}-{}", hash, text.len())
+}
+
+/// The files a document's mounts were read from and how each stood then - `actions::mounts_held`
+/// - named in a few bytes, the same whichever order they were found in. Empty for none, so a
+/// document that mounts nothing says nothing about it.
+pub fn reads_version(reads: &[(String, String)]) -> String {
+    if reads.is_empty() {
+        return String::new();
+    }
+    let mut sorted: Vec<&(String, String)> = reads.iter().collect();
+    sorted.sort();
+    let named: String = sorted.iter().map(|(file, stamp)| format!("{}\t{}\n", file, stamp)).collect();
+    version_of(&named)
 }
 
 /// The texts handed out by version, newest last, for `load_overseer_text` to give back.

@@ -564,6 +564,7 @@ impl DocumentRoot {
         // Which text the page is showing, so a change it sends is described against that - see
         // `app_api::describing_for`. Only a change reads it.
         let _showing = app_api::describing_for(arg_str(args, &["shown_version", "shownVersion"]));
+        let _reading = app_api::reading_for(arg_str(args, &["shown_read_from", "shownReadFrom"]));
 
         self.within(dir, || match cmd {
             "load_overseer_file" => {
@@ -649,15 +650,13 @@ impl DocumentRoot {
                         "say which document this is, so what it mounts can be found".into(),
                     ));
                 }
-                as_json(
-                    app_api::load_document_for(content, document.unwrap_or_default(), session)
-                        .map_err(|e| {
-                            RequestError::Failed(format!(
-                                "could not resolve the document: {:?}",
-                                e
-                            ))
-                        })?,
-                )
+                let named = document.unwrap_or_default();
+                let nodes = app_api::load_document_for(content, named, session).map_err(|e| {
+                    RequestError::Failed(format!("could not resolve the document: {:?}", e))
+                })?;
+                // What its mounts were read from, for the page's watch to start from - see `watch`.
+                crate::watch::reads(&self.resolve(named)?, &crate::actions::mounts_held(&nodes));
+                as_json(nodes)
             }
             "parse_overseer_content_selective_update" => {
                 let content = arg_str(args, &["content"])

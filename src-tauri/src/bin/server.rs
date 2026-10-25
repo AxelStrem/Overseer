@@ -987,6 +987,7 @@ async fn watch(
     (StatusCode, Json<serde_json::Value>),
 > {
     use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures_util::StreamExt;
     use tokio::sync::broadcast::error::RecvError;
     let documents = service.documents.clone();
     let (now, listening) = tokio::task::spawn_blocking(move || {
@@ -997,23 +998,33 @@ async fn watch(
     .await
     .map_err(|e| respond(RequestError::Failed(format!("watching panicked: {}", e))))?
     .map_err(respond)?;
-    let changed = |version: String| Ok(Event::default().event("changed").data(version));
+    // What the document's mounts read goes as an event of its own, ahead of the version, so a
+    // page that knows only `changed` goes on reading the version alone - see `watch::Heard`.
+    let said = |heard: overseer::watch::Heard| {
+        let mut events = Vec::new();
+        if !heard.read_from.is_empty() {
+            events.push(Ok(Event::default().event("read").data(heard.read_from)));
+        }
+        events.push(Ok(Event::default().event("changed").data(heard.version)));
+        events
+    };
     let stream = futures_util::stream::unfold(
         (Some(now), listening),
         move |(first, mut listening)| async move {
-            if let Some(version) = first {
-                return Some((changed(version), (None, listening)));
+            if let Some(heard) = first {
+                return Some((said(heard), (None, listening)));
             }
             loop {
                 match listening.recv().await {
-                    Ok(version) => return Some((changed(version), (None, listening))),
+                    Ok(heard) => return Some((said(heard), (None, listening))),
                     // Versions missed only mean the next one is newer still.
                     Err(RecvError::Lagged(_)) => continue,
                     Err(RecvError::Closed) => return None,
                 }
             }
         },
-    );
+    )
+    .flat_map(futures_util::stream::iter);
     // Kept alive, or a proxy in front of the server closes a quiet stream.
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }

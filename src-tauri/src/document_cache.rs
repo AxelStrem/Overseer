@@ -307,10 +307,47 @@ fn held_at(store: &mut Vec<Entry>, text: &str) -> Option<usize> {
         .iter()
         .position(|entry| entry.text == text && entry.base == base && entry.seen == seen)?;
     if !store[found].mounts_unchanged() {
-        store.remove(found);
+        supersede(store.remove(found));
         return None;
     }
     Some(found)
+}
+
+/// Trees let go because a file their mounts were read from moved, kept a little longer for one
+/// use: a page still shows such a tree, and a catch-up is described against what the page holds -
+/// see `app_api::catch_up_at`. Without it the page is sent the whole document, and drawn again
+/// from scratch, each time the bot writes to a file it mounts. Never handed out to work from.
+static SUPERSEDED: std::sync::Mutex<Vec<Entry>> = std::sync::Mutex::new(Vec::new());
+const SUPERSEDED_KEPT: usize = 2;
+
+fn supersede(mut entry: Entry) {
+    if entry.nodes.is_none() || budget_bytes() == 0 {
+        return;
+    }
+    entry.graph = None;
+    let mut kept = SUPERSEDED.lock().unwrap_or_else(|e| e.into_inner());
+    kept.retain(|held| !(held.text == entry.text && held.base == entry.base && held.seen == entry.seen));
+    kept.push(entry);
+    let over = kept.len().saturating_sub(SUPERSEDED_KEPT);
+    kept.drain(..over);
+}
+
+/// A copy of the tree this text produced in this folder from its mounts as they stood when
+/// `reads` named them - see `app_api::reads_version` - held or superseded, if it is still kept.
+pub fn worked_out_from(text: &str, reads: &str) -> Option<Vec<OverseerNode>> {
+    let base = here();
+    let seen = seen();
+    let from = |entry: &Entry| {
+        let nodes = entry.nodes.as_deref()?;
+        let fits = entry.text == text
+            && entry.base == base
+            && entry.seen == seen
+            && crate::app_api::reads_version(&crate::actions::mounts_held(nodes)) == reads
+            && entry.readable();
+        fits.then(|| nodes.to_vec())
+    };
+    with(|store| store.iter().find_map(from))
+        .or_else(|| SUPERSEDED.lock().unwrap_or_else(|e| e.into_inner()).iter().find_map(from))
 }
 
 /// The same, and failing that the entry written to disk when it last left memory, brought back.
@@ -557,7 +594,8 @@ pub fn forget_nodes() {
             entry.measure();
         }
         store.retain(|entry| entry.graph.is_some());
-    })
+    });
+    SUPERSEDED.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
 /// Drop every graph, keeping the documents.
