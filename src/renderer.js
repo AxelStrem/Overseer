@@ -5899,6 +5899,22 @@ export class OverseerRenderer {
         })
         
         container.appendChild(value)
+
+        // `view="progress"` draws the number as a bar. The figure stays in the page, hidden: it
+        // is what editing opens on and what every repaint after a change writes to, so the bar
+        // only has to be redrawn beside it rather than taught to every one of those paths.
+        if (this.isProgressBar(node)) {
+            container.classList.add('progress-field')
+            value.classList.add('progress-figure')
+            const track = document.createElement('div')
+            track.className = 'progress-track'
+            track.setAttribute('role', 'progressbar')
+            const fill = document.createElement('div')
+            fill.className = 'progress-fill'
+            track.appendChild(fill)
+            track.addEventListener('dblclick', () => value.dispatchEvent(new MouseEvent('dblclick')))
+            container.appendChild(track)
+        }
         
     // Apply layout overrides (only explicit margins/padding; defaults handled for containers)
     this.applyLayoutStyles(container, node)
@@ -5906,7 +5922,42 @@ export class OverseerRenderer {
     // Apply default field styling if no explicit parameters are set
     this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
+        if (this.isProgressBar(node)) this.paintProgress(container, node)
         return container
+    }
+
+    isProgressBar(node) {
+        return String(this.getParameterValue(node, 'view') || '').toLowerCase() === 'progress'
+    }
+
+    /// Draw a progress field's bar for the node's value: full at `limit=`, which is 1 for a
+    /// float, a share, and 100 for an int, a percentage.
+    ///
+    /// Only a `layout` the field states itself turns the bar upright. The one the resolver works
+    /// out from the nesting says where a label goes, and following it would stand every bar in
+    /// a horizontal row on its end.
+    paintProgress(container, node) {
+        const track = container.querySelector(':scope > .progress-track')
+        const fill = track && track.querySelector('.progress-fill')
+        if (!fill) return
+        const type = String(node.node_type || node.type || '').toLowerCase()
+        const stated = Number(this.getParameterValue(node, 'limit'))
+        const limit = Number.isFinite(stated) && stated > 0 ? stated : (type === 'float' ? 1 : 100)
+        const amount = Number(this.getNodeValue(node))
+        const share = Number.isFinite(amount) ? Math.min(1, Math.max(0, amount / limit)) : 0
+        const upright = String(this.getParameterValue(node, 'layout') || '').toLowerCase() === 'vertical'
+        container.classList.toggle('progress-vertical', upright)
+        fill.style.width = upright ? '' : `${share * 100}%`
+        fill.style.height = upright ? `${share * 100}%` : ''
+        const colour = this.getParameterValue(node, 'color')
+        fill.style.background = colour ? this.convertColorValue(colour) : ''
+        track.setAttribute('aria-valuemin', '0')
+        track.setAttribute('aria-valuemax', String(limit))
+        track.setAttribute('aria-valuenow', Number.isFinite(amount) ? String(amount) : '0')
+        // A hover text that reads the value - "40% done" - is worked out again with it.
+        const saying = this.hoverTextFor(node, container.querySelector(':scope > label'))
+        if (saying) container.dataset.hoverText = saying
+        else delete container.dataset.hoverText
     }
 
     createDateElement(node) {
@@ -11091,6 +11142,8 @@ export class OverseerRenderer {
             // Only update if there's a known text holder; otherwise skip
             this.updateTextElement(element, newNode)
         }
+        const bar = element.classList?.contains('progress-field') ? element : element.querySelector?.('.progress-field')
+        if (bar) this.paintProgress(bar, newNode)
     }
 
     /**

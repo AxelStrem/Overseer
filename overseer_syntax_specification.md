@@ -116,6 +116,21 @@ number 1000. A float that is not whole stays one in an `int` field, as written. 
 writes into a document is written so that it reads back the same: `1e20` and `1e-9` with an
 exponent, infinity as `inf`.
 
+`view="progress"` draws an `int` or a `float` as a bar, filled as far as its value goes: full at
+`limit=`, which is `1` for a float - a share - and `100` for an int - a percentage. A value
+outside 0 to the limit is drawn at the nearer end. The bar is the theme's `accent` on its `line`,
+and `color=` fills it otherwise. It lies across its field, and stands upright, filling from the
+bottom, when the field itself says `layout="vertical"` - that also puts the label above it, as on
+any field; the layout a field takes from its container never turns a bar. The bar shows no
+figure: a field beside it that reads it, `int shown (label="Done", suffix="%") = $(../done)`,
+says the number, and `hover-text` can say it on request.
+
+```overseer
+float share (label="Read", view="progress") = 0.4
+int pages (label="Pages", view="progress", limit=412, color=#16a34a) = 120
+int level (view="progress", layout="vertical", height=120px) = 70
+```
+
 #### Container Types:
 - `div`: Generic container for grouping and visual placement and styling
 - `list`: Collection with CRUD operations and two entry types:
@@ -2092,7 +2107,7 @@ div Tasks {
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
 - **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`
-- **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`)
+- **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)

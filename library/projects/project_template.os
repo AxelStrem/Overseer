@@ -194,7 +194,7 @@ tab project (label="Project", mutable=true) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=7%) = ""
             mark (type="separator")
-            string title (label="title", font-size=14px, width=24%,
+            string title (label="title", font-size=14px, width=28%,
                           hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
@@ -226,13 +226,6 @@ tab project (label="Project", mutable=true) {
             mark (type="separator")
             tags flags (label="flags", vocabulary="/project/Flags", width=6%,
                         hover-text="How it is to be worked") = ""
-            mark (type="separator")
-            int done (label="done", format="trim", precision=0, suffix="%", width=4%,
-                      hover-text="How much of its parts is finished, by points",
-                      hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
-                          (/project/Items.filter(|x| x/parent == ../handle)
-                                         .map(|x| x/done * x/weight).sum()
-                           + finished_weight * 100) / weight)
             mark (type="separator")
             int points (label="pts", format="trim", width=4%,
                         hover-text="How much work: 1 the smallest thing, 8 most of a day") = 1
@@ -270,6 +263,13 @@ tab project (label="Project", mutable=true) {
                     remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
                 }
             }
+
+            int done (view="progress", span="row", margin=0, padding=0,
+                      hover-text=$(../done - ../done % 1 + "% done"),
+                      hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
+                          (/project/Items.filter(|x| x/parent == ../handle)
+                                         .map(|x| x/done * x/weight).sum()
+                           + finished_weight * 100) / weight)
 
             div Talk (foldable=true, folded=true, span="row", layout="vertical", margin=0, spacing=4) {
                 list Comments (entry=<Comment>, layout="vertical", spacing=4, border-style=none) { }

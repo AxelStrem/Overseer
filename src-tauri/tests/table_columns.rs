@@ -227,19 +227,19 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
             "mark#6",
             "flags",
             "mark#7",
-            "done",
-            "mark#8",
             "points",
-            "mark#9",
+            "mark#8",
             "complexity",
-            "mark#10",
+            "mark#9",
             "moved_at",
             // The row's controls, together at its end.
-            "mark#11",
+            "mark#10",
             "talk",
             "work",
             "pin",
             "drop",
+            // How much of a composite item is done, a bar under the row rather than a column.
+            "done",
             "Talk",
             "Agents",
         ],
@@ -261,9 +261,9 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
         headings,
     );
 
-    // The conversation and the agents' work break the table on purpose: each is a line of its own
-    // under the row, folded away until its button opens it.
-    for folded in &columns[columns.len() - 2..] {
+    // The progress bar, the conversation and the agents' work break the table on purpose: each is
+    // a line of its own under the row - the last two folded away until their buttons open them.
+    for folded in &columns[columns.len() - 3..] {
         assert_eq!(folded["span"], true, "{} is a cell of the row", folded["name"]);
     }
 }

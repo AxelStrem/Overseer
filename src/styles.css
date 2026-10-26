@@ -1597,6 +1597,61 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     text-align: var(--ov-field-number-align, right);
 }
 
+/* `view="progress"`: the number drawn as a bar. The figure stays in the field, hidden, for editing
+   to open on; `!important` because editing leaves an inline display on it when it closes. */
+.progress-field > .progress-figure {
+    display: none !important;
+}
+
+.progress-field:has(> .field-editor) > .progress-track {
+    display: none;
+}
+
+.progress-field.label-beside {
+    align-items: center;
+}
+
+.progress-track {
+    position: relative;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 40px;
+    height: 8px;
+    margin: 8px 0;
+    border-radius: 4px;
+    background: var(--ov-line);
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.progress-fill {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 100%;
+    background: var(--ov-accent);
+    border-radius: inherit;
+}
+
+/* Upright, it fills from the bottom, and takes the height the field is given. */
+.progress-field.progress-vertical {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.progress-vertical > .progress-track {
+    width: 8px;
+    min-width: 0;
+    min-height: 80px;
+    height: auto;
+    margin: 0 8px;
+}
+
+.progress-vertical .progress-fill {
+    width: 100%;
+}
+
 .date-field .field-value {
     color: var(--ov-muted);
 }
