@@ -79,7 +79,13 @@ fn add(file: &str, nodes: &[OverseerNode], typed: &[(&str, &str)]) {
             value: OverseerValue::String(text.to_string()),
         })
         .collect();
-    app_api::run_event_at(file, "p.os", button, "click".into(), "s", typed, Vec::new()).expect("the press");
+    // The add reads `me/handle`, which is there wherever settings are in force - in the app and on
+    // the server alike.
+    let settings = std::path::Path::new(file).with_file_name("settings.os");
+    overseer::environment::with_file(settings, || {
+        app_api::run_event_at(file, "p.os", button, "click".into(), "s", typed, Vec::new())
+    })
+    .expect("the press");
 }
 
 #[test]
