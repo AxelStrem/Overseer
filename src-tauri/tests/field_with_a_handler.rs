@@ -61,9 +61,11 @@ fn the_body_does_not_close_the_block_it_is_in() {
     // The whole failure, in one assertion. `moved_at` and `after` belong to the tab; if the
     // handler's brace closes the tab, they become siblings of it instead.
     let nodes = app_api::load_document(DOCUMENT.to_string()).expect("load");
-    assert_eq!(nodes.len(), 1, "the document should have one root, the tab");
+    // The environment's `me` is put in front of the document's own nodes, as a copy.
+    let roots: Vec<&OverseerNode> = nodes.iter().filter(|n| !overseer::contexts::is_copy(n)).collect();
+    assert_eq!(roots.len(), 1, "the document should have one root, the tab");
 
-    let tab = &nodes[0];
+    let tab = roots[0];
     let named: Vec<&str> = tab.children.iter().map(|c| c.name.as_str()).collect();
     assert!(named.contains(&"done"), "no done field: {named:?}");
     assert!(named.contains(&"moved_at"), "moved_at fell out of the tab: {named:?}");

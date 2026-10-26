@@ -1,14 +1,10 @@
 //! An item added to a project with `+ task` belongs to whoever added it: its `owner` is their
 //! username, drawn as their chip. Where nobody is signed in - the desktop app - it is left empty,
-//! and the add still goes through. Both work under settings, as the app and the server always do:
-//! `me` is declared with them.
+//! and the add still goes through, with or without settings in force.
 
 use overseer::app_api;
 
 const EXAMPLE: &str = include_str!("../../examples/projects/project.os");
-
-// One at a time: what a document was worked out under is held for the whole process.
-static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(feature = "server")]
 fn served(test: &str) -> (overseer::server::DocumentRoot, std::path::PathBuf) {
@@ -29,7 +25,6 @@ fn served(test: &str) -> (overseer::server::DocumentRoot, std::path::PathBuf) {
 #[cfg(feature = "server")]
 #[test]
 fn an_item_added_by_a_person_is_theirs() {
-    let _one = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let (documents, root) = served("person");
     documents.as_asker(overseer::access::Asker::Person("ap31".into()), || {
         documents
@@ -47,7 +42,6 @@ fn an_item_added_by_a_person_is_theirs() {
 
 #[test]
 fn an_item_added_where_nobody_is_signed_in_has_no_owner() {
-    let _one = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = std::env::temp_dir().join(format!("overseer-owner-nobody-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
@@ -60,10 +54,9 @@ fn an_item_added_where_nobody_is_signed_in_has_no_owner() {
     let add = overseer::addressing::name_path(&nodes, "project/NewTask/add").expect("the add button");
     let before = EXAMPLE.matches("- {").count();
 
-    let answer = overseer::environment::with_file(root.join("settings.os"), || {
+    let answer =
         app_api::run_event_at(&file.to_string_lossy(), "p.os", add, "click".into(), "s", Vec::new(), Vec::new())
-    })
-    .expect("the add");
+            .expect("the add");
     assert!(answer.wrote);
     let written = std::fs::read_to_string(&file).unwrap();
     assert_eq!(written.matches("- {").count(), before + 1, "{}", written);

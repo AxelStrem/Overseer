@@ -101,7 +101,8 @@ fn bare_comment_marker_inside_a_block_is_not_parsed_as_nodes() {
     resolver::resolve_document(&mut nodes);
 
     fn names(nodes: &[overseer::types::OverseerNode], out: &mut Vec<String>) {
-        for n in nodes {
+        // The environment's `me` is put in front of the document's own nodes, as a copy.
+        for n in nodes.iter().filter(|n| !overseer::contexts::is_copy(n)) {
             out.push(n.name.clone());
             names(&n.children, out);
         }

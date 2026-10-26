@@ -4823,6 +4823,9 @@ mod tests {
             debug_resolver!("Node {}: {} (type: {})", i, node.name, node.node_type);
         }
 
+        // The environment's `me` stands in front of the document's own nodes, as a copy
+        nodes.retain(|node| !crate::contexts::is_copy(node));
+
         // Find the resolved task (it should be the second node, or the only non-hidden one)
         let resolved_task = if nodes.len() == 2 {
             &nodes[1] // Both template and instance present

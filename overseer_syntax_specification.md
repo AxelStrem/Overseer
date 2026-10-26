@@ -922,7 +922,9 @@ context mode = "system"
 
 `me` is a context of the environment beside the theme and the mode: `me/handle` is the username of
 whoever is looking, and `me/name` what they are called. Both are empty where nobody is signed in,
-and in the desktop app.
+and in the desktop app. `me` is there whether or not settings are in force, so a document worked
+out on its own reads it as empty and does not fail on it; a mounted document sees the `me` of the
+place it is mounted at.
 
 A document names people by username and shows them by name through the server's directory,
 `people.os` at its root: a list `People` keyed by `tag`, one entry per account with its `name`. The

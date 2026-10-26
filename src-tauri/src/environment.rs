@@ -139,17 +139,18 @@ fn settings(file: &Path) -> Option<Vec<OverseerNode>> {
     }
 }
 
-/// The context declarations a document's top is seen under, in the order they are written. None
-/// where no settings are in force.
+/// The context declarations a document's top is seen under, in the order they are written: those
+/// of the settings, where any are in force, and `me`, which is there without them as well - empty,
+/// as for anyone nobody has signed in. None for a mounted document, which sees the environment
+/// through its host.
 pub fn declarations() -> Vec<OverseerNode> {
-    let Some(file) = file() else {
+    if LEFT_OUT.with(Cell::get) {
         return Vec::new();
-    };
-    let Some(nodes) = settings(&file) else {
-        return Vec::new();
-    };
+    }
     let mut out = Vec::new();
-    gather(&nodes, &mut out);
+    if let Some(nodes) = file().and_then(|file| settings(&file)) {
+        gather(&nodes, &mut out);
+    }
     out.push(me());
     out
 }
