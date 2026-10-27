@@ -130,6 +130,16 @@ pub fn listen(path: &Path) -> (Heard, broadcast::Receiver<Heard>) {
     (now, listening)
 }
 
+/// Whether any page listens for this file now, and so will ask to catch up once it is written.
+pub fn listened(path: &Path) -> bool {
+    if watched().lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
+        return false;
+    }
+    let key = key(path);
+    let all = watched().lock().unwrap_or_else(|e| e.into_inner());
+    all.get(&key).is_some_and(|one| one.to.receiver_count() > 0)
+}
+
 /// Something here wrote this file: tell whoever listens now, rather than at the next look. The
 /// file may be one another document mounts, so every document watched is looked at again - a
 /// look at one that has not moved costs a few stamps.

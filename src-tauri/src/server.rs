@@ -1558,7 +1558,7 @@ impl DocumentRoot {
             }
             *since = std::time::Instant::now();
         }
-        let (outcome, nodes, serialized, report, settled_quickly, through_mounts) = self.within(dir.clone(), || {
+        let (outcome, nodes, serialized, report, settled_quickly, through_mounts, before) = self.within(dir.clone(), || {
             // The quick way, taken whenever it can be: the document as it was last worked out for
             // this very text, when what the write is about is in view there. A write then works
             // out what it reaches and no more, as the page's writes do - see
@@ -1573,8 +1573,16 @@ impl DocumentRoot {
             // And brought up to the moment before anything reads it: held from when it was last
             // worked out, what reads the clock is as old as that - see
             // `app_api::catch_up_with_the_clock`. Without a graph to say what that is, the long way.
+            //
+            // A page listening for the document shows the tree as it was taken, and asks to catch
+            // up from it once this is written: a copy is kept for that - see
+            // `document_cache::keep_superseded` - or it is sent the whole document.
+            let mut before = None;
             let quick = if in_view { app_api::take_worked_out(&text) } else { None }
                 .and_then(|(mut nodes, worked_out_in)| {
+                    if crate::watch::listened(&path) {
+                        before = Some(nodes.clone());
+                    }
                     app_api::catch_up_with_the_clock(&text, &mut nodes, worked_out_in).map(|()| nodes)
                 });
             let quick_way = quick.is_some();
@@ -1630,7 +1638,7 @@ impl DocumentRoot {
             let serialized = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
                 .map_err(|e| RequestError::Failed(format!("could not serialize: {}", e)))?;
             phase("edit serialize", &mut since);
-            Ok::<_, RequestError>((outcome, nodes, serialized, report, settled_quickly, through_mounts))
+            Ok::<_, RequestError>((outcome, nodes, serialized, report, settled_quickly, through_mounts, before))
         })?;
 
         // Whatever the work said belongs to the viewer is kept against this session, and taken
@@ -1668,6 +1676,9 @@ impl DocumentRoot {
             self.write_document(&path, name, &settled.text)?;
         }
         app_api::one_step_with(&path, wrote, &text_before, &along);
+        if wrote && (before.is_some() || crate::watch::listened(&path)) {
+            self.within(dir.clone(), || app_api::keep_for_catching_up(&text_before, before));
+        }
         phase("edit write", &mut since);
         // Kept for the text the file now holds, so the next write - the bot's, or the page
         // reopening what the bot just changed - starts from it rather than from nothing. Only when

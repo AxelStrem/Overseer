@@ -709,7 +709,7 @@ fn finish_update(
     let text = OverseerFileHandler::serialize_nodes(&resolved).map_err(|e| {
         OverseerError::SerializationError(format!("Failed to serialize resolved document: {}", e))
     })?;
-    finish_update_with(was, text, resolved, baseline, None)
+    finish_update_with(was, text, resolved, baseline, None, false)
 }
 
 /// The same, when the text has already been worked out - in `worked_out_in`, when that is known.
@@ -719,8 +719,18 @@ fn finish_update_with(
     resolved: Vec<OverseerNode>,
     baseline: Option<Vec<OverseerNode>>,
     worked_out_in: crate::document_cache::WorkedOutIn,
+    // Whether the baseline is the tree for `was`, which the file no longer holds and a page
+    // listening for it still shows - see `document_cache::keep_superseded`.
+    keep_before: bool,
 ) -> Result<ResolvedUpdate> {
-    match baseline.map(|before| crate::delta::diff(&before, &resolved)) {
+    let described = baseline.map(|before| {
+        let changes = crate::delta::diff(&before, &resolved);
+        if keep_before && was != text {
+            keep_for_catching_up(was, Some(before));
+        }
+        changes
+    });
+    match described {
         // The caller gets the changes, so the document itself can be handed to the cache
         // rather than copied into it.
         Some(changes) => {
@@ -888,7 +898,7 @@ pub fn execute_event_update(
         &nodes,
     );
     let phase = std::time::Instant::now();
-    let done = finish_update_with(&was, text, nodes, baseline, None).map(|mut update| {
+    let done = finish_update_with(&was, text, nodes, baseline, None, false).map(|mut update| {
         if let Some(fresh) = worked_out_whole {
             replace_graph(&update.text, fresh);
         }
@@ -1085,7 +1095,16 @@ fn change_or_look(
     // and resolving it again produces the same thing and costs what opening it cost, which on
     // tasks.os was most of the second every edit took; the cache is keyed by the text, so a hit
     // means the file has not moved since, and the graph for it is held under the same key.
-    let held = if looking_at.is_empty() { take_worked_out(&as_it_stood) } else { None };
+    //
+    // Copied instead when nothing is written: a catch-up is asked for by every page open on the
+    // document at once, the moment something writes it, and a press made meanwhile arrives beside
+    // them. Whichever came second found the document taken and worked it all out again - over two
+    // seconds on the project tracker, against a fiftieth of that for the copy.
+    let held = match (looking_at.is_empty(), writing) {
+        (true, true) => take_worked_out(&as_it_stood),
+        (true, false) => crate::document_cache::copy_nodes(&as_it_stood),
+        (false, _) => None,
+    };
     // The text the caller is showing, when it said and that is not the text the file holds. The
     // caller applies the answer to what it holds, by child index, so that is what the answer has
     // to be described against: something else wrote since it last heard - the bot, through this
@@ -1095,18 +1114,24 @@ fn change_or_look(
         .with(|s| s.borrow().clone())
         .filter(|shown| *shown != version_of(&as_it_stood))
         .map(|shown| text_of_version(path, &shown));
+    let shown_reading = SHOWN_READING.with(|s| s.borrow().clone());
     // What the change is described against, which needs a copy: the one copy this makes. It was
     // two, one to describe against and another to work on.
     let mut baseline = match &shown_elsewhere {
-        // The document worked out for the caller's text, if it is still held; if not, there is
-        // nothing to describe against, and the caller is sent the whole document.
+        // The document worked out for the caller's text, if it is still held, or kept since the
+        // file moved on from it; if not, there is nothing to describe against, and the caller is
+        // sent the whole document.
         Some(shown) => Baseline {
             put_back: false,
-            copy: shown.as_deref().and_then(baseline_copy),
+            copy: shown.as_deref().and_then(|shown| {
+                baseline_copy(shown).or_else(|| {
+                    crate::document_cache::superseded_for(shown, shown_reading.as_deref())
+                })
+            }),
             text: shown.clone().unwrap_or_default(),
         },
         None => Baseline {
-            put_back: held.is_some(),
+            put_back: held.is_some() && writing,
             copy: match &held {
                 Some((nodes, _)) => Some(nodes.clone()),
                 None => baseline_copy(&as_it_stood),
@@ -1118,7 +1143,6 @@ fn change_or_look(
     // bot added a food to the catalogue the food tracker mounts. The document held for the text
     // now is the newer one, or none at all, so the caller is described against the tree it was
     // shown, while that is still kept; failing that it is sent the whole document.
-    let shown_reading = SHOWN_READING.with(|s| s.borrow().clone());
     let behind_its_mounts = match (&shown_reading, &shown_elsewhere) {
         (Some(reading), None) => {
             let held_reads = baseline.copy.as_deref().map(|n| reads_version(&crate::actions::mounts_held(n)));
@@ -1242,8 +1266,16 @@ fn change_or_look(
     let worked_out_in = held_for_the_viewer.is_empty().then(this_minute);
     let reads = crate::actions::mounts_held(&nodes);
     crate::watch::reads(std::path::Path::new(path), &reads);
+    // The baseline is the tree for the text the file held until now, as anyone else was shown
+    // it - not a viewer's own, nor one from before the caller's mounts moved - and a page that
+    // listens still shows it, and is about to catch up from it.
+    let keep_before = wrote
+        && shown_elsewhere.is_none()
+        && !behind_its_mounts
+        && held_for_the_viewer.is_empty()
+        && crate::watch::listened(std::path::Path::new(path));
     let mut update =
-        finish_update_with(&as_it_stood, serialized, nodes, baseline.used(), worked_out_in)?;
+        finish_update_with(&as_it_stood, serialized, nodes, baseline.used(), worked_out_in, keep_before)?;
     update.read_from = reads_version(&reads);
     if let Some(fresh) = worked_out_whole {
         replace_graph(&update.text, fresh);
@@ -2169,6 +2201,17 @@ fn hand_out(text: String) -> String {
     let over = kept.len().saturating_sub(HANDED_OUT_KEPT);
     kept.drain(..over);
     version
+}
+
+/// Keep what a page showing a text the file has just moved on from needs to catch up from it: the
+/// text by its version, which is all the page names it by - a page that opened the document was
+/// sent its text whole, and never told a version anyone kept - and the tree, when the write took
+/// it from the cache rather than leaving it there - see `document_cache::keep_superseded`.
+pub(crate) fn keep_for_catching_up(was: &str, before: Option<Vec<OverseerNode>>) {
+    if let Some(before) = before {
+        crate::document_cache::keep_superseded(was, before);
+    }
+    hand_out(was.to_string());
 }
 
 /// The text a version names: one handed out lately, or the file if that is what it says now.

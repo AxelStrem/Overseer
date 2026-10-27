@@ -350,6 +350,49 @@ pub fn worked_out_from(text: &str, reads: &str) -> Option<Vec<OverseerNode>> {
         .or_else(|| SUPERSEDED.lock().unwrap_or_else(|e| e.into_inner()).iter().find_map(from))
 }
 
+/// Keep the tree a text produced after the file has moved on from that text, for the same one use
+/// as a tree let go for its mounts: a page still shows it.
+///
+/// A write moves what is held onto the text it wrote - see `rekey` - so the tree for the text
+/// before is gone the moment it is written. Every other page open on the document then asked to
+/// catch up from a text nobody held, and was sent the whole of it: 9.4 MB for the project tracker
+/// each time the loop or the bot wrote one field, and every press made meanwhile the same.
+pub fn keep_superseded(text: &str, nodes: Vec<OverseerNode>) {
+    if budget_bytes() == 0 || crate::access::refused_any() {
+        return;
+    }
+    let mounts = read_from(&nodes);
+    supersede(Entry {
+        text: text.to_string(),
+        base: here(),
+        seen: seen(),
+        nodes: Some(nodes),
+        graph: None,
+        bytes: 0,
+        used: now(),
+        mounts,
+        clock_minute: None,
+    });
+}
+
+/// A copy of a tree kept by `keep_superseded` or `supersede` for this text in this folder, and,
+/// when `reads` names them, worked out from the mounts as they stood then - see
+/// `app_api::reads_version`.
+pub fn superseded_for(text: &str, reads: Option<&str>) -> Option<Vec<OverseerNode>> {
+    let base = here();
+    let seen = seen();
+    let kept = SUPERSEDED.lock().unwrap_or_else(|e| e.into_inner());
+    kept.iter().rev().find_map(|entry| {
+        let nodes = entry.nodes.as_deref()?;
+        let fits = entry.text == text
+            && entry.base == base
+            && entry.seen == seen
+            && reads.is_none_or(|reads| crate::app_api::reads_version(&crate::actions::mounts_held(nodes)) == reads)
+            && entry.readable();
+        fits.then(|| nodes.to_vec())
+    })
+}
+
 /// The same, and failing that the entry written to disk when it last left memory, brought back.
 ///
 /// For whoever wants what was worked out, not for whoever is about to put something in its place.
@@ -460,6 +503,17 @@ pub fn take_nodes(text: &str) -> Option<(Vec<OverseerNode>, WorkedOutIn)> {
             store[found].measure();
         }
         taken.map(|nodes| (nodes, minute))
+    })
+}
+
+/// The same, copied and left where it is: for a caller that changes nothing, so that another
+/// arriving meanwhile finds it held rather than working the document out again.
+pub fn copy_nodes(text: &str) -> Option<(Vec<OverseerNode>, WorkedOutIn)> {
+    with(|store| {
+        let found = found(store, text)?;
+        store[found].used = now();
+        let minute = store[found].clock_minute;
+        store[found].nodes.clone().map(|nodes| (nodes, minute))
     })
 }
 
