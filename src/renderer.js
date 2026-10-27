@@ -3262,8 +3262,22 @@ export class OverseerRenderer {
         list.classList.remove('layout-vertical', 'layout-horizontal', 'layout-flow')
         // `auto` is what is left: a share of it like `1fr`, but never narrower than what the
         // column holds - the same as in a horizontal row (see `.takes-rest`).
+        //
+        // A percentage is a share of the room the table has to give, not of its whole width: a
+        // grid reads a `%` track against the container as if nothing else were in it, so widths
+        // that add up to 100% - which is how they are written - plus a column with no width, or
+        // a fixed one, made the rows overflow the list on the right. As a fraction of one `fr` it
+        // is the same share of what is left, and widths adding up to less than 100% still leave
+        // the rest empty, since flex factors that sum to under one take only that part of it. A
+        // column with no width is then as wide as what it holds, rather than the rest.
+        const shared = across.some((c) => /^\d+(\.\d+)?%$/.test(c.width || ''))
         list.style.gridTemplateColumns = across
-            .map((c) => (c.width === 'auto' ? 'minmax(auto, 1fr)' : c.width || '1fr'))
+            .map((c) => {
+                const width = c.width || ''
+                if (width === 'auto') return 'minmax(auto, 1fr)'
+                if (/^\d+(\.\d+)?%$/.test(width)) return `minmax(0, ${Number((parseFloat(width) / 100).toFixed(6))}fr)`
+                return width || (shared ? 'auto' : '1fr')
+            })
             .join(' ')
 
         const column = new Map(across.map((c, i) => [c.name, i + 1]))

@@ -131,7 +131,7 @@ describe('a list drawn as a table', () => {
     // A percentage left on a grid item is measured against its own column rather than the row,
     // so a cell that kept its width would be a tenth of a tenth.
     render([withDone(1)])
-    expect(table().style.gridTemplateColumns).toBe('10% 50% 10% 10%')
+    expect(table().style.gridTemplateColumns).toBe('minmax(0, 0.1fr) minmax(0, 0.5fr) minmax(0, 0.1fr) minmax(0, 0.1fr)')
     for (const cell of rowsOf()[0].children) expect(cell.style.width).toBe('')
   })
 

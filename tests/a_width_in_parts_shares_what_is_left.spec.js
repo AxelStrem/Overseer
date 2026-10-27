@@ -84,4 +84,24 @@ describe('a width in parts', () => {
     expect(document.querySelector('.view-table').style.gridTemplateColumns)
       .toBe('2fr 1fr minmax(auto, 1fr) 80px')
   })
+
+  it('reaches a table with percentages as shares of what the other columns leave', () => {
+    // A percentage track is read against the whole width, so widths adding up to 100% beside a
+    // column of no width or a fixed one overflowed the list.
+    const columns = JSON.stringify([
+      { name: 'grip', label: '', width: '', span: false },
+      { name: 'name', label: 'Name', width: '70%', span: false },
+      { name: 'note', label: 'Note', width: '30%', span: false },
+      { name: 'size', label: 'Size', width: '30px', span: false },
+    ])
+    render([base('t', 'tab', {}, [base('Rows', 'list', {
+      view: { String: 'table' },
+      _columns: { String: columns },
+      _effective_layout: { String: 'vertical' },
+    }, [base('Row__1', 'div', { layout: { String: 'horizontal' } }, [
+      base('name', 'string', { value: { String: 'a' } }),
+    ])])])])
+    expect(document.querySelector('.view-table').style.gridTemplateColumns)
+      .toBe('auto minmax(0, 0.7fr) minmax(0, 0.3fr) 30px')
+  })
 })

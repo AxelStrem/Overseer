@@ -198,7 +198,7 @@ tab project (label="Project", mutable=true) {
             enum owner (label="by", vocabulary="/project/people/People", placeholder="", font-size=11px, width=6%,
                         hover-text="Whose item it is") = ""
             mark (type="separator")
-            string title (label="title", font-size=14px, width=25%,
+            string title (label="title", font-size=14px, width=37%,
                           hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
@@ -246,24 +246,25 @@ tab project (label="Project", mutable=true) {
                 $(../said_at > ../touched_at ? ../said_at : ../touched_at)
 
             mark (type="separator")
-            button talk (icon="note", margin=0, width=3%,
+            button talk (icon="note", margin=0, width=30px,
                          font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
                 on click {
                     toggle_fold (path="../Talk")
                 }
             }
-            button work (icon="burger", margin=0, width=3%, hidden=$(../Agents/Work.count() == 0)) {
+            button work (icon="burger", margin=0, width=30px, hidden=$(../Agents/Work.count() == 0)) {
                 on click {
                     toggle_fold (path="../Agents")
                 }
             }
-            button pin (icon="pin", margin=0, width=3%, hover-text="Keep it on top of the list, or let it go",
-                        font-color=$(../pinned == true ? "inherit" : "#6b7280")) {
+            button pin (icon="pin", margin=0, width=30px, hover-text="Keep it on top of the list, or let it go",
+                        background-color=$(../pinned == true ? "#f59e0b" : "transparent"),
+                        font-color=$(../pinned == true ? "#1a1a1a" : "#6b7280")) {
                 on click {
                     toggle (path="../pinned")
                 }
             }
-            button drop (icon="cross", margin=0, width=3%, hidden=$(open_kids > 0)) {
+            button drop (icon="cross", margin=0, width=30px, hidden=$(open_kids > 0)) {
                 on click {
                     remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
                 }

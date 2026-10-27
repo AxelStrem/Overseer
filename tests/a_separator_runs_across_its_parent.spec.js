@@ -124,7 +124,7 @@ describe('separators in a table', () => {
     // A row without a title leaves its column empty; the separators on either side stay put.
     expect(placed(rows[1])).toEqual(['3', '5'])
     expect(placed(list.querySelector(':scope > .table-header'))).toEqual(['3', '5'])
-    expect(list.style.gridTemplateColumns).toBe('1fr 10% 0px 50% 0px 10%')
+    expect(list.style.gridTemplateColumns).toBe('auto minmax(0, 0.1fr) 0px minmax(0, 0.5fr) 0px minmax(0, 0.1fr)')
   })
 
   it('rules a line of its own across the row when it runs along it', () => {
