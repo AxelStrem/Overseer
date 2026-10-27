@@ -9044,7 +9044,11 @@ export class OverseerRenderer {
             input.rows = 3
         }
         
-        // Replace the element with the input
+        // Replace the element with the input. The display it was drawn with is put back after,
+        // not a fixed one: a value is a block or an inline-block, and shown again as inline its
+        // padding stopped counting towards the field's height, so the field sat off its
+        // neighbours in a row until it was next drawn.
+        const displayBefore = element.style.display
         element.style.display = 'none'
         element.parentNode.insertBefore(input, element.nextSibling)
         input.focus()
@@ -9077,7 +9081,7 @@ export class OverseerRenderer {
             const newValue = input.value
             const prevDisplay = this.textOf(element)
             const isFormulaInput = typeof newValue === 'string' && /\$\([\s\S]*\)/.test(newValue.trim())
-            element.style.display = 'inline'
+            element.style.display = displayBefore
 
             // Safely remove input element
             try {
@@ -9528,7 +9532,7 @@ export class OverseerRenderer {
             if (e.key === 'Escape') {
                 editingFinished = true
                 draft.drop()
-                element.style.display = 'inline'
+                element.style.display = displayBefore
                 try {
                     input.remove()
                 } catch (e) {
@@ -9719,7 +9723,9 @@ export class OverseerRenderer {
         preview.style.display = 'none'
         editorContainer.appendChild(preview)
         
-        // Insert editor container
+        // Insert editor container. The value is shown again as it was drawn, for the reason
+        // makeFieldEditable gives.
+        const displayBefore = element.style.display
         element.style.display = 'none'
     element.parentNode.insertBefore(editorContainer, element.nextSibling)
         textarea.focus()
@@ -9803,7 +9809,7 @@ export class OverseerRenderer {
                 // asked for after, the handler's write landed before the text's did, and the
                 // text was lost: a comment edited in a project tracker came back empty.
                 if (this.declaresEvent(node, 'change') && window.app && window.app.currentFile) {
-                    element.style.display = 'block'
+                    element.style.display = displayBefore
                     editorContainer.remove()
                     try { await this.emitEvent(node, element, 'change', { String: newValue }) } catch(_) {}
                     return
@@ -9846,7 +9852,7 @@ export class OverseerRenderer {
             }
             
             // Clean up
-            element.style.display = 'block'
+            element.style.display = displayBefore
             editorContainer.remove()
         }
         
