@@ -74,6 +74,18 @@ describe('a number drawn as a progress bar', () => {
     expect(fillOf('lying').style.width).toBe('60%')
   })
 
+  it('lying across a field that states its height, is that thick and fills it', () => {
+    // A thin line along the bottom of a card: the bar is the field, not a bar in the middle of it.
+    render([
+      number('line', 'float', 0.5, { height: { CssSize: { Pixels: 3 } } }),
+      number('plain', 'float', 0.5),
+    ])
+    const track = (name) => fieldAt(name).querySelector('.progress-track')
+    expect(track('line').style.height).toBe('100%')
+    expect(track('line').style.margin).toBe('0px')
+    expect(track('plain').style.height).toBe('')
+  })
+
   it('takes the colour it is given', () => {
     render([number('tinted', 'int', 50, { color: { String: '#ff0000' } })])
     expect(fillOf('tinted').style.background).toContain('rgb(255, 0, 0)')

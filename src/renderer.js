@@ -5961,6 +5961,11 @@ export class OverseerRenderer {
         const share = Number.isFinite(amount) ? Math.min(1, Math.max(0, amount / limit)) : 0
         const upright = String(this.getParameterValue(node, 'layout') || '').toLowerCase() === 'vertical'
         container.classList.toggle('progress-vertical', upright)
+        // A bar lying across a field that states its height is that thick, edge to edge - a thin
+        // line along the bottom of a card - rather than the usual bar in the middle of a taller box.
+        const thick = !upright && this.getParameterValue(node, 'height') != null
+        track.style.height = thick ? '100%' : ''
+        track.style.margin = thick ? '0' : ''
         fill.style.width = upright ? '' : `${share * 100}%`
         fill.style.height = upright ? `${share * 100}%` : ''
         const colour = this.getParameterValue(node, 'color')
@@ -6528,6 +6533,16 @@ export class OverseerRenderer {
         // other things: in a horizontal group the container has no width of its own, so it
         // collapses and takes the chart with it - a bordered box with nothing in it.
         const isPixelSize = (v) => v !== null && v !== undefined && !String(v).trim().endsWith('%')
+
+        // A height in percent is a share of what the chart stands in - beside a list, the list's
+        // height. The box takes the height and the canvas follows the box, lying over it, so the
+        // drawing never holds the box open: a canvas in the flow would keep the row as tall as it
+        // once was after the list beside it got shorter. In a row, whose height comes only from
+        // its tallest member, a percentage never resolves, so there the stylesheet stretches the
+        // chart to the row instead.
+        const isPercent = (v) => v !== null && v !== undefined && String(v).trim().endsWith('%')
+        if (isPercent(rawH)) container.classList.add('fills')
+
         if (isPixelSize(rawW) || isPixelSize(rawH)) {
             container.classList.add('sized')
             container.style.flex = '0 0 auto'
@@ -6730,7 +6745,19 @@ export class OverseerRenderer {
         // Prepare datasets for Chart.js
         const datasets = []
         const allDataPoints = []
-        
+
+        // How a line goes from one point to the next: `straight`, `smooth` or `step`, said by
+        // the chart for all its plots or by a plot for itself. Smooth is monotone, so a curve
+        // never bulges past the points it joins - a week of the same figure stays flat.
+        const chartCurve = this.getParameterValue(node, 'curve')
+        const curveOptions = (curve) => {
+            switch ((curve || 'straight').toString().toLowerCase()) {
+                case 'smooth': return { tension: 0.4, cubicInterpolationMode: 'monotone', stepped: false }
+                case 'step': return { tension: 0, stepped: true }
+                default: return { tension: 0.1, stepped: false }
+            }
+        }
+
         for (const plot of plotsAll) {
             const seriesJson = this.getParameterValue(plot, '_computed_series')
             if (!seriesJson) continue
@@ -6759,7 +6786,7 @@ export class OverseerRenderer {
                 backgroundColor: color + '20', // Add transparency for fill
                 borderWidth: 2,
                 fill: false,
-                tension: 0.1,
+                ...curveOptions(this.getParameterValue(plot, 'curve') ?? chartCurve),
                 pointRadius: 3,
                 pointHoverRadius: 5
             })
@@ -6912,7 +6939,31 @@ export class OverseerRenderer {
         }
         
         // Handle resize
+        // The axes, grid and legend in the theme's colours rather than ones that only read on a
+        // dark page. The theme reaches the chart as CSS variables, which a canvas cannot read and
+        // which are only there once the chart is in the page - so on its first measuring.
+        let themed = false
+        const takeTheTheme = () => {
+            if (themed || !chartInstance || !container.isConnected) return
+            themed = true
+            const style = getComputedStyle(container)
+            const text = style.getPropertyValue('--ov-muted').trim() || style.color
+            const line = style.getPropertyValue('--ov-line').trim()
+            const options = chartInstance.options
+            if (text) {
+                options.plugins.legend.labels.color = text
+                options.scales.x.ticks.color = text
+                options.scales.y.ticks.color = text
+            }
+            if (line) {
+                options.scales.x.grid.color = line
+                options.scales.y.grid.color = line
+            }
+            chartInstance.update('none')
+        }
+
         const resizeObserver = new ResizeObserver(() => {
+            takeTheTheme()
             computeSize()
             if (chartInstance) {
                 chartInstance.resize()

@@ -121,7 +121,9 @@ exponent, infinity as `inf`.
 outside 0 to the limit is drawn at the nearer end. The bar is the theme's `accent` on its `line`,
 and `color=` fills it otherwise. It lies across its field, and stands upright, filling from the
 bottom, when the field itself says `layout="vertical"` - that also puts the label above it, as on
-any field; the layout a field takes from its container never turns a bar. The bar shows no
+any field; the layout a field takes from its container never turns a bar. A bar lying across a field
+that states its `height` is that thick, the field edge to edge - a thin line along the bottom of a
+card is `height=3px, width=100%`. The bar shows no
 figure: a field beside it that reads it, `int shown (label="Done", suffix="%") = $(../done)`,
 says the number, and `hover-text` can say it on request.
 
@@ -1670,6 +1672,14 @@ chart trend (height=320px, width=100%) {
               x=$(|x| x/first_at), y=$(|x| x/avg_systolic))
 }
 ```
+
+A `height` in percent is a share of what the chart stands in; in a row it is stretched to the row,
+so `height=100%` beside a list is as tall as the list. The axes, grid and legend are drawn in the
+theme's `muted` and `line`.
+
+`curve` says how a line goes from one point to the next: `straight`, unless it says `smooth` or
+`step`. A smooth line never bends past the points it joins. Said on the chart it is every plot's,
+and a plot can say its own.
 
 `domain-x-min`, `domain-x-max`, `domain-y-min` and `domain-y-max` fix the axes; without them the
 axes fit the points. A time on the x axis is drawn as a date.
