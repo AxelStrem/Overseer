@@ -389,7 +389,9 @@ async function main() {
         browser = started.browser
         const page = await connect(started.debugPort)
         const exceptions = []
-        let inFlight = 0
+        // The requests still open, by id. The page's watch on the file is a stream that stays open
+        // for as long as the page does, so it is left out - else nothing would ever settle.
+        const open = new Set()
         let lastChange = Date.now()
         page.on((method, params) => {
             if (method === 'Runtime.exceptionThrown') {
@@ -398,10 +400,11 @@ async function main() {
             } else if (method === 'Runtime.consoleAPICalled' && params.type === 'error') {
                 exceptions.push('console error: ' + params.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 400))
             } else if (method === 'Network.requestWillBeSent') {
-                inFlight++
+                if (params.type === 'EventSource' || /\/v1\/watch/.test(params.request.url)) return
+                open.add(params.requestId)
                 lastChange = Date.now()
             } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
-                inFlight = Math.max(0, inFlight - 1)
+                if (!open.delete(params.requestId)) return
                 lastChange = Date.now()
             }
         })
@@ -435,7 +438,7 @@ async function main() {
             while (Date.now() < until) {
                 await wait(100)
                 const changed = await evaluate('window.__previewChanged')
-                if (inFlight === 0 && Date.now() - Math.max(changed, lastChange) >= quiet) return
+                if (open.size === 0 && Date.now() - Math.max(changed, lastChange) >= quiet) return
             }
         }
         for (let i = 0; i < 300; i++) {
