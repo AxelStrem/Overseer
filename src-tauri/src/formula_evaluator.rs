@@ -2703,6 +2703,73 @@ impl FormulaEvaluator {
             // Months are 1-12. Both read the date the way `same_day` does, in local time, so
             // "is it Tuesday" and "is it still the same day" never disagree about where a
             // midnight falls.
+            // random(seed, ..., n): a whole number from 0 to n-1, fixed by its seed.
+            //
+            // Seeded rather than drawn for the same reason fresh_key is derived: a formula is
+            // resolved again and again, and a number drawn afresh on every pass would change under
+            // the cursor. A guarded timestamp that an action sets is the seed when a new draw is
+            // wanted. The hash is written out here, not taken from the standard library, whose
+            // hasher may change between releases: the same seed has to give the same number on
+            // the server, the desktop app, and after an upgrade.
+            "random" => {
+                if args.len() < 2 {
+                    return Err(OverseerError::FormulaError(
+                        "random(seed, ..., n) takes a seed and n".to_string(),
+                    ));
+                }
+                let (seed_args, n_arg) = args.split_at(args.len() - 1);
+                let n = match Self::evaluate_expression(&n_arg[0], context)? {
+                    OverseerValue::Integer(i) => i,
+                    OverseerValue::Float(f) if f.is_finite() && f.fract() == 0.0 => f as i64,
+                    _ => 0,
+                };
+                if n <= 0 {
+                    return Err(OverseerError::FormulaError(
+                        "random(seed, ..., n): n must be a whole number above 0".to_string(),
+                    ));
+                }
+                let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+                let mut feed = |bytes: &[u8]| {
+                    for b in bytes {
+                        hash ^= *b as u64;
+                        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+                    }
+                };
+                for arg in seed_args {
+                    // Each part goes in with its kind and a separator, so ("ab", "c") and
+                    // ("a", "bc") are different seeds, and so are 1 and "1". A whole float is
+                    // the integer it equals: `column() + 1` comes out of arithmetic as a float.
+                    let (kind, text) = match Self::evaluate_expression(arg, context)? {
+                        OverseerValue::Integer(i) => (b'n', i.to_string()),
+                        OverseerValue::Float(f) if f.is_finite() && f.fract() == 0.0 => {
+                            (b'n', (f as i64).to_string())
+                        }
+                        OverseerValue::Float(f) => (b'f', f.to_string()),
+                        // Text is text whatever its field is typed: a timestamp read through a
+                        // path may reach a formula as a string.
+                        OverseerValue::String(s)
+                        | OverseerValue::Date(s)
+                        | OverseerValue::Timestamp(s) => (b's', s),
+                        OverseerValue::Boolean(b) => (b'b', b.to_string()),
+                        OverseerValue::Null => {
+                            return Err(OverseerError::FormulaError(
+                                "random: a part of the seed has no value".to_string(),
+                            ))
+                        }
+                        other => (b'o', format!("{:?}", other)),
+                    };
+                    feed(&[kind]);
+                    feed(text.as_bytes());
+                    feed(&[0]);
+                }
+                // FNV leaves its low bits poorly mixed; splitmix64's finaliser spreads them
+                // before the remainder takes them.
+                let mut z = hash;
+                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                z ^= z >> 31;
+                Ok(OverseerValue::Integer((z % n as u64) as i64))
+            }
             "weekday" | "day_of_month" | "month_of" => {
                 if args.len() != 1 {
                     return Err(OverseerError::FormulaError(format!(

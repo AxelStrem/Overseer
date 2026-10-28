@@ -268,6 +268,7 @@ taken as UTC, and a bare date as its midnight.
 | `minutes_of_day(x)` | minutes since local midnight, for a time of day |
 | `millis_since_epoch(x)` | the moment as a number, for sorting by it |
 | `fresh_key(list, ...)` | a key no entry of the keyed lists given holds - see "A form that fills an entry" |
+| `random(seed, ..., n)` | a whole number from 0 to `n - 1`, fixed by its seed: every argument but the last. The same seed gives the same number on every pass and every machine, so it stays put until the seed changes - `random(today(), Quotes.count())` is a quote of the day; for a fresh draw on demand, seed it with a timestamp an action sets |
 
 ### 5. Path References
 
