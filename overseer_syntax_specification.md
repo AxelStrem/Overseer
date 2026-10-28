@@ -995,6 +995,22 @@ date finished = ""
   and one undo takes back both.
 - `load`, `unload` - on a `mount`; without a block of its own, a mount loads and unloads what it
   names.
+- `load` on a top-level node of a document, named - each time the page opens the document, before
+  anything is pressed. Not when it is saved, worked out again, or caught up after something else
+  wrote it; programs writing through the server never run it. Opening a document never writes it,
+  so `on load` may write only fields that are `mutable="guarded"` (see "Who may change what"),
+  for whoever opened it: a load that writes anything else is refused whole, and the page says so.
+  It is no change to take back.
+
+```overseer
+tab board (mutable=true) {
+    timestamp started (mutable="guarded") = ""
+
+    on load {
+        set_now_ts (path="/board/started")
+    }
+}
+```
 
 #### Actions
 

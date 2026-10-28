@@ -499,6 +499,9 @@ export class OverseerApp {
             this.showEditorScreen()
             // A field that was being edited when the page went away, opened again as it was.
             try { this.renderer.putBackDraft() } catch (_) { /* the edit is let go */ }
+            // Only here, where a document is opened: a save, a catch-up or a re-resolve is not
+            // an opening, and does not run it.
+            if (this.runsOnLoad(this.currentDocument)) await this.runOnLoad()
 
             // Final status update handled by updateTitle()
             if (DEBUG_MODE) this.setStatus('File loaded successfully - DEBUG VERSION')
@@ -2023,6 +2026,12 @@ tab Main {
         const update = await invoke('catch_up_overseer_document', { path: file, ...shown })
         if (!update || file !== this.currentFile) return
         if (this.busyForCatchingUp() || JSON.stringify(this.showing()) !== JSON.stringify(shown)) return
+        return this.showLooked(update)
+    }
+
+    /// Take an answer that changed nothing in the file - a catch-up, a document's `on load` -
+    /// the way an edit's answer is taken. True when it was taken.
+    showLooked(update) {
         // A reevaluation still on its way was worked out from the page as it was before this.
         this._reevaluationTicket = (this._reevaluationTicket || 0) + 1
         if (Array.isArray(update.changes)) {
@@ -2040,6 +2049,26 @@ tab Main {
         } else if (Array.isArray(update.nodes)) {
             this.showWhole(update)
             return true
+        }
+    }
+
+    /// Whether a top-level node of the document says what to do when it is opened.
+    runsOnLoad(nodes) {
+        return (nodes || []).some((node) =>
+            (node.children || []).some((c) => c.node_type === 'on' && c.name === 'load'))
+    }
+
+    /// Run what the document says to do when it is opened, for this viewer: it may set only what
+    /// is theirs, so the file is never written and nothing is left to undo. A refusal is shown,
+    /// and the document stays open as the file has it.
+    async runOnLoad() {
+        const file = this.currentFile
+        try {
+            const update = await invoke('run_overseer_on_load', { path: file, ...this.showing() })
+            if (!update || file !== this.currentFile) return
+            this.showLooked(update)
+        } catch (e) {
+            this.setStatus('on load did not run', String(e?.message || e), 'warning')
         }
     }
 

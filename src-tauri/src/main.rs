@@ -241,6 +241,17 @@ async fn catch_up_overseer_document(
     app_api::catch_up_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
+/// What the document says to do when it is opened, for this window alone - see
+/// `app_api::run_on_load_at`.
+#[command]
+async fn run_overseer_on_load(
+    path: String,
+    shown_version: Option<String>,
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    let _showing = app_api::describing_for(shown_version);
+    app_api::run_on_load_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+}
+
 /// One window more of a list, for this window alone - see `app_api::show_more_at`.
 #[command]
 async fn show_more_of_overseer_list(
@@ -492,6 +503,7 @@ fn main() {
             execute_overseer_event_update,
             write_overseer_values,
             catch_up_overseer_document,
+            run_overseer_on_load,
             show_more_of_overseer_list,
             run_overseer_event,
             append_overseer_entry,

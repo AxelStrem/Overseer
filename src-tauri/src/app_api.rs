@@ -1066,6 +1066,50 @@ pub fn catch_up_at(path: &str, document: &str, session: &str) -> Result<Resolved
     Ok(update)
 }
 
+/// Run what a document says to do each time it is opened: the `on load` of each of its top-level
+/// nodes, in order, for this viewer.
+///
+/// Opening a document must never write it - the bot, another tab and the backup would all see a
+/// change nobody made - so it is run the way a catch-up looks, and the file is not written
+/// whatever happens. What it may change is what is the viewer's: fields marked
+/// `mutable="guarded"`, kept against the session as a press keeps them. An `on load` that writes
+/// anything else is refused whole, so the page is never shown a value the file does not hold.
+/// Nothing of it is a step to take back.
+///
+/// Only the page asks for this, when it opens a document; a save, a catch-up and the bot's door
+/// never run it.
+pub fn run_on_load_at(path: &str, document: &str, session: &str) -> Result<ResolvedUpdate> {
+    let as_it_stands = std::fs::read_to_string(path)
+        .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
+    let mut update = change_or_look(path, document, session, false, |nodes| {
+        let owners: Vec<Vec<String>> = nodes
+            .iter()
+            .filter(|n| n.children.iter().any(|c| c.node_type == "on" && c.name == "load"))
+            .map(|n| vec![n.name.clone()])
+            .collect();
+        for owner in owners {
+            // An unnamed container is no step of any address, so nothing could say which one ran.
+            if owner[0].is_empty() {
+                return Err(OverseerError::ValidationError(
+                    "on load stands on a top-level node with a name".into(),
+                ));
+            }
+            crate::actions::ActionExecutor::execute_event(nodes, &owner, "load")?;
+            if crate::actions::wrote_the_document() {
+                return Err(OverseerError::ValidationError(format!(
+                    "on load in '{}' may write only fields marked mutable=\"guarded\": opening a document never writes it",
+                    owner.join("/")
+                )));
+            }
+        }
+        Ok(())
+    })?;
+    if update.text != as_it_stands {
+        update.file_text = Some(as_it_stands);
+    }
+    Ok(update)
+}
+
 fn change_or_look(
     path: &str,
     document: &str,

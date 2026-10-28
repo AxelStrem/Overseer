@@ -421,6 +421,16 @@ pub fn take_report() -> Option<Changed> {
     REPORT.with(|r| r.borrow_mut().take())
 }
 
+/// Whether what has been noted so far reaches the document itself - a value written down, or its
+/// shape moved - rather than only what the viewer is looking at. See `app_api::run_on_load_at`.
+pub fn wrote_the_document() -> bool {
+    REPORT.with(|r| {
+        r.borrow()
+            .as_ref()
+            .is_some_and(|changed| !changed.fields.is_empty() || changed.structural)
+    })
+}
+
 /// One value moved, at this address.
 fn note_field(address: String) {
     REPORT.with(|r| {

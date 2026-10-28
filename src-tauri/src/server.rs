@@ -807,6 +807,25 @@ impl DocumentRoot {
                     .map_err(|e| RequestError::Failed(format!("could not catch up: {:?}", e)))?),
                 )
             }
+            // What the document says to do when it is opened, for this viewer alone - see
+            // `app_api::run_on_load_at`. It writes nothing, so a document shared to be read runs it too.
+            "run_overseer_on_load" => {
+                let named = document.ok_or_else(|| {
+                    RequestError::Rejected("'document' is required".into())
+                })?;
+                let at = self.resolve(named)?;
+                as_json(
+                    app_api::for_the_page(app_api::run_on_load_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        session,
+                    )
+                    .map_err(|e| match e {
+                        OverseerError::ValidationError(m) => RequestError::Rejected(m),
+                        e => RequestError::Failed(format!("could not run on load: {:?}", e)),
+                    })?),
+                )
+            }
             // One window more of a list, for this viewer alone - see `app_api::show_more_at`.
             // Only read, so a document shared to be read can be read further back too.
             "show_more_of_overseer_list" => {
