@@ -494,8 +494,9 @@ fn remember_graph(text: &str, graph: crate::dependencies::Graph) {
 /// right, where the old graph is fast and wrong.
 fn replace_graph(text: &str, fresh: Option<crate::dependencies::Graph>) {
     crate::document_cache::take_graph(text);
-    if let Some(graph) = fresh {
-        remember_graph(text, graph);
+    match fresh {
+        Some(graph) => remember_graph(text, graph),
+        None => crate::document_cache::reads_unknown(text),
     }
 }
 

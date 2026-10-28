@@ -86,6 +86,8 @@ struct PassRoot {
     root: *const OverseerNode,
     len: usize,
     paths: Option<std::collections::HashMap<usize, Vec<String>>>,
+    /// The name of every node outside the contexts - see `may_be_found_below`.
+    names: Option<std::collections::HashSet<String>>,
 }
 
 /// Represents a parsed formula expression
@@ -861,7 +863,7 @@ impl FormulaEvaluator {
     pub fn begin_pass_over(root: *const [OverseerNode]) {
         Self::begin_pass_memo();
         Self::with_pass_root(|slot| {
-            *slot = Some(PassRoot { root: root as *const OverseerNode, len: root.len(), paths: None })
+            *slot = Some(PassRoot { root: root as *const OverseerNode, len: root.len(), paths: None, names: None })
         });
     }
 
@@ -914,6 +916,41 @@ impl FormulaEvaluator {
             });
             let path = paths.get(&(node as *const OverseerNode as usize))?.clone();
             Some((root, path))
+        })
+    }
+
+    /// Whether a search going down from somewhere in the pass's document could find a node of this
+    /// name: whether any node outside the contexts bears it, which is where such a search looks.
+    /// True outside a pass, or for another document, where nothing is known.
+    ///
+    /// A bare name is looked for under each ancestor in turn before the top is reached, and a name
+    /// only the top's contexts answer to - `mode`, read by every theme a container's own context
+    /// merges onto - was looked for through the whole document from each of them: two
+    /// milliseconds a read on the project tracker, and every row's theme reads it nine times.
+    /// A pass adds no node and renames none, so what it holds is known once for the pass.
+    fn may_be_found_below(root: &[OverseerNode], name: &str) -> bool {
+        Self::with_pass_root(|slot| {
+            let Some(held) = slot.as_mut() else { return true };
+            if held.root != root.as_ptr() || held.len != root.len() {
+                return true;
+            }
+            let names = held.names.get_or_insert_with(|| {
+                fn gather(nodes: &[OverseerNode], out: &mut std::collections::HashSet<String>) {
+                    for n in nodes {
+                        if crate::contexts::is_context(n) {
+                            continue;
+                        }
+                        if !out.contains(&n.name) {
+                            out.insert(n.name.clone());
+                        }
+                        gather(&n.children, out);
+                    }
+                }
+                let mut out = std::collections::HashSet::new();
+                gather(root, &mut out);
+                out
+            });
+            names.contains(name)
         })
     }
 
@@ -1417,9 +1454,12 @@ impl FormulaEvaluator {
                     }
                     // c) Deep search under ancestor (first match)
                     let mut below: Vec<String> = Vec::new();
-                    if let Some(val) =
+                    let found_below = if Self::may_be_found_below(context.document_root, field_name) {
                         FormulaEvaluator::find_value_by_name_deep_from(ancestor, field_name, &mut below)
-                    {
+                    } else {
+                        None
+                    };
+                    if let Some(val) = found_below {
                         let mut walked = ancestor_path.to_vec();
                         walked.extend(below);
                         crate::dependencies::note_read(&walked);

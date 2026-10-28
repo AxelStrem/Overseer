@@ -163,10 +163,9 @@ fn looking() -> Option<String> {
     }
 }
 
-/// `context me`, for whoever is looking. Their name is read from the server's directory of
-/// people, so a new one is seen at once, in every document.
-fn me() -> OverseerNode {
-    let (handle, name) = match looking() {
+/// Whoever is looking, as `me` says them: their username and their name, both empty for nobody.
+fn who_is_looking() -> (String, String) {
+    match looking() {
         Some(handle) => {
             let name = crate::access::root()
                 .and_then(|root| crate::people::name_of(&root, &handle))
@@ -174,7 +173,13 @@ fn me() -> OverseerNode {
             (handle, name)
         }
         None => (String::new(), String::new()),
-    };
+    }
+}
+
+/// `context me`, for whoever is looking. Their name is read from the server's directory of
+/// people, so a new one is seen at once, in every document.
+fn me() -> OverseerNode {
+    let (handle, name) = who_is_looking();
     let quoted =
         |s: &str| crate::file_ops::FileOperations::serialize_value(&OverseerValue::String(s.to_string()));
     let text = format!(
@@ -236,6 +241,66 @@ pub fn key() -> String {
         Some(handle) => format!("mode={};me={}", mode, handle),
         None => format!("mode={}", mode),
     }
+}
+
+/// What the environment says besides who is looking: each declaration of the settings as it
+/// stands, with `mode` settled, and the files its themes were read from and how each stood. Two
+/// people whose settings say the same in the same scheme see the same here, wherever their
+/// settings are kept - see `document_cache`, which hands a document worked out for one of them to
+/// the other on the strength of it.
+pub fn look() -> String {
+    let declarations = declarations();
+    let mut out = String::new();
+    for node in declarations.iter().filter(|node| node.name != ME) {
+        let mut node = node.clone();
+        settle_mode(&mut node);
+        describe(&node, &mut out);
+    }
+    for (file, stamp) in crate::bases::held(&declarations) {
+        out.push_str(&file);
+        out.push(' ');
+        out.push_str(&stamp);
+        out.push('\n');
+    }
+    out
+}
+
+/// Who is looking, as `me` says them - see `look`.
+pub fn who() -> String {
+    let (handle, name) = who_is_looking();
+    format!("{}\n{}", handle, name)
+}
+
+/// The names the environment declares, `me` among them: what a document's top sees from it.
+pub fn names() -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for node in declarations() {
+        if !names.contains(&node.name) {
+            names.push(node.name);
+        }
+    }
+    names
+}
+
+/// A node as `look` compares it: what it says, and nothing of where it was read from.
+fn describe(node: &OverseerNode, out: &mut String) {
+    out.push_str(&node.node_type);
+    out.push(' ');
+    out.push_str(&node.name);
+    if let Some(template) = &node.template {
+        out.push_str(" <");
+        out.push_str(template);
+        out.push('>');
+    }
+    out.push_str(" (");
+    for (key, value) in &node.parameters {
+        out.push_str(&format!("{}={:?}, ", key, value));
+    }
+    out.push_str(") {");
+    for child in &node.children {
+        describe(child, out);
+    }
+    out.push_str("}\n");
 }
 
 /// Every file the environment was read from, and how each stood: the settings - or where they

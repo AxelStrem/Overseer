@@ -3374,6 +3374,62 @@ fn collect_all_node_paths(
     }
 }
 
+/// The contexts of a worked-out document worked out again for whoever is asking now, and nothing
+/// else: the copies are put in afresh from the declarations and the environment, and their
+/// formulas worked out where they stand.
+///
+/// For a document held as someone else saw it - in another scheme, by another person - whose
+/// values outside the copies read nothing of the environment: what differs between the two is
+/// then inside the copies alone - see `document_cache`. Recorded nowhere, and counted as no pass:
+/// it is no part of whatever the caller was working out.
+pub fn see_contexts_as_asked(nodes: &mut Vec<OverseerNode>) {
+    crate::dependencies::unrecorded(|| {
+        crate::contexts::resolve_contexts(nodes);
+        // As `resolve_structure` does after the contexts, so that a copy is laid out as one
+        // worked out with the rest of the document is.
+        resolve_layout_parameters(nodes, None);
+        let mut paths = std::collections::HashSet::new();
+        for (idx, n) in nodes.iter().enumerate() {
+            let name = n.name.clone();
+            let k = nodes.iter().take(idx).filter(|c| c.name == name).count();
+            let mut prefix = vec![if k > 0 { format!("{}#{}", name, k) } else { name }];
+            let inside = crate::contexts::is_copy(n);
+            if inside {
+                paths.insert(prefix.join("/"));
+            }
+            collect_copy_paths(&n.children, &mut prefix, &mut paths, &mut crate::addressing::Level::default(), inside);
+        }
+        if !paths.is_empty() {
+            let passes = PASSES_TAKEN.with(|p| p.get());
+            evaluate_formulas_for_specific_fields(nodes, &paths);
+            PASSES_TAKEN.with(|p| p.set(passes));
+        }
+    })
+}
+
+/// The paths of every node inside a context's copy, named as `collect_paths_below` names them.
+fn collect_copy_paths(
+    nodes: &[OverseerNode],
+    prefix: &mut Vec<String>,
+    acc: &mut std::collections::HashSet<String>,
+    level: &mut crate::addressing::Level,
+    inside: bool,
+) {
+    for n in nodes {
+        if crate::addressing::is_wrapper(n) {
+            collect_copy_paths(&n.children, prefix, acc, level, inside);
+            continue;
+        }
+        let here = inside || crate::contexts::is_copy(n);
+        prefix.push(level.segment(&n.name));
+        if here {
+            acc.insert(prefix.join("/"));
+        }
+        collect_copy_paths(&n.children, prefix, acc, &mut crate::addressing::Level::default(), here);
+        prefix.pop();
+    }
+}
+
 fn collect_paths_below(
     nodes: &[OverseerNode],
     prefix: &mut Vec<String>,

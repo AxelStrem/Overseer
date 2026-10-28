@@ -239,6 +239,15 @@ pub fn apart<T>(work: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Work something out with nothing recorded, whatever was being recorded around it: work done
+/// for another purpose in the middle of a recording - see `resolver::see_contexts_as_asked`.
+pub fn unrecorded<T>(work: impl FnOnce() -> T) -> T {
+    let was = RECORDING.with(|on| std::mem::replace(&mut *on.borrow_mut(), false));
+    let out = work();
+    RECORDING.with(|on| *on.borrow_mut() = was);
+    out
+}
+
 /// The frame `apart` opens. Named by no path, so nothing is ever recorded against it.
 const APART: PathId = 0;
 
@@ -384,6 +393,39 @@ impl Graph {
 
     pub fn reads_the_clock(&self) -> bool {
         self.read_by.contains_key(crate::formula_evaluator::CLOCK)
+    }
+
+    /// Which of these names something read under, from outside every one of them: the contexts
+    /// of the environment - `theme`, `mode`, `me` - a document's values were worked out from.
+    ///
+    /// A context's copy reads the others - the theme reads `mode` - and that is no value of the
+    /// document's: what is inside a copy is worked out again wherever the document is handed to
+    /// someone who sees it otherwise - see `document_cache`. A value outside them that read one is
+    /// worked out from it, and holds only for whoever sees it the same. A copy is a step of a path
+    /// below wherever it was put, so any step counts: a read of `project/Items/Item__3/theme/text`
+    /// is the theme's as much as one of `theme/text`.
+    pub fn names_read_from_outside(&self, names: &[String]) -> Vec<String> {
+        let under = |key: &str| -> Option<usize> {
+            Self::node_of(key).split('/').find_map(|step| {
+                let step = step.split('#').next().unwrap_or(step);
+                names.iter().position(|name| name == step)
+            })
+        };
+        let mut found = vec![false; names.len()];
+        for (value, sources) in &self.reads {
+            if under(value).is_some() {
+                continue;
+            }
+            for source in sources {
+                if let Some(at) = under(source) {
+                    found[at] = true;
+                }
+            }
+            if found.iter().all(|f| *f) {
+                break;
+            }
+        }
+        names.iter().zip(found).filter(|(_, f)| *f).map(|(name, _)| name.clone()).collect()
     }
 
     /// The node a recorded key belongs to.

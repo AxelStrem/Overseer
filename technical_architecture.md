@@ -99,6 +99,10 @@ knowing about because each has a cost:
 - **A document cache**, byte-budgeted and least-recently-used, holding text, nodes and graph
   together. `OVERSEER_CACHE_MB` overrides the budget. A document resolved with part of a list
   out of view is never cached, because a write needs the whole thing.
+  A document is drawn through whoever is looking - their theme, their scheme, `me` - but most
+  documents read none of that outside the copies of their contexts. The graph says whether one
+  does: if not, the document worked out for one person is handed to another, with only its
+  contexts worked out again as they see them.
   What it lets go of for want of room is written to a folder (`OVERSEER_DISK_CACHE`, by default
   one under the system's temporary folder; empty turns it off) and read back for about a third
   of what working it out again costs. A file holds the text, the folder and the build it was worked out by,
