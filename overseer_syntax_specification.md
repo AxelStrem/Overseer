@@ -514,6 +514,14 @@ grid Steps (entry=int, columns=7, rows=2) {
   ```
 
   A place outside the grid is an error, as a field that is not there is.
+- **A cell's own place**: `column()` and `row()`, in any formula inside a cell, give the cell's
+  place from 0 - the numbers `at()` takes - so the template every cell is made from can reach a
+  neighbour. They are plain functions, not the grid's `row(n)` and `column(n)`, and outside a cell
+  they are an error.
+
+  ```overseer
+  int right = $(Rota.at(column() + 1, row())/hours)
+  ```
 - **The page** draws the cells in their rows and columns, headed by the column letters and the row
   numbers; `header=false` leaves the headings out.
 

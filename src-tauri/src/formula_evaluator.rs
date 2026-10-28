@@ -2770,6 +2770,33 @@ impl FormulaEvaluator {
                 z ^= z >> 31;
                 Ok(OverseerValue::Integer((z % n as u64) as i64))
             }
+            // column() and row(): the place of the grid cell the formula is in, from 0, as `at()`
+            // takes it - so a cell made from a template can reach its neighbours. A cell's name is
+            // its place, and it is a step of every path under it; the nearest cell wins.
+            "column" | "row" => {
+                if !args.is_empty() {
+                    return Err(OverseerError::FormulaError(format!(
+                        "{}() takes no arguments - a grid's own {}(n) is called on the grid",
+                        name, name
+                    )));
+                }
+                let path = &context.node_path;
+                for i in (1..path.len()).rev() {
+                    let Some((column, row)) = crate::addressing::cell_place(&path[i]) else {
+                        continue;
+                    };
+                    let in_a_grid = Self::resolve_path_to_node(&path[..i], context.document_root)
+                        .is_some_and(|parent| parent.node_type == "grid");
+                    if in_a_grid {
+                        let place = if name == "column" { column } else { row };
+                        return Ok(OverseerValue::Integer(place as i64));
+                    }
+                }
+                Err(OverseerError::FormulaError(format!(
+                    "{}() is only for a formula inside a grid's cell",
+                    name
+                )))
+            }
             "weekday" | "day_of_month" | "month_of" => {
                 if args.len() != 1 {
                     return Err(OverseerError::FormulaError(format!(
