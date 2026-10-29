@@ -830,6 +830,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     opacity: 0.12;
 }
 
+/* Something that says `on hold` is held down on a phone, which would otherwise select its text
+   and bring up the phone's own menu under the finger. */
+[data-holds="1"] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
 .overseer-pressable:focus-visible {
     outline: 2px solid var(--ov-accent);
     outline-offset: 2px;

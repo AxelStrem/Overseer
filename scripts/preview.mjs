@@ -16,7 +16,9 @@
 //   shot(name, { of, full })   a screenshot, its path printed: the whole document, one node
 //                              (of: address), or only what the window shows (full: false)
 //   press(at), type(text), key('Enter')
-//                              a click (a tap with --mobile), typing, a key - as a person's
+//                              a click (a tap with --mobile), typing, a key - as a person's;
+//                              press(at, { hold: 2 }) holds it down two seconds before letting go,
+//                              and press(at, { right: true }) is a right-click
 //   pick(at, option), tab(name)
 //                              an option of an enum or tags field; a tab, by name or label
 //   text(at), drawn(at), node(at, depth)
@@ -506,19 +508,25 @@ async function main() {
                 return path
             },
             /// A press, as a person's: the mouse moved there and clicked - or, in --mobile, a tap.
-            async press(target, { double = false } = {}) {
+            /// `hold` is how many seconds it is held down before it is let go; `right` presses
+            /// the mouse's other button.
+            async press(target, { double = false, hold = 0, right = false } = {}) {
                 const r = await rectOf(target)
                 if (r.covered) throw new Error(`${JSON.stringify(target)} cannot be pressed: ${r.covered} lies over it`)
                 const x = r.pressX
                 const y = r.pressY
-                if (args.mobile) {
+                const held = () => hold > 0 ? new Promise((done) => setTimeout(done, hold * 1000)) : null
+                if (args.mobile && !right) {
                     await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+                    await held()
                     await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
                 } else {
+                    const button = right ? 'right' : 'left'
                     await mouse(x, y, 'mouseMoved', { button: 'none' })
                     for (const count of double ? [1, 2] : [1]) {
-                        await mouse(x, y, 'mousePressed', { clickCount: count })
-                        await mouse(x, y, 'mouseReleased', { clickCount: count })
+                        await mouse(x, y, 'mousePressed', { clickCount: count, button })
+                        await held()
+                        await mouse(x, y, 'mouseReleased', { clickCount: count, button })
                     }
                 }
                 await settle()

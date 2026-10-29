@@ -1070,7 +1070,7 @@ impl ActionExecutor {
         let owner_eval_path = Self::build_disambiguated_path(nodes, &owner_indices);
         let _press_state = PressState::begin();
         // What was pressed by hand counts as pressed: a flood that comes back round to it stops.
-        if event_name == "click" {
+        if event_name == "click" || event_name == "hold" {
             PRESSED.with(|p| p.borrow_mut().insert(owner_eval_path.join("/")));
         }
 

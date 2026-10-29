@@ -1134,7 +1134,7 @@ export class OverseerRenderer {
         const n = String(name).toLowerCase()
         // Common UI events supported by Overseer actions
         const eventNames = [
-            'click','change','submit','dblclick','hover','keydown','keyup','input'
+            'click','hold','change','submit','dblclick','hover','keydown','keyup','input'
         ]
         return eventNames.includes(n)
     }
@@ -3791,7 +3791,8 @@ export class OverseerRenderer {
         const drawnAsAField = ['tab', 'list', 'string', 'textbox', 'text', 'tags', 'enum', 'filter', 'int', 'float',
             'date', 'timestamp', 'bool', 'button', 'checkbox', 'chart', 'mount'].includes(type)
         if (drawnAsAField) return
-        if (!this.declaresEvent(node, 'click')) return
+        const taps = this.declaresEvent(node, 'click')
+        if (!taps && !this.declaresEvent(node, 'hold')) return
         if (node.parameters && node.parameters.link !== undefined) return
 
         element.classList.add('overseer-pressable')
@@ -3799,8 +3800,13 @@ export class OverseerRenderer {
         element.tabIndex = 0
 
         const reachesThis = (event) => this.whatTakesTheTap(event.target, element) === element
-        const press = () => this.emitEvent(node, element, 'click')
-            .catch((err) => console.warn('Action execution failed:', err))
+        const press = () => {
+            if (!taps) return
+            this.emitEvent(node, element, 'click')
+                .catch((err) => console.warn('Action execution failed:', err))
+        }
+        // Before the click listener below, so that the click ending a hold never reaches it.
+        this.listenForHold(element, node, { reaches: reachesThis, onTap: press })
 
         element.addEventListener('click', (event) => {
             if (!reachesThis(event)) return
@@ -3835,6 +3841,110 @@ export class OverseerRenderer {
             letGo()
             element.classList.remove('would-press')
         })
+    }
+
+    /// How long a press on the node has to be held to be a hold, in milliseconds: `hold=2` and
+    /// `hold="2s"` are two seconds, `hold="600ms"` is what it says, and a node that says nothing
+    /// waits a little over half a second, about as long as a phone's own long press.
+    holdTimeOf(node) {
+        const said = this.getParameterValue(node, 'hold')
+        if (typeof said === 'number' && Number.isFinite(said) && said >= 0) return said * 1000
+        const m = typeof said === 'string' ? said.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s)?$/i) : null
+        if (m) return Number(m[1]) * ((m[2] || 's').toLowerCase() === 'ms' ? 1 : 1000)
+        return 600
+    }
+
+    /**
+     * Tell a tap from a hold, for a node that declares `on hold`.
+     *
+     * A press held still for the node's hold time runs `on hold`, and the click the browser sends
+     * when it is let go is swallowed; one let go sooner is a click as ever, left to the listener
+     * registered after this one, which is why this one has to be registered first. A press that
+     * moves away or is taken over by a scroll is neither. A right-click is a hold at once, since a
+     * mouse has a button for it; a phone's long press brings up the same event, and there the
+     * timer decides instead. From the keyboard, Enter or Space held is a hold, and let go sooner
+     * is `onTap`.
+     *
+     * A drag that has begun on a movable list's entry is a drag, and not a hold as well.
+     */
+    listenForHold(element, node, { reaches = () => true, onTap = () => {} } = {}) {
+        if (!this.declaresEvent(node, 'hold')) return
+        element.dataset.holds = '1'
+        const hold = () => this.emitEvent(node, element, 'hold')
+            .catch((err) => console.warn('Action execution failed:', err))
+        let timer = null
+        let start = null
+        let swallow = false
+        const stop = () => {
+            if (timer) clearTimeout(timer)
+            timer = null
+        }
+        const abandon = () => {
+            if (!timer) return
+            stop()
+            swallow = true
+        }
+        const arm = (onTime) => {
+            stop()
+            timer = setTimeout(() => {
+                timer = null
+                if (this._entryDrag && this._entryDrag.started) return
+                onTime()
+            }, this.holdTimeOf(node))
+        }
+
+        element.addEventListener('click', (event) => {
+            if (!swallow) return
+            swallow = false
+            event.preventDefault()
+            event.stopImmediatePropagation()
+        })
+        element.addEventListener('pointerdown', (event) => {
+            swallow = false
+            if (event.pointerType === 'mouse' && event.button !== 0) return
+            if (!reaches(event)) return
+            start = { x: event.clientX, y: event.clientY, id: event.pointerId, touch: event.pointerType !== 'mouse' }
+            arm(() => { swallow = true; hold() })
+        })
+        element.addEventListener('pointermove', (event) => {
+            if (!timer || !start || event.pointerId !== start.id) return
+            if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) abandon()
+        })
+        element.addEventListener('pointerup', () => { stop(); start = null })
+        element.addEventListener('pointercancel', () => { abandon(); start = null })
+        element.addEventListener('pointerleave', () => { abandon(); start = null })
+        element.addEventListener('contextmenu', (event) => {
+            if (!reaches(event)) return
+            event.preventDefault()
+            // A finger held down is the timer's to decide; the menu a phone offers is not wanted.
+            if (timer && start && start.touch) return
+            stop()
+            start = null
+            hold()
+        })
+
+        let keyDown = false
+        const isPressKey = (event) => event.target === element && (event.key === 'Enter' || event.key === ' ')
+        // In the capture phase, so that a pressable div's own keydown, which taps at once, never
+        // sees a key that may turn out to be a hold.
+        element.addEventListener('keydown', (event) => {
+            if (!isPressKey(event)) return
+            event.preventDefault()
+            event.stopImmediatePropagation()
+            if (event.repeat || keyDown) return
+            keyDown = true
+            arm(() => { keyDown = false; hold() })
+        }, true)
+        element.addEventListener('keyup', (event) => {
+            if (!isPressKey(event)) return
+            // A button clicks itself when Space is let go.
+            event.preventDefault()
+            if (!keyDown) return
+            keyDown = false
+            stop()
+            onTap()
+        }, true)
+        element.addEventListener('blur', () => { keyDown = false; stop() })
     }
 
     /**
@@ -4411,7 +4521,7 @@ export class OverseerRenderer {
             if (el.disabled) return false
             // A document's button with nothing to do is as inert as a label.
             const declared = this.nodeDrawnBy(el)
-            return declared ? this.declaresEvent(declared, 'click') : true
+            return declared ? (this.declaresEvent(declared, 'click') || this.declaresEvent(declared, 'hold')) : true
         }
         if (el.classList.contains('overseer-field')) {
             const declared = this.nodeDrawnBy(el)
@@ -6280,13 +6390,16 @@ export class OverseerRenderer {
         // If any children exist, they are non-visual and handled by emitEvent only
         // We intentionally do not render node.children for buttons
         // Wire to backend actions on click (path is read from dataset set by renderNode)
-        button.addEventListener('click', async () => {
+        const tap = async () => {
             try {
                 await this.emitEvent(node, button, 'click')
             } catch (err) {
                 console.warn('Action execution failed:', err)
             }
-        })
+        }
+        // Before the click listener, so that the click ending a hold never reaches it.
+        this.listenForHold(button, node, { onTap: tap })
+        button.addEventListener('click', tap)
     // Honor explicit margin/padding on buttons (do not apply container defaults)
     this.applyLayoutStyles(button, node)
     this.applyNodeStyles(button, node)

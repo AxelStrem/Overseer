@@ -1300,6 +1300,35 @@ with no action of its own. A worked-out value inside a pressable div does not op
 a double tap either, since its taps are the div's. An entry inside another pressable entry takes
 the tap itself, and the outer one does not see it.
 
+#### A tap or a hold
+
+`on hold` sits beside `on click` on a button or a div, and tells a tap from a press held down: a
+press held still for the node's `hold` time runs `on hold`, and one let go sooner runs `on click`.
+A press that moves off the node, or that turns into a scroll, runs neither. On a computer a
+right-click is a hold at once, and from the keyboard Enter held down is one. `hold=` is a number
+of seconds, or says its unit - `hold="2s"`, `hold="600ms"`; without it a hold is 0.6 seconds,
+about as long as a phone's own long press. A div with `on hold` and no `on click` is pressable
+too, and a tap on it does nothing.
+
+```overseer
+div Cell (hold="2s") {
+    bool flagged = false
+    bool open = false
+
+    on click {
+        toggle (path="./flagged")
+    }
+
+    on hold {
+        set (path="./open") = true
+    }
+}
+```
+
+A hold is run as a click is: from the node's own place, as one change and one step to take back.
+`press` runs another node's `on click`, never its `on hold`. On an entry of a movable list, a
+long press that begins dragging the entry is a drag, and not a hold.
+
 #### Opening a field for editing
 
 `start_editing` opens a field as though it had been double-tapped, with the cursor in it:
@@ -2192,7 +2221,7 @@ div Tasks {
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
-- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`
+- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`)
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
@@ -2202,7 +2231,7 @@ div Tasks {
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`
 - **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
-- **Events**: `on click`, `on change`, `on load`, `on unload`
+- **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`
 - **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context, and `base=none` or `base=<node>` on an element of an override)
 
