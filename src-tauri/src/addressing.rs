@@ -280,31 +280,31 @@ pub fn segments_for(
     parent: Option<&OverseerNode>,
     children: &[(Vec<usize>, &OverseerNode)],
 ) -> Vec<String> {
-    let mut out = Vec::with_capacity(children.len());
-    for (i, (_, node)) in children.iter().enumerate() {
-        if let Some(field) = parent.and_then(key_field) {
-            if let Some(key) = key_of(node, field) {
-                out.push(format!("[{}]", escape(&key)));
-                continue;
-            }
+    (0..children.len()).map(|i| segment_of(parent, children, i)).collect()
+}
+
+/// The step of one of them, the `i`th - see `segments_for`.
+pub fn segment_of(parent: Option<&OverseerNode>, children: &[(Vec<usize>, &OverseerNode)], i: usize) -> String {
+    let node = children[i].1;
+    if let Some(field) = parent.and_then(key_field) {
+        if let Some(key) = key_of(node, field) {
+            return format!("[{}]", escape(&key));
         }
-        if crate::contexts::is_copy(node) {
-            out.push(format!("({})", escape(&node.name)));
-            continue;
-        }
-        // Counted across the effective siblings, so two wrappers holding same-named children
-        // still produce one address each.
-        let ordinal = children[..i]
-            .iter()
-            .filter(|(_, s)| s.name == node.name && !crate::contexts::is_copy(s))
-            .count();
-        out.push(if ordinal == 0 {
-            escape(&node.name)
-        } else {
-            format!("{}#{}", escape(&node.name), ordinal)
-        });
     }
-    out
+    if crate::contexts::is_copy(node) {
+        return format!("({})", escape(&node.name));
+    }
+    // Counted across the effective siblings, so two wrappers holding same-named children
+    // still produce one address each.
+    let ordinal = children[..i]
+        .iter()
+        .filter(|(_, s)| s.name == node.name && !crate::contexts::is_copy(s))
+        .count();
+    if ordinal == 0 {
+        escape(&node.name)
+    } else {
+        format!("{}#{}", escape(&node.name), ordinal)
+    }
 }
 
 /// The address segment of each immediate child of `parent`, in order.

@@ -1037,6 +1037,8 @@ can be a formula.
 | `sort (list, by, order, stable)` | puts the entries in the order `by` gives, `by="$(x/title)"`, `asc` or `desc`, and writes that order |
 | `clear_list (path)` | takes away every entry |
 | `if (cond) { ... }` | runs the actions inside when the condition holds (see below) |
+| `each (in, as) { ... }` | runs the actions inside once for each item of a list (see "Going through a list") |
+| `press (path)` | runs another node's `on click` as part of this press (see "Pressing another node") |
 | `refuse = "why"` | stops the press and writes nothing (see "Saying no to a press") |
 | `start_editing (path)` | opens a field for typing (see "Opening a field for editing") |
 | `fold (path)`, `unfold (path)`, `toggle_fold (path)` | folds a div away or brings it back (see "Folding a div away") |
@@ -1045,6 +1047,53 @@ can be a formula.
 A press is one change: every action in it is written together, and one undo takes back all of
 it. An action that fails - a path that names nothing, say - refuses the whole press, and nothing of it
 is written.
+
+#### Going through a list
+
+`each (in=$(list), as="t") { ... }` runs its actions once for each item of the list the formula
+names - `$(../Tasks)`, `$(../Tasks.filter(|x| x/urgent))`, the values of a `tags` field - in
+order. Inside, `t` names the item: in formulas, as a lambda's name does (`$(t/title)`), and as
+the first step of a path (`path="t/done"`). Without `as`, the item is `item`. The list is worked
+out once, before the first round; an entry an earlier round took away is passed over, and the
+rest are found by their key, so a list the rounds change should have one. A formula that ends in
+a value - `.count()`, `.sum()` - names no list, and is refused.
+
+```overseer
+button tick_urgent (label="Tick urgent") {
+    on click {
+        each (in=$(../Tasks.filter(|x| x/urgent)), as="t") {
+            set (path="t/done") = true
+        }
+    }
+}
+```
+
+#### Pressing another node
+
+`press (path="../add")` runs that node's `on click` within this press: it is the same change,
+and one undo takes back both. The pressed node's actions read and write from where they are
+written, and the names an `each` gave are not theirs. A node with no `on click` is refused.
+
+A press may press nodes that press others, and come back round: a node already pressed in this
+press - the one pressed by hand included - is passed over. That is what lets a cell with nothing
+around it open its neighbours, which open theirs, each once. Presses nested more than 512 deep
+refuse the press.
+
+Writing a field with `set` does not run that field's `on change`; `press` is how one handler runs
+another.
+
+```overseer
+button open (label="Open") {
+    on click {
+        set (path="../opened") = true
+        if (cond=$(../around == 0)) {
+            each (in=$(/board/Cells.filter(|x| !x/opened && x/near_me)), as="c") {
+                press (path="c/open")
+            }
+        }
+    }
+}
+```
 
 #### Who may change what
 

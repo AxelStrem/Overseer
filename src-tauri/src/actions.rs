@@ -352,6 +352,107 @@ thread_local! {
     static REPORT: std::cell::RefCell<Option<Changed>> = const { std::cell::RefCell::new(None) };
 }
 
+/// How deep one press may press other nodes that press others - see `press`. A flood over a
+/// board chains a press for each cell it opens; past this the press fails, saying so, rather than
+/// running out of stack.
+pub const PRESS_DEPTH_LIMIT: usize = 512;
+
+/// A name an `each` gives the item it is on, for the formulas and paths of its block.
+#[derive(Clone)]
+struct Bound {
+    name: String,
+    item: BoundItem,
+}
+
+#[derive(Clone)]
+enum BoundItem {
+    /// An entry, or any node, of the document: where it is, and its address to find it again by
+    /// once the document's shape has moved since - see `SHAPE_MOVES`.
+    Node { address: Option<String>, indices: Vec<usize>, seen_at: u64 },
+    Value(OverseerValue),
+}
+
+thread_local! {
+    /// The names `each` blocks have given, innermost last. Set aside while another node's handler
+    /// runs from a `press`, since a block reads only the names written around it.
+    static BOUND: std::cell::RefCell<Vec<Bound>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Counted up each time an action may have moved the document's shape, so a bound node is
+    /// looked for again by its address only when its place can have changed.
+    static SHAPE_MOVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The nodes pressed in this press, by path: none is pressed twice - see `press`.
+    static PRESSED: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+    /// How many presses deep the press now is.
+    static PRESS_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn shape_moved() {
+    SHAPE_MOVES.with(|m| m.set(m.get().wrapping_add(1)));
+}
+
+/// What `each` and `press` keep for the length of one press, begun empty and put back as it was
+/// when the press is over - a mount loaded from inside a press runs a press of its own.
+struct PressState {
+    bound: Vec<Bound>,
+    pressed: std::collections::HashSet<String>,
+    depth: usize,
+}
+
+impl PressState {
+    fn begin() -> Self {
+        PressState {
+            bound: BOUND.with(|b| std::mem::take(&mut *b.borrow_mut())),
+            pressed: PRESSED.with(|p| std::mem::take(&mut *p.borrow_mut())),
+            depth: PRESS_DEPTH.with(|d| d.replace(0)),
+        }
+    }
+}
+
+impl Drop for PressState {
+    fn drop(&mut self) {
+        BOUND.with(|b| *b.borrow_mut() = std::mem::take(&mut self.bound));
+        PRESSED.with(|p| *p.borrow_mut() = std::mem::take(&mut self.pressed));
+        PRESS_DEPTH.with(|d| d.set(self.depth));
+    }
+}
+
+/// One `each` round's name, taken off again however the round ends.
+struct Binding;
+
+impl Binding {
+    fn bind(bound: Bound) -> Self {
+        BOUND.with(|b| b.borrow_mut().push(bound));
+        Binding
+    }
+}
+
+impl Drop for Binding {
+    fn drop(&mut self) {
+        BOUND.with(|b| {
+            b.borrow_mut().pop();
+        });
+    }
+}
+
+/// One press deeper, with the names around the `press` set aside until it is done.
+struct Deeper {
+    bound: Vec<Bound>,
+}
+
+impl Deeper {
+    fn enter() -> Self {
+        PRESS_DEPTH.with(|d| d.set(d.get() + 1));
+        Deeper { bound: BOUND.with(|b| std::mem::take(&mut *b.borrow_mut())) }
+    }
+}
+
+impl Drop for Deeper {
+    fn drop(&mut self) {
+        PRESS_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        BOUND.with(|b| *b.borrow_mut() = std::mem::take(&mut self.bound));
+    }
+}
+
 /// Start noting what actions change. Anything previously noted is discarded.
 ///
 /// For a caller that does not work the document out afterwards, so the event settles it itself.
@@ -717,6 +818,7 @@ fn note_fold(address: String, how: FoldHow) {
 
 /// The document's shape moved, so no address can be trusted to still mean what it did.
 fn note_structural() {
+    shape_moved();
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
             changed.acted = true;
@@ -728,6 +830,7 @@ fn note_structural() {
 
 /// The document's shape moved in a way that can be said - see `Shape`.
 fn note_shape(shape: Shape) {
+    shape_moved();
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
             changed.acted = true;
@@ -888,6 +991,8 @@ impl ActionExecutor {
                 | "load_mount"
                 | "unload_mount"
                 | "if"
+                | "each"
+                | "press"
         )
     }
 
@@ -963,6 +1068,11 @@ impl ActionExecutor {
         // itself: a copy of the whole of it, made only to read a path, was a fifth of what a press
         // on tasks.os cost once it no longer worked the document out again.
         let owner_eval_path = Self::build_disambiguated_path(nodes, &owner_indices);
+        let _press_state = PressState::begin();
+        // What was pressed by hand counts as pressed: a flood that comes back round to it stops.
+        if event_name == "click" {
+            PRESSED.with(|p| p.borrow_mut().insert(owner_eval_path.join("/")));
+        }
 
         // 2) Find matching on block(s)
         #[cfg(feature = "debug-resolver")]
@@ -1068,6 +1178,147 @@ impl ActionExecutor {
         Ok(())
     }
 
+    /// Run a block of actions in order, as an `if`, an `each` round or a pressed node's handler.
+    ///
+    /// Settled between them by the rule the press itself follows - see `execute_event`: in place
+    /// when the shape moved and another action is still to read it, and otherwise left to
+    /// whatever settles the press. It used to work the whole document out after every one of
+    /// them, and the tag form's one append paid that before the press was settled anyway.
+    fn run_actions(
+        nodes: &mut Vec<OverseerNode>,
+        owner_indices: &[usize],
+        owner_path: &[String],
+        actions: &[OverseerNode],
+    ) -> Result<(), OverseerError> {
+        let last = actions.len().saturating_sub(1);
+        for (at, child) in actions.iter().enumerate() {
+            Self::execute_action(nodes, owner_indices, owner_path, child)?;
+            if Self::action_changes_structure(&child.node_type) {
+                // What an `if`, `each` or `press` ran has said so already, action by action.
+                if !matches!(child.node_type.as_str(), "if" | "each" | "press") {
+                    shape_moved();
+                }
+                if at < last {
+                    Self::settle_for_what_comes_next(nodes);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// What an action's formulas are worked out in: the node the action belongs to, with every
+    /// name the `each` blocks around it give.
+    fn action_context<'a>(owner_path: &[String], nodes: &'a [OverseerNode]) -> EvaluationContext<'a> {
+        let mut ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
+        Self::add_bindings(&mut ctx, nodes);
+        ctx
+    }
+
+    fn add_bindings<'a>(ctx: &mut EvaluationContext<'a>, nodes: &'a [OverseerNode]) {
+        let bound = BOUND.with(|b| b.borrow().clone());
+        for Bound { name, item } in bound {
+            let value = match item {
+                BoundItem::Node { address, indices, seen_at } => {
+                    match Self::found_again(nodes, address.as_deref(), &indices, seen_at)
+                        .and_then(|at| Self::node_by_indices(nodes, &at))
+                    {
+                        Some(node) => BoundValue::Node(node),
+                        None => continue,
+                    }
+                }
+                BoundItem::Value(v) => BoundValue::Value(v),
+            };
+            ctx.var_bindings.insert(name, value);
+        }
+    }
+
+    /// Where a bound node is now: where it was, unless the shape has moved since, and then
+    /// wherever its address leads - or nowhere, once it has been taken away.
+    fn found_again(
+        nodes: &[OverseerNode],
+        address: Option<&str>,
+        indices: &[usize],
+        seen_at: u64,
+    ) -> Option<Vec<usize>> {
+        if SHAPE_MOVES.with(|m| m.get()) == seen_at {
+            return Some(indices.to_vec());
+        }
+        match address {
+            Some(address) => crate::delta::indices_of(nodes, address),
+            None => Self::node_by_indices(nodes, indices).map(|_| indices.to_vec()),
+        }
+    }
+
+    /// The node a name an `each` gave stands for, when the first step of a path is that name.
+    fn bound_node(nodes: &[OverseerNode], name: &str) -> Option<Vec<usize>> {
+        let bound = BOUND.with(|b| b.borrow().iter().rev().find(|b| b.name == name).cloned())?;
+        match bound.item {
+            BoundItem::Node { address, indices, seen_at } => {
+                Self::found_again(nodes, address.as_deref(), &indices, seen_at)
+            }
+            BoundItem::Value(_) => None,
+        }
+    }
+
+    /// The items an `each` goes through, worked out once, each node held by where it is.
+    fn items_to_go_through(
+        nodes: &[OverseerNode],
+        owner_path: &[String],
+        formula: &str,
+    ) -> Result<Vec<BoundItem>, OverseerError> {
+        use crate::formula_evaluator::ListItem;
+        use std::collections::{HashMap, HashSet};
+        let ctx = Self::action_context(owner_path, nodes);
+        let listed = FormulaEvaluator::evaluate_items(formula, &ctx)?;
+        // Found by identity: the formula hands back the document's own nodes, and a name can be
+        // shared by entries of a list without a key.
+        let wanted: HashSet<usize> = listed
+            .iter()
+            .filter_map(|item| match item {
+                ListItem::Node(n) => Some(*n as *const OverseerNode as usize),
+                ListItem::Value(_) => None,
+            })
+            .collect();
+        fn walk(
+            nodes: &[OverseerNode],
+            path: &mut Vec<usize>,
+            wanted: &HashSet<usize>,
+            found: &mut HashMap<usize, Vec<usize>>,
+        ) {
+            for (i, node) in nodes.iter().enumerate() {
+                path.push(i);
+                let at = node as *const OverseerNode as usize;
+                if wanted.contains(&at) {
+                    found.insert(at, path.clone());
+                }
+                walk(&node.children, path, wanted, found);
+                path.pop();
+            }
+        }
+        let mut found: HashMap<usize, Vec<usize>> = HashMap::new();
+        if !wanted.is_empty() {
+            walk(nodes, &mut Vec::new(), &wanted, &mut found);
+        }
+        let places: Vec<Vec<usize>> = found.values().cloned().collect();
+        let addresses = crate::delta::addresses_at(nodes, &places);
+        let now = SHAPE_MOVES.with(|m| m.get());
+        listed
+            .into_iter()
+            .map(|item| match item {
+                ListItem::Node(n) => {
+                    let indices = found.get(&(n as *const OverseerNode as usize)).cloned().ok_or_else(|| {
+                        OverseerError::ValidationError(format!(
+                            "$({}) gave something this document does not hold",
+                            formula
+                        ))
+                    })?;
+                    Ok(BoundItem::Node { address: addresses.get(&indices).cloned(), indices, seen_at: now })
+                }
+                ListItem::Value(v) => Ok(BoundItem::Value(v)),
+            })
+            .collect()
+    }
+
     /// Settle what the actions so far changed, for the ones still to come to read.
     ///
     /// Followed through the graph when the caller holds the document its graph was recorded
@@ -1081,6 +1332,13 @@ impl ActionExecutor {
     }
 
 
+    /// Run one action.
+    ///
+    /// The actions that hold others - `if`, `each`, `press` - are run from here, and every other
+    /// one from `execute_leaf_action`, which is kept out of line. A press that presses another
+    /// nests through this function once per press, and a flood across a board nests hundreds
+    /// deep: with every action's locals in one frame each level cost nearly five kilobytes, and a
+    /// press four hundred deep ran out of the two megabytes a server's request thread has.
     fn execute_action(
         nodes: &mut Vec<OverseerNode>,
         owner_indices: &[usize],
@@ -1096,11 +1354,162 @@ impl ActionExecutor {
         // where the press keeps it - see `keep_if_pressed`.
         let kept_at = FormulaEvaluator::pressed_address(owner_path);
         let owner_path: &[String] = kept_at.as_deref().unwrap_or(owner_path);
-        // Everything but these may change the document. An `if` says so through whatever it
-        // lets run, and opening a field changes nothing until somebody types.
-        if !matches!(action.node_type.as_str(), "if" | "refuse" | "start_editing" | "fold" | "unfold" | "toggle_fold") {
+        // Everything but these may change the document. An `if`, an `each` and a `press` say so
+        // through whatever they run, and opening a field changes nothing until somebody types.
+        if !matches!(
+            action.node_type.as_str(),
+            "if" | "each" | "press" | "refuse" | "start_editing" | "fold" | "unfold" | "toggle_fold"
+        ) {
             note_acted();
         }
+        match action.node_type.as_str() {
+            "if" => Self::run_if(nodes, owner_indices, owner_path, action),
+            "each" => Self::run_each(nodes, owner_indices, owner_path, action),
+            "press" => Self::run_press(nodes, owner_path, action),
+            _ => Self::execute_leaf_action(nodes, owner_indices, owner_path, action),
+        }
+    }
+
+    /// if (cond) { ... } - the actions inside, when the condition holds.
+    fn run_if(
+        nodes: &mut Vec<OverseerNode>,
+        owner_indices: &[usize],
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<(), OverseerError> {
+        // Read where it is - see the key of `remove`.
+        let holds = Self::condition_holds(nodes, owner_path, action)?;
+        if holds {
+            Self::run_actions(nodes, owner_indices, owner_path, &action.children)?;
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn condition_holds(
+        nodes: &Vec<OverseerNode>,
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<bool, OverseerError> {
+        let cond_val = match action.parameters.get("cond") {
+            Some(v) => Self::evaluate_in_context(v, owner_path, nodes)?,
+            None => OverseerValue::Boolean(false),
+        };
+        Ok(Self::to_bool(&cond_val))
+    }
+
+    /// each (in=$(list), as="c") { ... } - the block once for each item of the list, in order,
+    /// with `c` naming the item in its formulas and as the first step of its paths.
+    ///
+    /// The list is worked out once, before the first round, so a round that adds to it or
+    /// reorders it does not change what is gone through. An entry a round before took away is
+    /// passed over: it is found again by its address, which a keyed list keeps.
+    fn run_each(
+        nodes: &mut Vec<OverseerNode>,
+        owner_indices: &[usize],
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<(), OverseerError> {
+        let (name, items) = Self::each_items(nodes, owner_path, action)?;
+        for item in items {
+            let Some(item) = Self::still_there(nodes, item) else { continue };
+            let _bound = Binding::bind(Bound { name: name.clone(), item });
+            Self::run_actions(nodes, owner_indices, owner_path, &action.children)?;
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn each_items(
+        nodes: &[OverseerNode],
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<(String, Vec<BoundItem>), OverseerError> {
+        let name = match action.parameters.get("as") {
+            Some(OverseerValue::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+            None => "item".to_string(),
+            Some(_) => {
+                return Err(OverseerError::ValidationError(
+                    "each.as must name the item, as=\"c\"".to_string(),
+                ))
+            }
+        };
+        let formula = match action.parameters.get("in") {
+            Some(OverseerValue::Formula(f)) => f.clone(),
+            _ => {
+                return Err(OverseerError::ValidationError(
+                    "each needs the list to go through, in=$(...)".to_string(),
+                ))
+            }
+        };
+        Ok((name, Self::items_to_go_through(nodes, owner_path, &formula)?))
+    }
+
+    /// The item as it is now, or nothing once a round before took it away.
+    #[inline(never)]
+    fn still_there(nodes: &[OverseerNode], item: BoundItem) -> Option<BoundItem> {
+        match item {
+            BoundItem::Node { address, indices, seen_at } => {
+                let indices = Self::found_again(nodes, address.as_deref(), &indices, seen_at)?;
+                Some(BoundItem::Node { address, indices, seen_at: SHAPE_MOVES.with(|m| m.get()) })
+            }
+            value => Some(value),
+        }
+    }
+
+    /// press (path) - runs that node's `on click` as part of this press: one change, and one undo
+    /// takes it all back. A node already pressed in this press is passed over, which ends a press
+    /// that comes back round to itself and keeps a flood to one press per node; past
+    /// `PRESS_DEPTH_LIMIT` presses deep the press fails.
+    fn run_press(
+        nodes: &mut Vec<OverseerNode>,
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<(), OverseerError> {
+        let Some((indices, pressed_path, block)) = Self::what_to_press(nodes, owner_path, action)? else {
+            return Ok(());
+        };
+        let _deeper = Deeper::enter();
+        Self::run_actions(nodes, &indices, &pressed_path, &block.children)
+    }
+
+    /// The node a `press` names, where it is and its `on click` - or nothing, when it has been
+    /// pressed already in this press.
+    #[inline(never)]
+    fn what_to_press(
+        nodes: &Vec<OverseerNode>,
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<Option<(Vec<usize>, Vec<String>, Box<OverseerNode>)>, OverseerError> {
+        let target = Self::require_string(&action.parameters, "path")?;
+        let (segments, _param, anchored) = Self::split_path_and_param(&target);
+        let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
+            .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+        let block = Self::node_by_indices(nodes, &indices)
+            .and_then(|node| node.children.iter().find(|c| c.node_type == "on" && c.name == "click").cloned())
+            .ok_or_else(|| OverseerError::ValidationError(format!("{} has no on click to press", target)))?;
+        let pressed_path = Self::build_disambiguated_path(nodes, &indices);
+        let first_time = PRESSED.with(|p| p.borrow_mut().insert(pressed_path.join("/")));
+        if !first_time {
+            return Ok(None);
+        }
+        if PRESS_DEPTH.with(|d| d.get()) >= PRESS_DEPTH_LIMIT {
+            return Err(OverseerError::ValidationError(format!(
+                "a press pressed more than {} nodes deep, at {}",
+                PRESS_DEPTH_LIMIT, target
+            )));
+        }
+        Ok(Some((indices, pressed_path, Box::new(block))))
+    }
+
+    /// Every action that holds no others - see `execute_action`.
+    #[inline(never)]
+    fn execute_leaf_action(
+        nodes: &mut Vec<OverseerNode>,
+        owner_indices: &[usize],
+        owner_path: &[String],
+        action: &OverseerNode,
+    ) -> Result<(), OverseerError> {
         match action.node_type.as_str() {
             // Opens a field for editing, as though it had been double-tapped.
             //
@@ -1161,30 +1570,6 @@ impl ActionExecutor {
                 };
                 let said = if said.trim().is_empty() { "refused".to_string() } else { said };
                 Err(OverseerError::Refused(said))
-            }
-            "if" => {
-                // if(cond=...) { <actions...> }
-                // Evaluate cond in owner's context (defaults to false if missing)
-                // Read where it is - see the key of `remove`.
-                let cond_val = match action.parameters.get("cond") {
-                    Some(v) => Self::evaluate_in_context(v, owner_path, nodes)?,
-                    None => OverseerValue::Boolean(false),
-                };
-                if Self::to_bool(&cond_val) {
-                    // Settled between the actions it lets through by the rule the press itself
-                    // follows - see `execute_event`: in place when the shape moved and another
-                    // action is still to read it, and otherwise left to whatever settles the
-                    // press. It used to work the whole document out after every one of them, and
-                    // the tag form's one append paid that before the press was settled anyway.
-                    let last = action.children.len().saturating_sub(1);
-                    for (at, child) in action.children.iter().enumerate() {
-                        Self::execute_action(nodes, owner_indices, owner_path, child)?;
-                        if Self::action_changes_structure(&child.node_type) && at < last {
-                            Self::settle_for_what_comes_next(nodes);
-                        }
-                    }
-                }
-                Ok(())
             }
             "load_mount" => {
                 // What a mount brings in is part of the document's shape.
@@ -1415,7 +1800,7 @@ impl ActionExecutor {
                         // Read where it is: nothing is written while it is worked out, and a copy
                         // of the whole document to read one value from was over twenty
                         // milliseconds - `done` on a task paid it for the key of its `remove`.
-                        let ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
+                        let ctx = Self::action_context(owner_path, nodes);
                         FormulaEvaluator::evaluate_formula(expr, &ctx)?
                     } else if let Some(v) = action.parameters.get("value") {
                         v.clone()
@@ -1572,7 +1957,7 @@ impl ActionExecutor {
                         // Read where it is: nothing is written while it is worked out, and a copy
                         // of the whole document to read one value from was over twenty
                         // milliseconds - `done` on a task paid it for the key of its `remove`.
-                        let ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
+                        let ctx = Self::action_context(owner_path, nodes);
                         FormulaEvaluator::evaluate_formula(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
@@ -1638,7 +2023,7 @@ impl ActionExecutor {
                         // Read where it is: nothing is written while it is worked out, and a copy
                         // of the whole document to read one value from was over twenty
                         // milliseconds - `done` on a task paid it for the key of its `remove`.
-                        let ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
+                        let ctx = Self::action_context(owner_path, nodes);
                         FormulaEvaluator::evaluate_formula(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
@@ -1789,7 +2174,7 @@ impl ActionExecutor {
                         // Read where it is: nothing is written while it is worked out, and a copy
                         // of the whole document to read one value from was over twenty
                         // milliseconds - `done` on a task paid it for the key of its `remove`.
-                        let ctx = EvaluationContext::new(owner_path.to_vec(), nodes);
+                        let ctx = Self::action_context(owner_path, nodes);
                         FormulaEvaluator::evaluate_formula(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
@@ -1939,6 +2324,18 @@ impl ActionExecutor {
     ) -> Option<Vec<usize>> {
         // For anchored paths (starting with '/'): treat as absolute from root
         // For relative paths: use the owner_path as the base
+        // A path that begins with a name an `each` gave starts from the item it stands for.
+        if !anchored {
+            if let Some((first, rest)) = segments.split_first() {
+                if let Some(at) = Self::bound_node(nodes, first) {
+                    if rest.is_empty() {
+                        return Some(at);
+                    }
+                    let from = Self::build_disambiguated_path(nodes, &at);
+                    return Self::resolve_target_indices(nodes, &from, false, rest);
+                }
+            }
+        }
         let bases: Vec<Vec<String>> = if anchored {
             vec![Vec::new()]
         } else {
@@ -4847,7 +5244,7 @@ impl ActionExecutor {
     ) -> Result<OverseerValue, OverseerError> {
         match val {
             OverseerValue::Formula(expr) => {
-                let ctx = EvaluationContext::new(owner_path.to_vec(), snapshot);
+                let ctx = Self::action_context(owner_path, snapshot);
                 let evaluated = FormulaEvaluator::evaluate_formula(expr, &ctx)?;
                 Ok(evaluated)
             }
@@ -5034,13 +5431,14 @@ impl ActionExecutor {
         // in the document that would otherwise answer ok and sort nothing.
         let mut keys: Vec<OverseerValue> = Vec::with_capacity(cur.children.len());
         for (i, child) in cur.children.iter().enumerate() {
-            let base_ctx = EvaluationContext {
+            let mut base_ctx = EvaluationContext {
                 current_node: cur,
                 parent_node: None,
                 document_root: &snapshot,
                 node_path: owner_path.to_vec(),
                 var_bindings: std::collections::HashMap::new(),
             };
+            Self::add_bindings(&mut base_ctx, &snapshot);
             let ctx = base_ctx.with_var("x", BoundValue::Node(child));
             let key = FormulaEvaluator::evaluate_formula(by_expr, &ctx).map_err(|e| {
                 OverseerError::ValidationError(format!(

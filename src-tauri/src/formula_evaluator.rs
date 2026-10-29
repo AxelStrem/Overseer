@@ -1226,7 +1226,7 @@ impl FormulaEvaluator {
                     base,
                     calls
                 );
-                let out = Self::evaluate_method_chain(base, calls, context);
+                let out = Self::evaluate_method_chain(base, calls, context, None);
                 debug_evaluator!("[EVAL] Method chain result => {:?}", out);
                 out
             }
@@ -3668,7 +3668,7 @@ fn relative_path_reference(input: &str) -> IResult<&str, FormulaExpression> {
 // ================= Method chain evaluation helpers =================
 
 #[derive(Debug, Clone)]
-enum ListItem<'a> {
+pub(crate) enum ListItem<'a> {
     Node(&'a OverseerNode),
     Value(OverseerValue),
 }
@@ -3713,10 +3713,46 @@ impl FormulaEvaluator {
             .collect()
     }
 
-    fn evaluate_method_chain(
+    /// The items a formula names, one by one, for an action to go through - see `each`.
+    ///
+    /// A formula's answer is one value, and a list has no value of its own: inside a method chain
+    /// it is a run of entries or plain values that the last call reduces. Here the chain is left
+    /// unreduced - `Items`, `Items.filter(|x| ...)`, `Values.map(...)` - and its items given back.
+    /// A chain that does reduce, or a formula that names no list, is refused, so a mistyped list
+    /// says so rather than going through nothing.
+    pub(crate) fn evaluate_items<'c>(
+        formula: &str,
+        context: &'c EvaluationContext,
+    ) -> Result<Vec<ListItem<'c>>, OverseerError> {
+        let expression = Self::parse_expression(formula)
+            .map_err(|_| OverseerError::FormulaError(format!("invalid formula: {}", formula)))?;
+        let not_a_list = || OverseerError::ValidationError(format!("$({}) names no list", formula));
+        match &expression {
+            FormulaExpression::MethodChain { base, calls } => {
+                Self::eval_expr_to_node(base, context).ok_or_else(not_a_list)?;
+                let mut items = None;
+                Self::evaluate_method_chain(base, calls, context, Some(&mut items))?;
+                items.ok_or_else(|| {
+                    OverseerError::ValidationError(format!(
+                        "$({}) ends in a value, not a list to go through",
+                        formula
+                    ))
+                })
+            }
+            other => {
+                let node = Self::eval_expr_to_node(other, context).ok_or_else(not_a_list)?;
+                Ok(Self::items_of(node))
+            }
+        }
+    }
+
+    /// `gather`, when given, is where a chain that ends without reducing its list leaves the list
+    /// - see `evaluate_items`. Without it such a chain is an error, as it always was.
+    fn evaluate_method_chain<'c>(
         base: &FormulaExpression,
         calls: &[MethodCall],
-        context: &EvaluationContext,
+        context: &'c EvaluationContext,
+        gather: Option<&mut Option<Vec<ListItem<'c>>>>,
     ) -> Result<OverseerValue, OverseerError> {
         debug_evaluator!(
             "[EVAL] evaluate_method_chain base {:?} calls {:?}",
@@ -4213,6 +4249,10 @@ impl FormulaEvaluator {
             }
         }
 
+        if let Some(gather) = gather {
+            *gather = Some(list);
+            return Ok(OverseerValue::Null);
+        }
         Err(OverseerError::FormulaError(
             "Method chain must end with an aggregate or reduce".to_string(),
         ))

@@ -179,6 +179,36 @@ pub fn address_at(nodes: &[OverseerNode], indices: &[usize]) -> Option<String> {
         .map(|(address, _)| address)
 }
 
+/// The address of each of several places, found along each place's own path rather than by
+/// naming the whole document - see `address_at`. A place with no address is left out.
+///
+/// For a press that names a few entries of a long list, as an `each` does on every round: naming
+/// the whole document to find them was most of what a flood across a board cost.
+pub fn addresses_at(nodes: &[OverseerNode], places: &[Vec<usize>]) -> HashMap<Vec<usize>, String> {
+    places
+        .iter()
+        .filter_map(|place| address_along(nodes, place).map(|address| (place.clone(), address)))
+        .collect()
+}
+
+fn address_along(nodes: &[OverseerNode], indices: &[usize]) -> Option<String> {
+    let mut parent: Option<&OverseerNode> = None;
+    let mut children = addressing::drawn_roots(nodes);
+    let mut rest = indices;
+    let mut address = String::new();
+    loop {
+        let i = children.iter().position(|(relative, _)| rest.starts_with(relative))?;
+        address = join(&address, &addressing::segment_of(parent, &children, i));
+        let (relative, node) = &children[i];
+        rest = &rest[relative.len()..];
+        if rest.is_empty() {
+            return Some(address);
+        }
+        parent = Some(*node);
+        children = addressing::drawn_children(node);
+    }
+}
+
 /// The child indices that reach an address, in this document.
 pub fn indices_of(nodes: &[OverseerNode], address: &str) -> Option<Vec<usize>> {
     index_paths(nodes).remove(address)
