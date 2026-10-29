@@ -7419,32 +7419,18 @@ export class OverseerRenderer {
             }
         }
         
-        // Selective border controls
-        if (params['border-top']) {
-            const borderStyle = this.convertBorderStyleValue(params['border-top'])
+        // Selective border controls, read as `border-style` is: a formula's worked-out value
+        // when there is one. A formula not yet worked out is left alone rather than written into
+        // the style as its own text.
+        for (const [name, property] of [['border-top', 'borderTop'], ['border-bottom', 'borderBottom'],
+                                        ['border-left', 'borderLeft'], ['border-right', 'borderRight']]) {
+            const raw = params[name]
+            if (!raw) continue
+            const computed = params[`_computed_${name}`] !== undefined
+            if (!computed && raw.Formula !== undefined) continue
+            const borderStyle = this.convertBorderStyleValue(this.getParameterValue(node, name) ?? raw)
             if (borderStyle) {
-                element.style.borderTop = borderStyle
-            }
-        }
-        
-        if (params['border-bottom']) {
-            const borderStyle = this.convertBorderStyleValue(params['border-bottom'])
-            if (borderStyle) {
-                element.style.borderBottom = borderStyle
-            }
-        }
-        
-        if (params['border-left']) {
-            const borderStyle = this.convertBorderStyleValue(params['border-left'])
-            if (borderStyle) {
-                element.style.borderLeft = borderStyle
-            }
-        }
-        
-        if (params['border-right']) {
-            const borderStyle = this.convertBorderStyleValue(params['border-right'])
-            if (borderStyle) {
-                element.style.borderRight = borderStyle
+                element.style[property] = borderStyle
             }
         }
         
