@@ -1,7 +1,8 @@
 //! A grid's cell written for the viewer - a guarded field set by a press - is the viewer's alone:
 //! the file keeps the grid as it was written, with no `- A1 { }` left behind for the cell. That
 //! includes a later press that changes nothing at all, which once wrote the file anyway and left
-//! an empty block for every cell the viewer had set.
+//! an empty block for every cell the viewer had set, and a press that really writes the file
+//! beside one.
 
 use overseer::server::DocumentRoot;
 use serde_json::json;
@@ -27,6 +28,10 @@ const DOC: &str = r#"div (hidden=true) {
     }
 }
 
+div tally (mutable=true) {
+    int presses = 0
+}
+
 div game (mutable="guarded") {
     grid Field (entry=<Cell>, columns=3, rows=2) { }
 
@@ -49,6 +54,12 @@ div game (mutable="guarded") {
     button first {
         on click {
             set (path="/game/Field/A1/opened") = true
+        }
+    }
+
+    button count {
+        on click {
+            inc (path="/tally/presses")
         }
     }
 }
@@ -130,3 +141,41 @@ fn a_press_that_changes_nothing_after_one_into_a_cell_leaves_the_file_alone() {
     assert_eq!(std::fs::read_to_string(root.join("d.os")).unwrap(), DOC, "the press wrote the file");
 }
 
+#[test]
+fn a_real_write_beside_a_cell_set_for_the_viewer_writes_only_itself() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let root = a_root("real");
+    let service = DocumentRoot::new(&root).expect("open the root");
+    press(&service, "game/first");
+    press(&service, "game/count");
+    assert_eq!(set_for("someone", "opened"), 1);
+    assert_eq!(
+        std::fs::read_to_string(root.join("d.os")).unwrap(),
+        DOC.replace("int presses = 0", "int presses = 1"),
+        "the file holds more than the count"
+    );
+}
+
+#[test]
+fn a_cell_the_file_wrote_keeps_its_block_when_the_viewer_sets_another_of_its_fields() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let root = a_root("kept");
+    let written = DOC.replace(
+        "grid Field (entry=<Cell>, columns=3, rows=2) { }",
+        "grid Field (entry=<Cell>, columns=3, rows=2) {
+        - A1 {
+            - flagged = true
+        }
+    }",
+    );
+    std::fs::write(root.join("d.os"), &written).expect("write");
+    let service = DocumentRoot::new(&root).expect("open the root");
+    press(&service, "game/first");
+    press(&service, "game/count");
+    assert_eq!(set_for("someone", "opened"), 1);
+    assert_eq!(
+        std::fs::read_to_string(root.join("d.os")).unwrap(),
+        written.replace("int presses = 0", "int presses = 1"),
+        "the file lost the cell's own field, or gained the viewer's"
+    );
+}

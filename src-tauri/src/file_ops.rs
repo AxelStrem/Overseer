@@ -2409,7 +2409,65 @@ impl FileOperations {
             let (s, e, ref with) = replacements[i];
             text.replace_range(s..e, with);
         }
+        if let Some((open_end, close_start)) = Self::body_emptied(&full, &text, &snap, &replacements) {
+            // A cell's `- A1 { ... }` whose every override was taken back - a viewer's value,
+            // kept out of the file - says nothing any more, and goes as an override's value
+            // does. What it sat in, emptied by that, closes up to `{ }` as it was written.
+            if Self::is_an_override_block(node) {
+                return Ok(Some(Some(String::new())));
+            }
+            text.replace_range(open_end..close_start, " ");
+        }
         Ok(Some(Some(text.replace("\r\n", "\n"))))
+    }
+
+    /// Where a block's body now lies in its rewritten text, when the replacements took everything
+    /// out of a body that held something as it was read.
+    fn body_emptied(
+        full: &str,
+        text: &str,
+        snap: &NodeSourceSnapshot,
+        replacements: &[(usize, usize, String)],
+    ) -> Option<(usize, usize)> {
+        let base = snap.span.0;
+        let rel = |abs: usize| abs.checked_sub(base).filter(|r| *r <= full.len());
+        let open_end = rel(snap.body.child_envelope.open.as_ref()?.span.1)?;
+        let close_start = rel(snap.body.child_envelope.close.as_ref()?.span.0)?;
+        if open_end > close_start || full[open_end..close_start].trim().is_empty() {
+            return None;
+        }
+        // Each replacement moves what comes after it by how much it grew; one inside the body
+        // moves only its close.
+        let mut new_open_end = open_end as isize;
+        let mut new_close_start = close_start as isize;
+        for (s, e, with) in replacements {
+            let grew = with.len() as isize - (*e as isize - *s as isize);
+            if *e <= open_end {
+                new_open_end += grew;
+                new_close_start += grew;
+            } else if *s >= open_end && *e <= close_start {
+                new_close_start += grew;
+            } else if *s < close_start {
+                // A replacement across a brace: the body cannot be told apart any more.
+                return None;
+            }
+        }
+        let open_end = usize::try_from(new_open_end).ok()?;
+        let close_start = usize::try_from(new_close_start).ok()?;
+        let body = text.get(open_end..close_start)?;
+        body.trim().is_empty().then_some((open_end, close_start))
+    }
+
+    /// A block an instance wrote into something its template gave - a grid's cell, a named div
+    /// of an entry - rather than a node standing for itself or an entry of a list.
+    fn is_an_override_block(node: &OverseerNode) -> bool {
+        matches!(
+            node.parameters.get("_template_node"),
+            Some(OverseerValue::Boolean(true))
+        ) && !matches!(
+            node.parameters.get("_from_template"),
+            Some(OverseerValue::Boolean(true))
+        ) && node.node_type != "list"
     }
 
     /// What changed in a node's own line since it was written - its header's parameters and its
