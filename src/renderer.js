@@ -195,6 +195,25 @@ export const imageBeside = (path) => {
         p.split('/').every((part) => part && part !== '.' && part !== '..')
 }
 
+/// Whether a node is the one an answer's address names, as the backend steps addresses - see
+/// `addressing::segment_of`: the last step is the node's name, `#n` after it for a later one of
+/// that name, `(name)` for a context's worked-out copy, and `[key]` for an entry of a keyed list,
+/// which is any entry of the list it is in. A wrapper has no step: what changes on one is said
+/// under its container's address. With no address to go by, nothing can be told, and it fits.
+export const nodeFitsAddress = (node, parent, address) => {
+    if (!node) return false
+    if (typeof address !== 'string' || address === '') return true
+    if (node.is_hierarchy_transparent && (!node.name || node.name === node.node_type)) return true
+    const steps = address.split(/(?<!\\)\//)
+    const step = steps[steps.length - 1]
+    const unescaped = (s) => s.replace(/\\(.)/g, '$1')
+    if (step.startsWith('[') && step.endsWith(']')) return !!parent && parent.node_type === 'list'
+    if (step.startsWith('(') && step.endsWith(')')) {
+        return node.node_type === 'context' && node.name === unescaped(step.slice(1, -1))
+    }
+    return node.name === unescaped(step.replace(/#\d+$/, ''))
+}
+
 // A theme's fonts, `- fonts { - plex_sans = "fonts/plex-sans.woff2" }`, by family and file: the
 // face once it has loaded, null for one refused or missing, or the promise while it is on its way.
 // A face stays here once loaded, so a theme chosen again does not fetch it again; it is on the
@@ -9098,12 +9117,21 @@ export class OverseerRenderer {
             let parent = null
             let node = null
             let path = []
+            let above = null
             for (const index of fold.path) {
+                above = node
                 node = level && level[index]
                 if (!node) break
                 path = parent ? this.childPathFor(parent, node, path) : [node.name || node.node_type || node.type || `root_${index}`]
                 parent = node
                 level = Array.isArray(node.children) ? node.children : []
+            }
+            // Found by index, as a change is, and checked by its address the same way - see
+            // `applyDocumentChanges`. Two places along from a project item's Talk is a count,
+            // which no fold can turn, and the press did nothing at all.
+            if (node && !nodeFitsAddress(node, above, fold.address)) {
+                window.app?.readWholeAfterAMisfit?.(fold.address)
+                continue
             }
             if (!node || !this.isFoldable(node)) continue
             const now = this.isFolded(node, path)
@@ -10228,6 +10256,9 @@ export class OverseerRenderer {
         let emptied = []
         // The field the press asked to have opened, once the answer is on screen.
         let toOpen = null
+        // What it asked to fold, when the answer is the whole document: by index into that, which
+        // is what the page holds once it is drawn.
+        let toFold = []
         let updated = null
         try {
             // Send the document's text rather than the document, which is never sent.
@@ -10303,7 +10334,7 @@ export class OverseerRenderer {
                     toOpen = update.start_editing || null
                 }
                 if (update && Array.isArray(update.changes)) {
-                    const toFold = Array.isArray(update.folds) ? update.folds : []
+                    toFold = Array.isArray(update.folds) ? update.folds : []
                     window.app.tookTheText(update)
                     const touched = window.app.applyDocumentChanges(window.app.currentDocument, update.changes)
                     try {
@@ -10329,6 +10360,7 @@ export class OverseerRenderer {
                 if (update && Array.isArray(update.nodes)) {
                     updated = update.nodes
                     nextText = typeof update.text === 'string' ? update.text : null
+                    toFold = Array.isArray(update.folds) ? update.folds : []
                 }
             }
             // The long way, from the text: fetched now if the last answer only named it, since a
@@ -10402,6 +10434,8 @@ export class OverseerRenderer {
                 window.app.markDocumentModified && window.app.markDocumentModified(true)
             }
             this.openFieldForEditing(toOpen)
+            // Dropped here before, so Talk did nothing whenever its answer came whole.
+            this.applyFolds(toFold)
         } else {
             // Backend returned a status/boolean or unexpected shape; keep current document
             if (DEBUG_MODE) console.warn('[Overseer] emitEvent returned non-document value; preserving current document:', updated)

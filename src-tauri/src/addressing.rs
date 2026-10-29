@@ -209,6 +209,23 @@ pub fn node_at_path<'a>(nodes: &'a [OverseerNode], path: &str) -> Option<&'a Ove
     Some(node)
 }
 
+/// The child indices that reach the node `node_at_path` finds, from the top.
+pub fn indices_at_path(nodes: &[OverseerNode], path: &str) -> Option<Vec<usize>> {
+    let wanted: *const OverseerNode = node_at_path(nodes, path)?;
+    fn look(nodes: &[OverseerNode], wanted: *const OverseerNode, trail: &mut Vec<usize>) -> bool {
+        for (index, node) in nodes.iter().enumerate() {
+            trail.push(index);
+            if std::ptr::eq(node, wanted) || look(&node.children, wanted, trail) {
+                return true;
+            }
+            trail.pop();
+        }
+        false
+    }
+    let mut trail = Vec::new();
+    look(nodes, wanted, &mut trail).then_some(trail)
+}
+
 /// The children a node has for addressing, with the child indices that reach each.
 ///
 /// A wrapper contributes what is inside it rather than itself, so the path to a node under one

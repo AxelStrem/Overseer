@@ -1608,6 +1608,10 @@ fn follow_the_shape(
         if let Shape::Added { list, entry } = shape {
             let entry = renames.get(list.as_str()).and_then(|r| r.get(entry)).unwrap_or(entry);
             let path = format!("{}/{}", list, entry);
+            // Its contexts worked out first, as a whole work-out does after the templates, so
+            // that its copies are among what is worked out below.
+            let at = crate::addressing::indices_at_path(nodes, &path)?;
+            crate::contexts::resolve_contexts_within(nodes, &at);
             let node = crate::addressing::node_at_path(nodes, &path)?;
             if node.node_type == "list_item" || node.node_type == "-" {
                 return None;

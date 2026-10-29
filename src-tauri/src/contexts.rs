@@ -172,6 +172,9 @@ struct Work {
     copies: Vec<(Vec<usize>, Vec<OverseerNode>, bool)>,
     /// Nodes refused, and why.
     refused: Vec<(Vec<usize>, String)>,
+    /// The one container worked out, when only one is - see `resolve_contexts_within`: nothing
+    /// off the way down to it is walked.
+    only: Option<Vec<usize>>,
 }
 
 /// Work out what every container sees, and put it in front of the container's children.
@@ -222,6 +225,49 @@ pub fn resolve_contexts(nodes: &mut Vec<OverseerNode>) {
     }
 }
 
+/// The same for one container and what is inside it, the rest of the tree left as it stands.
+///
+/// For an entry an action has just made. It is made from its template as the template's file was
+/// read - for a project tracker, the library's - where nothing worked its contexts out, so it
+/// holds the declarations and none of the copies a whole work-out gives every entry. The page
+/// applies a change by the index of the node it is about, so the same text held in two shapes
+/// sent changes two places along: a project item's Talk button drew as one labelled "moved".
+/// Only the way down to the container is walked, for what it sees from above.
+pub fn resolve_contexts_within(nodes: &mut Vec<OverseerNode>, at: &[usize]) {
+    let Some(container) = node_at_mut(nodes, at) else {
+        return;
+    };
+    leave_out_copies(&mut container.children);
+    if !declares_any(&container.children) {
+        return;
+    }
+    let environment = crate::environment::declarations();
+    let mut seen = Visible::new();
+    for declaration in &environment {
+        let worked_out = override_with(&[], visible(&seen, &declaration.name), declaration);
+        set_visible(&mut seen, &declaration.name, worked_out, false);
+    }
+    let mut work = Work { only: Some(at.to_vec()), ..Work::default() };
+    let at_the_top = !seen.is_empty();
+    walk_scope(nodes, nodes, &Vec::new(), &mut seen, at_the_top, &mut work);
+    let within = |place: &Vec<usize>| place.starts_with(at);
+    for (place, why) in work.refused.into_iter().filter(|(place, _)| within(place)) {
+        if let Some(node) = node_at_mut(nodes, &place) {
+            node.parameters.insert(crate::bases::ERROR.to_string(), OverseerValue::String(why));
+        }
+    }
+    // Deepest first, as above. The containers on the way down hold their copies already.
+    for (place, copies, after) in work.copies.into_iter().filter(|(place, _, _)| within(place)).rev() {
+        if let Some(node) = node_at_mut(nodes, &place) {
+            if after {
+                node.children.extend(copies);
+            } else {
+                node.children.splice(0..0, copies);
+            }
+        }
+    }
+}
+
 fn node_at_mut<'a>(nodes: &'a mut [OverseerNode], at: &[usize]) -> Option<&'a mut OverseerNode> {
     let (first, rest) = at.split_first()?;
     let mut node = nodes.get_mut(*first)?;
@@ -266,7 +312,8 @@ fn walk_scope(
     let declared: Vec<&OverseerNode> = level
         .iter()
         .map(|(_, node)| *node)
-        .filter(|node| is_context(node))
+        // Not a copy: a walk of one container meets those the containers above it already hold.
+        .filter(|node| is_declaration(node))
         .collect();
     let mut here: Visible = seen.clone();
     // Where the document declares nothing, the copies above serve: but at its top there is nothing
@@ -315,6 +362,11 @@ fn walk_scope(
         // whatever the action makes.
         if crate::resolver::not_worked_out(node) || node.node_type == "on" {
             continue;
+        }
+        if let Some(only) = &work.only {
+            if !(only.starts_with(place) || place.starts_with(only)) {
+                continue;
+            }
         }
         match hides {
             Some(found) => {

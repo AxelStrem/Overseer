@@ -21,7 +21,7 @@ const DEBUG_MODE = (() => {
 // Quiet belongs at the call site, where you can see it. Replacing a global takes the console
 // away from someone who has not agreed to give it up.
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { OverseerRenderer, textWithoutIcons } from './renderer.js'
+import { OverseerRenderer, textWithoutIcons, nodeFitsAddress } from './renderer.js'
 import { FileManager } from './file-manager.js'
 import { Drawer } from './drawer.js'
 import { Account } from './account.js'
@@ -238,6 +238,13 @@ export class OverseerApp {
     // backend uses to match nodes across two resolves has to be reimplemented here, where it
     // could drift. An index path is valid in this document because a change is never reported
     // below an ancestor whose shape moved.
+    //
+    // As long as the backend describes it against the very tree this page holds. When the two
+    // differ - the same text worked out in two shapes - an index lands on a neighbour, and a
+    // change of parameters makes it look like the node it was meant for: a project item's Talk
+    // button drew as a field labelled "moved". So each change is checked against the address it
+    // carries, and on the first that does not fit nothing more is applied, nothing is repainted,
+    // and the document is read again whole.
     applyDocumentChanges(doc, changes) {
         const nodeAt = (path) => {
             let list = doc
@@ -272,11 +279,26 @@ export class OverseerApp {
             }
         }
 
+        // Whether the node at a change's path is the one its address names.
+        const fits = (change, node) => {
+            const path = change.path || []
+            const parent = path.length > 1 ? nodeAt(path.slice(0, -1)) : null
+            return nodeFitsAddress(node, parent, change.address)
+        }
+        const misfit = (change) => {
+            const none = []
+            none.resorted = []
+            none.misfit = true
+            this.readWholeAfterAMisfit(change.address)
+            return none
+        }
+
         for (const change of changes || []) {
             if (change.kind === 'parameters' || change.kind === 'subtree') inSortedList(change.path)
             if (change.kind === 'parameters') {
                 const node = nodeAt(change.path)
                 if (!node) continue
+                if (!fits(change, node)) return misfit(change)
                 this._carryGuardedMarkers(node, change.parameters)
                 const shows = this.drawnDifferently(node.parameters, change.parameters)
                 const moved = JSON.stringify(node.parameters?._ui_sort_key)
@@ -293,6 +315,8 @@ export class OverseerApp {
             } else if (change.kind === 'subtree') {
                 const list = listFor(change.path)
                 if (!list) continue
+                const was = list[change.path[change.path.length - 1]]
+                if (was && !fits(change, was)) return misfit(change)
                 list[change.path[change.path.length - 1]] = change.node
                 // The replaced node is new and has never been rendered, so the parent is what
                 // knows where it belongs on screen.
@@ -305,6 +329,7 @@ export class OverseerApp {
                 // count in the new order.
                 const list = nodeAt(change.path)
                 if (!list) continue
+                if (list.node_type !== 'list' || !fits(change, list)) return misfit(change)
                 const before = list.children || []
                 const added = []
                 let renamed = false
@@ -338,6 +363,8 @@ export class OverseerApp {
         for (const change of removals) {
             const list = listFor(change.path)
             if (!list) continue
+            const going = list[change.path[change.path.length - 1]]
+            if (going && !fits(change, going)) return misfit(change)
             list.splice(change.path[change.path.length - 1], 1)
             note(change.path.length <= 1 ? null : nodeAt(change.path.slice(0, -1)))
         }
@@ -2218,6 +2245,18 @@ tab Main {
     /// told. This used to ask whether to discard unsaved changes, and asked without waiting for
     /// the answer - so the re-read began either way. With every change written as it is made
     /// there is nothing to discard, which is what removed the question rather than fixing it.
+    /// Read the document again whole, because an answer did not fit the tree this page holds - see
+    /// `applyDocumentChanges`. Said in the console, since it is a fault somewhere that this
+    /// covers for, and once at a time: answers arriving meanwhile are taken by the re-read.
+    readWholeAfterAMisfit(address) {
+        console.warn(`[Overseer] a change for '${address}' does not fit the page; reading the document again`)
+        if (this._readingWholeAfterAMisfit) return
+        this._readingWholeAfterAMisfit = Promise.resolve()
+            .then(() => this.rereadFromDisk())
+            .catch((e) => { if (DEBUG_MODE) console.warn('[Overseer] reading the document again failed', e) })
+            .finally(() => { this._readingWholeAfterAMisfit = null })
+    }
+
     async rereadFromDisk() {
         if (!this.currentFile) return
         // Read whole, so there is nothing for a catch-up to add meanwhile - see `catchUpSoon`.
