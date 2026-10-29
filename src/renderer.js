@@ -1180,6 +1180,14 @@ export class OverseerRenderer {
         return actionNames.includes(n)
     }
 
+    /// An event block or an action statement: what happens, not something to see. Both are known
+    /// by their type - `on click` is an `on` named `click`, `set (...)` a `set` - never by a name,
+    /// which a field of any type may share.
+    isBehaviourNode(node) {
+        const type = (node?.node_type || node?.type || '').toLowerCase()
+        return type === 'on' || this.isActionName(type)
+    }
+
     /// Say how many of a list's entries were left out of view.
     ///
     /// A windowed list draws three of forty-three, and without a word about it the other forty
@@ -1229,11 +1237,9 @@ export class OverseerRenderer {
         const childType = (childNode?.node_type || childNode?.type || '').toLowerCase()
 
     // Timer nodes are visual now; don't filter them out
-        // Hide any event handler containers and action statements anywhere
-        if (this.isEventHandlerName(childName) || this.isActionName(childName)) return false
-        // An `on` block is what happens, never something to see, whatever event it names - an
-        // `on load` once drew as an empty box because `load` was not among the names above.
-        if (childType === 'on') return false
+        // An `on` block is what happens, never something to see, whatever event it names. It is
+        // known by its type: a field may well be named `change` or `move`, and is drawn.
+        if (this.isBehaviourNode(childNode)) return false
 
         // Hide plot nodes - they are configuration for chart nodes, not visual elements
         if (childType === 'plot') return false
@@ -2170,7 +2176,7 @@ export class OverseerRenderer {
                                 let mergedChildren = []
                                 try {
                                     const baseChildren = Array.isArray(phantomPreviewNode.children) ? JSON.parse(JSON.stringify(phantomPreviewNode.children)) : []
-                                    const overrideSpecs = (node.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
+                                    const overrideSpecs = (node.children || []).filter(ch => ch && !this.isBehaviourNode(ch))
                                     if (overrideSpecs.length > 0) {
                                         const applyOverrideRecursive = (kids, oNode) => {
                                             if (!kids) return
@@ -2292,7 +2298,7 @@ export class OverseerRenderer {
                                 let mergedChildren = []
                                 try {
                                     const baseChildren = Array.isArray(targetNode.children) ? JSON.parse(JSON.stringify(targetNode.children)) : []
-                                    const overrideSpecs = (node.children || []).filter(ch => ch && !this.isEventHandlerName(ch.name) && !this.isActionName(ch.name))
+                                    const overrideSpecs = (node.children || []).filter(ch => ch && !this.isBehaviourNode(ch))
                                     if (overrideSpecs.length > 0) {
                                         const applyOverrideRecursive = (kids, oNode) => {
                                             if (!kids) return
@@ -4644,7 +4650,7 @@ export class OverseerRenderer {
     renderEventControls(node, container) {
         try {
             if (!node || !Array.isArray(node.children)) return
-            const handlers = node.children.filter(ch => this.isEventHandlerName(ch?.name))
+            const handlers = node.children.filter(ch => (ch?.node_type || ch?.type || '').toLowerCase() === 'on' && this.isEventHandlerName(ch.name))
             for (const h of handlers) {
                 const ev = String(h.name).toLowerCase()
                 // Look for a button under the handler to derive label/icon
