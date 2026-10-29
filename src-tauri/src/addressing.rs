@@ -65,14 +65,41 @@ fn key_field(node: &OverseerNode) -> Option<&str> {
 /// The name of a grid's cell at a column and a row, both counted from 0: spreadsheet-style,
 /// column letters `A`..`Z`, `AA`.. and the row from 1, so `cell_name(2, 4)` is `C5`.
 pub fn cell_name(column: usize, row: usize) -> String {
+    element_name(column) + &(row + 1).to_string()
+}
+
+/// The name of an array's element at a place counted from 0: the grid's column letters alone,
+/// `A`..`Z`, `AA`.., so an array reads as one row of a grid.
+pub fn element_name(place: usize) -> String {
     let mut letters = Vec::new();
-    let mut n = column + 1;
+    let mut n = place + 1;
     while n > 0 {
         let digit = (n - 1) % 26;
         letters.push((b'A' + digit as u8) as char);
         n = (n - 1) / 26;
     }
-    letters.iter().rev().collect::<String>() + &(row + 1).to_string()
+    letters.iter().rev().collect()
+}
+
+/// The place, from 0, an array element's name stands for - `None` for any other name.
+pub fn element_place(name: &str) -> Option<usize> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_uppercase()) {
+        return None;
+    }
+    let mut place = 0usize;
+    for c in name.chars() {
+        place = place.checked_mul(26)?.checked_add((c as u8 - b'A') as usize + 1)?;
+    }
+    Some(place - 1)
+}
+
+/// The column and the row, from 0, of a child of a grid or an array by its name: an array's
+/// elements are the one row of a grid. `None` for a name that is no cell of that kind of node.
+pub fn place_in(node_type: &str, name: &str) -> Option<(usize, usize)> {
+    match node_type {
+        "array" => element_place(name).map(|place| (place, 0)),
+        _ => cell_place(name),
+    }
 }
 
 /// The column and the row, from 0, a cell's name stands for - `None` for any other name.

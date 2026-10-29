@@ -2805,6 +2805,29 @@ impl FormulaEvaluator {
                     name
                 )))
             }
+            // index(): the place of the array element the formula is in, from 0, as `at()` takes
+            // it - the array's own `column()`.
+            "index" => {
+                if !args.is_empty() {
+                    return Err(OverseerError::FormulaError(
+                        "index() takes no arguments".to_string(),
+                    ));
+                }
+                let path = &context.node_path;
+                for i in (1..path.len()).rev() {
+                    let Some(place) = crate::addressing::element_place(&path[i]) else {
+                        continue;
+                    };
+                    let in_an_array = Self::resolve_path_to_node(&path[..i], context.document_root)
+                        .is_some_and(|parent| parent.node_type == "array");
+                    if in_an_array {
+                        return Ok(OverseerValue::Integer(place as i64));
+                    }
+                }
+                Err(OverseerError::FormulaError(
+                    "index() is only for a formula inside an array's element".to_string(),
+                ))
+            }
             "weekday" | "day_of_month" | "month_of" => {
                 if args.len() != 1 {
                     return Err(OverseerError::FormulaError(format!(
@@ -4320,21 +4343,26 @@ impl FormulaEvaluator {
     /// What a grid's own methods pick out of its cells, row by row: `cells()` all of them,
     /// `row(n)` and `column(n)` one line, `at(column, row)` one cell, each counted from 0. `None`
     /// for any other method, or for a node that is not a grid. A place outside the grid is an
-    /// error, as a field that is not there is.
+    /// error, as a field that is not there is. An array, one row, has `cells()` and `at(n)`.
     fn grid_pick<'a>(
         grid: &'a OverseerNode,
         call: &MethodCall,
         context: &EvaluationContext,
     ) -> Option<Result<Vec<&'a OverseerNode>, OverseerError>> {
-        if grid.node_type != "grid" || !matches!(call.name.as_str(), "cells" | "row" | "column" | "at")
-        {
+        let array = grid.node_type == "array";
+        let methods: &[&str] = if array {
+            &["cells", "at"]
+        } else {
+            &["cells", "row", "column", "at"]
+        };
+        if !(array || grid.node_type == "grid") || !methods.contains(&call.name.as_str()) {
             return None;
         }
         let (columns, rows) = crate::resolver::grid_size(grid).unwrap_or((0, 0));
         let wanted = call.args.len();
         let expected = match call.name.as_str() {
             "cells" => 0,
-            "at" => 2,
+            "at" if !array => 2,
             _ => 1,
         };
         if wanted != expected {
@@ -4358,6 +4386,9 @@ impl FormulaEvaluator {
             };
             places.push(place);
         }
+        if array {
+            places.push(0);
+        }
         let outside = match call.name.as_str() {
             "row" => places[0] >= rows,
             "column" => places[0] >= columns,
@@ -4365,16 +4396,21 @@ impl FormulaEvaluator {
             _ => false,
         };
         if outside {
-            return Some(Err(OverseerError::FormulaError(format!(
-                "grid '{}' is {} by {}, and has no {}{:?}",
-                grid.name, columns, rows, call.name, places
-            ))));
+            return Some(Err(OverseerError::FormulaError(if array {
+                format!("array '{}' is {} long, and has no at({})", grid.name, columns, places[0])
+            } else {
+                format!(
+                    "grid '{}' is {} by {}, and has no {}{:?}",
+                    grid.name, columns, rows, call.name, places
+                )
+            })));
         }
         let picked = grid
             .children
             .iter()
             .filter(|cell| {
-                let Some((column, row)) = crate::addressing::cell_place(&cell.name) else {
+                let Some((column, row)) = crate::addressing::place_in(&grid.node_type, &cell.name)
+                else {
                     return false;
                 };
                 column < columns

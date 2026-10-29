@@ -79,7 +79,7 @@ pub fn find_beside(dir: &Path, path: &str) -> Option<OverseerNode> {
 /// field - a root named `tags` drew a tags field - and such a name is refused. The page lowercases
 /// a type before choosing, so the comparison ignores case.
 pub const TYPES: &[&str] = &[
-    "tab", "div", "list", "grid", "list_item", "string", "textbox", "text", "tags", "enum", "filter", "int",
+    "tab", "div", "list", "grid", "array", "list_item", "string", "textbox", "text", "tags", "enum", "filter", "int",
     "float", "date", "timestamp", "bool", "button", "checkbox", "chart", "image", "mark", "mount",
     "context",
 ];

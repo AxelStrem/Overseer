@@ -2409,7 +2409,7 @@ fn resolve_node_templates(
         }
     }
 
-    if node.node_type == "grid" && make_grid_cells(node, all_nodes, missed) {
+    if matches!(node.node_type.as_str(), "grid" | "array") && make_grid_cells(node, all_nodes, missed) {
         local_progress = true;
     }
 
@@ -2592,15 +2592,19 @@ fn resolve_node_templates(
     local_progress
 }
 
-/// Set on a grid once its cells are made, so that a later pass leaves them as they are.
+/// Set on a grid or an array once its cells are made, so that a later pass leaves them as they are.
 pub const GRID_MADE: &str = "_grid_made";
 
-/// A grid's size, `columns` by `rows`, when both are whole numbers above 0.
+/// A grid's size, `columns` by `rows`, when both are whole numbers above 0. An array is a grid
+/// of one row, `length` long.
 pub fn grid_size(node: &OverseerNode) -> Option<(usize, usize)> {
     let size = |key: &str| match node.parameters.get(key) {
         Some(OverseerValue::Integer(n)) if *n > 0 => Some(*n as usize),
         _ => None,
     };
+    if node.node_type == "array" {
+        return Some((size("length")?, 1));
+    }
     Some((size("columns")?, size("rows")?))
 }
 
@@ -2620,6 +2624,9 @@ fn empty_value_of(type_name: &str) -> OverseerValue {
 /// only what the block wrote is saved, and a cell set since is written into the block as
 /// `- C5 { ... }`, as an instance's inherited field is.
 ///
+/// An array is made the same way, as one row: its elements are named by the column letters
+/// alone, `A`, `B`, ...
+///
 /// Returns whether it made them. A template not there yet is waited for, as a list waits.
 fn make_grid_cells(
     node: &mut OverseerNode,
@@ -2636,11 +2643,15 @@ fn make_grid_cells(
             .insert(GRID_MADE.to_string(), OverseerValue::Boolean(true));
         true
     };
+    let kind = node.node_type.clone();
+    let array = kind == "array";
     let Some((columns, rows)) = grid_size(node) else {
-        return refuse(
-            node,
-            format!("grid '{}' needs columns= and rows=, each a whole number above 0", node.name),
-        );
+        let why = if array {
+            format!("array '{}' needs length=, a whole number above 0", node.name)
+        } else {
+            format!("grid '{}' needs columns= and rows=, each a whole number above 0", node.name)
+        };
+        return refuse(node, why);
     };
     let cell = match node.parameters.get("entry").cloned() {
         Some(OverseerValue::Template(path)) => match crate::bases::find_or_why(all_nodes, &path) {
@@ -2672,7 +2683,7 @@ fn make_grid_cells(
         _ => {
             return refuse(
                 node,
-                format!("grid '{}' needs entry=, a template or a field type", node.name),
+                format!("{} '{}' needs entry=, a template or a field type", kind, node.name),
             )
         }
     };
@@ -2685,7 +2696,11 @@ fn make_grid_cells(
     for row in 0..rows {
         for column in 0..columns {
             let mut one = cell.clone();
-            one.name = crate::addressing::cell_name(column, row);
+            one.name = if array {
+                crate::addressing::element_name(column)
+            } else {
+                crate::addressing::cell_name(column, row)
+            };
             one.is_hierarchy_transparent = false;
             mark_template_child_recursive(&mut one);
             one.parameters.remove("_explicit_child_override");
@@ -2702,21 +2717,29 @@ fn make_grid_cells(
         .iter()
         .map(|w| w.name.as_str())
         .filter(|name| {
-            !crate::addressing::cell_place(name)
+            !crate::addressing::place_in(&kind, name)
                 .is_some_and(|(column, row)| column < columns && row < rows)
         })
         .collect();
     if !outside.is_empty() {
-        node.parameters.insert(
-            crate::bases::ERROR.to_string(),
-            OverseerValue::String(format!(
+        let why = if array {
+            format!(
+                "array '{}' is {} long, and has no element {}",
+                node.name,
+                columns,
+                outside.join(", ")
+            )
+        } else {
+            format!(
                 "grid '{}' is {} by {}, and has no cell {}",
                 node.name,
                 columns,
                 rows,
                 outside.join(", ")
-            )),
-        );
+            )
+        };
+        node.parameters
+            .insert(crate::bases::ERROR.to_string(), OverseerValue::String(why));
     }
     node.children = cells;
     node.parameters

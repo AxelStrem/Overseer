@@ -85,6 +85,17 @@ const gridCellPlace = (name) => {
     return { column: column - 1, row: Number(m[2]) - 1 }
 }
 
+// The place of a child of a grid or an array by its name, or null: an array is one row of a
+// grid, its elements named by the column letters alone, `A`, `B`, ...
+const gridPlaceIn = (type, name) => {
+    if (type !== 'array') return gridCellPlace(name)
+    const m = /^[A-Z]+$/.exec(String(name || ''))
+    if (!m) return null
+    let column = 0
+    for (const c of m[0]) column = column * 26 + (c.charCodeAt(0) - 64)
+    return { column: column - 1, row: 0 }
+}
+
 const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
 /// The ways a button can be drawn, the theme's `button/style`; `solid` is the stylesheet's own.
 const BUTTON_STYLES = ['outline', 'plain']
@@ -1229,10 +1240,11 @@ export class OverseerRenderer {
 
         // A grid draws its cells. What its block wrote for a place outside it is kept in the file
         // and said as a problem on the grid, and has nowhere to be drawn.
-        if (parentType === 'grid') {
-            const place = gridCellPlace(childName)
-            const columns = Number(this.getParameterValue(parentNode, 'columns')) || 0
-            const rows = Number(this.getParameterValue(parentNode, 'rows')) || 0
+        if (parentType === 'grid' || parentType === 'array') {
+            const place = gridPlaceIn(parentType, childName)
+            const array = parentType === 'array'
+            const columns = Number(this.getParameterValue(parentNode, array ? 'length' : 'columns')) || 0
+            const rows = array ? 1 : Number(this.getParameterValue(parentNode, 'rows')) || 0
             if (!place || place.column >= columns || place.row >= rows) return false
         }
 
@@ -2472,6 +2484,7 @@ export class OverseerRenderer {
                     }
                     renderChildren()
                     if (nodeTypeLower === 'grid') this.setUpGrid(element, node)
+                    if (nodeTypeLower === 'array') this.setUpArray(element, node)
                     if (nodeTypeLower === 'list') {
                         this.setUpTable(element, node)
                         this.drawEntriesLeftOut(element, node, path)
@@ -2516,6 +2529,7 @@ export class OverseerRenderer {
             case 'list':
                 return this.createListElement(node)
             case 'grid':
+            case 'array':
                 return this.createGridElement(node)
             case 'list_item':
                 return this.createListItemElement(node)
@@ -3206,6 +3220,37 @@ export class OverseerRenderer {
             if (!place || place.row === row) continue
             row = place.row
             element.insertBefore(heading(String(row + 1), 'row'), cell)
+        }
+    }
+
+    /// An array: one row of a grid, headed by its letters, or with `layout="vertical"` one
+    /// column with the letters to the left. `header=false` leaves them out.
+    setUpArray(element, node) {
+        const length = Number(this.getParameterValue(node, 'length')) || 0
+        if (length <= 0) return
+        const header = this.getParameterValue(node, 'header')
+        const headed = !(header === false || String(header).toLowerCase() === 'false')
+        const vertical = String(this.getParameterValue(node, 'layout') || '').toLowerCase() === 'vertical'
+        element.style.gridTemplateColumns = vertical
+            ? (headed ? 'auto ' : '') + 'minmax(0, 1fr)'
+            : `repeat(${length}, minmax(0, 1fr))`
+        if (!headed) return
+        const heading = (text, kind) => {
+            const h = document.createElement('div')
+            h.className = `overseer-grid-heading ${kind}`
+            h.textContent = text
+            return h
+        }
+        const cells = Array.from(element.children).filter(el => el.dataset && el.dataset.path)
+        if (vertical) {
+            for (const cell of cells) {
+                let name = ''
+                try { name = String(JSON.parse(cell.dataset.path).slice(-1)[0] || '') } catch (_) { /* no place */ }
+                element.insertBefore(heading(name, 'row'), cell)
+            }
+        } else {
+            const first = cells[0] || null
+            for (let c = 0; c < length; c++) element.insertBefore(heading(gridColumnLetters(c), 'column'), first)
         }
     }
 
@@ -9095,7 +9140,7 @@ export class OverseerRenderer {
         // told for a container by what it holds.
         const kind = String(node.node_type || node.type || '').toLowerCase()
         const holds = Array.isArray(node.children) && node.children.length > 0
-        if (holds || ['div', 'list', 'grid', 'tab', 'table'].includes(kind)) {
+        if (holds || ['div', 'list', 'grid', 'array', 'tab', 'table'].includes(kind)) {
             const header = element.querySelector(':scope > .overseer-fold-header')
             element.insertBefore(line, header ? header.nextSibling : element.firstChild)
         } else if (element.parentNode === container) {
@@ -10850,7 +10895,8 @@ export class OverseerRenderer {
             const expectedClass = (() => {
                 switch (nodeType) {
                     case 'list': return 'overseer-list'
-                    case 'grid': return 'overseer-grid'
+                    case 'grid':
+                    case 'array': return 'overseer-grid'
                     case 'list_item':
                     case '-': return 'overseer-list-item'
                     case 'div': return 'overseer-div'
@@ -11266,6 +11312,7 @@ export class OverseerRenderer {
                     break
                 case 'list':
                 case 'grid':
+                case 'array':
                 case 'tab':
                     // Re-render container subtree for lists and tabs
                     try {

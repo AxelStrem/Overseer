@@ -140,6 +140,8 @@ int level (view="progress", layout="vertical", height=120px) = 70
   - **Vanilla type entries**: `list Names (entry=string)` - simple primitive values
 - `grid`: A fixed number of cells in rows and columns, each made from one template or type - see
   "Grids"
+- `array`: A grid of one row: a fixed number of elements, each made from one template or type -
+  see "Arrays"
 - `tab`: One page of a tab system, anywhere a node can stand - in a div, a list, another tab.
   The tabs that share a parent are one system: a bar of their labels and one page showing at a
   time, drawn where the first of them stands. Two systems at one level are two divs. At the top of
@@ -524,6 +526,34 @@ grid Steps (entry=int, columns=7, rows=2) {
   ```
 - **The page** draws the cells in their rows and columns, headed by the column letters and the row
   numbers; `header=false` leaves the headings out.
+
+### 9. Arrays
+
+An array is a grid of one row: `length` elements, every one made from its `entry=`, named by the
+column letters alone - `A`, `B`, ... `Z`, `AA`.. - so `C` is the third. Everything a grid's cells
+do, its elements do: only what is written is saved, an element set since is written into the block
+as `- C { ... }` (or `- C = 3`), `length=` is a whole number above 0 written as it is, and an
+element written past the end stays in the file, is not drawn, and is said as a problem.
+
+```overseer
+array Week (entry=int, length=7) {
+    - C = 8200
+}
+```
+
+- **An element's address** is `Week/C`; an action may also name it by its place from 0, as
+  `[n]` counts a list's entries: `set (path="../Week[2]")` is `set (path="../Week/C")`. An array
+  has no entries to `append`, `remove` or `move`.
+- **A formula** reaches the elements through `cells()`, every one, and `at(n)`, one by its place
+  from 0 - its value, or `at(n)/field` one of its fields. A place past the end is an error.
+- **An element's own place**: `index()`, in any formula inside an element, gives its place from
+  0, the number `at()` takes; outside an element it is an error.
+
+  ```overseer
+  int before = $(index() > 0 ? Week.at(index() - 1) : 0)
+  ```
+- **The page** draws the elements in one row headed by their letters; `layout="vertical"` draws
+  them in one column with the letters to the left, and `header=false` leaves the letters out.
 
 ## Advanced Features
 
@@ -2228,12 +2258,13 @@ div Tasks {
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
 - **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
 - **Grids**: `entry`, `columns`, `rows`, `header`
+- **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`
 - **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`
-- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
+- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context, and `base=none` or `base=<node>` on an element of an override)
 
 ---
