@@ -1413,8 +1413,16 @@ impl FormulaEvaluator {
 
         // 3) Look up in parent scope: siblings or parent parameters
         if !context.node_path.is_empty() {
-            // Walk up the ancestor chain from nearest parent to root
-            for end in (1..=context.node_path.len() - 1).rev() {
+            // Walk up the ancestor chain from nearest parent to root. A wrapper is no step of its
+            // path, which is its parent's already, so its parent is the whole path: dropping a
+            // step there skipped the entry a wrapper sits in, and a card's unnamed div found the
+            // first entry's `open` rather than its own.
+            let nearest = if crate::addressing::is_wrapper(context.current_node) {
+                context.node_path.len()
+            } else {
+                context.node_path.len() - 1
+            };
+            for end in (1..=nearest).rev() {
                 let ancestor_path = &context.node_path[..end];
                 if let Some(ancestor) =
                     FormulaEvaluator::resolve_path_to_node(ancestor_path, context.document_root)

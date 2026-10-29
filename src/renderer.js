@@ -1319,6 +1319,7 @@ export class OverseerRenderer {
         } catch (_) { /* non-fatal */ }
         // What has been drawn afresh in this pass, so nothing inside it is drawn a second time.
         const drawn = []
+        const hasLinks = !!document.querySelector('[data-link-proxy]')
         const within = (path) => Array.isArray(path)
             && drawn.some((d) => d.length <= path.length && d.every((s, i) => s === path[i]))
         const redraw = (path) => {
@@ -1338,7 +1339,17 @@ export class OverseerRenderer {
             // used to end in drawing the whole document for this, since marking a task done
             // moves the counts kept on the hidden template of a rule.
             const chain = this.ancestorsOf(doc, node)
-            if (chain && this.leftUndrawn(node, chain)) continue
+            if (chain && this.leftUndrawn(node, chain)) {
+                // Left off the screen where it is, and still on it through a link: a day of a
+                // hidden history drawn as the selected day carries the history's paths. A card's
+                // fold opened there changed nothing that is drawn, so the card it is in is drawn
+                // again. Looked for only when the page shows a link at all.
+                if (hasLinks) {
+                    chain.slice().reverse().some((above) => within(above.__overseer_path)
+                        || (!!this.drawnElementAt(above.__overseer_path || []) && redraw(above.__overseer_path)))
+                }
+                continue
+            }
             // To be seen now: the nearest thing above it that is on screen draws it.
             if (chain && chain.slice().reverse().some((above) => within(above.__overseer_path) || redraw(above.__overseer_path))) continue
             // Reported under the profiling flag rather than the debug one: falling back to a
