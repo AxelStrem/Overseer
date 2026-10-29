@@ -1177,11 +1177,13 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     align-items: start;
 }
 
-/* When parent aligns center/far, ensure inner containers don't stick to top */
-.overseer-div.align-center > .overseer-div:first-child,
-.overseer-div.align-far > .overseer-div:first-child,
-.overseer-list.align-center > .overseer-div:first-child,
-.overseer-list.align-far > .overseer-div:first-child {
+/* When parent aligns center/far, ensure inner containers don't stick to top. One as wide as its
+   content is placed as the parent's alignment says: stretched, it was pinned to the start of a
+   column - a `fit-content` bar left of centre - and drawn the full height of a row. */
+.overseer-div.align-center > .overseer-div:first-child:not(.fits-content),
+.overseer-div.align-far > .overseer-div:first-child:not(.fits-content),
+.overseer-list.align-center > .overseer-div:first-child:not(.fits-content),
+.overseer-list.align-far > .overseer-div:first-child:not(.fits-content) {
     align-self: stretch;
 }
 
@@ -1213,6 +1215,33 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .overseer-div.layout-horizontal > .takes-rest,
 .overseer-list.layout-horizontal > .takes-rest {
+    flex: 1 1 auto;
+}
+
+/* A height in parts is the same down a column: a share of the height left once the column's other
+   children are drawn, never less than its own content. At the top of a document the column is the
+   window below the bar, so a document can fill the page's height as it fills its width. Only a
+   page that holds such a node is made a column all the way down, so that the margins between the
+   top-level nodes of every other document still collapse as they always have. */
+.layout-vertical > .takes-height-parts,
+.screen > #content-display > .takes-height-parts,
+.screen > #content-display > .tab-content > .takes-height-parts {
+    flex: var(--ov-height-parts) 1 0;
+}
+
+#main:has(#content-display > .takes-height-parts, #content-display > .tab-content > .takes-height-parts) {
+    display: flex;
+    flex-direction: column;
+}
+
+#main:has(#content-display > .takes-height-parts, #content-display > .tab-content > .takes-height-parts) > #content-area,
+#content-display:has(> .takes-height-parts, > .tab-content > .takes-height-parts) {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+
+#content-display > .tab-content:has(> .takes-height-parts) {
     flex: 1 1 auto;
 }
 

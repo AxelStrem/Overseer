@@ -1944,6 +1944,21 @@ share of the rest like `1fr`, but never narrower than what it holds. A table's c
 the same way, and a column with no width at all is `1fr`. Parts are shares of a row, so a width in
 parts outside one means nothing; there `auto` is the plain width a node would have anyway.
 
+A height in parts is the same down a vertical column: a share of the height left once the column's
+other children are drawn, never less than what the node holds. The top level of a document is such
+a column, as tall as the window, so a node there with `height=1fr` fills the page down as it
+already fills it across. Inside it, a row with `height=1fr` and `alignment="center"` holds what it
+holds in the middle of the space left:
+
+```overseer
+div game (alignment="center", height=1fr) {
+    div (layout="horizontal", spacing=16, width=fit-content) { }
+    div (layout="horizontal", alignment="center", height=1fr) {
+        grid Field (columns=9, rows=9) { }
+    }
+}
+```
+
 A style is the node's own. `background-color`, `font-color` and `font-size` given to a container
 paint that container, and what is inside it is drawn in the theme, as though nothing had been said:
 a background shows through what is inside it, but its text keeps the theme's colour and size. A

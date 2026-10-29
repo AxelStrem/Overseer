@@ -7427,10 +7427,22 @@ export class OverseerRenderer {
         // narrow for it, the row wraps or scrolls rather than squeezing it (see `.keeps-width`).
         const widthCss = params.width ? String(element.style.width) : ''
         element.classList.toggle('keeps-width', widthCss.endsWith('px'))
+        // One as wide as its content is placed where an aligning parent says, not stretched (see
+        // `.fits-content` in styles.css).
+        element.classList.toggle('fits-content', widthCss === 'fit-content')
         
-        // Height parameter  
-        if (params.height) {
-            element.style.height = this.convertCssSizeValue(params.height)
+        // Height parameter. A height in parts is a share of what a column has left once its other
+        // children are drawn, as a width in parts is of a row's; at the top of a document the
+        // column is the window (see `.takes-height-parts`).
+        const height = params.height ? this.convertCssSizeValue(params.height) : ''
+        const heightParts = /^(\d+(?:\.\d+)?)fr$/.exec(String(height))
+        element.classList.toggle('takes-height-parts', !!heightParts)
+        if (heightParts) {
+            element.style.setProperty('--ov-height-parts', heightParts[1])
+            element.style.height = ''
+        } else element.style.removeProperty('--ov-height-parts')
+        if (params.height && !heightParts) {
+            element.style.height = height
         }
         
         // Explicit overflow control parameters. They arrive wrapped - `auto` as {"CssSize":"Auto"},

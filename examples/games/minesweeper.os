@@ -23,7 +23,7 @@ context theme {
 }
 
 div (hidden=true) {
-    div Cell (hold="2s", width=34, height=34, padding=0, margin=0, alignment="center", border-radius=4,
+    div Cell (hold="1.3s", width=34, height=34, padding=0, margin=0, alignment="center", border-radius=4,
               background-color=$(./opened ? (./mine ? "#ef4444" : "#cbd5e1") : (/game/lost && ./mine ? "#fca5a5" : "#64748b")),
               shadow=$(./opened ? "inset 0 0 0 1px #94a3b8" : "inset 3px 3px 0 #94a3b8, inset -3px -3px 0 #334155")) {
         div (hidden=true) {
@@ -67,7 +67,7 @@ div (hidden=true) {
     }
 }
 
-div game (mutable="guarded", layout="vertical", alignment="center") {
+div game (mutable="guarded", layout="vertical", alignment="center", height=1fr) {
     timestamp seed (hidden=true) = ""
     int opened (hidden=true) = $(Field.cells().filter(|x| x/opened && !x/mine).count())
     bool lost (hidden=true) = $(Field.cells().filter(|x| x/opened && x/mine).count() > 0)
@@ -78,7 +78,7 @@ div game (mutable="guarded", layout="vertical", alignment="center") {
         press (path="/game/new_game")
     }
 
-    div (layout="horizontal", alignment="center", spacing=16) {
+    div (layout="horizontal", alignment="center", spacing=16, width=fit-content) {
         string flags_left (hide-labels=true, font-size=20px, font-weight="bold", font-color="#fbbf24") = $("<icon=flag> " + (won ? 0 : 10 - Field.cells().filter(|x| x/flagged).count()))
         div new_game (width=44, height=44, padding=0, padding-left=10, layout="horizontal", alignment="center", border-radius=22, shadow="lifted",
                       background-color=$(lost ? "#ef4444" : won ? "#22c55e" : "#fbbf24")) {
@@ -96,20 +96,22 @@ div game (mutable="guarded", layout="vertical", alignment="center") {
         string status (hide-labels=true, font-size=16px) = $(lost ? "Boom. Tap the face to try again." : won ? "Cleared!" : "Tap to flag, hold to dig")
     }
 
-    div (width=fit-content, border-radius=12, shadow="floating", margin-top=12) {
-        context theme {
-            - backdrop (base=none) {
-                - board {
-                    - kind = "gradient"
-                    - from = "#334155"
-                    - to = "#0f172a"
-                    - angle = 160
+    div (height=1fr, layout="horizontal", alignment="center", margin-top=12) {
+        div (width=fit-content, border-radius=12, shadow="floating") {
+            context theme {
+                - backdrop (base=none) {
+                    - board {
+                        - kind = "gradient"
+                        - from = "#334155"
+                        - to = "#0f172a"
+                        - angle = 160
+                    }
+                }
+                - field {
+                    - leading = 1.9
                 }
             }
-            - field {
-                - leading = 1.9
-            }
+            grid Field (entry=<Cell>, columns=9, rows=9, header=false, width=fit-content, border-style=none) { }
         }
-        grid Field (entry=<Cell>, columns=9, rows=9, header=false, width=fit-content, border-style=none) { }
     }
 }
