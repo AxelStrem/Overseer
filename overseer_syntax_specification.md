@@ -1106,7 +1106,8 @@ writes allowed there.
 
 Actions, and programs writing through the server, are not held back by it: the document said what
 they do. An action that writes a guarded field changes it for whoever pressed, and the file keeps
-what it said.
+what it said. A press that changed only such fields, or nothing at all - an `if` that let nothing
+through - leaves the file as it was, with no step to take back.
 
 ```overseer
 tab Tasks (mutable=true) {

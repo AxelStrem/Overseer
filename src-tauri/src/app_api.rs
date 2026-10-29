@@ -957,9 +957,13 @@ pub fn settle_the_viewers_values(
         report.map(|r| r.view_state.clone()).unwrap_or_default();
 
     // A press that moved nothing but the viewer leaves the file alone entirely: no write, no
-    // undo point, nothing for the backup to commit.
-    let only_the_viewers = !reported.is_empty()
-        && report.map_or(false, |r| r.fields.is_empty() && !r.structural);
+    // undo point, nothing for the backup to commit. So does one where nothing ran that could
+    // change anything - an `if` that let nothing through. Writing that anyway sent the text out
+    // through the reverts below, and a grid's cell set only for the viewer came back as an empty
+    // `- A1 { }`.
+    let only_the_viewers = report.map_or(false, |r| {
+        !r.acted || (!reported.is_empty() && r.fields.is_empty() && !r.structural)
+    });
 
     // Everything this viewer holds, not only what this action happened to move.
     //

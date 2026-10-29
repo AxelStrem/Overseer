@@ -1220,7 +1220,10 @@ export class OverseerRenderer {
     // Timer nodes are visual now; don't filter them out
         // Hide any event handler containers and action statements anywhere
         if (this.isEventHandlerName(childName) || this.isActionName(childName)) return false
-        
+        // An `on` block is what happens, never something to see, whatever event it names - an
+        // `on load` once drew as an empty box because `load` was not among the names above.
+        if (childType === 'on') return false
+
         // Hide plot nodes - they are configuration for chart nodes, not visual elements
         if (childType === 'plot') return false
 

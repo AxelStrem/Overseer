@@ -69,6 +69,14 @@ describe('a page runs on load when it opens a document', () => {
     expect(shownStarted()).toBe('just now')
   })
 
+  it('draws nothing for the on load block itself', async () => {
+    const app = new OverseerApp()
+    opening(aDocument(true), () => theLoad)
+    await app.loadFile('board.os')
+    expect(document.querySelector(`[data-path='${JSON.stringify(['board', 'started'])}']`)).not.toBeNull()
+    expect(document.querySelector(`[data-path='${JSON.stringify(['board', 'load'])}']`)).toBeNull()
+  })
+
   it('does not ask when the document has no on load', async () => {
     const app = new OverseerApp()
     opening(aDocument(false), () => theLoad)
