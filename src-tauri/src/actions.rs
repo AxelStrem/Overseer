@@ -1250,7 +1250,7 @@ impl ActionExecutor {
                     match Self::found_again(nodes, address.as_deref(), &indices, seen_at)
                         .and_then(|at| Self::node_by_indices(nodes, &at))
                     {
-                        Some(node) => BoundValue::Node(node),
+                        Some(node) => BoundValue::Node(node, None),
                         None => continue,
                     }
                 }
@@ -5481,7 +5481,7 @@ impl ActionExecutor {
                 var_bindings: std::collections::HashMap::new(),
             };
             Self::add_bindings(&mut base_ctx, &snapshot);
-            let ctx = base_ctx.with_var("x", BoundValue::Node(child));
+            let ctx = base_ctx.with_var("x", BoundValue::Node(child, None));
             let key = FormulaEvaluator::evaluate_formula(by_expr, &ctx).map_err(|e| {
                 OverseerError::ValidationError(format!(
                     "sort.by could not be worked out for entry {}: {}",

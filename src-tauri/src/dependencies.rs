@@ -19,6 +19,14 @@
 //! recomputing something that did not need it costs time, and failing to recompute something that
 //! did costs a wrong number that nothing reports.
 //!
+//! A list read only through what a lambda is handed is the one exception, and an exact one.
+//! `cells().filter(|x| x/mine).count()` reads which entries the list holds - `Field#_entries` -
+//! and the `mine` of each, recorded once for all of them as `Field/*/mine`. A change to a cell's
+//! flag reaches neither, where a read of the whole board was reached by it, and on the
+//! minesweeper board that was every cell's mine and neighbour count worked out again for a flag.
+//! Whatever reads an entry any other way - its own value, a lookup by key, an index - reads the
+//! list whole, as before.
+//!
 //! # A path is a number while this is running
 //!
 //! Reads happen tens of millions of times in one resolve of a large document, and the first
@@ -174,6 +182,64 @@ pub fn note_read(segments: &[String]) {
     }
 }
 
+/// The step that stands for every entry of a list: `meals/*/kcal` is the `kcal` of each meal.
+pub const EVERY_ENTRY: &str = "*";
+
+/// What is read of a list whose entries are only reached one by one: which entries it holds,
+/// `meals#_entries`, and nothing of what is in them.
+pub const ENTRIES: &str = "#_entries";
+
+/// Note that the value being worked out read the same path below every entry of a list:
+/// `list/*/below`, or `list/*` for the entry itself.
+///
+/// For a lambda run over a list. Each entry it is handed is read through the same steps, so
+/// one path says it for all of them, and a change to one entry's field reaches what read that
+/// field and not whatever read anything else in the list - see `Graph::cascade`.
+pub fn note_read_of_every_entry(list: &[String], below: &[String]) {
+    if !is_recording() || list.is_empty() {
+        return;
+    }
+    let tail = std::iter::once(EVERY_ENTRY).chain(below.iter().map(String::as_str));
+    note_read_of(list, tail, "");
+}
+
+/// Note that the value being worked out read which entries a list holds - see `ENTRIES`.
+pub fn note_read_of_entries(list: &[String]) {
+    if !is_recording() || list.is_empty() {
+        return;
+    }
+    note_read_of(list, std::iter::empty(), ENTRIES);
+}
+
+/// `note_read` for a path given in pieces, hashed as the joined path would be.
+fn note_read_of<'s>(head: &'s [String], tail: impl Iterator<Item = &'s str> + Clone, suffix: &str) {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (i, segment) in head.iter().map(String::as_str).chain(tail.clone()).enumerate() {
+        if i > 0 {
+            hasher.write_u8(b'/');
+        }
+        hasher.write(segment.as_bytes());
+    }
+    hasher.write(suffix.as_bytes());
+    let id = hasher.finish();
+    let first_time = BEING_WORKED_OUT.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let Some((_, reads)) = stack.last_mut() else {
+            return false;
+        };
+        reads.push(id);
+        true
+    });
+    if first_time {
+        name_it(id, || {
+            let mut text = head.iter().map(String::as_str).chain(tail).collect::<Vec<_>>().join("/");
+            text.push_str(suffix);
+            text
+        });
+    }
+}
+
 /// Close the innermost frame: write what it read against its own name, and hand the same reads to
 /// the frame above.
 ///
@@ -293,6 +359,8 @@ pub struct Graph {
     reads: HashMap<String, HashSet<String>>,
     /// path -> every value that read it
     read_by: HashMap<String, HashSet<String>>,
+    /// Every list something read below each of its entries, `list/*/...` - see `cascade`.
+    every_entry_of: HashSet<String>,
 }
 
 impl Graph {
@@ -300,6 +368,7 @@ impl Graph {
         let mut graph = Graph {
             reads,
             read_by: HashMap::new(),
+            every_entry_of: HashSet::new(),
         };
         graph.index();
         graph
@@ -327,6 +396,26 @@ impl Graph {
             }
         }
         self.read_by = read_by;
+        self.find_reads_of_every_entry();
+    }
+
+    /// The list a read of `list/*/...` is below, if it is one.
+    fn every_entry_read_of(path: &str) -> Option<&str> {
+        // Asked of every key of a graph, and almost none holds one.
+        path.find("/*")?;
+        let node = Self::node_of(path);
+        let at = node.find("/*")?;
+        let after = &node[at + 2..];
+        (after.is_empty() || after.starts_with('/')).then(|| &node[..at])
+    }
+
+    fn find_reads_of_every_entry(&mut self) {
+        self.every_entry_of = self
+            .read_by
+            .keys()
+            .filter_map(|path| Self::every_entry_read_of(path))
+            .map(str::to_string)
+            .collect();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -480,6 +569,9 @@ impl Graph {
     pub fn merge(&mut self, newer: Graph) {
         for (value, sources) in newer.reads {
             for source in &sources {
+                if let Some(list) = Self::every_entry_read_of(source) {
+                    self.every_entry_of.insert(list.to_string());
+                }
                 self.read_by.entry(source.clone()).or_default().insert(value.clone());
             }
             self.reads.entry(value).or_default().extend(sources);
@@ -551,13 +643,17 @@ impl Graph {
                     .collect();
             }
         }
+        // A list inside an entry moves with it, `meals/Meal__4/parts/*/kcal` included.
+        self.find_reads_of_every_entry();
     }
 
     /// Everything that has to be worked out again when these paths change, nearest first.
     ///
     /// A value that read a path depends on it; so does a value that read anything *under* it,
-    /// because a list is read as a whole and its entries are what changed. The changed paths
-    /// themselves are not included - the caller already has those.
+    /// because a list is read as a whole and its entries are what changed. So does one that read
+    /// the same field of every entry of a list, `list/*/field`, when one entry's field changed;
+    /// and one that read which entries a list holds, `list#_entries`, when the list itself is
+    /// what changed. The changed paths themselves are not included - the caller already has those.
     pub fn cascade(&self, changed: &[String]) -> Vec<String> {
         let mut seen: HashSet<String> = HashSet::new();
         let mut order: Vec<String> = Vec::new();
@@ -596,17 +692,40 @@ impl Graph {
                 walk = &walk[..cut];
                 steps.push(walk);
             }
-            for step in steps {
-                if !taken.insert(step.to_string()) {
-                    break;
-                }
-                let Some(readers) = self.read_by.get(step) else {
-                    continue;
+            let mut reach = |key: &str| {
+                let Some(readers) = self.read_by.get(key) else {
+                    return;
                 };
                 for dependent in readers {
                     if seen.insert(dependent.clone()) {
                         order.push(dependent.clone());
                         queue.push_back(dependent.clone());
+                    }
+                }
+            };
+            // What read only which entries a list holds is reached from the list itself - an
+            // entry made or taken out names it - and not from a change inside one of them, which
+            // is the point: `cells().filter(|x| x/mine).count()` has nothing to do with a cell's
+            // flag. Taken apart from the walk below, which can have passed the list on its way
+            // up from an earlier change.
+            for step in &steps[..if node != path { 2 } else { 1 }] {
+                let entries = format!("{}{}", step, ENTRIES);
+                if taken.insert(entries.clone()) {
+                    reach(&entries);
+                }
+            }
+            for (at, step) in steps.iter().enumerate() {
+                if !taken.insert(step.to_string()) {
+                    break;
+                }
+                reach(step);
+                // What read the same field of every entry of a list above this step: from
+                // `meals/Meal__4/kcal`, the readers of `meals/*/kcal`.
+                for list in &steps[at + 1..] {
+                    if self.every_entry_of.contains(*list) {
+                        if let Some((_, rest)) = entry_step(step, list) {
+                            reach(&format!("{}/{}{}", list, EVERY_ENTRY, rest));
+                        }
                     }
                 }
             }

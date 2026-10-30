@@ -15,8 +15,8 @@
 //! reach it. They all carry it now, which is what lets any of them be recorded.
 //!
 //! The direction of error matters and is asserted here. Recording the list an aggregate ran over,
-//! rather than the entries it touched, means a change anywhere in that list recomputes the
-//! aggregate: more work than needed, never less. A graph that recomputes too much is slow; one
+//! rather than the entries it touched, means a change to any entry recomputes the aggregate: more
+//! work than needed, never less. A graph that recomputes too much is slow; one
 //! that recomputes too little is wrong and says nothing about it.
 
 use overseer::dependencies;
@@ -72,12 +72,17 @@ fn depends_on(graph: &dependencies::Graph, value: &str, wanted: &str) -> bool {
 #[test]
 fn an_aggregate_depends_on_the_list_it_runs_over() {
     // The first thing the old graph missed. Without this edge a day's totals never notice a meal.
+    // Read through a lambda, the list is read as which entries it holds, and each entry as what
+    // the lambda read of it.
     let graph = graph_of(DOC);
-    assert!(
-        depends_on(&graph, "shop/total#_computed_value", "shop/Lines"),
-        "the total does not depend on the list it adds up: {:?}",
-        graph.reads("shop/total#_computed_value")
-    );
+    for wanted in ["shop/Lines#_entries", "shop/Lines/*/taxed"] {
+        assert!(
+            depends_on(&graph, "shop/total#_computed_value", wanted),
+            "the total does not depend on {} of the list it adds up: {:?}",
+            wanted,
+            graph.reads("shop/total#_computed_value")
+        );
+    }
 }
 
 #[test]

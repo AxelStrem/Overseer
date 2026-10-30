@@ -29,8 +29,30 @@ macro_rules! debug_evaluator {
 /// A value bound in lambda evaluation: either a node reference or a value
 #[derive(Debug, Clone)]
 pub enum BoundValue<'a> {
-    Node(&'a OverseerNode),
+    /// A node, and the path of the list it is an entry of when a method chain handed it to a
+    /// lambda: what is read through it is then recorded as read of every entry of that list -
+    /// see `dependencies::note_read_of_every_entry`.
+    Node(&'a OverseerNode, Option<std::rc::Rc<[String]>>),
     Value(OverseerValue),
+}
+
+/// The read of the list a method chain runs over, recorded once the chain is done, however it
+/// ends: the list whole, or only which entries it holds when every entry was reached through a
+/// lambda - see `FormulaEvaluator::reads_entries_one_by_one`.
+#[derive(Default)]
+struct ListRead {
+    path: std::rc::Rc<[String]>,
+    entries_alone: bool,
+}
+
+impl Drop for ListRead {
+    fn drop(&mut self) {
+        if self.entries_alone {
+            crate::dependencies::note_read_of_entries(&self.path);
+        } else {
+            crate::dependencies::note_read(&self.path);
+        }
+    }
 }
 
 /// Context for formula evaluation, tracking current position in document tree
@@ -423,7 +445,7 @@ impl FormulaEvaluator {
                 }
                 FormulaExpression::FieldReference(name) => {
                     // Try bound var first
-                    if let Some(BoundValue::Node(n)) = ctx.var_bindings.get(name) {
+                    if let Some(BoundValue::Node(n, _)) = ctx.var_bindings.get(name) {
                         return Some((ctx.node_path.clone(), *n));
                     }
                     // Try children of current
@@ -1371,7 +1393,8 @@ impl FormulaEvaluator {
             debug_evaluator!("[EVAL] '{}' bound in lambda: {:?}", field_name, bound);
             return match bound {
                 BoundValue::Value(v) => Ok(v.clone()),
-                BoundValue::Node(n) => {
+                BoundValue::Node(n, list) => {
+                    Self::note_read_through(list, &[]);
                     if let Some(v) = Self::value_of_node(n) {
                         Ok(v)
                     } else {
@@ -1614,9 +1637,14 @@ impl FormulaEvaluator {
             // Where this read landed - see `dependencies`. Recorded here rather than at the path
             // helper, which is also used to probe ancestors while looking for a base: recording
             // those made every value look as though it read its own container.
-            crate::dependencies::note_read(&p);
+            //
+            // The node the last step was taken from only when the read is of one of its
+            // parameters, or is looked for anywhere below it. A field read of it is recorded as
+            // the field: `/game/seed` recorded `game` as well, and every cell of the board under
+            // it then reached each cell's `roll`.
             // Final segment can be either a parameter on current or a child node's value
             if let Some(val) = Self::get_effective_param(&current.parameters, last) {
+                crate::dependencies::note_read(&p);
                 if let OverseerValue::Formula(formula_expr) = val {
                     let child_ctx =
                         EvaluationContext::new_with_current(current, p, context.document_root);
@@ -1638,6 +1666,7 @@ impl FormulaEvaluator {
                     context.document_root,
                 );
             }
+            crate::dependencies::note_read(&p);
             // Fallback: deep search within found_start subtree
             if let Some(v) = FormulaEvaluator::find_value_by_name_deep(found_start, last) {
                 return Ok(v);
@@ -1662,9 +1691,10 @@ impl FormulaEvaluator {
         // Case A: identifier-based relative path (e.g., GrandChild/Inner/x)
         if Self::steps_up(path).is_none() {
             // If first segment is a bound variable naming a node, resolve relative to it
-            if let Some(BoundValue::Node(start)) = context.var_bindings.get(&path[0]) {
+            if let Some(BoundValue::Node(start, list)) = context.var_bindings.get(&path[0]) {
                 // Traverse remaining segments from the bound node
                 if path.len() == 1 {
+                    Self::note_read_through(list, &[]);
                     // Just the variable name; return its value param if present
                     if let Some(v) = Self::value_of_node(start) {
                         return Ok(v);
@@ -1684,6 +1714,8 @@ impl FormulaEvaluator {
                     {
                         node = next;
                     } else {
+                        // Whatever is found from here is found on or under the node reached.
+                        Self::note_read_through(list, &path[1..1 + i]);
                         // Allow final segment to be a parameter on current node
                         if i == path.len() - 2 {
                             // since we skipped first, len-2 is last index here
@@ -1718,6 +1750,7 @@ impl FormulaEvaluator {
                     }
                 }
                 if traversed_all {
+                    Self::note_read_through(list, &path[1..]);
                     // Prefer node's value
                     if let Some(v) = Self::value_of_node(node) {
                         return Ok(v);
@@ -2104,7 +2137,7 @@ impl FormulaEvaluator {
         // Identifier-based path from nearest ancestor
         if Self::steps_up(path).is_none() {
             // Variable-anchored: start from bound node if available
-            if let Some(BoundValue::Node(start)) = context.var_bindings.get(&path[0]) {
+            if let Some(BoundValue::Node(start, list)) = context.var_bindings.get(&path[0]) {
                 let mut node = *start;
                 let mut ok = true;
                 for seg in path.iter().skip(1) {
@@ -2119,6 +2152,8 @@ impl FormulaEvaluator {
                         break;
                     }
                 }
+                // Not found where it was said to be, it is looked for anywhere in the entry.
+                Self::note_read_through(list, if ok { &path[1..] } else { &[] });
                 if ok {
                     if let Some(v) = Self::get_effective_param(&node.parameters, param) {
                         if let OverseerValue::Formula(formula_expr) = v {
@@ -3794,6 +3829,9 @@ impl FormulaEvaluator {
         // index. Only meaningful for the first call in the chain - after that the list has been
         // reshaped and no longer matches what any index was built against.
         let mut came_from: Option<usize> = None;
+        // The node the chain runs over, and the read of it, recorded when the chain is done.
+        let mut base_node: Option<&OverseerNode> = None;
+        let mut read = ListRead::default();
         // Phase 1: special-case files(pattern) to support reducers without loading anything yet
         let mut list: Vec<ListItem> = if let FormulaExpression::FunctionCall { name, args } = base {
             if name == "files" {
@@ -3804,26 +3842,44 @@ impl FormulaEvaluator {
                 Vec::new() // empty list stub; reducers will operate on empty list
             } else {
                 // Fallback to node-based chaining
-                let base_node = match Self::eval_expr_to_node(base, context) {
+                let node = match Self::eval_expr_to_node(base, context) {
                     Some(n) => n,
                     None => return Ok(OverseerValue::String("null".to_string())),
                 };
-                came_from = Some(base_node as *const OverseerNode as usize);
-                Self::items_of(base_node)
+                base_node = Some(node);
+                came_from = Some(node as *const OverseerNode as usize);
+                Self::items_of(node)
             }
         } else {
-            let base_node = match Self::eval_expr_to_node(base, context) {
-                Some(n) => n,
+            let found = match base {
+                FormulaExpression::PathReference(_) | FormulaExpression::FieldReference(_) => {
+                    Self::named_node(base, context)
+                }
+                _ => Self::eval_expr_to_node(base, context).map(|node| (Vec::new(), node)),
+            };
+            let (walked, node) = match found {
+                Some(found) => found,
                 None => return Ok(OverseerValue::String("null".to_string())),
             };
-            came_from = Some(base_node as *const OverseerNode as usize);
-            Self::items_of(base_node)
+            // A list inside an entry is read whole, as `meals/*/parts`: which entries every
+            // meal's parts hold is not something the graph can name.
+            read.entries_alone = !walked.is_empty()
+                && !walked.iter().any(|step| step == crate::dependencies::EVERY_ENTRY)
+                && node.node_type != "tags"
+                && Self::reads_entries_one_by_one(calls);
+            read.path = walked.into();
+            base_node = Some(node);
+            came_from = Some(node as *const OverseerNode as usize);
+            Self::items_of(node)
         };
+        // Handed to each lambda with the entry, so what it reads of one is recorded as read of
+        // every entry's - see `BoundValue::Node`.
+        let entries: Option<std::rc::Rc<[String]>> = read.entries_alone.then(|| read.path.clone());
         debug_evaluator!("[EVAL] Initial list size: {}", list.len());
 
         for (position, call) in calls.iter().enumerate() {
             if position == 0 {
-                let grid = Self::eval_expr_to_node(base, context);
+                let grid = base_node;
                 if let Some(picked) = grid.and_then(|grid| Self::grid_pick(grid, call, context)) {
                     list = picked?.into_iter().map(ListItem::Node).collect();
                     // A cell stands for its value, as `first()` gives one.
@@ -3849,7 +3905,7 @@ impl FormulaEvaluator {
                     for item in list.into_iter() {
                         let v_res = match &item {
                             ListItem::Node(n) => {
-                                Self::eval_lambda(lambda, None, Some(*n), None, context)
+                                Self::eval_lambda_over(lambda, None, Some(*n), None, &entries, context)
                             }
                             ListItem::Value(val) => {
                                 Self::eval_lambda(lambda, None, None, Some(val.clone()), context)
@@ -3872,7 +3928,7 @@ impl FormulaEvaluator {
                     })?;
                     let target_key_value = Self::evaluate_expression(key_val_expr, context)?;
                     // Determine key field name from base container
-                    let key_field = if let Some(base_node) = Self::eval_expr_to_node(base, context)
+                    let key_field = if let Some(base_node) = base_node
                     {
                         if let Some(OverseerValue::String(k)) = base_node.parameters.get("key") {
                             k.clone()
@@ -3934,6 +3990,8 @@ impl FormulaEvaluator {
                         })
                     }) {
                         Some((at, remaining)) => {
+                            // The index read a field of every entry, and which is not said here.
+                            read.entries_alone = false;
                             list = at.into_iter().filter_map(|i| list.get(i).cloned()).collect();
                             may_index = false;
                             rest = remaining;
@@ -3949,6 +4007,10 @@ impl FormulaEvaluator {
                     // `x/field == literal`, which is what the hoist leaves behind, can be
                     // answered by reading the field. Everything else goes the long way.
                     let direct = Self::direct_field_comparison(lambda);
+                    // Answered by reading the field, or from an index of it: read of every entry.
+                    if let Some((field, ..)) = &direct {
+                        Self::note_read_through(&entries, std::slice::from_ref(field));
+                    }
                     // Asking which entries hold a given string is a question an index answers
                     // outright. The food tracker asks it constantly: fourteen nutrients, each
                     // looked up through `Catalog.filter(|x| x/handle == ../food)`, for every
@@ -4005,7 +4067,7 @@ impl FormulaEvaluator {
                         }
                         let keep_val = match &item {
                             ListItem::Node(n) => {
-                                Self::eval_lambda(lambda, None, Some(*n), None, context)
+                                Self::eval_lambda_over(lambda, None, Some(*n), None, &entries, context)
                             }
                             ListItem::Value(val) => {
                                 Self::eval_lambda(lambda, None, None, Some(val.clone()), context)
@@ -4034,7 +4096,7 @@ impl FormulaEvaluator {
                     for item in list.into_iter() {
                         acc = match item {
                             ListItem::Node(n) => {
-                                Self::eval_lambda(lambda, Some(acc), Some(n), None, context)?
+                                Self::eval_lambda_over(lambda, Some(acc), Some(n), None, &entries, context)?
                             }
                             ListItem::Value(v) => {
                                 Self::eval_lambda(lambda, Some(acc), None, Some(v), context)?
@@ -4054,7 +4116,7 @@ impl FormulaEvaluator {
                             let v_res = match proj {
                                 FormulaExpression::Lambda { .. } => match item {
                                     ListItem::Node(n) => {
-                                        Self::eval_lambda(proj, None, Some(*n), None, context)
+                                        Self::eval_lambda_over(proj, None, Some(*n), None, &entries, context)
                                     }
                                     ListItem::Value(val) => Self::eval_lambda(
                                         proj,
@@ -4069,13 +4131,12 @@ impl FormulaEvaluator {
                                         // Evaluate expression with current node = item
                                         let ctx = EvaluationContext::new_with_current_and_parent(
                                             *n,
-                                            Self::eval_expr_to_node(base, context),
+                                            base_node,
                                             {
                                                 // Best-effort path: start from current path, append base and item names
                                                 let mut p = context.node_path.clone();
                                                 // Append base name if resolvable
-                                                if let Some(bn) =
-                                                    Self::eval_expr_to_node(base, context)
+                                                if let Some(bn) = base_node
                                                 {
                                                     p.push(bn.name.clone());
                                                 }
@@ -4171,7 +4232,7 @@ impl FormulaEvaluator {
                             let v_res = match proj {
                                 FormulaExpression::Lambda { .. } => match item {
                                     ListItem::Node(n) => {
-                                        Self::eval_lambda(proj, None, Some(*n), None, context)
+                                        Self::eval_lambda_over(proj, None, Some(*n), None, &entries, context)
                                     }
                                     ListItem::Value(val) => Self::eval_lambda(
                                         proj,
@@ -4186,11 +4247,10 @@ impl FormulaEvaluator {
                                         // Evaluate expression with current node = item
                                         let ctx = EvaluationContext::new_with_current_and_parent(
                                             *n,
-                                            Self::eval_expr_to_node(base, context),
+                                            base_node,
                                             {
                                                 let mut p = context.node_path.clone();
-                                                if let Some(bn) =
-                                                    Self::eval_expr_to_node(base, context)
+                                                if let Some(bn) = base_node
                                                 {
                                                     p.push(bn.name.clone());
                                                 }
@@ -4426,30 +4486,26 @@ impl FormulaEvaluator {
         Some(Ok(picked))
     }
 
-    /// Every node an expression names, or nothing when the expression makes no sense here.
-    ///
-    /// The distinction matters where a field is read through a lookup. `Shops.filter(...)/name`
-    /// on a shop that is not in the list found nothing, and a field read from nothing used to be
-    /// an error - so a record written before the shops existed read "invalid formula error" in
-    /// its shop column for ever. An empty answer is not a broken formula; it is the answer.
-    ///
-    /// Several matches is different again, and still an error: which of them `/name` meant is a
-    /// question the document has not answered.
-    fn eval_expr_to_nodes<'a>(
+    /// The node a path or a name stands for, and the path it was found at - empty when there is
+    /// none to record. Records nothing itself: `eval_expr_to_nodes` records the read, and a
+    /// method chain records it as what the chain made of the list - see `evaluate_method_chain`.
+    fn named_node<'a>(
         expr: &FormulaExpression,
         context: &'a EvaluationContext,
-    ) -> Option<Vec<&'a OverseerNode>> {
+    ) -> Option<(Vec<String>, &'a OverseerNode)> {
         match expr {
-            FormulaExpression::PathReference(path) => {
-                let (walked, node) = Self::resolve_path_and_node(path, context)?;
-                // The list an aggregate runs over is reached through here. Recording it is what
-                // makes a change to one entry reach whatever adds them up.
-                crate::dependencies::note_read(&walked);
-                Some(vec![node])
-            }
+            FormulaExpression::PathReference(path) => Self::resolve_path_and_node(path, context),
             FormulaExpression::FieldReference(name) => {
-                if let Some(BoundValue::Node(n)) = context.var_bindings.get(name) {
-                    return Some(vec![*n]);
+                if let Some(BoundValue::Node(n, list)) = context.var_bindings.get(name) {
+                    let walked = match list {
+                        Some(list) => {
+                            let mut walked = list.to_vec();
+                            walked.push(crate::dependencies::EVERY_ENTRY.to_string());
+                            walked
+                        }
+                        None => Vec::new(),
+                    };
+                    return Some((walked, *n));
                 }
                 // First, try child of the current node (rare but valid)
                 if let Some(child) = context
@@ -4460,8 +4516,7 @@ impl FormulaEvaluator {
                 {
                     let mut walked = context.node_path.clone();
                     walked.push(child.name.clone());
-                    crate::dependencies::note_read(&walked);
-                    return Some(vec![child]);
+                    return Some((walked, child));
                 }
                 // Next, try immediate parent for siblings
                 if let Some(parent) = context.parent_node {
@@ -4470,12 +4525,12 @@ impl FormulaEvaluator {
                         .into_iter()
                         .find(|c| &c.name == name)
                     {
+                        let mut walked = Vec::new();
                         if context.node_path.len() >= 1 {
-                            let mut walked = context.node_path[..context.node_path.len() - 1].to_vec();
+                            walked = context.node_path[..context.node_path.len() - 1].to_vec();
                             walked.push(sib.name.clone());
-                            crate::dependencies::note_read(&walked);
                         }
-                        return Some(vec![sib]);
+                        return Some((walked, sib));
                     }
                 }
                 // Then, walk ancestors using node_path in the document snapshot and search each ancestor's children
@@ -4489,8 +4544,7 @@ impl FormulaEvaluator {
                             if let Some(found) =
                                 context.document_root.iter().find(|n| &n.name == name)
                             {
-                                crate::dependencies::note_read(&[found.name.clone()]);
-                                return Some(vec![found]);
+                                return Some((vec![found.name.clone()], found));
                             }
                             break;
                         }
@@ -4507,14 +4561,38 @@ impl FormulaEvaluator {
                                 // from three levels down is still that list.
                                 let mut walked = context.node_path[..parent_end].to_vec();
                                 walked.push(sib.name.clone());
-                                crate::dependencies::note_read(&walked);
-                                return Some(vec![sib]);
+                                return Some((walked, sib));
                             }
                         }
                         end -= 1;
                     }
                 }
                 None
+            }
+            _ => None,
+        }
+    }
+
+    /// Every node an expression names, or nothing when the expression makes no sense here.
+    ///
+    /// The distinction matters where a field is read through a lookup. `Shops.filter(...)/name`
+    /// on a shop that is not in the list found nothing, and a field read from nothing used to be
+    /// an error - so a record written before the shops existed read "invalid formula error" in
+    /// its shop column for ever. An empty answer is not a broken formula; it is the answer.
+    ///
+    /// Several matches is different again, and still an error: which of them `/name` meant is a
+    /// question the document has not answered.
+    fn eval_expr_to_nodes<'a>(
+        expr: &FormulaExpression,
+        context: &'a EvaluationContext,
+    ) -> Option<Vec<&'a OverseerNode>> {
+        match expr {
+            FormulaExpression::PathReference(_) | FormulaExpression::FieldReference(_) => {
+                let (walked, node) = Self::named_node(expr, context)?;
+                // The list an aggregate runs over is reached through here. Recording it is what
+                // makes a change to one entry reach whatever adds them up.
+                crate::dependencies::note_read(&walked);
+                Some(vec![node])
             }
             FormulaExpression::MethodChain { base, calls } => {
                 // Resolve base container node
@@ -4692,7 +4770,8 @@ impl FormulaEvaluator {
     /// `dependencies`. It comes back empty when there is nothing meaningful to record: a name
     /// bound to a list element inside a lambda has no path of its own, and needs none, because
     /// the list it came from was resolved by one of the other branches and a read of the list
-    /// covers everything in it.
+    /// covers everything in it - unless the chain said which list the element is an entry of,
+    /// when it is the path below every entry, `list/*/field` - see `BoundValue::Node`.
     fn resolve_path_and_node<'a>(
         path: &[String],
         context: &'a EvaluationContext,
@@ -4765,8 +4844,9 @@ impl FormulaEvaluator {
             }
             return Some((walked, current));
         }
-        // A name bound to a list element. No path, by design - see the note above.
-        if let Some(BoundValue::Node(start)) = context.var_bindings.get(&path[0]) {
+        // A name bound to a list element. No path, by design - see the note above - unless a
+        // method chain said which list it is an entry of, when the read is of every entry's.
+        if let Some(BoundValue::Node(start, list)) = context.var_bindings.get(&path[0]) {
             let mut current = *start;
             for seg in &path[1..] {
                 current = current
@@ -4774,7 +4854,16 @@ impl FormulaEvaluator {
                     .into_iter()
                     .find(|c| &c.name == seg)?;
             }
-            return Some((Vec::new(), current));
+            let walked = match list {
+                Some(list) => list
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(crate::dependencies::EVERY_ENTRY.to_string()))
+                    .chain(path[1..].iter().cloned())
+                    .collect(),
+                None => Vec::new(),
+            };
+            return Some((walked, current));
         }
         // Nearest ancestor from which the whole path can be followed.
         let mut end = context.node_path.len();
@@ -4972,6 +5061,33 @@ impl FormulaEvaluator {
         Self::accessible_child(entry, key)
     }
 
+    /// Whether a chain reaches the entries of its list only through what it hands a lambda, and
+    /// ends in a value. The lambda records what it reads of each entry, so what the chain read of
+    /// the list itself is which entries it holds - see `dependencies::ENTRIES`. One that reads an
+    /// entry's own value, looks one up by its key, or hands the entries on reads the list whole.
+    fn reads_entries_one_by_one(calls: &[MethodCall]) -> bool {
+        let lambda = |arg: Option<&FormulaExpression>| matches!(arg, Some(FormulaExpression::Lambda { .. }));
+        for (position, call) in calls.iter().enumerate() {
+            match call.name.as_str() {
+                "cells" | "row" | "column" if position == 0 => {}
+                "filter" => {}
+                // Values from here on, each worked out by the lambda from its entry.
+                "map" | "count" => return true,
+                "reduce" => return lambda(call.args.get(1)),
+                "sum" | "avg" | "average" => return call.args.len() == 1 && lambda(call.args.first()),
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Note a read made through a node bound to an entry, `below` it - see `BoundValue::Node`.
+    fn note_read_through(list: &Option<std::rc::Rc<[String]>>, below: &[String]) {
+        if let Some(list) = list {
+            crate::dependencies::note_read_of_every_entry(list, below);
+        }
+    }
+
     fn field_already_known(node: &OverseerNode, field: &str) -> Option<OverseerValue> {
         let child = Self::accessible_child(node, field)?;
         Self::value_of_node(child)
@@ -5165,6 +5281,18 @@ impl FormulaEvaluator {
         item_value: Option<OverseerValue>,
         context: &EvaluationContext,
     ) -> Result<OverseerValue, OverseerError> {
+        Self::eval_lambda_over(lambda_expr, acc_value, item_node, item_value, &None, context)
+    }
+
+    /// `eval_lambda`, for an entry of the list at `list` - see `BoundValue::Node`.
+    fn eval_lambda_over(
+        lambda_expr: &FormulaExpression,
+        acc_value: Option<OverseerValue>,
+        item_node: Option<&OverseerNode>,
+        item_value: Option<OverseerValue>,
+        list: &Option<std::rc::Rc<[String]>>,
+        context: &EvaluationContext,
+    ) -> Result<OverseerValue, OverseerError> {
         match lambda_expr {
             FormulaExpression::Lambda { params, body } => {
                 // `with_var` builds a fresh context from this one, so cloning first and then
@@ -5174,7 +5302,7 @@ impl FormulaEvaluator {
                 let mut ctx;
                 if params.len() == 1 {
                     if let Some(n) = item_node {
-                        ctx = context.with_var(&params[0], BoundValue::Node(n));
+                        ctx = context.with_var(&params[0], BoundValue::Node(n, list.clone()));
                     } else if let Some(v) = item_value.clone() {
                         ctx = context.with_var(&params[0], BoundValue::Value(v));
                     } else {
@@ -5186,7 +5314,7 @@ impl FormulaEvaluator {
                         ctx = ctx.with_var(&params[0], BoundValue::Value(acc));
                     }
                     if let Some(n) = item_node {
-                        ctx = ctx.with_var(&params[1], BoundValue::Node(n));
+                        ctx = ctx.with_var(&params[1], BoundValue::Node(n, list.clone()));
                     } else if let Some(v) = item_value.clone() {
                         ctx = ctx.with_var(&params[1], BoundValue::Value(v));
                     }
@@ -5205,7 +5333,7 @@ impl FormulaEvaluator {
                 // Allow non-lambda expressions as trivial mappers/predicates with item bound to 'x'
                 let mut ctx = context.clone();
                 if let Some(n) = item_node {
-                    ctx = ctx.with_var("x", BoundValue::Node(n));
+                    ctx = ctx.with_var("x", BoundValue::Node(n, list.clone()));
                 }
                 if let Some(v) = item_value {
                     ctx = ctx.with_var("x", BoundValue::Value(v));
