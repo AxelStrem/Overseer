@@ -703,6 +703,9 @@ async fn me(Extension(caller): Extension<Caller>) -> Result<Json<serde_json::Val
 struct OwnChange {
     #[serde(default)]
     name: Option<String>,
+    /// The chip's colour, `#rrggbb` or `#rgb`; empty for the default.
+    #[serde(default)]
+    colour: Option<String>,
     #[serde(default)]
     password: Option<String>,
     /// The password now, which a new one needs.
@@ -710,7 +713,7 @@ struct OwnChange {
     current: Option<String>,
 }
 
-/// Change one's own display name or password.
+/// Change one's own display name, chip colour or password.
 async fn change_me(
     State(service): State<Service>,
     Extension(caller): Extension<Caller>,
@@ -725,7 +728,7 @@ async fn change_me(
         .as_deref()
         .map(|new| (body.current.as_deref().unwrap_or(""), new));
     let changed = accounts
-        .change_own(&user.username, body.name.as_deref(), password, chrono::Utc::now())
+        .change_own(&user.username, body.name.as_deref(), body.colour.as_deref(), password, chrono::Utc::now())
         .map_err(account_refusal)?;
     Ok(Json(json!(changed)))
 }

@@ -15,6 +15,9 @@ import { invoke } from '@tauri-apps/api/core'
  * The desktop app has no accounts, and a server without them answers as the token: both are left
  * exactly as they were.
  */
+/// The colour of a person's chip until they choose one - the template's in `people.os`.
+const DEFAULT_COLOUR = '#6b7280'
+
 export class Account {
     constructor(app) {
         this.app = app
@@ -83,6 +86,13 @@ export class Account {
             if (el) el.addEventListener('click', what)
         }
         on('account-save-name', () => this.saveName())
+        on('account-colour-default', () => { this.colour = null; this.preview() })
+        const typed = (id, what) => {
+            const el = document.getElementById(id)
+            if (el) el.addEventListener('input', what)
+        }
+        typed('account-name', () => this.preview())
+        typed('account-colour', () => { this.colour = this.valueOf('account-colour'); this.preview() })
         on('account-save-password', () => this.savePassword())
         on('account-sharing', () => this.openSharing())
         on('account-sign-out', () => this.signOut())
@@ -104,15 +114,36 @@ export class Account {
         const section = document.getElementById('drawer-account')
         if (section) section.hidden = !this.person
         const who = document.getElementById('account-who')
-        if (who) who.textContent = this.person ? this.person.name || this.person.username : ''
+        if (who) this.drawChip(who, this.person && this.person.name, this.person && this.person.colour)
         const name = document.getElementById('account-name')
         if (name && this.person) name.value = this.person.name || ''
+        this.colour = (this.person && this.person.colour) || null
+        this.preview()
         const admin = document.getElementById('account-admin')
         if (admin) admin.hidden = !(this.person && this.person.admin)
         const signIn = document.getElementById('drawer-sign-in')
         if (signIn) signIn.hidden = this.asker !== 'stranger'
         const all = document.getElementById('drawer-all-documents')
         if (all) all.hidden = this.asker === 'stranger'
+    }
+
+    /// The person's chip as documents draw it: their name, styled as written, on their colour or
+    /// on the directory's grey (`people.rs`) when they chose none.
+    drawChip(el, name, colour) {
+        el.textContent = ''
+        if (!this.person) return
+        const renderer = this.app && this.app.renderer
+        const said = name || this.person.username
+        if (!renderer) { el.textContent = said; return }
+        el.appendChild(renderer.tagChip(this.person.username, { name: said, named: true, colour: colour || DEFAULT_COLOUR }, null))
+    }
+
+    /// The chip as the profile's fields would make it, before it is saved.
+    preview() {
+        const colour = document.getElementById('account-colour')
+        if (colour) colour.value = this.colour || DEFAULT_COLOUR
+        const shown = document.getElementById('account-preview')
+        if (shown) this.drawChip(shown, this.valueOf('account-name'), this.colour)
     }
 
     valueOf(id) {
@@ -149,7 +180,7 @@ export class Account {
         const name = this.valueOf('account-name')
         if (!name) return this.say('account-name-said', 'A name cannot be empty.', true)
         try {
-            this.person = await this.post('/account/me', { name })
+            this.person = await this.post('/account/me', { name, colour: this.colour || '' })
             this.paint()
             this.say('account-name-said', 'Saved.')
         } catch (e) {

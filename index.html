@@ -49,7 +49,13 @@
                 <details class="account-profile">
                     <summary class="drawer-action quiet">Profile</summary>
                     <label class="account-field">Display name <input id="account-name" type="text" autocomplete="name"></label>
-                    <button id="account-save-name" class="drawer-action">Save the name</button>
+                    <div class="account-hint">Markdown and icons are drawn: **bold**, *italic*, &lt;color=#e11d48 | red&gt;, &lt;icon=bot&gt;.</div>
+                    <div class="account-colour">
+                        <label class="account-field">Chip colour <input id="account-colour" type="color"></label>
+                        <button id="account-colour-default" class="drawer-action quiet">Default</button>
+                        <span id="account-preview"></span>
+                    </div>
+                    <button id="account-save-name" class="drawer-action">Save the name and colour</button>
                     <div id="account-name-said" class="account-said" role="status"></div>
                     <label class="account-field">Current password <input id="account-current" type="password" autocomplete="current-password"></label>
                     <label class="account-field">New password <input id="account-password" type="password" autocomplete="new-password"></label>

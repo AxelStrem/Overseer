@@ -422,6 +422,30 @@ a.drawer-action {
     border-radius: 6px;
 }
 
+.account-hint {
+    margin: 0 8px;
+    font-size: 11px;
+    color: var(--ov-muted);
+}
+
+.account-colour {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    margin-right: 8px;
+}
+
+.account-colour .account-field input[type="color"] {
+    width: 44px;
+    height: 28px;
+    padding: 2px;
+}
+
+#account-preview {
+    align-self: center;
+    margin-left: auto;
+}
+
 .account-said {
     margin: 0 8px;
     font-size: 12px;
@@ -2957,6 +2981,18 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     display: inline-flex;
     vertical-align: baseline;
     margin: 0 1px;
+}
+
+/* A chip's name written as markdown, kept on one line as a plain name is. */
+.tag-chip .chip-name {
+    white-space: nowrap;
+}
+.tag-chip .chip-name code {
+    font-size: inherit;
+    padding: 0 2px;
+    border-radius: 2px;
+    background: rgba(0, 0, 0, 0.15);
+    color: inherit;
 }
 
 /* A chip that shows the entry it stands for when pressed. */

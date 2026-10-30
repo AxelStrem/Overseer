@@ -35,9 +35,12 @@ The token stays what it was: whoever holds it may do anything.
 - **Signing in**: `/signin` asks for the username and password and sets the `overseer_session`
   cookie, good for 90 days. `/signout` ends it. A browser asking without one for a page that is
   not shared with everyone is sent to `/signin`, and back afterwards.
-- **`GET /account/me`** answers `{"username","name","admin"}` for whoever is signed in.
-  **`POST /account/me`** with `{"name": ...}`, or `{"password": ..., "current": ...}`, changes
-  their own display name or password.
+- **`GET /account/me`** answers `{"username","name","admin","colour"}` for whoever is signed in.
+  **`POST /account/me`** with `{"name": ...}`, `{"colour": "#rrggbb"}` (or `#rgb`; `""` for the
+  default) or `{"password": ..., "current": ...}`, any of them together, changes their own display
+  name, chip colour or password, and answers as `GET` does - `colour` is `null` for the default. A display
+  name is inline markdown (see the specification's "Tags"): it shows at most 64 characters, and is
+  at most 1000 as written, its markup included.
 - **`POST /account/invite`**, for an admin or the token, answers `{"link": "/join?invite=...",
   "expires": ...}`. With `{"reset": "<username>"}` the link sets a new password for that account
   instead, and signs it out everywhere.

@@ -167,8 +167,12 @@ fn looking() -> Option<String> {
 fn who_is_looking() -> (String, String) {
     match looking() {
         Some(handle) => {
+            // As plain text: a display name's markup is drawn in the person's chip, and a
+            // formula that writes the name into a string would show it as written.
             let name = crate::access::root()
                 .and_then(|root| crate::people::name_of(&root, &handle))
+                .map(|name| crate::people::plain(&name))
+                .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| handle.clone());
             (handle, name)
         }

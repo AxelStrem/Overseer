@@ -27,6 +27,9 @@ pub const SESSION_LASTS: Duration = Duration::days(90);
 pub const SHORTEST_PASSWORD: usize = 8;
 const LONGEST_USERNAME: usize = 32;
 const LONGEST_NAME: usize = 64;
+/// The longest a display name may be as written, its markup included: room for a colour on every
+/// letter of a name that shows `LONGEST_NAME` of them, and an icon or two.
+const LONGEST_WRITTEN_NAME: usize = 1000;
 /// What every key begins with, so that one pasted somewhere is recognisable for what it is.
 pub const KEY_PREFIX: &str = "osk_";
 /// How stale a key's last use may be before it is written down again: often enough to tell a
@@ -42,6 +45,8 @@ pub struct User {
     pub name: String,
     /// Whether they may invite others, and send someone a new password.
     pub admin: bool,
+    /// The colour of their chip, `#rrggbb` or `#rgb`, where they chose one.
+    pub colour: Option<String>,
 }
 
 /// What an invite will do when it is used.
@@ -94,6 +99,8 @@ struct Account {
     password: String,
     #[serde(default)]
     admin: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    colour: Option<String>,
     #[serde(default)]
     sessions: Vec<Secret>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -181,15 +188,38 @@ pub fn valid_username(username: &str) -> Result<String, AccountError> {
     }
 }
 
+/// A display name as it is kept. It is markdown, drawn wherever the person's chip is, so it is
+/// held to the length of what it shows - a colour on every letter does not use the room up - and,
+/// as written, to a cap of its own.
 fn valid_name(name: &str) -> Result<String, AccountError> {
     let name = name.trim();
-    if name.is_empty() || name.chars().count() > LONGEST_NAME {
+    if name.is_empty() || crate::people::plain(name).chars().count() > LONGEST_NAME {
         return Err(AccountError::Refused(format!(
-            "a display name is 1 to {} characters",
+            "a display name shows 1 to {} characters",
             LONGEST_NAME
         )));
     }
+    if name.chars().count() > LONGEST_WRITTEN_NAME {
+        return Err(AccountError::Refused(format!(
+            "a display name is at most {} characters as written, its markup included",
+            LONGEST_WRITTEN_NAME
+        )));
+    }
     Ok(name.to_string())
+}
+
+/// A chip colour as it is kept: `#rgb` or `#rrggbb`, in lower case, or none for the default.
+fn valid_colour(colour: &str) -> Result<Option<String>, AccountError> {
+    let colour = colour.trim();
+    if colour.is_empty() {
+        return Ok(None);
+    }
+    let digits = colour.strip_prefix('#').unwrap_or("");
+    if (digits.len() == 3 || digits.len() == 6) && digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(Some(colour.to_ascii_lowercase()))
+    } else {
+        Err(AccountError::Refused("a colour is #rgb or #rrggbb, or empty for the default".into()))
+    }
 }
 
 fn valid_password(password: &str) -> Result<(), AccountError> {
@@ -218,6 +248,7 @@ fn as_user(account: &Account) -> User {
         username: account.username.clone(),
         name: account.name.clone(),
         admin: account.admin,
+        colour: account.colour.clone(),
     }
 }
 
@@ -279,13 +310,17 @@ impl Accounts {
         Ok(self)
     }
 
-    /// Everyone with an account, as `(username, display name)`, in the order they joined.
-    pub fn people(&self) -> Vec<(String, String)> {
+    /// Everyone with an account, in the order they joined.
+    pub fn people(&self) -> Vec<crate::people::Person> {
         self.read(|store| {
             store
                 .accounts
                 .iter()
-                .map(|a| (a.username.clone(), a.name.clone()))
+                .map(|a| crate::people::Person {
+                    tag: a.username.clone(),
+                    name: a.name.clone(),
+                    colour: a.colour.clone(),
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -433,6 +468,7 @@ impl Accounts {
                     name: valid_name(name)?,
                     password: password_hash,
                     admin: invite.admin,
+                    colour: None,
                     sessions: Vec::new(),
                     keys: Vec::new(),
                 }),
@@ -583,16 +619,19 @@ impl Accounts {
         Some(user)
     }
 
-    /// Change one's own display name, password, or both. A new password needs the current one:
-    /// a session left open on someone else's phone must not be enough to take the account.
+    /// Change one's own display name, chip colour or password, or any of them. An empty colour
+    /// goes back to the default. A new password needs the current one: a session left open on
+    /// someone else's phone must not be enough to take the account.
     pub fn change_own(
         &self,
         username: &str,
         name: Option<&str>,
+        colour: Option<&str>,
         password: Option<(&str, &str)>,
         now: DateTime<Utc>,
     ) -> Result<User, AccountError> {
         let name = name.map(valid_name).transpose()?;
+        let colour = colour.map(valid_colour).transpose()?;
         let password_hash = match password {
             Some((current, new)) => {
                 let kept = self
@@ -613,6 +652,9 @@ impl Accounts {
                 .ok_or_else(|| AccountError::Refused("there is no such account".into()))?;
             if let Some(name) = name {
                 account.name = name;
+            }
+            if let Some(colour) = colour {
+                account.colour = colour;
             }
             if let Some(hash) = password_hash {
                 account.password = hash;

@@ -17,6 +17,8 @@ function setupDOM() {
       <span id="account-who"></span>
       <button id="account-sharing"></button>
       <input id="account-name">
+      <input id="account-colour" type="color"><button id="account-colour-default"></button>
+      <span id="account-preview"></span>
       <button id="account-save-name"></button><div id="account-name-said"></div>
       <input id="account-current"><input id="account-password">
       <button id="account-save-password"></button><div id="account-password-said"></div>
@@ -144,7 +146,38 @@ describe('a viewer is offered what they may do', () => {
     document.getElementById('account-name').value = 'Robert'
     document.getElementById('account-save-name').click()
     await vi.waitFor(() => expect(document.getElementById('account-who').textContent).toBe('Robert'))
-    expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Robert' } })
+    expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Robert', colour: '' } })
+  })
+
+  it('previews their chip as they style it, and saves the colour they pick', async () => {
+    fetching({ '/account/me': { ...BOB, name: '**Bo**b', colour: '#0f766e' } })
+    await started({ asker: 'person', person: { ...BOB, colour: '#e11d48' }, can: 'edit' })
+    const who = document.querySelector('#account-who .tag-chip')
+    expect(who.style.backgroundColor).toBe('rgb(225, 29, 72)')
+    expect(document.getElementById('account-colour').value).toBe('#e11d48')
+
+    const name = document.getElementById('account-name')
+    name.value = '**Bo**b'
+    name.dispatchEvent(new Event('input'))
+    const colour = document.getElementById('account-colour')
+    colour.value = '#0f766e'
+    colour.dispatchEvent(new Event('input'))
+    const preview = document.querySelector('#account-preview .tag-chip')
+    expect(preview.querySelector('strong').textContent).toBe('Bo')
+    expect(preview.style.backgroundColor).toBe('rgb(15, 118, 110)')
+
+    document.getElementById('account-save-name').click()
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: '**Bo**b', colour: '#0f766e' } }))
+    await vi.waitFor(() => expect(document.querySelector('#account-who strong')?.textContent).toBe('Bo'))
+  })
+
+  it('goes back to the default colour when asked', async () => {
+    fetching({ '/account/me': BOB })
+    await started({ asker: 'person', person: { ...BOB, colour: '#e11d48' }, can: 'edit' })
+    document.getElementById('account-colour-default').click()
+    expect(document.querySelector('#account-preview .tag-chip').style.backgroundColor).toBe('rgb(107, 114, 128)')
+    document.getElementById('account-save-name').click()
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '' } }))
   })
 
   it('opens their sharing document, made when there is none', async () => {

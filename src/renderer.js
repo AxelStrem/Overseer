@@ -308,6 +308,23 @@ const writtenIcons = (text) => text.replace(ICON_MARK, (_, said) => {
     return `<icon=${raw}>`
 })
 
+// `<color=#FF0000 | This text is red>` as the span markdown lets through. The colour is held to
+// #RRGGBB, #RGB, a named colour, rgb(a)() or hsl(a)(); any other keeps its text and loses the tag.
+const colourTags = (input) => {
+    if (!input || typeof input !== 'string' || input.indexOf('<color=') === -1) return input
+    return input.replace(/<color=([^|>]+)\|(.*?)>/gms, (match, rawColor, inner) => {
+        const color = String(rawColor).trim()
+        const content = String(inner).trim()
+        const isHex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)
+        const isNamed = /^[a-zA-Z]+$/.test(color)
+        const isRgb = /^rgb(a)?\(\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
+        const isHsl = /^hsl(a)?\(\s*[-+]?\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
+        if (!(isHex || isNamed || isRgb || isHsl)) return content
+        const esc = content.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        return `<span class="md-inline-color" style="color:${color}">${esc}</span>`
+    })
+}
+
 // A scheme the page may follow, or none at all - a path on this server. Read with the whitespace and
 // control characters a browser drops from a URL taken out, so `java\tscript:` is seen for what it is.
 const safeUrl = (href) => {
@@ -375,6 +392,39 @@ markdown.use(markedHighlight({
         return text.length > GUESSED_CODE_LIMIT ? escapeHtml(text) : hljs.highlightAuto(text).value
     },
 }))
+
+/// A vocabulary entry's name, as the HTML its chip holds: inline markdown - bold, italic,
+/// strikethrough, code, colours and icons - under the same rule for raw HTML as a text field's. A
+/// link is drawn as its text, since a press on a chip is the chip's, and an image as its alt.
+const chipMarkdown = new Marked({
+    renderer: {
+        html(html) {
+            return INLINE_COLOR.test(html.trim()) ? html : escapeHtml(html)
+        },
+        link(href, title, text) {
+            return text
+        },
+        image(href, title, text) {
+            return escapeHtml(text)
+        },
+        codespan(text) {
+            return `<code>${text.replace(ICON_MARK, (said) => escapeHtml(writtenIcons(said)))}</code>`
+        },
+    },
+})
+const nameHtml = (name) => drawIconMarks(chipMarkdown.parseInline(colourTags(markIcons(String(name ?? '')))))
+/// Whether a name holds anything inline markdown reads. One that does not is drawn as plain text
+/// with its icons, as a name always was.
+const NAME_MARKUP = /[*_~`\\]|<color=/
+
+/// A chip's name as plain text, for places that can only hold text: what it shows, its marks gone.
+export const nameAsText = (name) => {
+    const s = String(name ?? '')
+    if (!NAME_MARKUP.test(s)) return textWithoutIcons(s)
+    const holder = document.createElement('span')
+    holder.innerHTML = nameHtml(s.replace(CHIP_IN_TEXT, '$1'))
+    return holder.textContent.replace(/\s+/g, ' ').trim()
+}
 
 // Import Chart.js for chart visualization
 import {
@@ -5495,8 +5545,12 @@ export class OverseerRenderer {
                     }
                     const tag = field(key)
                     if (tag === null || tag === undefined || tag === '' || found.has(String(tag))) continue
+                    const name = field('name')
                     found.set(String(tag), {
-                        name: field('name') || String(tag),
+                        name: name || String(tag),
+                        // A name the entry gives is markdown; its key, standing in, is not -
+                        // `__init__` names a thing, it does not ask for bold.
+                        named: Boolean(name),
                         colour: field('colour') || field('color') || null,
                         hover: field('title') || null,
                         offered: at === 0,
@@ -5528,7 +5582,8 @@ export class OverseerRenderer {
         chip.className = 'tag-chip'
         chip.dataset.tag = tag
         const name = (known && known.name) || tag
-        this.setTextWithIcons(chip, name)
+        if (known && known.named) this.setChipName(chip, name)
+        else this.setTextWithIcons(chip, name)
         if (known && known.colour) {
             chip.style.backgroundColor = known.colour
             chip.style.color = this.readableOn(known.colour)
@@ -5539,7 +5594,7 @@ export class OverseerRenderer {
         }
         if (known && known.hover) chip.title = String(known.hover)
         // A chip that is only an icon still says what it is, when asked.
-        else if (textWithoutIcons(name).trim() === '') chip.title = tag
+        else if (nameAsText(name) === '') chip.title = tag
         if (!known) {
             // A tag the vocabulary does not list. Shown rather than hidden: it is in the
             // document, and dropping it from the display would misreport what the field holds.
@@ -6452,6 +6507,24 @@ export class OverseerRenderer {
             last = m.index + m[0].length
         }
         if (last < s.length) el.appendChild(document.createTextNode(s.slice(last)))
+        el.dataset.text = s
+        return el
+    }
+
+    /**
+     * Draws a vocabulary entry's name into a chip, as inline markdown - see `nameHtml`. It is
+     * held in one span: the chip lays its parts out with a gap between, and a name coloured
+     * letter by letter is one word. A name with no markup is drawn as `setTextWithIcons` draws
+     * it, and either way `data-text` keeps the name as written.
+     */
+    setChipName(el, text) {
+        const s = text == null ? '' : String(text)
+        if (!NAME_MARKUP.test(s)) return this.setTextWithIcons(el, s)
+        const held = document.createElement('span')
+        held.className = 'chip-name'
+        held.innerHTML = this.drawChipsInHtml(nameHtml(s), null)
+        el.textContent = ''
+        el.appendChild(held)
         el.dataset.text = s
         return el
     }
@@ -10719,30 +10792,8 @@ export class OverseerRenderer {
 
     _renderMarkdownAlone(text) {
         try {
-            // Preprocess custom inline color syntax before passing to markdown parser.
-            // Syntax: <color=#FF0000 | This text is red>
-            // Allowed color value formats: #RRGGBB, #RGB, named CSS color (alphabetic), rgb(a)(), hsl(a)().
-            // We sanitize by whitelisting acceptable patterns and discarding anything else (leaving raw text).
-            const preprocessColorTags = (input) => {
-                if (!input || typeof input !== 'string' || input.indexOf('<color=') === -1) return input
-                return input.replace(/<color=([^|>]+)\|(.*?)>/gms, (match, rawColor, inner) => {
-                    const color = String(rawColor).trim()
-                    const content = String(inner).trim()
-                    // Basic safe patterns
-                    const isHex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)
-                    const isNamed = /^[a-zA-Z]+$/.test(color)
-                    const isRgb = /^rgb(a)?\(\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
-                    const isHsl = /^hsl(a)?\(\s*[-+]?\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
-                    if (!(isHex || isNamed || isRgb || isHsl)) {
-                        return content // Unsafe or unsupported color format; strip tag but keep text
-                    }
-                    // Escape angle brackets in content minimally (marked will further sanitize if configured)
-                    const esc = content.replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                    return `<span class=\"md-inline-color\" style=\"color:${color}\">${esc}</span>`
-                })
-            }
             const withIcons = typeof text === 'string' && text.indexOf('<icon=') !== -1 ? markIcons(text) : text
-            const preprocessed = preprocessColorTags(withIcons)
+            const preprocessed = colourTags(withIcons)
             // Use marked library for proper markdown rendering on preprocessed text
             return drawIconMarks(markdown.parse(preprocessed));
         } catch (error) {

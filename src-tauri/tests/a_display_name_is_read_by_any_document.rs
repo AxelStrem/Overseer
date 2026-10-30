@@ -137,7 +137,7 @@ fn a_new_name_is_seen_without_writing_the_document() {
 
     // What `POST /api/me` does.
     accounts
-        .change_own("ap31", Some("Dima"), None, chrono::Utc::now())
+        .change_own("ap31", Some("Dima"), None, None, chrono::Utc::now())
         .unwrap();
     assert!(std::fs::read_to_string(root.join("people.os")).unwrap().contains("\"Dima\""));
     assert_eq!(read(), ("Dima".to_string(), "ap31".to_string()));
@@ -145,6 +145,33 @@ fn a_new_name_is_seen_without_writing_the_document() {
         assert_eq!(text(&documents.open("card.os").unwrap(), "viewer"), "Dima");
     });
     assert_eq!(std::fs::read(&card).unwrap(), before, "the document is not written");
+}
+
+#[test]
+fn a_styled_name_and_a_chosen_colour_reach_the_directory() {
+    let (documents, accounts, root) = served("styled");
+    let styled = "<color=#e11d48 | D><color=#2563eb | ima> <icon=bot>";
+    accounts
+        .change_own("ap31", Some(styled), Some("#0F766E"), None, chrono::Utc::now())
+        .unwrap();
+    let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
+    assert!(directory.contains("- colour = \"#0f766e\""), "{}", directory);
+    assert_eq!(directory.matches("- colour = ").count(), 1, "bob chose none: {}", directory);
+    documents.as_asker(person("bob"), || {
+        // Read through the vocabulary as written, for the page to draw...
+        assert_eq!(text(&documents.open("ap31/card.os").unwrap(), "written_by"), styled);
+    });
+    documents.as_asker(person("ap31"), || {
+        // ...and as plain text where a formula puts it in a string.
+        assert_eq!(text(&documents.open("card.os").unwrap(), "viewer"), "Dima");
+    });
+
+    // An empty colour is the default again.
+    accounts
+        .change_own("ap31", None, Some(""), None, chrono::Utc::now())
+        .unwrap();
+    let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
+    assert!(!directory.contains("- colour = "), "{}", directory);
 }
 
 #[test]
