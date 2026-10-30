@@ -339,22 +339,44 @@ const writtenIcons = (text) => text.replace(ICON_MARK, (_, said) => {
     return `<icon=${raw}>`
 })
 
-// `<color=#FF0000 | This text is red>` as the span markdown lets through. The colour is held to
-// #RRGGBB, #RGB, a named colour, rgb(a)() or hsl(a)(); any other keeps its text and loses the tag.
-const colourTags = (input) => {
+// `<color=#FF0000 | This text is red>` is carried through the parser as icons are: its opening and
+// its closing each a mark of two private-use characters around the piece as it was written, so that
+// inside code it goes back to that text, and outside it becomes the span. The text between is left
+// to markdown. The colour is held to #RRGGBB, #RGB, a named colour, rgb(a)() or hsl(a)(); any other
+// keeps its text and loses the tag.
+const COLOUR_MARK = /([A-Za-z0-9%]*)/g
+const markPiece = (piece) => `${encodeURIComponent(piece)
+    .replace(/[^A-Za-z0-9%]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`
+const markColourTags = (input) => {
     if (!input || typeof input !== 'string' || input.indexOf('<color=') === -1) return input
-    return input.replace(/<color=([^|>]+)\|(.*?)>/gms, (match, rawColor, inner) => {
-        const color = String(rawColor).trim()
-        const content = String(inner).trim()
-        const isHex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)
-        const isNamed = /^[a-zA-Z]+$/.test(color)
-        const isRgb = /^rgb(a)?\(\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
-        const isHsl = /^hsl(a)?\(\s*[-+]?\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
-        if (!(isHex || isNamed || isRgb || isHsl)) return content
-        const esc = content.replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        return `<span class="md-inline-color" style="color:${color}">${esc}</span>`
+    return input.replace(/(<color=[^|>]+\|\s*)(.*?)(\s*>)/gms,
+        (_, opening, inner, closing) => markPiece(opening) + inner + markPiece(closing))
+}
+const writtenPiece = (said) => {
+    try { return decodeURIComponent(said) } catch (_) { return '' }
+}
+const isColour = (color) =>
+    /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)
+    || /^[a-zA-Z]+$/.test(color)
+    || /^rgb(a)?\(\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
+    || /^hsl(a)?\(\s*[-+]?\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
+const drawColourMarks = (html) => {
+    if (html.indexOf('') === -1) return html
+    // A closing closes a span only when its opening drew one.
+    const drew = []
+    return html.replace(COLOUR_MARK, (_, said) => {
+        const piece = writtenPiece(said)
+        if (!piece.startsWith('<color=')) return drew.pop() ? '</span>' : ''
+        const color = piece.slice('<color='.length, piece.indexOf('|')).trim()
+        drew.push(isColour(color))
+        return drew[drew.length - 1] ? `<span class="md-inline-color" style="color:${color}">` : ''
     })
 }
+const writtenColours = (text) => text.replace(COLOUR_MARK, (_, said) => writtenPiece(said))
+// Code shows its marks as the text they were written as, escaped as the rest of it is.
+const writtenInCode = (text) => text
+    .replace(ICON_MARK, (said) => escapeHtml(writtenIcons(said)))
+    .replace(COLOUR_MARK, (said) => escapeHtml(writtenColours(said)))
 
 // A scheme the page may follow, or none at all - a path on this server. Read with the whitespace and
 // control characters a browser drops from a URL taken out, so `java\tscript:` is seen for what it is.
@@ -393,7 +415,7 @@ const markdown = new Marked({
             return `<img src="${escapeHtml(href)}" ${titled} referrerpolicy="no-referrer" loading="lazy">`
         },
         codespan(text) {
-            return `<code>${text.replace(ICON_MARK, (said) => escapeHtml(writtenIcons(said)))}</code>`
+            return `<code>${writtenInCode(text)}</code>`
         },
     },
 })
@@ -414,7 +436,7 @@ markdown.use(markedHighlight({
     langPrefix: 'hljs language-',
     emptyLangClass: 'hljs',
     highlight(code, lang) {
-        const text = writtenIcons(code)
+        const text = writtenColours(writtenIcons(code))
         if (lang) {
             return hljs.getLanguage(lang)
                 ? hljs.highlight(text, { language: lang, ignoreIllegals: true }).value
@@ -439,11 +461,12 @@ const chipMarkdown = new Marked({
             return escapeHtml(text)
         },
         codespan(text) {
-            return `<code>${text.replace(ICON_MARK, (said) => escapeHtml(writtenIcons(said)))}</code>`
+            return `<code>${writtenInCode(text)}</code>`
         },
     },
 })
-const nameHtml = (name) => drawIconMarks(chipMarkdown.parseInline(colourTags(markIcons(String(name ?? '')))))
+const nameHtml = (name) =>
+    drawColourMarks(drawIconMarks(chipMarkdown.parseInline(markColourTags(markIcons(String(name ?? ''))))))
 /// Whether a name holds anything inline markdown reads. One that does not is drawn as plain text
 /// with its icons, as a name always was.
 const NAME_MARKUP = /[*_~`\\]|<color=/
@@ -10929,9 +10952,7 @@ export class OverseerRenderer {
     _renderMarkdownAlone(text) {
         try {
             const withIcons = typeof text === 'string' && text.indexOf('<icon=') !== -1 ? markIcons(text) : text
-            const preprocessed = colourTags(withIcons)
-            // Use marked library for proper markdown rendering on preprocessed text
-            return drawIconMarks(markdown.parse(preprocessed));
+            return drawColourMarks(drawIconMarks(markdown.parse(markColourTags(withIcons))));
         } catch (error) {
             console.warn('Markdown parsing error:', error);
             // Fallback to basic markdown rendering, of the text escaped first for the same reason.
