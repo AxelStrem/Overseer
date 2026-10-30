@@ -1042,6 +1042,30 @@ tab board (mutable=true) {
     }
 }
 ```
+- `tick` on a top-level node of a document, named - on each beat of a clock the page keeps while
+  the document is open, as often as the node's `tick=` says: a number of seconds, or with its unit,
+  `tick="250ms"`. Nothing, `0` or an empty value is a stopped clock, and since `tick=` can be a
+  formula, a flag starts and stops it. Like `on load`, a tick may write only fields that are
+  `mutable="guarded"`, so each viewer's clock steps their own state and the file is never
+  written; a tick that writes anything else is refused whole, and that clock stops. A tick waits
+  for the one before it to be answered, and none comes while the page is hidden.
+
+```overseer
+tab life (mutable=true, tick=$(running ? "250ms" : 0)) {
+    bool running (mutable="guarded") = false
+    int generation (mutable="guarded") = 0
+
+    button go (label="Start / stop") {
+        on click {
+            toggle (path="/life/running")
+        }
+    }
+
+    on tick {
+        inc (path="/life/generation")
+    }
+}
+```
 
 #### Actions
 
@@ -1669,7 +1693,8 @@ timestamp deadline (mode="remaining") = "2026-09-20T09:00:00+04:00"  // "in 2 da
 Both redraw once a second without the document changing, which is the point: the value stored
 is the moment, and only its reading moves. There is no timer node - there was one, and it also
 fired actions on a schedule, which only worked while the app happened to be open. Anything that
-has to happen whether or not a document is open belongs outside the document.
+has to happen whether or not a document is open belongs outside the document; state that moves on
+a clock while somebody watches - a game's step - is `on tick` (see "Events"), and is theirs.
 
 #### Tags
 
@@ -2282,7 +2307,7 @@ div Tasks {
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
-- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`)
+- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`

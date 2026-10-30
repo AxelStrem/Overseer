@@ -21,12 +21,18 @@ const DEBUG_MODE = (() => {
 // Quiet belongs at the call site, where you can see it. Replacing a global takes the console
 // away from someone who has not agreed to give it up.
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { OverseerRenderer, textWithoutIcons, nodeFitsAddress } from './renderer.js'
+import { OverseerRenderer, textWithoutIcons, nodeFitsAddress, millisecondsSaid } from './renderer.js'
 import { FileManager } from './file-manager.js'
 import { Drawer } from './drawer.js'
 import { Account } from './account.js'
 
-// Shallow document equality check used to avoid unnecessary re-renders after scheduler ticks
+// The shortest beat a document's clock keeps, however often its `tick=` asks: each beat is a
+// round trip to the server, and the document worked out again.
+const TICK_AT_MOST_EVERY = 50
+// How often a stopped clock is looked at, to start soon after its `tick=` says so.
+const TICK_STOPPED_LOOK = 250
+
+// Shallow document equality check used to avoid unnecessary re-renders
 // If serialization fails, assume different to be safe and apply update.
 function docsEqual(a, b) {
     try {
@@ -529,12 +535,10 @@ export class OverseerApp {
             // Only here, where a document is opened: a save, a catch-up or a re-resolve is not
             // an opening, and does not run it.
             if (this.runsOnLoad(this.currentDocument)) await this.runOnLoad()
+            this.startTheClock()
 
             // Final status update handled by updateTitle()
             if (DEBUG_MODE) this.setStatus('File loaded successfully - DEBUG VERSION')
-            
-            // Start periodic scheduler tick
-            
         } catch (error) {
             if (DEBUG_MODE) this.setStatus(`DEBUG: Error occurred - ${error.message}`)
             this.showError('Failed to load file', error)
@@ -2097,6 +2101,74 @@ tab Main {
         } catch (e) {
             this.setStatus('on load did not run', String(e?.message || e), 'warning')
         }
+    }
+
+    /// The names of the top-level nodes that say what to do on each tick of the document's clock.
+    ticking(nodes) {
+        return (nodes || [])
+            .filter((node) => node.name && (node.children || []).some((c) => c.node_type === 'on' && c.name === 'tick'))
+            .map((node) => node.name)
+    }
+
+    /// Start the document's clock: one for each top-level node with an `on tick`, beating as often
+    /// as its `tick=` says - for as long as the document is open here, and only then.
+    ///
+    /// The clock is the page's, not the document's: a tick may set only what is this viewer's, so
+    /// each page that has the document open steps its own state and the file is never written.
+    /// Ticks never overlap - the next is counted from when the last was answered - and a beat that
+    /// finds the page hidden, or part-way through a change, is let go.
+    startTheClock() {
+        this.stopTheClock()
+        const owners = this.ticking(this.currentDocument)
+        if (!owners.length) return
+        const clock = { file: this.currentFile, timers: new Map() }
+        this._clock = clock
+        for (const owner of owners) this.tickSoon(clock, owner)
+    }
+
+    stopTheClock() {
+        const clock = this._clock
+        if (!clock) return
+        this._clock = null
+        for (const timer of clock.timers.values()) clearTimeout(timer)
+    }
+
+    /// How often the node's clock beats now, in milliseconds, or null while it is stopped. `tick=`
+    /// is often a formula - a flag turned over by a button starts and stops it - so it is read
+    /// again before every beat.
+    tickIntervalOf(owner) {
+        const node = (this.currentDocument || []).find((n) => n.name === owner)
+        const ms = node ? millisecondsSaid(this.renderer.getParameterValue(node, 'tick')) : null
+        return ms ? Math.max(ms, TICK_AT_MOST_EVERY) : null
+    }
+
+    tickSoon(clock, owner) {
+        if (this._clock !== clock) return
+        const interval = this.tickIntervalOf(owner)
+        // A stopped clock is looked at again now and then, to start when its `tick=` says so.
+        clock.timers.set(owner, setTimeout(() => this.tick(clock, owner, interval), interval ?? TICK_STOPPED_LOOK))
+    }
+
+    async tick(clock, owner, interval) {
+        clock.timers.delete(owner)
+        if (this._clock !== clock || this.currentFile !== clock.file) return
+        if (interval == null || this.tickIntervalOf(owner) == null || document.hidden || this.busyForCatchingUp()) {
+            this.tickSoon(clock, owner)
+            return
+        }
+        const shown = this.showing()
+        try {
+            const update = await invoke('run_overseer_tick', { path: clock.file, owners: [owner], ...shown })
+            // Dropped, as a catch-up's is, when something began here meanwhile: it describes the
+            // page as it was before that, and what began brings the viewer's state with it.
+            if (update && this._clock === clock && this.currentFile === clock.file && !this.busyForCatchingUp()
+                && JSON.stringify(this.showing()) === JSON.stringify(shown)) this.showLooked(update)
+        } catch (e) {
+            // Said once, and that clock stopped: a refusal comes back the same on every beat.
+            if (this._clock === clock) this.setStatus('on tick did not run', String(e?.message || e), 'warning')
+            return
+        }
+        this.tickSoon(clock, owner)
     }
 
     /// Take an answer that is the whole document, and draw it again left scrolled where it was.

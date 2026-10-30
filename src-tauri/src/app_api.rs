@@ -1083,26 +1083,62 @@ pub fn catch_up_at(path: &str, document: &str, session: &str) -> Result<Resolved
 /// Only the page asks for this, when it opens a document; a save, a catch-up and the bot's door
 /// never run it.
 pub fn run_on_load_at(path: &str, document: &str, session: &str) -> Result<ResolvedUpdate> {
+    run_for_the_viewer_at(path, document, session, "load", "opening a document never writes it", None)
+}
+
+/// Run one tick of a document's clock: the `on tick` of each top-level node the page names, for
+/// this viewer.
+///
+/// The clock is the page's, and runs only while the document is open in it. A tick is held to
+/// what `on load` is held to, and for more reason: a tick that wrote the file would write it every
+/// few hundred milliseconds for as long as any page had it open, each open page would step it
+/// again, and each step would be one more to take back. So it may change only what is the
+/// viewer's, and each viewer's clock moves their own state.
+pub fn run_on_tick_at(path: &str, document: &str, session: &str, owners: &[String]) -> Result<ResolvedUpdate> {
+    run_for_the_viewer_at(
+        path,
+        document,
+        session,
+        "tick",
+        "a tick never writes the document",
+        Some(owners),
+    )
+}
+
+/// Run `event` on the top-level nodes that carry it - those of `only`, where it says - for this
+/// viewer alone, never writing the file. See `run_on_load_at`.
+fn run_for_the_viewer_at(
+    path: &str,
+    document: &str,
+    session: &str,
+    event: &str,
+    because: &str,
+    only: Option<&[String]>,
+) -> Result<ResolvedUpdate> {
     let as_it_stands = std::fs::read_to_string(path)
         .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
     let mut update = change_or_look(path, document, session, false, |nodes| {
         let owners: Vec<Vec<String>> = nodes
             .iter()
-            .filter(|n| n.children.iter().any(|c| c.node_type == "on" && c.name == "load"))
+            .filter(|n| n.children.iter().any(|c| c.node_type == "on" && c.name == event))
+            .filter(|n| only.map_or(true, |only| only.iter().any(|o| *o == n.name)))
             .map(|n| vec![n.name.clone()])
             .collect();
         for owner in owners {
             // An unnamed container is no step of any address, so nothing could say which one ran.
             if owner[0].is_empty() {
-                return Err(OverseerError::ValidationError(
-                    "on load stands on a top-level node with a name".into(),
-                ));
+                return Err(OverseerError::ValidationError(format!(
+                    "on {} stands on a top-level node with a name",
+                    event
+                )));
             }
-            crate::actions::ActionExecutor::execute_event(nodes, &owner, "load")?;
+            crate::actions::ActionExecutor::execute_event(nodes, &owner, event)?;
             if crate::actions::wrote_the_document() {
                 return Err(OverseerError::ValidationError(format!(
-                    "on load in '{}' may write only fields marked mutable=\"guarded\": opening a document never writes it",
-                    owner.join("/")
+                    "on {} in '{}' may write only fields marked mutable=\"guarded\": {}",
+                    event,
+                    owner.join("/"),
+                    because
                 )));
             }
         }

@@ -137,6 +137,15 @@ const THEME_WORDS = {
         : v === 'never' ? { rest: 'hidden', pointed: 'hidden' } : unsaid('rest', 'pointed'),
 }
 
+/// A length of time a parameter says, in milliseconds: a number is seconds, and a string may say
+/// its unit - `"2s"`, `"600ms"`. Null when it says none.
+export const millisecondsSaid = (said) => {
+    if (typeof said === 'number' && Number.isFinite(said) && said >= 0) return said * 1000
+    const m = typeof said === 'string' ? said.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s)?$/i) : null
+    if (m) return Number(m[1]) * ((m[2] || 's').toLowerCase() === 'ms' ? 1 : 1000)
+    return null
+}
+
 /// Text with its icons taken out, for places that can only hold text: a title attribute, the
 /// window's title, a search over names. A chip says its key.
 export const textWithoutIcons = (s) => {
@@ -4006,11 +4015,7 @@ export class OverseerRenderer {
     /// `hold="2s"` are two seconds, `hold="600ms"` is what it says, and a node that says nothing
     /// waits a little over half a second, about as long as a phone's own long press.
     holdTimeOf(node) {
-        const said = this.getParameterValue(node, 'hold')
-        if (typeof said === 'number' && Number.isFinite(said) && said >= 0) return said * 1000
-        const m = typeof said === 'string' ? said.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s)?$/i) : null
-        if (m) return Number(m[1]) * ((m[2] || 's').toLowerCase() === 'ms' ? 1 : 1000)
-        return 600
+        return millisecondsSaid(this.getParameterValue(node, 'hold')) ?? 600
     }
 
     /**

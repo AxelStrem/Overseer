@@ -252,6 +252,17 @@ async fn run_overseer_on_load(
     app_api::run_on_load_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
 }
 
+/// One tick of the page's clock, for this window alone - see `app_api::run_on_tick_at`.
+#[command]
+async fn run_overseer_tick(
+    path: String,
+    owners: Vec<String>,
+    shown_version: Option<String>,
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    let _showing = app_api::describing_for(shown_version);
+    app_api::run_on_tick_at(&path, &path, THE_WINDOW, &owners).map(app_api::for_the_page).map(ForThePage)
+}
+
 /// One window more of a list, for this window alone - see `app_api::show_more_at`.
 #[command]
 async fn show_more_of_overseer_list(
@@ -416,8 +427,6 @@ async fn execute_overseer_event_with_text(
     app_api::execute_event_on_text(content, node_path, event_name).map(ForThePage)
 }
 
-/// `scheduler_tick` driven by the document's text.
-
 /// `execute_overseer_event_with_text`, answering with what changed where possible.
 #[command]
 async fn execute_overseer_event_update(
@@ -504,6 +513,7 @@ fn main() {
             write_overseer_values,
             catch_up_overseer_document,
             run_overseer_on_load,
+            run_overseer_tick,
             show_more_of_overseer_list,
             run_overseer_event,
             append_overseer_entry,

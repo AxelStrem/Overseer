@@ -832,6 +832,27 @@ impl DocumentRoot {
                     })?),
                 )
             }
+            // One tick of the page's clock, for this viewer alone - see `app_api::run_on_tick_at`.
+            // Held to what `on load` is held to, so a document shared to be read ticks too.
+            "run_overseer_tick" => {
+                let named = document.ok_or_else(|| {
+                    RequestError::Rejected("'document' is required".into())
+                })?;
+                let at = self.resolve(named)?;
+                let owners = arg_strings(args, &["owners"]);
+                as_json(
+                    app_api::for_the_page(app_api::run_on_tick_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        session,
+                        &owners,
+                    )
+                    .map_err(|e| match e {
+                        OverseerError::ValidationError(m) => RequestError::Rejected(m),
+                        e => RequestError::Failed(format!("could not run a tick: {:?}", e)),
+                    })?),
+                )
+            }
             // One window more of a list, for this viewer alone - see `app_api::show_more_at`.
             // Only read, so a document shared to be read can be read further back too.
             "show_more_of_overseer_list" => {
