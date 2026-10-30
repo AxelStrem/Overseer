@@ -3569,8 +3569,22 @@ impl ActionExecutor {
         }
     }
 
+    /// The field of an entry with this name, among its own fields and those of the unnamed divs
+    /// that lay it out - where `get_field_value` reads it.
+    fn field_of_item_mut<'a>(item: &'a mut OverseerNode, field: &str) -> Option<&'a mut OverseerNode> {
+        if let Some(at) = item.children.iter().position(|c| c.name == field) {
+            return item.children.get_mut(at);
+        }
+        item.children
+            .iter_mut()
+            .filter(|c| c.is_hierarchy_transparent && (c.name.is_empty() || c.name == c.node_type))
+            .find_map(|c| Self::field_of_item_mut(c, field))
+    }
+
     fn set_field_value_on_item(item: &mut OverseerNode, field: &str, value: OverseerValue) {
-        if let Some(child) = item.children.iter_mut().find(|c| c.name == field) {
+        // A key field the template keeps in an unnamed row is set where it is. Added beside the
+        // row instead, the entry held the field twice, and the copy that was written went last.
+        if let Some(child) = Self::field_of_item_mut(item, field) {
             child.parameters.insert("value".to_string(), value);
             // Mark explicit override so serializer will persist this child even if template-derived
             child.source_fingerprint = None;

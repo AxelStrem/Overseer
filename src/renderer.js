@@ -693,7 +693,8 @@ export class OverseerRenderer {
             const preview = tmpl ? JSON.parse(JSON.stringify(tmpl)) : { name: templateName || 'Item', node_type: 'div', parameters: {}, children: [] }
             // Ensure key field child exists and has the keyValue
             if (!preview.children) preview.children = []
-            let keyChild = preview.children.find(c => c && c.name === keyField)
+            // The key field may sit in an unnamed row of the template, beside the day's buttons.
+            let keyChild = this.columnField(preview, keyField)
             if (!keyChild) {
                 keyChild = { name: keyField, node_type: 'string', parameters: {}, children: [] }
                 preview.children.unshift(keyChild)
@@ -926,9 +927,12 @@ export class OverseerRenderer {
         const precision = (precisionRaw && typeof precisionRaw === 'object')
             ? precisionRaw.String : precisionRaw
         const wanted = this.keyReadsAs(precision, key)
+        // An empty key names no entry. Read as '', it would otherwise match the first entry
+        // that has no key field to read.
+        if (wanted === '') return null
         const children = Array.isArray(listNode?.children) ? listNode.children : []
         return children.find((entry) => {
-            const field = (entry.children || []).find((c) => c?.name === keyField)
+            const field = this.columnField(entry, keyField)
             const held = field?.parameters
                 ? (field.parameters._computed_value ?? field.parameters.value)
                 : undefined
@@ -1650,6 +1654,23 @@ export class OverseerRenderer {
             }
         }
         return null
+    }
+
+    /// The nodes a path step chooses among at one level: these, with every wrapper replaced by
+    /// what it holds. A wrapper is no step of an address, so `../selected_date` reaches a field
+    /// that sits in an unnamed row beside the link, as it does in a formula.
+    namedLevel(nodes) {
+        const out = []
+        for (const node of Array.isArray(nodes) ? nodes : []) {
+            if (!node) continue
+            const wrapper = node.is_hierarchy_transparent === true
+                && (!node.name
+                    || String(node.name).toLowerCase()
+                       === String(node.node_type || node.type || '').toLowerCase())
+            if (wrapper) out.push(...this.namedLevel(node.children))
+            else out.push(node)
+        }
+        return out
     }
 
     /**
@@ -2689,7 +2710,7 @@ export class OverseerRenderer {
         const getFieldValue = (node, fieldName) => {
             try {
                 if (!node || !Array.isArray(node.children)) return null
-                const ch = node.children.find(c => (c?.name === fieldName))
+                const ch = this.columnField(node, fieldName)
                 if (!ch) return null
                 const v = ch.parameters ? (ch.parameters._computed_value ?? ch.parameters.value) : undefined
                 return toPrimitive(v)
@@ -2717,6 +2738,7 @@ export class OverseerRenderer {
                 currentNode = parentNode || null
                 continue
             }
+            currentNodes = this.namedLevel(currentNodes)
 
             // Support bracket syntax on this segment: Name[expr]
             // expr can be a numeric index (0-based) or key selection key=value
@@ -2771,7 +2793,9 @@ export class OverseerRenderer {
                         } catch(_) {}
                     }
                     const rhsNorm = normalizeByPrecision(keyPrecision, rhsPrim)
-                    pickedChild = children.find(ch => {
+                    // An empty key names no entry: read as '', it would match the first entry
+                    // whose key field this walk could not read.
+                    pickedChild = rhsNorm === '' ? null : children.find(ch => {
                         const v = getFieldValue(ch, keyField)
                         const vNorm = normalizeByPrecision(keyPrecision, v)
                         // Loose equality on normalized values
@@ -2801,6 +2825,7 @@ export class OverseerRenderer {
                         let tailPath = []
                         for (const t of tail) {
                             const { base: tb, ord: to } = parseSeg(t)
+                            relNodes = this.namedLevel(relNodes)
                             const matches = relNodes.filter(n => n && n.name === tb)
                             if (matches.length === 0) { previewNode = null; break }
                             const picked = matches[to] || matches[0]

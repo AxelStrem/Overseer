@@ -386,7 +386,9 @@ impl FileOperations {
                 // spacing rules take it for the top of a file and give it blank lines of its own.
                 let mut list = String::from("\n");
                 Self::serialize_node_context(child, &mut list, level, false, unit, None, false)?;
-                output.push_str(&list[1..]);
+                // Only the line put there: the list's own leading trivia may have taken it already,
+                // and cutting a character regardless cut a space off the list's indent.
+                output.push_str(list.strip_prefix('\n').unwrap_or(&list));
                 wrote = true;
                 continue;
             }
