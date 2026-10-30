@@ -79,6 +79,17 @@ fn every_context_has_one_address() {
 
 #[test]
 fn a_change_to_what_a_container_sees_still_reaches_the_page() {
+    // The settings in force decide which copies the box holds: under a theme, one of it as well.
+    // The tests beside this one make a server, which sets the process's settings while this runs,
+    // so this one names its own - a file that is not there, which reads as the default theme - for
+    // its thread alone.
+    let nowhere = std::env::temp_dir().join(format!("overseer_context_once_none_{}", std::process::id()));
+    overseer::environment::with_file(nowhere.join("settings.os"), || {
+        a_change_to_what_a_container_sees_reaches_the_page_under_the_settings_in_force()
+    });
+}
+
+fn a_change_to_what_a_container_sees_reaches_the_page_under_the_settings_in_force() {
     let resolve = |accent: &str| {
         overseer::source_registry::SourceRegistry::reset();
         let source = format!("div box {{\n    context accent = \"{}\"\n    string tint = $(accent)\n}}\n", accent);
@@ -91,7 +102,7 @@ fn a_change_to_what_a_container_sees_still_reaches_the_page() {
     let copy_at = after[0]
         .children
         .iter()
-        .position(overseer::contexts::is_copy)
+        .position(|child| overseer::contexts::is_copy(child) && child.name == "accent")
         .expect("the box holds the copy the page reads");
     let changed: Vec<(String, Vec<usize>)> = overseer::delta::diff(&before, &after)
         .iter()
