@@ -299,6 +299,23 @@ pub struct Changed {
     pub folds: Vec<(String, FoldHow)>,
 }
 
+impl Changed {
+    /// Every address whose value moved in the document the press worked on: the document's, and
+    /// the viewer's as well. A viewer's value is not written down, but it was written into the
+    /// tree the caller is about to show, and what reads it has to be worked out again just the
+    /// same. Left out, a press that moved only a viewer's values reached nothing through the
+    /// graph, and the document was worked out whole for it.
+    pub fn moved(&self) -> Vec<String> {
+        let mut moved = self.fields.clone();
+        for (address, _) in &self.view_state {
+            if !moved.contains(address) {
+                moved.push(address.clone());
+            }
+        }
+        moved
+    }
+}
+
 /// What a fold action asks of the div it names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -505,6 +522,17 @@ pub(crate) fn report_so_far() -> Option<(Vec<String>, Vec<Shape>, bool)> {
         r.borrow()
             .as_ref()
             .map(|changed| (changed.fields.clone(), changed.shapes.clone(), changed.shape_unknown))
+    })
+}
+
+/// The viewer's values written so far, for a settle between actions - see `Changed::moved`. Not
+/// counted as the fields are, so all of them are settled each time: a few values worked out twice.
+pub(crate) fn viewers_so_far() -> Vec<String> {
+    REPORT.with(|r| {
+        r.borrow()
+            .as_ref()
+            .map(|changed| changed.view_state.iter().map(|(address, _)| address.clone()).collect())
+            .unwrap_or_default()
     })
 }
 

@@ -840,9 +840,9 @@ pub fn execute_event_update(
 
     let folds_asked = report.as_ref().map(|changed| changed.folds.clone()).unwrap_or_default();
     let quick = report
-        .filter(|changed| !changed.structural && !changed.fields.is_empty())
+        .filter(|changed| !changed.structural && !changed.moved().is_empty())
         .and_then(|changed| {
-            crate::document_cache::with_graph(&was, |graph| graph.nodes_to_work_out_again(&changed.fields))
+            crate::document_cache::with_graph(&was, |graph| graph.nodes_to_work_out_again(&changed.moved()))
                 .map(|to_redo| (changed, to_redo))
         })
         .and_then(|(changed, to_redo)| {
@@ -1176,6 +1176,14 @@ fn change_or_look(
     // the file says again and never get past the first step back.
     let looking_at = crate::viewstate::overlay(session, document);
     let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
+    // Where the document as this viewer last saw it is held, if it still describes this text and
+    // what they hold - see `viewstate::worked_out`. It is theirs, so it is taken whether this
+    // writes or not, and put back under whatever the answer is.
+    let viewers_text = (!looking_at.is_empty())
+        .then(|| crate::viewstate::worked_out_as(session, document, &version_of(&as_it_stood)))
+        .flatten();
+    // The text the cache holds the document worked on under, and its graph with it.
+    let held_as: &str = viewers_text.as_deref().unwrap_or(&as_it_stood);
     // The document as it was last worked out, for exactly this text - taken, not copied. Parsing
     // and resolving it again produces the same thing and costs what opening it cost, which on
     // tasks.os was most of the second every edit took; the cache is keyed by the text, so a hit
@@ -1188,7 +1196,7 @@ fn change_or_look(
     let held = match (looking_at.is_empty(), writing) {
         (true, true) => take_worked_out(&as_it_stood),
         (true, false) => crate::document_cache::copy_nodes(&as_it_stood),
-        (false, _) => None,
+        (false, _) => viewers_text.as_deref().and_then(take_worked_out),
     };
     // The text the caller is showing, when it said and that is not the text the file holds. The
     // caller applies the answer to what it holds, by child index, so that is what the answer has
@@ -1203,6 +1211,13 @@ fn change_or_look(
     // What the change is described against, which needs a copy: the one copy this makes. It was
     // two, one to describe against and another to work on.
     let mut baseline = match &shown_elsewhere {
+        // The page is showing what this viewer was last answered with, which is the document just
+        // taken: taken, it is no longer held to be copied, and is owed back.
+        Some(shown) if held.is_some() && viewers_text.is_some() && *shown == viewers_text => Baseline {
+            put_back: true,
+            copy: held.as_ref().map(|(nodes, _)| nodes.clone()),
+            text: held_as.to_string(),
+        },
         // The document worked out for the caller's text, if it is still held, or kept since the
         // file moved on from it; if not, there is nothing to describe against, and the caller is
         // sent the whole document.
@@ -1216,12 +1231,12 @@ fn change_or_look(
             text: shown.clone().unwrap_or_default(),
         },
         None => Baseline {
-            put_back: held.is_some() && writing,
+            put_back: held.is_some() && (writing || viewers_text.is_some()),
             copy: match &held {
                 Some((nodes, _)) => Some(nodes.clone()),
                 None => baseline_copy(&as_it_stood),
             },
-            text: as_it_stood.clone(),
+            text: held_as.to_string(),
         },
     };
     // The caller holds this text, but worked out from what a file it mounts said before - the
@@ -1241,27 +1256,30 @@ fn change_or_look(
             .and_then(|reading| crate::document_cache::worked_out_from(&as_it_stood, reading));
         baseline.put_back = false;
     }
-    let mut nodes = if !looking_at.is_empty() {
-        resolve_selective(as_it_stood.clone(), held_for_the_viewer.clone(), Some(looking_at))?
-    } else if let Some((mut held, worked_out_in)) = held {
-        // Brought up to the moment before anything reads it - see `catch_up_with_the_clock`. After
-        // the copy above, so what moved with the clock is part of what the caller is told.
-        match catch_up_with_the_clock(&as_it_stood, &mut held, worked_out_in) {
-            Some(()) => held,
-            None => load_document(as_it_stood.clone())?,
+    // Brought up to the moment before anything reads it - see `catch_up_with_the_clock`. After the
+    // copy above, so what moved with the clock is part of what the caller is told.
+    let caught_up = held.and_then(|(mut held, worked_out_in)| {
+        catch_up_with_the_clock(held_as, &mut held, worked_out_in).map(|()| held)
+    });
+    let from_the_cache = caught_up.is_some();
+    let mut nodes = match caught_up {
+        Some(held) => held,
+        None if !looking_at.is_empty() => {
+            resolve_selective(as_it_stood.clone(), held_for_the_viewer.clone(), Some(looking_at))?
         }
-    } else {
-        load_document(as_it_stood.clone())?
+        None => load_document(as_it_stood.clone())?,
     };
+    // Worked out for the viewer the long way: nothing is held under the text it was worked out
+    // for, so there is no graph to follow and nothing to move onto the answer's text.
+    let held_as: &str = if from_the_cache { held_as } else { &as_it_stood };
     phase("load");
 
     crate::actions::start_reporting_and_settling();
-    // Worked out plainly - from the cache or opened just now, which caches it - so the graph held
-    // for this text describes it, and a change of shape can be followed through the graph. Not
-    // when it was worked out for a viewer.
-    let _following = held_for_the_viewer
-        .is_empty()
-        .then(|| crate::actions::follow_against(&as_it_stood));
+    // Worked out plainly - from the cache or opened just now, which caches it - or taken from where
+    // this viewer's is held, so the graph held with it describes it, and a change of shape can be
+    // followed through the graph. Not when it was worked out for a viewer the long way.
+    let _following = (held_for_the_viewer.is_empty() || from_the_cache)
+        .then(|| crate::actions::follow_against(held_as));
     work(&mut nodes)?;
     let report = crate::actions::take_report();
     phase("work");
@@ -1315,7 +1333,7 @@ fn change_or_look(
         Vec::new()
     };
     refuse_writing_through(&through_mounts).map_err(OverseerError::ValidationError)?;
-    let worked_out_whole = settle_after_change(&mut nodes, &as_it_stood, report.as_ref());
+    let worked_out_whole = settle_after_change(&mut nodes, held_as, report.as_ref());
     phase("settle");
 
     let serialized = OverseerFileHandler::serialize_nodes(&nodes)
@@ -1347,8 +1365,9 @@ fn change_or_look(
     let to_edit = field_to_edit(report.as_ref(), &nodes);
     let to_fold = folds_to_do(report.as_ref(), &nodes);
     // Held now, and current: brought up to the minute before the change, or opened in it. Not for
-    // a document worked out as one viewer sees it, which is not the one anyone else is handed.
-    let worked_out_in = held_for_the_viewer.is_empty().then(this_minute);
+    // a document worked out as one viewer sees it the long way, which was never brought up to the
+    // minute through the graph; one taken from where that viewer's is held was.
+    let worked_out_in = (held_for_the_viewer.is_empty() || from_the_cache).then(this_minute);
     let reads = crate::actions::mounts_held(&nodes);
     crate::watch::reads(std::path::Path::new(path), &reads);
     // The baseline is the tree for the text the file held until now, as anyone else was shown
@@ -1360,11 +1379,15 @@ fn change_or_look(
         && held_for_the_viewer.is_empty()
         && crate::watch::listened(std::path::Path::new(path));
     let mut update =
-        finish_update_with(&as_it_stood, serialized, nodes, baseline.used(), worked_out_in, keep_before)?;
+        finish_update_with(held_as, serialized, nodes, baseline.used(), worked_out_in, keep_before)?;
     update.read_from = reads_version(&reads);
     if let Some(fresh) = worked_out_whole {
         replace_graph(&update.text, fresh);
     }
+    // The answer holds this viewer's values, and the cache now holds it under its text: the next
+    // press, tick or open starts from there - see `viewstate::worked_out`.
+    let file_now = if wrote { &settled.text } else { &as_it_stood };
+    crate::viewstate::worked_out(session, document, &version_of(file_now), &update.text);
     phase("answer");
     update.wrote = wrote;
     update.start_editing = to_edit;
@@ -1455,17 +1478,18 @@ pub(crate) fn settle_after_change(
             .take()
             .or_else(|| crate::document_cache::take_graph(as_it_stood));
         if let Some(mut graph) = graph {
-            let unseen = &changed.fields[following.fields_settled.min(changed.fields.len())..];
-            if follow_the_shape(nodes, &mut graph, unseen, &changed.shapes).is_some() {
+            let mut unseen = changed.fields[following.fields_settled.min(changed.fields.len())..].to_vec();
+            unseen.extend(changed.view_state.iter().map(|(address, _)| address.clone()));
+            if follow_the_shape(nodes, &mut graph, &unseen, &changed.shapes).is_some() {
                 return Some(Some(graph));
             }
         }
     }
     let settled_what_it_reached = report
-        .filter(|changed| !changed.structural && !changed.fields.is_empty())
+        .filter(|changed| !changed.structural && !changed.moved().is_empty())
         .and_then(|changed| {
             crate::document_cache::with_graph(as_it_stood, |graph| {
-                graph.nodes_to_work_out_again(&changed.fields)
+                graph.nodes_to_work_out_again(&changed.moved())
             })
         })
         .and_then(|to_redo| {
@@ -1525,8 +1549,9 @@ pub(crate) fn settle_so_far(nodes: &mut Vec<OverseerNode>) -> bool {
     let Some(mut graph) = graph else {
         return false;
     };
-    let unseen = &fields[following.fields_settled.min(fields.len())..];
-    if follow_the_shape(nodes, &mut graph, unseen, &shapes).is_none() {
+    let mut unseen = fields[following.fields_settled.min(fields.len())..].to_vec();
+    unseen.extend(crate::actions::viewers_so_far());
+    if follow_the_shape(nodes, &mut graph, &unseen, &shapes).is_none() {
         // The graph may be half carried, and it is gone from the cache: nothing after this can
         // follow anything with it.
         crate::actions::note_shape_unknown();
@@ -1733,8 +1758,22 @@ pub fn load_document_for(content: String, document: &str, session: &str) -> Resu
     if looking_at.is_empty() {
         return load_document(content);
     }
+    if let Some(held) = viewers_copy(&content, document, session) {
+        return Ok(held);
+    }
     let addresses = looking_at.keys().cloned().collect();
     resolve_selective(content, addresses, Some(looking_at))
+}
+
+/// A copy of the document as this viewer last saw it, while that still describes this text and
+/// what they hold - see `viewstate::worked_out` - brought up to the minute. Copied, and left where
+/// it is for their next press.
+fn viewers_copy(content: &str, document: &str, session: &str) -> Option<Vec<OverseerNode>> {
+    let held_as = crate::viewstate::worked_out_as(session, document, &version_of(content))?;
+    let _clock = crate::formula_evaluator::FormulaEvaluator::pin_the_clock();
+    let (mut nodes, worked_out_in) = crate::document_cache::copy_nodes(&held_as)?;
+    catch_up_with_the_clock(&held_as, &mut nodes, worked_out_in)?;
+    Some(nodes)
 }
 
 /// Show this viewer one window more of a list, and answer with the document as they now see it.

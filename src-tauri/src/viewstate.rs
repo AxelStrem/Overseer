@@ -32,11 +32,22 @@ struct Overlay {
     /// How many times more of each windowed list this viewer asked to see, by the list's address.
     more: HashMap<String, usize>,
     used: Instant,
+    /// Where the document as this viewer last saw it is held - see `worked_out`.
+    worked_out: Option<WorkedOut>,
+}
+
+struct WorkedOut {
+    /// The version of the file's text it was worked out from.
+    file: String,
+    /// The viewer's values it was worked out with.
+    values: HashMap<String, OverseerValue>,
+    /// The text the document cache holds it under: the file's, with the viewer's values in it.
+    text: String,
 }
 
 impl Overlay {
     fn new() -> Self {
-        Overlay { values: HashMap::new(), more: HashMap::new(), used: Instant::now() }
+        Overlay { values: HashMap::new(), more: HashMap::new(), used: Instant::now(), worked_out: None }
     }
 }
 
@@ -72,6 +83,37 @@ pub fn overlay(session: &str, document: &str) -> HashMap<String, OverseerValue> 
             }
             None => HashMap::new(),
         }
+    })
+}
+
+/// Say where the document as this viewer now sees it is held: worked out from the file's text of
+/// version `file` with the values they hold now, and kept by the document cache under `text`.
+///
+/// An answer to a press on a document with anything of the viewer's in it is the file's text with
+/// their values written in, and the cache holds the worked-out document under that text, graph and
+/// all. Nothing else knew to look there, so the next press, tick or open worked the document out
+/// again from the file - on a board of guarded cells, the whole of it twice per press.
+pub fn worked_out(session: &str, document: &str, file: &str, text: &str) {
+    with(|held| {
+        if let Some(overlay) = held.get_mut(&(session.to_string(), document.to_string())) {
+            overlay.worked_out = Some(WorkedOut {
+                file: file.to_string(),
+                values: overlay.values.clone(),
+                text: text.to_string(),
+            });
+            overlay.used = Instant::now();
+        }
+    });
+}
+
+/// The text the document as this viewer sees it is held under - see `worked_out` - while it was
+/// worked out from the file's text of version `file` and with the values the viewer holds now.
+/// Whether the cache still holds it is the cache's to say.
+pub fn worked_out_as(session: &str, document: &str, file: &str) -> Option<String> {
+    with(|held| {
+        let overlay = held.get(&(session.to_string(), document.to_string()))?;
+        let worked_out = overlay.worked_out.as_ref()?;
+        (worked_out.file == file && worked_out.values == overlay.values).then(|| worked_out.text.clone())
     })
 }
 

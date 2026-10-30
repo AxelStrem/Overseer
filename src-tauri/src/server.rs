@@ -333,18 +333,7 @@ impl DocumentRoot {
         // Naming the document is what lets its mounts resolve against its own directory, and
         // what keeps two documents being served at once from deciding for each other.
         let dir = path.parent().map(|d| d.to_path_buf());
-        let looking_at = crate::viewstate::overlay(session, name);
-        let _more = crate::viewstate::reading_more(session, name);
-        self.within(dir, || {
-            if looking_at.is_empty() {
-                app_api::load_document(text)
-            } else {
-                // The same call an edit makes: apply these values, then work out what reads
-                // them. The overlay is exactly a set of edits that are never written down.
-                let addresses = looking_at.keys().cloned().collect();
-                app_api::resolve_selective(text, addresses, Some(looking_at))
-            }
-        })
+        self.within(dir, || app_api::load_document_for(text, name, session))
         .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))
     }
 }
