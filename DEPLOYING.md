@@ -100,6 +100,7 @@ A flag wins over its variable.
 | `--open` | `OVERSEER_OPEN=1` | off | serve beyond `127.0.0.1` without a token |
 | `--accounts PATH` | `OVERSEER_ACCOUNTS` | none | the file of accounts people sign in with; without it, nobody signs in |
 | `--admin NAME` | `OVERSEER_ADMIN` | none | the account that may invite others, made by a link printed at start-up |
+| `--examples DIR` | `OVERSEER_EXAMPLES` | none (`/app/examples` in the image) | example documents shown to anyone at `/examples/`, with no sign-in, read-only; unset, none are |
 | | `OVERSEER_LIBRARY` | the checkout it was built from, else `library` beside the binary (`/app/library` in the image) | the templates shipped in `library/` |
 | | `OVERSEER_CACHE_MB` | `64` | see above |
 | | `OVERSEER_DISK_CACHE` | system temp folder | see above |

@@ -70,6 +70,7 @@ export class Account {
         try {
             const path = decodeURIComponent(window.location.pathname || '')
             if (path.startsWith('/doc/')) return path.slice('/doc/'.length)
+            if (path.startsWith('/examples/')) return path.slice('/examples/'.length)
             return new URLSearchParams(window.location.search).get('doc')
         } catch (_) {
             return null

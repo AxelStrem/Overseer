@@ -131,6 +131,22 @@ included. Documents mount it to show people by name (see "Who is looking" in the
 `settings.os` at the root is the look the token and anyone not signed in see; each person's own is
 `settings.os` in their folder, which the drawer's choices are written to.
 
+### Examples
+
+Given a folder of examples (`--examples DIR` or `OVERSEER_EXAMPLES`; unset, there are none),
+the server shows them to anyone at all, with no token or sign-in, under `/examples/`:
+`/examples/games/minesweeper.os` is the page for a browser and the document for a program, as
+`/doc/` is. They are a root of their own, so no name asked for there reaches the documents, and a
+person's own folder called `examples` is still at `/doc/examples/`.
+
+An example is read-only to everyone, the token's holder included. A press that only moves what the
+document keeps for whoever is looking (`mutable="guarded"`) goes through, kept for that viewer
+alone; one that would change the file is `403`. `access` answers `stranger` and `read`, so the
+page draws it with nothing to change. Only what the page reads and presses with is served there:
+`/examples/api/<command>`, `GET /examples/v1/node`, `/examples/v1/source` and
+`/examples/v1/watch`. The page's own files are served to anyone too, so it can load; the list of
+documents, `/doc/` and every other route stay behind the token.
+
 A document is a `.os` file, or one under an extension that `extensions.txt`, beside the settings,
 names a line each (`brot`, for Brocessor's patches): it is listed, opened and written back under
 its own name like any other. Another name is refused with 400.
@@ -315,7 +331,7 @@ disk:
 | --- | --- |
 | 400 | the request cannot be done as asked: a missing or ill-typed value, an unknown field, a duplicate key, a removal that does not match, a document name that leaves the root |
 | 401 | no token, or the wrong one, and no session - with accounts, `sign in`, for anything not shared with everyone |
-| 403 | not allowed to whoever is asking: an invite by someone who is no admin, `X-Overseer-As` naming no account, a write to a document shared to be read |
+| 403 | not allowed to whoever is asking: an invite by someone who is no admin, `X-Overseer-As` naming no account, a write to a document shared to be read or to an example, which says why in `refused` too |
 | 404 | no such document, or one not shared with whoever is asking, or nothing at that address |
 | 422 | the document refused the press (`refused` holds its sentence) |
 | 500 | the write failed |

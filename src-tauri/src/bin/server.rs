@@ -18,6 +18,9 @@
 //! Given an accounts file (`OVERSEER_ACCOUNTS` or `--accounts`), people sign in to it as
 //! themselves too - see `overseer::accounts`. The token goes on meaning the service: whoever
 //! holds it may do anything, and may say whom it acts for.
+//!
+//! Given a folder of examples (`OVERSEER_EXAMPLES` or `--examples`), it serves those to anyone at
+//! all under `/examples/`, with no token or sign-in, to read and never to change.
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -59,6 +62,8 @@ enum Caller {
     /// Nobody signed in, on a server that keeps accounts: what is shared with everyone is
     /// theirs to read, and nothing else - see `overseer::access`.
     Stranger,
+    /// Anyone at all, looking at the examples: theirs to read, and none of them to change.
+    Visitor,
 }
 
 impl Caller {
@@ -67,8 +72,16 @@ impl Caller {
             Caller::Service => Asker::Anyone,
             Caller::Person(user) => Asker::Person(user.username.clone()),
             Caller::Stranger => Asker::Stranger,
+            Caller::Visitor => Asker::Visitor,
         }
     }
+}
+
+/// Every request to the examples comes from a visitor, whoever sent it: nothing there is theirs
+/// to change, the token's holder included.
+async fn as_visitor(mut request: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    request.extensions_mut().insert(Caller::Visitor);
+    next.run(request).await
 }
 
 /// What a stranger is told of anything not shared with everyone, there or not.
@@ -112,12 +125,18 @@ async fn command(
         _ => None,
     };
     let asked = cmd.clone();
+    // What a visitor is looking at is kept apart from what the same tab looked at in someone's
+    // documents, where a document of the same name may be quite another.
+    let session = match (&caller, body.session) {
+        (Caller::Visitor, Some(session)) => Some(format!("examples:{}", session)),
+        (_, session) => session,
+    };
     // Resolving is CPU work, long enough on a large document to block the thread it lands on.
     let outcome = tokio::task::spawn_blocking(move || {
         documents.as_asker(caller.asker(), || {
             overseer::environment::seen_as(body.scheme.as_deref(), || {
                 documents.command_for(
-                    body.session.as_deref().unwrap_or(""),
+                    session.as_deref().unwrap_or(""),
                     body.document.as_deref(),
                     &cmd,
                     &body.args,
@@ -163,6 +182,22 @@ async fn document_or_page(
         return index(State(service), Extension(caller), uri).await;
     }
     match document(State(service), Extension(caller), Path(name)).await {
+        Ok(json) => json.into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
+/// The same for an example: the page for a browser, the document for a program.
+async fn example_or_page(
+    State(service): State<Service>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    Path(name): Path<String>,
+) -> Response {
+    if wants_a_page(&headers) && service.frontend.is_some() {
+        return index(State(service), Extension(Caller::Visitor), uri).await;
+    }
+    match document(State(service), Extension(Caller::Visitor), Path(name)).await {
         Ok(json) => json.into_response(),
         Err(err) => err.into_response(),
     }
@@ -655,7 +690,7 @@ fn signed_in(caller: &Caller) -> Result<&User, (StatusCode, Json<serde_json::Val
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "this is the server's token, not an account" })),
         )),
-        Caller::Stranger => Err(sign_in_first()),
+        Caller::Stranger | Caller::Visitor => Err(sign_in_first()),
     }
 }
 
@@ -1043,7 +1078,12 @@ fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
         RequestError::ReadOnly(_) => StatusCode::FORBIDDEN,
     };
     match error {
-        RequestError::Refused(said) => (status, Json(json!({ "error": said, "refused": said }))),
+        // A press on a document only to be read is refused in a sentence for whoever pressed
+        // too: without it the page takes the long way, runs the press itself, and its save is
+        // refused instead, which it can only answer with an error in place of the document.
+        RequestError::Refused(said) | RequestError::ReadOnly(said) => {
+            (status, Json(json!({ "error": said, "refused": said })))
+        }
         other => (status, Json(json!({ "error": other.to_string() }))),
     }
 }
@@ -1188,6 +1228,7 @@ async fn serve() {
     let mut open = false;
     let mut accounts_file: Option<String> = None;
     let mut admin: Option<String> = None;
+    let mut examples_dir: Option<String> = None;
     // Read from the environment or a file rather than an argument: a command line ends up in
     // shell history and in the process list, where a secret has no business being.
     let mut token = std::env::var("OVERSEER_TOKEN").ok().filter(|t| !t.is_empty());
@@ -1201,6 +1242,7 @@ async fn serve() {
             "--open" => open = true,
             "--accounts" => accounts_file = args.next(),
             "--admin" => admin = args.next(),
+            "--examples" => examples_dir = args.next(),
             "--token-file" => {
                 if let Some(value) = args.next() {
                     match std::fs::read_to_string(&value) {
@@ -1215,7 +1257,7 @@ async fn serve() {
             other => {
                 eprintln!("unknown argument '{}'", other);
                 eprintln!(
-                    "usage: overseer-server [--root DIR] [--frontend DIR] [--bind ADDR] [--port N] [--token-file PATH] [--accounts PATH] [--admin NAME] [--open]"
+                    "usage: overseer-server [--root DIR] [--frontend DIR] [--bind ADDR] [--port N] [--token-file PATH] [--accounts PATH] [--admin NAME] [--examples DIR] [--open]"
                 );
                 std::process::exit(2);
             }
@@ -1330,6 +1372,25 @@ async fn serve() {
     };
     println!("serving {} documents from {}", documents.list().len(), documents.path().display());
 
+    // Unset is off: nothing is served without a token or sign-in unless this names a folder.
+    let examples = match setting(examples_dir, "--examples", &["OVERSEER_EXAMPLES"]) {
+        None => None,
+        Some((from, dir)) => match DocumentRoot::new(&dir) {
+            Ok(r) => {
+                println!(
+                    "serving {} examples from {} to anyone, at /examples/",
+                    r.as_asker(Asker::Visitor, || r.list().len()),
+                    r.path().display()
+                );
+                Some(Arc::new(r))
+            }
+            Err(e) => {
+                eprintln!("cannot serve the examples {} names: {}", from, e);
+                std::process::exit(1);
+            }
+        },
+    };
+
     // Serving the frontend is optional: without a build there is still a usable JSON API.
     let frontend = match frontend_dir.canonicalize() {
         Ok(dir) if dir.join("index.html").exists() => {
@@ -1371,13 +1432,15 @@ async fn serve() {
         .route("/v1/undo", post(undo))
         .route("/v1/watch", get(watch))
         .route("/v1/source", get(read_source))
-        .route("/__overseer/bridge.js", get(bridge))
         .route("/account/me", get(me).post(change_me))
         .route("/account/invite", post(invite))
         .route("/account/sharing", post(start_sharing))
         .route("/account/keys", get(keys).post(make_key))
         .route("/account/keys/:name", axum::routing::delete(revoke_key))
         .route("/", get(index));
+    if examples.is_none() {
+        app = app.route("/__overseer/bridge.js", get(bridge));
+    }
     if let Some(dir) = frontend.as_ref() {
         // Everything else is the frontend's own assets.
         app = app.fallback_service(tower_http::services::ServeDir::new(dir.as_ref()));
@@ -1404,7 +1467,52 @@ async fn serve() {
         .route("/signin", get(sign_in_page).post(sign_in_with_password))
         .route("/signout", get(sign_out).post(sign_out))
         .route("/join", get(join_page).post(join_with_invite))
-        .merge(app)
+        .merge(app);
+    // The examples, for anyone at all: outside the access check, and a root of their own, so no
+    // name asked for there can reach anyone's documents - a person's own folder called
+    // `examples` is still theirs, at /doc/examples/. Only what the page reads with is here;
+    // nothing that writes but a press, which a visitor's asker refuses unless it moves only what
+    // the document keeps for whoever is looking.
+    //
+    // The page has to load for someone with no token, so its own files and the bridge are
+    // served to anyone too. They are the open-source build, and once the examples are public
+    // there is nothing in them a stranger could learn from; the list of documents, /doc/ and
+    // everything that reads or writes them stay behind the check.
+    let app = match examples {
+        None => app,
+        Some(examples) => {
+            let visiting = Service {
+                documents: examples,
+                frontend: frontend.clone(),
+                access: access.clone(),
+                accounts: None,
+            };
+            let examples_app = Router::new()
+                .route(
+                    "/api/:cmd",
+                    post(command).layer(axum::extract::DefaultBodyLimit::max(API_MOST_BYTES)),
+                )
+                .route("/v1/node", get(read_at))
+                .route("/v1/watch", get(watch))
+                .route("/v1/source", get(read_source))
+                .route("/*name", get(example_or_page))
+                .layer(axum::middleware::from_fn(as_visitor))
+                .with_state(visiting);
+            let mut app = app
+                .nest("/examples", examples_app)
+                .route("/__overseer/bridge.js", get(bridge));
+            if let Some(dir) = frontend.as_ref() {
+                for part in ["assets", "icons"] {
+                    app = app.nest_service(
+                        &format!("/{}", part),
+                        tower_http::services::ServeDir::new(dir.join(part)),
+                    );
+                }
+            }
+            app
+        }
+    };
+    let app = app
         .with_state(state)
         .layer(tower_http::compression::CompressionLayer::new());
 

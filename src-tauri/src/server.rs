@@ -143,7 +143,7 @@ impl DocumentRoot {
         match crate::access::asker() {
             crate::access::Asker::Anyone => Ok(self.root.join(crate::menu::FILE)),
             crate::access::Asker::Person(me) => Ok(self.root.join(me).join(crate::menu::FILE)),
-            crate::access::Asker::Stranger => Err(RequestError::SignIn),
+            crate::access::Asker::Stranger | crate::access::Asker::Visitor => Err(RequestError::SignIn),
         }
     }
 
@@ -181,6 +181,7 @@ impl DocumentRoot {
         let asker = crate::access::asker();
         let hidden = || match asker {
             crate::access::Asker::Stranger => RequestError::SignIn,
+            crate::access::Asker::Visitor => RequestError::NotFound(format!("no example '{}'", name)),
             _ => RequestError::NotFound(format!("no document '{}'", name)),
         };
         let path = self.resolve_name(&self.named(name)).map_err(|e| match e {
@@ -249,6 +250,11 @@ impl DocumentRoot {
         use crate::access::{allows, Asker, Need};
         let asker = crate::access::asker();
         let mut listing = Listing::default();
+        // Everything served to visitors is theirs to read, and nobody's to own.
+        if asker == Asker::Visitor {
+            listing.documents = self.everything();
+            return listing;
+        }
         for name in self.everything() {
             // A file at the root is the server's - its directory of people, its settings - and
             // read by everyone, but nobody's document to open from the list.
@@ -930,7 +936,8 @@ impl DocumentRoot {
                 let asker = match crate::access::asker() {
                     crate::access::Asker::Anyone => "anyone",
                     crate::access::Asker::Person(_) => "person",
-                    crate::access::Asker::Stranger => "stranger",
+                    // Drawn as a stranger is: no profile, no list of their own.
+                    crate::access::Asker::Stranger | crate::access::Asker::Visitor => "stranger",
                 };
                 let can = document.and_then(|name| {
                     match self.resolve_for(name, crate::access::Need::Edit) {
@@ -945,7 +952,9 @@ impl DocumentRoot {
             // and names documents as this server does, so whichever document the page is showing
             // has nothing to do with it.
             // Nobody signed in has no documents kept to hand, and keeps none.
-            "menu_places" if crate::access::asker() == crate::access::Asker::Stranger => {
+            "menu_places" if crate::access::asker() == crate::access::Asker::Stranger
+                || crate::access::asker() == crate::access::Asker::Visitor =>
+            {
                 Ok(serde_json::json!([]))
             }
             "menu_places" | "menu_keep" | "menu_drop" | "menu_location" => {
@@ -973,7 +982,9 @@ impl DocumentRoot {
             // the menu is, whichever document the page is showing.
             "settings_read" => as_json(app_api::settings_in(&self.settings_file())),
             // Each person changes their own; the server's are no stranger's to change.
-            "settings_choose" if crate::access::asker() == crate::access::Asker::Stranger => {
+            "settings_choose" if crate::access::asker() == crate::access::Asker::Stranger
+                || crate::access::asker() == crate::access::Asker::Visitor =>
+            {
                 Err(RequestError::SignIn)
             }
             "settings_choose" => {

@@ -15,8 +15,13 @@
     //
     // Named either by following a link to the document itself, which is what someone pasting
     // an address will do, or by ?doc= for a page opened at the root.
+    //
+    // An example, under /examples/, is one of the examples the server shows anyone, and is asked
+    // of them rather than of anyone's documents: every call goes under the same prefix.
+    const path = decodeURIComponent(window.location.pathname || '')
+    const base = path.startsWith('/examples/') ? '/examples' : ''
     const documentName = (() => {
-        const path = decodeURIComponent(window.location.pathname || '')
+        if (base) return path.slice('/examples/'.length)
         if (path.startsWith('/doc/')) return path.slice('/doc/'.length)
         return new URLSearchParams(window.location.search).get('doc')
     })()
@@ -55,7 +60,7 @@
     }
 
     async function call(cmd, args) {
-        const response = await fetch(`/api/${encodeURIComponent(cmd)}`, {
+        const response = await fetch(`${base}/api/${encodeURIComponent(cmd)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ document: documentName, session, scheme: scheme(), args: args || {} }),
@@ -123,7 +128,7 @@
     // stream, and it is opened again a little later.
     function listen() {
         if (typeof EventSource !== 'function') return
-        const source = new EventSource(`/v1/watch?document=${encodeURIComponent(documentName)}`)
+        const source = new EventSource(`${base}/v1/watch?document=${encodeURIComponent(documentName)}`)
         // What the files the document mounts say, just before each version - see `heardItReads`.
         source.addEventListener('read', (event) => {
             try { window.app && window.app.heardItReads && window.app.heardItReads(event.data) } catch (e) {

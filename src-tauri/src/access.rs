@@ -34,6 +34,9 @@ pub enum Asker {
     Person(String),
     /// Nobody signed in, who reaches only what is shared with everyone.
     Stranger,
+    /// Anyone at all, looking at documents served for everyone to read: every file under the
+    /// root is theirs to read, and none to change.
+    Visitor,
 }
 
 /// What is wanted of a file.
@@ -116,6 +119,9 @@ pub fn may(file: &Path, need: Need) -> bool {
         if asking.asker == Asker::Anyone {
             return true;
         }
+        if asking.asker == Asker::Visitor {
+            return need == Need::Read;
+        }
         allows(&asking.root, &asking.asker, within_root, need)
     });
     if !allowed {
@@ -159,6 +165,7 @@ pub fn allows(root: &Path, asker: &Asker, relative: &Path, need: Need) -> bool {
             && match asker {
                 Asker::Person(me) => share.with == *me || share.with == EVERYONE,
                 Asker::Stranger => share.with == EVERYONE,
+                Asker::Visitor => false,
                 Asker::Anyone => true,
             }
             && (need == Need::Read || share.can == "edit")
