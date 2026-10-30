@@ -118,3 +118,80 @@ describe('a backdrop', () => {
     expect(root.style.getPropertyValue('--ov-backdrop')).toBe('')
   })
 })
+
+const USER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 1h2"/></svg>'
+
+const icon = (name, extra = {}) => block(name, [
+  key('kind', 'icon'),
+  ...Object.entries(extra).map(([k, v]) => key(k, v)),
+])
+
+const svgOf = (css) => decodeURIComponent(/url\("data:image\/svg\+xml,([^"]*)"\)/.exec(css)[1])
+
+describe('an icon in a backdrop', () => {
+  beforeEach(() => {
+    setupDOM()
+    document.documentElement.removeAttribute('style')
+    globalThis.fetch = vi.fn(async (url) => (['/icons/user.svg', '/icons/star.svg'].includes(url)
+      ? { ok: true, text: async () => USER_SVG }
+      : { ok: false, text: async () => '' }))
+  })
+
+  it('is drawn once it has come, coloured, faint, sized and placed, beside the gradients', async () => {
+    const app = new OverseerApp()
+    const backdrop = block('backdrop', [
+      icon('mark', { source: 'user', colour: '#ff0000', opacity: 0.1, size: '180%', position: 'right -10% center' }),
+      gradient('base'),
+    ])
+    // On its way, it is left out and said to be waited for.
+    const first = app.renderer.backdropLayers(backdrop)
+    expect(first.image).toBe('linear-gradient(180deg, red 0%, blue 100%)')
+    expect(first.waiting.length).toBe(1)
+    await Promise.all(first.waiting)
+
+    const layers = app.renderer.backdropLayers(backdrop)
+    expect(layers.waiting.length).toBe(0)
+    const [iconCss, gradientCss] = layers.image.split(/, (?=linear-gradient)/)
+    expect(gradientCss).toBe('linear-gradient(180deg, red 0%, blue 100%)')
+    const svg = svgOf(iconCss)
+    expect(svg).toContain('stroke="#ff0000"')
+    expect(svg).not.toContain('currentColor')
+    expect(svg).toContain('opacity="0.1"')
+    expect(layers.size).toBe('auto 180%, auto')
+    expect(layers.position).toBe('right -10% center, 0% 0%')
+    expect(layers.repeat).toBe('no-repeat, repeat')
+  })
+
+  it('is in the text\'s colour where it says none, and left out for a source there is none of', async () => {
+    const app = new OverseerApp()
+    await Promise.all(app.renderer.backdropLayers(block('backdrop', [icon('a', { source: 'user' })])).waiting)
+    const plain = app.renderer.backdropLayers(block('backdrop', [icon('a', { source: 'user' })]), 'green')
+    expect(svgOf(plain.image)).toContain('stroke="green"')
+    expect(svgOf(plain.image)).not.toContain('opacity=')
+    expect(plain.size).toBe('auto 100%')
+    expect(plain.position).toBe('center')
+
+    const missing = block('backdrop', [icon('a', { source: 'no-such-icon' })])
+    await Promise.all(app.renderer.backdropLayers(missing).waiting)
+    expect(app.renderer.backdropLayers(missing).image).toBe('none')
+    expect(app.renderer.backdropLayers(block('backdrop', [icon('a', { source: 'Not a name!' })])).image).toBe('none')
+    // A colour or a place that could reach past its own layer is not taken.
+    expect(app.renderer.backdropLayers(block('backdrop', [icon('a', { source: 'user', colour: 'red" onload="x' })])).image).toBe('none')
+    expect(app.renderer.backdropLayers(block('backdrop', [icon('a', { source: 'user', position: 'left, url(x)' })])).position).toBe('center')
+  })
+
+  it('makes a container\'s backdrop its own once it has come', async () => {
+    const app = new OverseerApp()
+    app.currentDocument = [
+      { name: 't', node_type: 'tab', parameters: {}, is_hierarchy_transparent: true, children: [
+        div('comment', [theme([block('backdrop', [icon('mark', { source: 'star', colour: 'blue' })])]), field('a')]),
+      ] },
+    ]
+    app.renderer.renderDocument(app.currentDocument)
+    const comment = elementAt(['t', 'comment'])
+    expect(comment.classList.contains('ov-themed-backdrop')).toBe(false)
+    await vi.waitFor(() => expect(comment.classList.contains('ov-themed-backdrop')).toBe(true))
+    expect(svgOf(comment.style.getPropertyValue('--ov-backdrop'))).toContain('stroke="blue"')
+    expect(comment.style.getPropertyValue('--ov-backdrop-repeat')).toBe('no-repeat')
+  })
+})

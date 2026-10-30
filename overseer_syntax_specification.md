@@ -910,7 +910,8 @@ context mode = "system"
   its `text`, and `button/label` says otherwise.
 - **`backdrop` is what is painted over `background`**: layers, each a key of its own, drawn in the
   order written with the first on top, and the `background` colour under them all. A layer has a
-  `kind`; one of a kind the page does not draw, `none` among them, is left out.
+  `kind`, `gradient` or `icon`; one of a kind the page does not draw, `none` among them, is left
+  out.
 
   ```overseer
   context theme {
@@ -935,7 +936,27 @@ context mode = "system"
   bottom, where it says none). `center` is where along that line the middle of the blend falls
   (`50%`), and `sharpness` how short the blend is: `0%` across the whole length, `100%` a hard edge
   between the two colours. A layer's colours are formulas like any of the theme's, so they follow
-  `mode`. Being keys, layers are overridden by name - `- backdrop { - glow { - to = "red" } }`
+  `mode`.
+
+  An `icon` draws one icon over the box: `source` is what `<icon=...>` takes - a library icon's
+  name, or an SVG beside the document - and a formula like any key, so each entry of a list can
+  draw its own. `colour` is what the icon is drawn in (the theme's `text` where it says none; an
+  SVG of the document's keeps its own colours unless given one), `opacity` how strongly, `0` to `1`
+  (`1`), `size` how high, of the box's height (`100%`; larger, and the box crops it), and
+  `position` where, as CSS places a background (`center`; `right -10% center` puts it partly past
+  the right edge). A `source` there is no icon of draws nothing.
+
+  ```overseer
+  - mark {
+      - kind = "icon"
+      - source = "user"
+      - opacity = 0.08
+      - size = "180%"
+      - position = "right center"
+  }
+  ```
+
+  Being keys, layers are overridden by name - `- backdrop { - glow { - to = "red" } }`
   changes one and keeps the others, `+` adds one, `- glow { - kind = "none" }` hides one - and
   `- backdrop (base=none)` starts over with none, or with only the layers its own block writes;
   `- backdrop (base=<sunset>)` with the layers of `sunset`, written once and used anywhere. The

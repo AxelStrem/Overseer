@@ -205,6 +205,28 @@ const showDocumentIcon = (el, url) => {
     el.dataset.icon = el.dataset.iconFile
 }
 
+// The text of the icons a theme's backdrop draws, by where they come from: the SVG once it has
+// come, null for one refused or missing, or the promise while it is on its way. A backdrop is a
+// CSS background, which cannot be masked and coloured as an icon's span is, so the icon is drawn
+// from its own text with its colour and opacity written into it.
+const backdropIcons = new Map()
+const backdropIconText = ({ key, file }) => {
+    const doc = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+    const at = key ? `/icons/${key}.svg` : `${doc}\n${file}`
+    const known = backdropIcons.get(at)
+    if (known !== undefined) return known
+    if (!key && !doc) return null
+    const asked = key
+        ? (typeof fetch === 'function' ? fetch(at).then((r) => (r.ok ? r.text() : null)) : Promise.resolve(null))
+        : invoke('load_overseer_icon', { path: doc, icon: file })
+    const coming = asked
+        .then((svg) => (typeof svg === 'string' && /<svg[\s>]/.test(svg) ? svg : null))
+        .catch(() => null)
+        .then((svg) => { backdropIcons.set(at, svg) })
+    backdropIcons.set(at, coming)
+    return coming
+}
+
 /// Whether a path a document gives for an image may be asked for: one beside the document or
 /// below, with a raster image's extension. Only the document's folder and below, as the server
 /// and the app check again.
@@ -8014,7 +8036,7 @@ export class OverseerRenderer {
             }
             // Layers painted over the background colour, as one CSS background - see `backdropCss`.
             if (key.name === 'backdrop') {
-                element.style.setProperty(`${prefix}backdrop`, this.backdropCss(key))
+                this.writeBackdrop(element, key, prefix, theme)
                 continue
             }
             const value = this.contextValue(key)
@@ -8042,32 +8064,136 @@ export class OverseerRenderer {
      * A theme's `backdrop` as a CSS `background-image` list: each layer in the order written, the
      * first drawn on top, as CSS draws a list of backgrounds. A layer of a kind the page does not
      * draw - `none`, to hide one handed down, or one yet to come - is left out, and a backdrop
-     * with nothing left is `none`.
+     * with nothing left is `none`. See `backdropLayers` for the sizes and places that go with it.
+     */
+    backdropCss(backdrop, textColour = null) {
+        return this.backdropLayers(backdrop, textColour).image
+    }
+
+    /**
+     * A theme's `backdrop` as the CSS background lists it is painted with - `image`, and `size`,
+     * `position` and `repeat` beside it, one item for each layer drawn - and `waiting`, the icons
+     * still on their way, which are left out until they come.
      *
      * A `gradient` goes from `from` to `to` along `angle` (degrees, 180 top to bottom). The blend
      * is centred on `center`, a place along that direction, and is as wide as `sharpness` leaves
-     * it: 0% across the whole length, 100% a hard edge.
+     * it: 0% across the whole length, 100% a hard edge. It covers the box as a background does.
+     *
+     * An `icon` draws `source` - what `<icon=...>` takes: a library icon, or an SVG beside the
+     * document - once, in `colour` (the text's where it says none; an SVG of the document's keeps
+     * its own colours unless given one), at `opacity`, `size` high (of the box's height; larger is
+     * cropped by the box) and at `position`, a CSS background position.
      */
-    backdropCss(backdrop) {
-        const layers = []
+    backdropLayers(backdrop, textColour = null) {
+        const lists = { image: [], size: [], position: [], repeat: [] }
+        const waiting = []
         const number = (node, otherwise) => {
             const said = parseFloat(this.contextValue(node))
             return Number.isFinite(said) ? said : otherwise
         }
+        const round = (n) => Math.round(n * 100) / 100
         for (const layer of backdrop.children || []) {
             if (!layer?.name || layer.name.startsWith('_')) continue
             const key = (name) => (layer.children || []).find((k) => k?.name === name)
-            if (this.contextValue(key('kind')) !== 'gradient') continue
-            const from = this.contextValue(key('from'))
-            const to = this.contextValue(key('to'))
-            if (from === null || to === null) continue
-            const angle = number(key('angle'), 180)
-            const center = number(key('center'), 50)
-            const width = 100 - Math.max(0, Math.min(100, number(key('sharpness'), 0)))
-            const round = (n) => Math.round(n * 100) / 100
-            layers.push(`linear-gradient(${round(angle)}deg, ${from} ${round(center - width / 2)}%, ${to} ${round(center + width / 2)}%)`)
+            const kind = this.contextValue(key('kind'))
+            if (kind === 'gradient') {
+                const from = this.contextValue(key('from'))
+                const to = this.contextValue(key('to'))
+                if (from === null || to === null) continue
+                const angle = number(key('angle'), 180)
+                const center = number(key('center'), 50)
+                const width = 100 - Math.max(0, Math.min(100, number(key('sharpness'), 0)))
+                lists.image.push(`linear-gradient(${round(angle)}deg, ${from} ${round(center - width / 2)}%, ${to} ${round(center + width / 2)}%)`)
+                lists.size.push('auto')
+                lists.position.push('0% 0%')
+                lists.repeat.push('repeat')
+            } else if (kind === 'icon') {
+                const parts = iconParts(this.contextValue(key('source')))
+                if (!parts.key && !parts.file) continue
+                const text = backdropIconText(parts)
+                if (text instanceof Promise) {
+                    waiting.push(text)
+                    continue
+                }
+                if (!text) continue
+                const colourSaid = this.contextValue(key('colour') || key('color')) ?? parts.color
+                const colour = colourSaid ?? (parts.key ? textColour : null)
+                const opacitySaid = String(this.contextValue(key('opacity')) ?? '').trim()
+                let opacity = parseFloat(opacitySaid)
+                if (opacitySaid.endsWith('%')) opacity /= 100
+                opacity = Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1
+                const svg = this.backdropIconSvg(text, colour, opacity)
+                if (!svg) continue
+                // A bare number is a share of the box's height; anything else must be one CSS
+                // length, and a place only words and lengths, so nothing can reach the other layers.
+                const sizeSaid = String(this.contextValue(key('size')) ?? '100%').trim()
+                const size = /^\d+(\.\d+)?$/.test(sizeSaid) ? `${sizeSaid}%`
+                    : /^\d+(\.\d+)?(%|px|em|rem|vh|vw|vmin|vmax)$/.test(sizeSaid) ? sizeSaid : '100%'
+                const placeSaid = String(this.contextValue(key('position')) ?? '').trim()
+                const position = /^[a-z0-9.%\s-]+$/i.test(placeSaid) ? placeSaid : 'center'
+                lists.image.push(`url("data:image/svg+xml,${encodeURIComponent(svg)}")`)
+                lists.size.push(`auto ${size}`)
+                lists.position.push(position)
+                lists.repeat.push('no-repeat')
+            }
         }
-        return layers.length ? layers.join(', ') : 'none'
+        if (!lists.image.length) return { image: 'none', size: 'auto', position: '0% 0%', repeat: 'repeat', waiting }
+        return {
+            image: lists.image.join(', '),
+            size: lists.size.join(', '),
+            position: lists.position.join(', '),
+            repeat: lists.repeat.join(', '),
+            waiting,
+        }
+    }
+
+    /**
+     * An icon's SVG as a backdrop draws it: what it paints in `currentColor` in `colour` - an
+     * image has no text colour of its own - and the whole at `opacity`. Null for text that is no
+     * SVG, or a colour the page does not accept.
+     */
+    backdropIconSvg(text, colour, opacity) {
+        const paint = colour === null || colour === undefined ? null : String(colour).trim()
+        if (paint !== null && !new RegExp(`^${COLOR_VALUE}$`).test(paint)) return null
+        if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') return null
+        const parsed = new DOMParser().parseFromString(text, 'image/svg+xml')
+        const svg = parsed.documentElement
+        if (!svg || svg.localName !== 'svg' || parsed.getElementsByTagName('parsererror').length) return null
+        if (paint) {
+            for (const el of [svg, ...svg.querySelectorAll('*')]) {
+                for (const attr of ['fill', 'stroke', 'color']) {
+                    if (el.getAttribute(attr) === 'currentColor') el.setAttribute(attr, paint)
+                }
+            }
+        }
+        if (opacity < 1) svg.setAttribute('opacity', String(opacity))
+        return new XMLSerializer().serializeToString(svg)
+    }
+
+    /**
+     * Writes a theme's `backdrop` as `<prefix>backdrop` and the lists painted with it, `-size`,
+     * `-position` and `-repeat`. An icon still on its way is drawn once it comes, and a container
+     * it gives a backdrop of its own is then painted with it.
+     */
+    writeBackdrop(element, backdrop, prefix, theme) {
+        const said = this.contextValue((theme?.children || []).find((k) => k?.name === 'text'))
+        const textColour = said || element.style.getPropertyValue('--ov-text').trim() ||
+            this.themeAbove(element, 'text') ||
+            (document.body && typeof getComputedStyle === 'function' ? getComputedStyle(document.body).color : null) || null
+        const layers = this.backdropLayers(backdrop, textColour)
+        element.style.setProperty(`${prefix}backdrop`, layers.image)
+        element.style.setProperty(`${prefix}backdrop-size`, layers.size)
+        element.style.setProperty(`${prefix}backdrop-position`, layers.position)
+        element.style.setProperty(`${prefix}backdrop-repeat`, layers.repeat)
+        if (!layers.waiting.length) return
+        Promise.all(layers.waiting).then(() => {
+            if (!element.isConnected) return
+            this.writeBackdrop(element, backdrop, prefix, theme)
+            if (prefix !== '--ov-' || element === document.documentElement) return
+            const own = element.style.getPropertyValue('--ov-backdrop').trim() !== (this.themeAbove(element, 'backdrop') || 'none')
+            element.classList.toggle('ov-themed-backdrop', own)
+            if (own) element.classList.add('ov-themed-background')
+        })
     }
 
     /**
@@ -8132,7 +8258,12 @@ export class OverseerRenderer {
                 // The theme's `button/backdrop`, over whatever colour the button's state gives
                 // it. Inline, because every state the stylesheet gives a button sets its whole
                 // `background`; a variable, so that it follows the theme it is drawn in.
-                if (this.themeAbove(box, 'button-backdrop')) box.style.backgroundImage = 'var(--ov-button-backdrop)'
+                if (this.themeAbove(box, 'button-backdrop')) {
+                    box.style.backgroundImage = 'var(--ov-button-backdrop)'
+                    box.style.backgroundSize = 'var(--ov-button-backdrop-size, auto)'
+                    box.style.backgroundPosition = 'var(--ov-button-backdrop-position, 0% 0%)'
+                    box.style.backgroundRepeat = 'var(--ov-button-backdrop-repeat, repeat)'
+                }
             } else if (box.matches('input[type="checkbox"]')) {
                 box.classList.toggle('ov-switch', this.themeAbove(box, 'checkbox-style') === 'switch')
             }

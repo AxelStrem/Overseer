@@ -47,6 +47,9 @@ body {
     background-color: var(--ov-background);
     /* The theme's `backdrop`, over the page's colour - see `backdropCss` in renderer.js. */
     background-image: var(--ov-backdrop, none);
+    background-size: var(--ov-backdrop-size, auto);
+    background-position: var(--ov-backdrop-position, 0% 0%);
+    background-repeat: var(--ov-backdrop-repeat, repeat);
     color: var(--ov-text);
     /* The theme's `size`, `leading` and `numerals`. A key no theme says leaves the variable
        unset, and the property is then inherited as though nothing were written. */
@@ -2412,6 +2415,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* The layers a theme's `backdrop` paints over the background colour, written by `backdropCss`. */
 .ov-themed-backdrop {
     background-image: var(--ov-backdrop);
+    background-size: var(--ov-backdrop-size, auto);
+    background-position: var(--ov-backdrop-position, 0% 0%);
+    background-repeat: var(--ov-backdrop-repeat, repeat);
 }
 
 /* A kind of element in the theme: `context theme { - button { - accent = ... } }` gives the
