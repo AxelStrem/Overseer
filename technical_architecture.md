@@ -110,8 +110,8 @@ knowing about because each has a cost:
   `OVERSEER_DISK_CACHE_MB` bounds the folder, 512 by default.
   A document as one viewer sees it, with their guarded values in, is held under the text it
   serializes to, which the file never holds; the viewer's state remembers that text with the
-  file's version and the values it was worked out with. A press, a tick or an open of theirs
-  starts from it while both still match, and what their values reach is followed through the
+  file's version and the values it was worked out with. A press, a tick or an open of theirs,
+  through the page or the API, starts from it while both still match, and what their values reach is followed through the
   graph like any other change.
 - **Windowed lists.** `window=3` on a list resolves three entries instead of forty-three, and
   the window is applied before templates are instantiated rather than after, so the work is

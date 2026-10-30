@@ -1585,6 +1585,15 @@ impl DocumentRoot {
         let looking_at = crate::viewstate::overlay(session, name);
         let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
         let _more = crate::viewstate::reading_more(session, name);
+        // Where the document as this viewer last saw it is held, if it still describes this text
+        // and what they hold - see `viewstate::worked_out`. The page's presses found it there
+        // since `guardedspeed`; this one did not, and every press after the first on a board of
+        // guarded cells worked the whole document out again.
+        let viewers_text = (!looking_at.is_empty())
+            .then(|| crate::viewstate::worked_out_as(session, name, &app_api::version_of(&text)))
+            .flatten();
+        // The text the cache holds the document worked on under, and its graph with it.
+        let held_as = viewers_text.clone().unwrap_or_else(|| text.clone());
 
         // One reading of the clock for the work and what it reaches - see
         // `FormulaEvaluator::pin_the_clock`.
@@ -1608,27 +1617,28 @@ impl DocumentRoot {
             //
             // Taken rather than copied, and handed back once settled - see
             // `app_api::take_worked_out`.
-            let in_view = looking_at.is_empty()
-                && crate::document_cache::with_nodes(&text, |nodes| wholly_in_view(nodes, touching)) == Some(true);
+            let in_view = (looking_at.is_empty() || viewers_text.is_some())
+                && crate::document_cache::with_nodes(&held_as, |nodes| wholly_in_view(nodes, touching)) == Some(true);
             // And brought up to the moment before anything reads it: held from when it was last
             // worked out, what reads the clock is as old as that - see
             // `app_api::catch_up_with_the_clock`. Without a graph to say what that is, the long way.
             //
             // A page listening for the document shows the tree as it was taken, and asks to catch
             // up from it once this is written: a copy is kept for that - see
-            // `document_cache::keep_superseded` - or it is sent the whole document.
+            // `document_cache::keep_superseded` - or it is sent the whole document. Not from a
+            // viewer's own document, which is not what anyone else was shown.
             let mut before = None;
-            let quick = if in_view { app_api::take_worked_out(&text) } else { None }
+            let quick = if in_view { app_api::take_worked_out(&held_as) } else { None }
                 .and_then(|(mut nodes, worked_out_in)| {
-                    if crate::watch::listened(&path) {
+                    if viewers_text.is_none() && crate::watch::listened(&path) {
                         before = Some(nodes.clone());
                     }
-                    app_api::catch_up_with_the_clock(&text, &mut nodes, worked_out_in).map(|()| nodes)
+                    app_api::catch_up_with_the_clock(&held_as, &mut nodes, worked_out_in).map(|()| nodes)
                 });
             let quick_way = quick.is_some();
             // Then it holds the very document the graph for this text describes, so a change of
             // shape can be followed through the graph - see `app_api::settle_after_change`.
-            let _following = quick_way.then(|| crate::actions::follow_against(&text));
+            let _following = quick_way.then(|| crate::actions::follow_against(&held_as));
             // The long way otherwise. Named before the document is resolved, so a list showing
             // only part of itself keeps whatever this write is about - see
             // `resolver::keeping_in_view`: someone says on Thursday that they forgot Monday's
@@ -1655,7 +1665,7 @@ impl DocumentRoot {
                     // it may be half changed, and is let go.
                     let acted = crate::actions::take_report().is_some_and(|changed| changed.acted);
                     if quick_way && !acted {
-                        app_api::hold_again(&text, nodes, None);
+                        app_api::hold_again(&held_as, nodes, None);
                     }
                     return Err(refused);
                 }
@@ -1669,7 +1679,7 @@ impl DocumentRoot {
             // What was written changes what derives from it, and the caller is about to be shown
             // the result.
             let settled_quickly = if quick_way {
-                Some(app_api::settle_after_change(&mut nodes, &text, report.as_ref()))
+                Some(app_api::settle_after_change(&mut nodes, &held_as, report.as_ref()))
             } else {
                 crate::resolver::resolve_document(&mut nodes);
                 None
@@ -1704,6 +1714,9 @@ impl DocumentRoot {
         if wrote && !crate::access::may(&path, crate::access::Need::Edit) {
             return Err(RequestError::ReadOnly(crate::access::READ_ONLY.into()));
         }
+        // Whether the document worked out holds anything of this viewer's, and so describes their
+        // text rather than the file's.
+        let theirs = !held_for_the_viewer.is_empty() || !settled.viewers.is_empty();
         for (address, value) in settled.viewers {
             crate::viewstate::set(session, name, &address, value);
         }
@@ -1726,7 +1739,17 @@ impl DocumentRoot {
         // out before writing, and then the tree describes something the file does not say.
         let answered = answer(&nodes);
         if let Some(whole) = settled_quickly {
-            if settled.text == serialized {
+            if theirs {
+                // Held under the file's text with the viewer's values in it, where only they look
+                // - see `viewstate::worked_out`. It used to be held under the file's own text when
+                // the press wrote nothing, and a flag the bot set on a guarded board was then on
+                // the board of everyone who opened it.
+                let file_now = if wrote { settled.text.as_str() } else { text_before.as_str() };
+                self.within(dir, || {
+                    crate::app_api::keep_worked_out(&held_as, &serialized, nodes, whole)
+                });
+                crate::viewstate::worked_out(session, name, &app_api::version_of(file_now), &serialized);
+            } else if settled.text == serialized {
                 let now = if wrote { settled.text.as_str() } else { text_before.as_str() };
                 // In the document's own folder, which is half of what it is kept under - see
                 // `document_cache::Entry::base`.
