@@ -1,6 +1,10 @@
 //! An item added to a project with `+ task` belongs to whoever added it: its `owner` is their
 //! username, drawn as their chip. Where nobody is signed in - the desktop app - it is left empty,
 //! and the add still goes through, with or without settings in force.
+//!
+//! It starts flagged `manual`, for a person to work: agents file theirs with `tracker.py`, never
+//! through the form, so the flag says which items a person added. Emptying the form's flags box
+//! hands the item to the agents.
 
 use overseer::app_api;
 
@@ -61,4 +65,52 @@ fn an_item_added_where_nobody_is_signed_in_has_no_owner() {
     let written = std::fs::read_to_string(&file).unwrap();
     assert_eq!(written.matches("- {").count(), before + 1, "{}", written);
     assert!(!written.contains("- owner"), "{}", written);
+}
+
+/// Adds one item from the form, with what is typed into its boxes, and gives back the new item as
+/// the file writes it.
+fn added_with(test: &str, typed: &[(&str, &str)]) -> String {
+    let root = std::env::temp_dir().join(format!("overseer-owner-{}-{}", test, std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("p.os");
+    std::fs::write(&file, EXAMPLE).unwrap();
+    app_api::forget_baseline();
+    app_api::forget_dependencies();
+    overseer::viewstate::forget_all();
+    let nodes = app_api::load_document(EXAMPLE.to_string()).expect("open");
+    let add = overseer::addressing::name_path(&nodes, "project/NewTask/add").expect("the add button");
+    let typed = typed
+        .iter()
+        .map(|(field, text)| app_api::ValueWrite {
+            node_path: vec!["project".into(), "NewTask".into(), field.to_string()],
+            value: overseer::types::OverseerValue::String(text.to_string()),
+        })
+        .collect();
+
+    app_api::run_event_at(&file.to_string_lossy(), "p.os", add, "click".into(), "s", typed, Vec::new())
+        .expect("the add");
+    let written = std::fs::read_to_string(&file).unwrap();
+    let at = written.find("- title = \"A new one\"").expect("the new item");
+    let start = written[..at].rfind("- {").unwrap();
+    let end = start + written[start..].find("\n        }").unwrap();
+    written[start..end].to_string()
+}
+
+#[test]
+fn an_item_added_in_the_page_is_for_a_person_to_work() {
+    let item = added_with("manual", &[("title", "A new one")]);
+    assert!(item.contains("- flags = \"manual\""), "{}", item);
+}
+
+#[test]
+fn an_item_whose_flags_were_emptied_goes_to_the_agents() {
+    let item = added_with("unflagged", &[("title", "A new one"), ("flags", "")]);
+    assert!(!item.contains("- flags"), "{}", item);
+}
+
+#[test]
+fn flags_typed_into_the_form_are_the_items() {
+    let item = added_with("first", &[("title", "A new one"), ("flags", "first")]);
+    assert!(item.contains("- flags = \"first\""), "{}", item);
 }
