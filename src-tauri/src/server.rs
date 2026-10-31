@@ -71,8 +71,9 @@ impl std::fmt::Display for RequestError {
 }
 
 impl RequestError {
-    /// What running an event failed with, for whoever asked: a refusal the document wrote is
-    /// passed on as its sentence, anything else is a failure described by `doing`.
+    /// What running an event or an instruction failed with, for whoever asked: a refusal - the
+    /// document's own, or a write too large to keep - is passed on as its sentence, anything else
+    /// is a failure described by `doing`.
     fn from_event(doing: &str, error: OverseerError) -> RequestError {
         match error {
             OverseerError::Refused(said) => RequestError::Refused(said),
@@ -705,7 +706,7 @@ impl DocumentRoot {
                         fields,
                         session,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))?),
+                    .map_err(|e| RequestError::from_event("could not append", e))?),
                 )
             }
             "remove_overseer_entry" => {
@@ -720,7 +721,7 @@ impl DocumentRoot {
                         entry,
                         session,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not remove: {:?}", e)))?),
+                    .map_err(|e| RequestError::from_event("could not remove", e))?),
                 )
             }
             "move_overseer_entry" => {
@@ -749,7 +750,7 @@ impl DocumentRoot {
                         setting,
                         session,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not move: {:?}", e)))?),
+                    .map_err(|e| RequestError::from_event("could not move", e))?),
                 )
             }
             "ensure_overseer_entry" => {
@@ -765,9 +766,7 @@ impl DocumentRoot {
                         wanted,
                         session,
                     )
-                    .map_err(|e| {
-                        RequestError::Failed(format!("could not make the entry: {:?}", e))
-                    })?),
+                    .map_err(|e| RequestError::from_event("could not make the entry", e))?),
                 )
             }
             "write_overseer_values" => {
@@ -783,7 +782,7 @@ impl DocumentRoot {
                         values,
                         session,
                     )
-                    .map_err(|e| RequestError::Failed(format!("could not write: {:?}", e)))?),
+                    .map_err(|e| RequestError::from_event("could not write", e))?),
                 )
             }
             // What the page should show now that something else wrote the file - see `watch`.
@@ -1714,6 +1713,8 @@ impl DocumentRoot {
         if wrote && !crate::access::may(&path, crate::access::Need::Edit) {
             return Err(RequestError::ReadOnly(crate::access::READ_ONLY.into()));
         }
+        app_api::refuse_outgrowing(name, &path, wrote.then_some(settled.text.as_str()), &through_mounts)
+            .map_err(RequestError::Refused)?;
         // Whether the document worked out holds anything of this viewer's, and so describes their
         // text rather than the file's.
         let theirs = !held_for_the_viewer.is_empty() || !settled.viewers.is_empty();
@@ -1854,6 +1855,7 @@ impl DocumentRoot {
         if !crate::access::may(path, crate::access::Need::Edit) {
             return Err(RequestError::ReadOnly(crate::access::READ_ONLY.into()));
         }
+        app_api::refuse_oversized(name, path, text).map_err(RequestError::Refused)?;
         // Before the write, and only when there is something to keep: a document being created
         // has nothing to go back to.
         if let Ok(previous) = std::fs::read_to_string(path) {

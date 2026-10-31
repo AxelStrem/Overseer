@@ -1346,10 +1346,13 @@ fn change_or_look(
         &held_for_the_viewer,
         report.as_ref(),
     );
+    // Asked before the viewer's values are kept, so a refused write leaves nothing behind.
+    let wrote = writing && settled.worth_writing && settled.text != as_it_stood;
+    refuse_outgrowing(document, path, wrote.then_some(settled.text.as_str()), &through_mounts)
+        .map_err(OverseerError::Refused)?;
     for (address, value) in settled.viewers {
         crate::viewstate::set(session, document, &address, value);
     }
-    let wrote = writing && settled.worth_writing && settled.text != as_it_stood;
     let along = write_through_mounts(through_mounts)
         .map_err(|e| OverseerError::IoError(format!("could not write what it mounts: {}", e)))?;
     if wrote {
@@ -2402,6 +2405,8 @@ pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result
             crate::access::READ_ONLY,
         ));
     }
+    let named = at.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    refuse_oversized(&named, at, text).map_err(std::io::Error::other)?;
     if let Some((beside, named)) = crate::undo::beside(at) {
         if let Ok(previous) = std::fs::read_to_string(at) {
             // A write that says what the file already says is not a change, and recording a step
@@ -2421,6 +2426,54 @@ pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result
         let _ = std::fs::remove_file(&temporary);
     })?;
     crate::watch::wrote(at);
+    Ok(())
+}
+
+/// The most a document may hold, in bytes: just under the 100 MiB at which GitHub turns a file
+/// away and asks for LFS, which is where a folder of documents synced there would stop backing up.
+pub const DOCUMENT_MOST_BYTES: u64 = 95 * 1024 * 1024;
+
+/// Refuse text that would take a file past `DOCUMENT_MOST_BYTES`.
+///
+/// No real document comes near the figure, so this is a stop for a fault, not a quota: an append
+/// that doubled an indent each time once took a document to 1.2 GB through ordinary writes, with
+/// nothing saying so until the page could no longer hold it. Text no larger than the file already
+/// is passes whatever its size, or a document past the figure could never be repaired by writing
+/// it smaller. Undo is not asked for the same reason: it only puts back what was there.
+pub fn refuse_oversized(name: &str, file: &std::path::Path, text: &str) -> std::result::Result<(), String> {
+    let size = text.len() as u64;
+    if size <= DOCUMENT_MOST_BYTES {
+        return Ok(());
+    }
+    if std::fs::metadata(file).is_ok_and(|now| size <= now.len()) {
+        return Ok(());
+    }
+    const MIB: u64 = 1024 * 1024;
+    Err(format!(
+        "'{}' would be {} MB, and a document may be at most {} MB, so nothing has been written.",
+        name,
+        size.div_ceil(MIB),
+        DOCUMENT_MOST_BYTES / MIB
+    ))
+}
+
+/// Refuse a write that would take the document or a file it mounts past the most a document may
+/// hold. Asked before any of them is written, as `refuse_writing_through` is, so a refused write
+/// leaves every file as it was.
+pub fn refuse_outgrowing(
+    document: &str,
+    path: impl AsRef<std::path::Path>,
+    text: Option<&str>,
+    mounts: &[crate::actions::MountWrite],
+) -> std::result::Result<(), String> {
+    if let Some(text) = text {
+        refuse_oversized(document, path.as_ref(), text)?;
+    }
+    for write in mounts {
+        let file = std::path::Path::new(&write.file);
+        let named = file.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+        refuse_oversized(&named, file, &write.text)?;
+    }
     Ok(())
 }
 

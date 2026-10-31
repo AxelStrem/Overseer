@@ -327,6 +327,10 @@ keeping its layout, its comments and the fields it left to the template, and one
 recorded per write - an event's actions together are one step. Each write is also logged as a line
 of `overseer-writes.jsonl` in the documents folder.
 
+A document may hold at most 95 MiB, just under the size at which GitHub turns a file away. A write
+that would take a document, or a file it mounts, past that is a 422 that says so, and nothing is
+written. A write that leaves a file already past it no larger goes through, and so does an undo.
+
 ## Errors
 
 An error is a JSON body `{"error": "<sentence>"}` that names what was wrong and never a path on
@@ -338,7 +342,7 @@ disk:
 | 401 | no token, or the wrong one, and no session - with accounts, `sign in`, for anything not shared with everyone |
 | 403 | not allowed to whoever is asking: an invite by someone who is no admin, `X-Overseer-As` naming no account, a write to a document shared to be read or to an example, which says why in `refused` too |
 | 404 | no such document, or one not shared with whoever is asking, or nothing at that address |
-| 422 | the document refused the press (`refused` holds its sentence) |
+| 422 | the document refused the press, or the write would make it too large (`refused` holds the sentence) |
 | 500 | the write failed |
 
 ## The page's bridge
