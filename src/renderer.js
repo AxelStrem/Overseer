@@ -155,6 +155,9 @@ export const textWithoutIcons = (s) => {
     return t.replace(ICON_IN_TEXT, ' ').replace(/\s+/g, ' ').trim()
 }
 
+/// How the library names an icon: lower-case words joined by dashes.
+const LIBRARY_ICON = /^[a-z0-9]+(-[a-z0-9]+)*$/
+
 /// What the inside of `<icon=...>` says: a library icon's name, or a path to an SVG beside the
 /// document - one with a `/` in it, or ending in `.svg` - and, after it, an optional
 /// `color=<colour>` to draw it in. A name the library cannot have, or a colour the page does not
@@ -172,7 +175,7 @@ const iconParts = (raw) => {
         return reaches ? { file: name, color } : {}
     }
     const key = name.toLowerCase()
-    return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(key) ? { key, color } : {}
+    return LIBRARY_ICON.test(key) ? { key, color } : {}
 }
 
 // A document's own icons, by the document and the path it gives: the address the page draws
@@ -5602,6 +5605,7 @@ export class OverseerRenderer {
                         // `__init__` names a thing, it does not ask for bold.
                         named: Boolean(name),
                         colour: field('colour') || field('color') || null,
+                        icon: field('icon') || null,
                         hover: field('title') || null,
                         offered: at === 0,
                         at: [...segments, entry.name],
@@ -5634,6 +5638,12 @@ export class OverseerRenderer {
         const name = (known && known.name) || tag
         if (known && known.named) this.setChipName(chip, name)
         else this.setTextWithIcons(chip, name)
+        // An entry's own icon, from the library, comes before whatever its name says.
+        if (known && typeof known.icon === 'string' && LIBRARY_ICON.test(known.icon.trim())) {
+            const icon = this.createIconElement(known.icon.trim())
+            icon.classList.add('chip-icon')
+            chip.prepend(icon)
+        }
         if (known && known.colour) {
             chip.style.backgroundColor = known.colour
             chip.style.color = this.readableOn(known.colour)

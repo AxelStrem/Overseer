@@ -706,6 +706,9 @@ struct OwnChange {
     /// The chip's colour, `#rrggbb` or `#rgb`; empty for the default.
     #[serde(default)]
     colour: Option<String>,
+    /// A library icon for the chip, such as `bot`; empty for none.
+    #[serde(default)]
+    icon: Option<String>,
     #[serde(default)]
     password: Option<String>,
     /// The password now, which a new one needs.
@@ -713,7 +716,7 @@ struct OwnChange {
     current: Option<String>,
 }
 
-/// Change one's own display name, chip colour or password.
+/// Change one's own display name, chip colour, chip icon or password.
 async fn change_me(
     State(service): State<Service>,
     Extension(caller): Extension<Caller>,
@@ -727,8 +730,25 @@ async fn change_me(
         .password
         .as_deref()
         .map(|new| (body.current.as_deref().unwrap_or(""), new));
+    // The accounts check an icon's name; only the server that serves the page can see whether
+    // the library has it.
+    if let (Some(icon), Some(frontend)) = (body.icon.as_deref().map(str::trim), service.frontend.as_ref()) {
+        if !icon.is_empty() && overseer::accounts::valid_icon(icon).is_ok() && !frontend.join("icons").join(format!("{}.svg", icon)).is_file() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("the icon library has no icon named '{}'", icon) })),
+            ));
+        }
+    }
     let changed = accounts
-        .change_own(&user.username, body.name.as_deref(), body.colour.as_deref(), password, chrono::Utc::now())
+        .change_own(
+            &user.username,
+            body.name.as_deref(),
+            body.colour.as_deref(),
+            body.icon.as_deref(),
+            password,
+            chrono::Utc::now(),
+        )
         .map_err(account_refusal)?;
     Ok(Json(json!(changed)))
 }

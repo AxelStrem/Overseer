@@ -19,6 +19,8 @@ function setupDOM() {
       <input id="account-name">
       <input id="account-colour" type="color"><button id="account-colour-default"></button>
       <span id="account-preview"></span>
+      <input id="account-icon-search"><button id="account-icon-none"></button>
+      <div id="account-icon-choices"></div>
       <button id="account-save-name"></button><div id="account-name-said"></div>
       <input id="account-current"><input id="account-password">
       <button id="account-save-password"></button><div id="account-password-said"></div>
@@ -146,7 +148,7 @@ describe('a viewer is offered what they may do', () => {
     document.getElementById('account-name').value = 'Robert'
     document.getElementById('account-save-name').click()
     await vi.waitFor(() => expect(document.getElementById('account-who').textContent).toBe('Robert'))
-    expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Robert', colour: '' } })
+    expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Robert', colour: '', icon: '' } })
   })
 
   it('previews their chip as they style it, and saves the colour they pick', async () => {
@@ -167,7 +169,7 @@ describe('a viewer is offered what they may do', () => {
     expect(preview.style.backgroundColor).toBe('rgb(15, 118, 110)')
 
     document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: '**Bo**b', colour: '#0f766e' } }))
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: '**Bo**b', colour: '#0f766e', icon: '' } }))
     await vi.waitFor(() => expect(document.querySelector('#account-who strong')?.textContent).toBe('Bo'))
   })
 
@@ -177,7 +179,41 @@ describe('a viewer is offered what they may do', () => {
     document.getElementById('account-colour-default').click()
     expect(document.querySelector('#account-preview .tag-chip').style.backgroundColor).toBe('rgb(107, 114, 128)')
     document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '' } }))
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: '' } }))
+  })
+
+  it('finds an icon by its name, shows it before the name, and saves it', async () => {
+    fetching({
+      '/icons/index.json': ['bone', 'bot', 'bot-off', 'robot'],
+      '/account/me': { ...BOB, icon: 'robot' },
+    })
+    await started({ asker: 'person', person: { ...BOB, icon: 'bot' }, can: 'edit' })
+    const choices = () => [...document.querySelectorAll('#account-icon-choices .account-icon-choice')]
+    expect(choices().map((c) => c.dataset.icon)).toEqual(['bot'])
+    expect(choices()[0].getAttribute('aria-pressed')).toBe('true')
+    expect(document.querySelector('#account-who .tag-chip .chip-icon').dataset.icon).toBe('bot')
+
+    const search = document.getElementById('account-icon-search')
+    search.value = 'bot'
+    search.dispatchEvent(new Event('input'))
+    await vi.waitFor(() => expect(choices().map((c) => c.dataset.icon)).toEqual(['bot', 'bot-off', 'robot']))
+    choices()[2].click()
+    expect(document.querySelector('#account-preview .tag-chip .chip-icon').dataset.icon).toBe('robot')
+    expect(document.querySelector('#account-preview .tag-chip').textContent).toBe('Bob')
+
+    document.getElementById('account-save-name').click()
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: 'robot' } }))
+    expect(fetched.filter((f) => f.url === '/icons/index.json')).toHaveLength(1)
+  })
+
+  it('takes the icon away when asked', async () => {
+    fetching({ '/account/me': BOB })
+    await started({ asker: 'person', person: { ...BOB, icon: 'bot' }, can: 'edit' })
+    document.getElementById('account-icon-none').click()
+    expect(document.querySelector('#account-preview .chip-icon')).toBeNull()
+    expect(document.querySelectorAll('#account-icon-choices .account-icon-choice')).toHaveLength(0)
+    document.getElementById('account-save-name').click()
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: '' } }))
   })
 
   it('opens their sharing document, made when there is none', async () => {

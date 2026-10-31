@@ -47,6 +47,8 @@ pub struct User {
     pub admin: bool,
     /// The colour of their chip, `#rrggbb` or `#rgb`, where they chose one.
     pub colour: Option<String>,
+    /// The library icon their chip shows before the name, where they chose one.
+    pub icon: Option<String>,
 }
 
 /// What an invite will do when it is used.
@@ -101,6 +103,8 @@ struct Account {
     admin: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     colour: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon: Option<String>,
     #[serde(default)]
     sessions: Vec<Secret>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -222,6 +226,22 @@ fn valid_colour(colour: &str) -> Result<Option<String>, AccountError> {
     }
 }
 
+/// A chip icon as it is kept: a name of the icon library, in the form its names take, or none.
+/// Whether the library has it is for whoever can see the library - the server that serves it.
+pub fn valid_icon(icon: &str) -> Result<Option<String>, AccountError> {
+    static NAME: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^[a-z0-9]+(-[a-z0-9]+)*$").unwrap());
+    let icon = icon.trim();
+    if icon.is_empty() {
+        return Ok(None);
+    }
+    if icon.len() <= LONGEST_NAME && NAME.is_match(icon) {
+        Ok(Some(icon.to_string()))
+    } else {
+        Err(AccountError::Refused("an icon is named as the library names it, such as 'bot', or empty for none".into()))
+    }
+}
+
 fn valid_password(password: &str) -> Result<(), AccountError> {
     if password.chars().count() < SHORTEST_PASSWORD {
         return Err(AccountError::Refused(format!(
@@ -249,6 +269,7 @@ fn as_user(account: &Account) -> User {
         name: account.name.clone(),
         admin: account.admin,
         colour: account.colour.clone(),
+        icon: account.icon.clone(),
     }
 }
 
@@ -320,6 +341,7 @@ impl Accounts {
                     tag: a.username.clone(),
                     name: a.name.clone(),
                     colour: a.colour.clone(),
+                    icon: a.icon.clone(),
                 })
                 .collect()
         })
@@ -469,6 +491,7 @@ impl Accounts {
                     password: password_hash,
                     admin: invite.admin,
                     colour: None,
+                    icon: None,
                     sessions: Vec::new(),
                     keys: Vec::new(),
                 }),
@@ -619,19 +642,21 @@ impl Accounts {
         Some(user)
     }
 
-    /// Change one's own display name, chip colour or password, or any of them. An empty colour
-    /// goes back to the default. A new password needs the current one: a session left open on
+    /// Change one's own display name, chip colour, chip icon or password, or any of them. An
+    /// empty colour goes back to the default, and an empty icon to none. A new password needs the current one: a session left open on
     /// someone else's phone must not be enough to take the account.
     pub fn change_own(
         &self,
         username: &str,
         name: Option<&str>,
         colour: Option<&str>,
+        icon: Option<&str>,
         password: Option<(&str, &str)>,
         now: DateTime<Utc>,
     ) -> Result<User, AccountError> {
         let name = name.map(valid_name).transpose()?;
         let colour = colour.map(valid_colour).transpose()?;
+        let icon = icon.map(valid_icon).transpose()?;
         let password_hash = match password {
             Some((current, new)) => {
                 let kept = self
@@ -655,6 +680,9 @@ impl Accounts {
             }
             if let Some(colour) = colour {
                 account.colour = colour;
+            }
+            if let Some(icon) = icon {
+                account.icon = icon;
             }
             if let Some(hash) = password_hash {
                 account.password = hash;

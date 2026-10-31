@@ -7,6 +7,7 @@
 //!
 //! A display name is inline markdown, as any vocabulary entry's name is: the page draws its bold,
 //! colours and icons in the person's chip, and `plain` is what it says where only text can go.
+//! A person may also choose a chip colour and a library icon, drawn before the name.
 
 use crate::types::{OverseerNode, OverseerValue};
 use std::path::Path;
@@ -22,6 +23,8 @@ pub struct Person {
     pub name: String,
     /// Their chip's colour, where they chose one; the template's otherwise.
     pub colour: Option<String>,
+    /// The library icon their chip shows before the name, where they chose one.
+    pub icon: Option<String>,
 }
 
 /// The directory's text, an entry for each person in the order given.
@@ -35,6 +38,7 @@ pub fn text(people: &[Person]) -> String {
     out.push_str("        string tag = \"\"\r\n");
     out.push_str("        string name = \"\"\r\n");
     out.push_str("        string colour = \"#6b7280\"\r\n");
+    out.push_str("        string icon = \"\"\r\n");
     out.push_str("    }\r\n");
     out.push_str("}\r\n");
     out.push_str("\r\n");
@@ -49,6 +53,9 @@ pub fn text(people: &[Person]) -> String {
         out.push_str(&format!("        - name = {}\r\n", quoted(&person.name)));
         if let Some(colour) = &person.colour {
             out.push_str(&format!("        - colour = {}\r\n", quoted(colour)));
+        }
+        if let Some(icon) = &person.icon {
+            out.push_str(&format!("        - icon = {}\r\n", quoted(icon)));
         }
         out.push_str("    }\r\n");
     }
@@ -197,23 +204,25 @@ mod tests {
     fn the_directory_reads_back_what_it_was_written_with() {
         let dir = std::env::temp_dir().join(format!("overseer-people-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let person = |tag: &str, name: &str, colour: Option<&str>| Person {
+        let person = |tag: &str, name: &str, colour: Option<&str>, icon: Option<&str>| Person {
             tag: tag.into(),
             name: name.into(),
             colour: colour.map(String::from),
+            icon: icon.map(String::from),
         };
         let people = vec![
-            person("ap31", "Dmitrii", Some("#e11d48")),
-            person("bob", "Bob \"the\" \\ Builder", None),
+            person("ap31", "Dmitrii", Some("#e11d48"), None),
+            person("bob", "Bob \"the\" \\ Builder", None, Some("hammer")),
         ];
         write(&dir, &people).unwrap();
         assert_eq!(
             read(&dir),
             people.iter().map(|p| (p.tag.clone(), p.name.clone())).collect::<Vec<_>>()
         );
-        // Only a colour someone chose is written; everyone else has the template's.
+        // Only a colour or an icon someone chose is written; everyone else has the template's.
         let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
         assert_eq!(text.matches("- colour = ").count(), 1, "{}", text);
+        assert_eq!(text.matches("- icon = ").count(), 1, "{}", text);
         assert_eq!(name_of(&dir, "bob").as_deref(), Some("Bob \"the\" \\ Builder"));
         assert_eq!(name_of(&dir, "carol"), None);
         std::fs::remove_dir_all(&dir).ok();

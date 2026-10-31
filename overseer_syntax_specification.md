@@ -989,9 +989,9 @@ out on its own reads it as empty and does not fail on it; a mounted document see
 place it is mounted at.
 
 A document names people by username and shows them by name through the server's directory,
-`people.os` at its root: a list `People` keyed by `tag`, one entry per account with its `name` - and its `colour`, where the person chose one. The
+`people.os` at its root: a list `People` keyed by `tag`, one entry per account with its `name` - and its `colour` and `icon`, where the person chose them. The
 server writes it from its accounts, everyone may read it, and nobody changes it through a document
-- a person changes their own name and chip colour in their profile. The name is markdown, as any
+- a person changes their own name, chip colour and chip icon in their profile. The name is markdown, as any
 vocabulary entry's is (see "Tags"), and `me/name` is it as plain text. Mounted, it is a vocabulary like any other, so
 a field holding `ap31` and a `<#ap31>` in any text draw that person's chip with the name they have
 now; renamed, they are shown by the new name everywhere, and no document is written for it:
@@ -1736,7 +1736,8 @@ tags labels (vocabulary="/project/Labels", width=24%) = "perf, correctness"
 
 An entry of the vocabulary is known by its list's `key` - `tag` when the list names none - so a
 list of tasks keyed by `handle` serves as well as a tag list. Its `title`, where it has one, is
-what its chip says on hover.
+what its chip says on hover, and its `icon`, where it names one of the library's icons (see
+"Icons"), is drawn before its name - a person's chosen icon, a stage's or a label's alike.
 
 Its `name` is inline markdown, drawn the same in every chip of it - in a field, a picker, a filter
 and a `<#key>` in text: bold, italic, strikethrough, code, `<color=... | ...>` and `<icon=...>`,
@@ -1750,7 +1751,9 @@ no name is drawn by its key as it stands, `__init__` and all:
     - tag = "claude"
     - name = "<icon=sparkles> <color=#d97706 | C>laude"
 }
-``` Several lists can be named, separated by commas: the picker offers
+```
+
+Several lists can be named, separated by commas: the picker offers
 the first, never the entry the field is part of, and the rest only name and colour what is
 already held. A task naming the tasks it waits on, open or finished, each in its own colour:
 

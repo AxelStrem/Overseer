@@ -17,6 +17,7 @@ tab card (mutable=true) {
     string handle = $(me/handle)
     enum author (vocabulary="/people/People") = "ap31"
     string written_by = $(/people/People.find(author)/name)
+    string author_icon = $(/people/People.find(author)/icon)
 
     button sign {
         on click {
@@ -137,7 +138,7 @@ fn a_new_name_is_seen_without_writing_the_document() {
 
     // What `POST /api/me` does.
     accounts
-        .change_own("ap31", Some("Dima"), None, None, chrono::Utc::now())
+        .change_own("ap31", Some("Dima"), None, None, None, chrono::Utc::now())
         .unwrap();
     assert!(std::fs::read_to_string(root.join("people.os")).unwrap().contains("\"Dima\""));
     assert_eq!(read(), ("Dima".to_string(), "ap31".to_string()));
@@ -152,7 +153,7 @@ fn a_styled_name_and_a_chosen_colour_reach_the_directory() {
     let (documents, accounts, root) = served("styled");
     let styled = "<color=#e11d48 | D><color=#2563eb | ima> <icon=bot>";
     accounts
-        .change_own("ap31", Some(styled), Some("#0F766E"), None, chrono::Utc::now())
+        .change_own("ap31", Some(styled), Some("#0F766E"), None, None, chrono::Utc::now())
         .unwrap();
     let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
     assert!(directory.contains("- colour = \"#0f766e\""), "{}", directory);
@@ -168,10 +169,34 @@ fn a_styled_name_and_a_chosen_colour_reach_the_directory() {
 
     // An empty colour is the default again.
     accounts
-        .change_own("ap31", None, Some(""), None, chrono::Utc::now())
+        .change_own("ap31", None, Some(""), None, None, chrono::Utc::now())
         .unwrap();
     let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
     assert!(!directory.contains("- colour = "), "{}", directory);
+}
+
+#[test]
+fn a_chosen_icon_reaches_the_directory() {
+    let (documents, accounts, root) = served("icon");
+    documents.as_asker(person("bob"), || {
+        assert_eq!(text(&documents.open("ap31/card.os").unwrap(), "author_icon"), "", "none chosen");
+    });
+    accounts
+        .change_own("ap31", None, None, Some("bot"), None, chrono::Utc::now())
+        .unwrap();
+    let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
+    assert!(directory.contains("- icon = \"bot\""), "{}", directory);
+    assert_eq!(directory.matches("- icon = ").count(), 1, "bob chose none: {}", directory);
+    documents.as_asker(person("bob"), || {
+        assert_eq!(text(&documents.open("ap31/card.os").unwrap(), "author_icon"), "bot");
+    });
+
+    // An empty icon is none again, and the directory says nothing of it.
+    accounts
+        .change_own("ap31", None, None, Some(""), None, chrono::Utc::now())
+        .unwrap();
+    let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
+    assert!(!directory.contains("- icon = "), "{}", directory);
 }
 
 #[test]

@@ -56,12 +56,21 @@ export function collectIcons() {
     return icons
 }
 
-/** Copy the merged library, and the licences it comes under, into `<outDir>/icons`. */
+/** Every icon name, in order, as the page asks for them to offer a choice of icon. */
+export function iconIndex(icons = collectIcons()) {
+    return JSON.stringify([...icons.keys()].sort())
+}
+
+/**
+ * Copy the merged library, and the licences it comes under, into `<outDir>/icons`, with
+ * `index.json`, the list of its names.
+ */
 export function writeIconLibrary(outDir) {
     const target = path.join(outDir, 'icons')
     fs.mkdirSync(path.join(target, 'LICENSES'), { recursive: true })
     const icons = collectIcons()
     for (const [name, file] of icons) fs.copyFileSync(file, path.join(target, `${name}.svg`))
+    fs.writeFileSync(path.join(target, 'index.json'), iconIndex(icons))
     for (const { from, to } of ICON_LICENSES) {
         if (fs.existsSync(from)) fs.copyFileSync(from, path.join(target, 'LICENSES', to))
     }

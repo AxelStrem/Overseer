@@ -33,10 +33,10 @@ fn a_display_name_counts_the_text_it_shows() {
     // Sixty letters, each of its own colour: over a thousand characters written, sixty shown.
     let sixty = coloured(50) + &"b".repeat(10);
     assert!(sixty.chars().count() > 64);
-    assert_eq!(accounts.change_own("alice", Some(&sixty), None, None, now).unwrap().name, sixty);
-    let shown = refused(accounts.change_own("alice", Some(&("x".repeat(65))), None, None, now));
+    assert_eq!(accounts.change_own("alice", Some(&sixty), None, None, None, now).unwrap().name, sixty);
+    let shown = refused(accounts.change_own("alice", Some(&("x".repeat(65))), None, None, None, now));
     assert!(shown.contains("shows"), "{}", shown);
-    let written = refused(accounts.change_own("alice", Some(&coloured(60)), None, None, now));
+    let written = refused(accounts.change_own("alice", Some(&coloured(60)), None, None, None, now));
     assert!(written.contains("as written"), "{}", written);
 }
 
@@ -47,14 +47,32 @@ fn a_chip_colour_is_a_hex_colour_or_the_default() {
     let invite = accounts.invite(None, false, now).unwrap();
     accounts.join(&invite, "alice", "Alice", "a good password", now).unwrap();
     assert_eq!(accounts.user("alice").unwrap().colour, None);
-    let set = accounts.change_own("alice", None, Some("#E11D48"), None, now).unwrap();
+    let set = accounts.change_own("alice", None, Some("#E11D48"), None, None, now).unwrap();
     assert_eq!(set.colour.as_deref(), Some("#e11d48"));
-    assert_eq!(accounts.change_own("alice", None, Some("#abc"), None, now).unwrap().colour.as_deref(), Some("#abc"));
+    assert_eq!(accounts.change_own("alice", None, Some("#abc"), None, None, now).unwrap().colour.as_deref(), Some("#abc"));
     for bad in ["red", "#12345", "#ggg", "url(x)"] {
-        refused(accounts.change_own("alice", None, Some(bad), None, now));
+        refused(accounts.change_own("alice", None, Some(bad), None, None, now));
     }
     assert_eq!(accounts.user("alice").unwrap().colour.as_deref(), Some("#abc"), "a refusal changes nothing");
-    assert_eq!(accounts.change_own("alice", None, Some(""), None, now).unwrap().colour, None);
+    assert_eq!(accounts.change_own("alice", None, Some(""), None, None, now).unwrap().colour, None);
+}
+
+#[test]
+fn a_chip_icon_is_a_library_name_or_none() {
+    let accounts = Accounts::open(fresh_file("icon")).unwrap();
+    let now = Utc::now();
+    let invite = accounts.invite(None, false, now).unwrap();
+    accounts.join(&invite, "alice", "Alice", "a good password", now).unwrap();
+    assert_eq!(accounts.user("alice").unwrap().icon, None);
+    let set = accounts.change_own("alice", None, None, Some(" bot "), None, now).unwrap();
+    assert_eq!(set.icon.as_deref(), Some("bot"));
+    assert_eq!(accounts.change_own("alice", None, None, Some("heart-filled"), None, now).unwrap().icon.as_deref(), Some("heart-filled"));
+    for bad in ["Bot", "../x", "bot.svg", "a--b", "-bot", "<icon=bot>"] {
+        refused(accounts.change_own("alice", None, None, Some(bad), None, now));
+    }
+    assert_eq!(accounts.user("alice").unwrap().icon.as_deref(), Some("heart-filled"), "a refusal changes nothing");
+    assert_eq!(accounts.change_own("alice", None, Some("#abc"), None, None, now).unwrap().icon.as_deref(), Some("heart-filled"), "a colour leaves the icon");
+    assert_eq!(accounts.change_own("alice", None, None, Some(""), None, now).unwrap().icon, None);
 }
 
 #[test]
@@ -168,11 +186,11 @@ fn a_person_changes_their_own_name_and_password() {
     let invite = accounts.invite(None, false, now).unwrap();
     accounts.join(&invite, "alice", "Alice", "a good password", now).unwrap();
 
-    let renamed = accounts.change_own("alice", Some("Alice C"), None, None, now).unwrap();
+    let renamed = accounts.change_own("alice", Some("Alice C"), None, None, None, now).unwrap();
     assert_eq!(renamed.name, "Alice C");
-    refused(accounts.change_own("alice", None, None, Some(("not it", "a new password")), now));
+    refused(accounts.change_own("alice", None, None, None, Some(("not it", "a new password")), now));
     accounts
-        .change_own("alice", None, None, Some(("a good password", "a new password")), now)
+        .change_own("alice", None, None, None, Some(("a good password", "a new password")), now)
         .unwrap();
     accounts.sign_in("alice", "a new password", now).unwrap();
 }

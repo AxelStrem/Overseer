@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
  * The server answers `access` with who is asking - a person, a stranger, or the token (`anyone`) -
  * and whether the open document is theirs to change. From that the page draws a document shared
  * only to be read as read-only, keeps from a stranger what the server would refuse them, and gives
- * a person their profile: their name and password, their sharing document, the keys programs act
+ * a person their profile: their name, their chip's colour and icon, and their password, their sharing document, the keys programs act
  * as them with, signing out, and for an admin the links that invite someone or set a new password.
  *
  * With no document open it lists what the person may open: their own, what others share with them,
@@ -17,6 +17,8 @@ import { invoke } from '@tauri-apps/api/core'
  */
 /// The colour of a person's chip until they choose one - the template's in `people.os`.
 const DEFAULT_COLOUR = '#6b7280'
+/// How many icons a search offers at once: enough to pick from, few enough to draw at once.
+const ICONS_OFFERED = 48
 
 export class Account {
     constructor(app) {
@@ -87,12 +89,14 @@ export class Account {
         }
         on('account-save-name', () => this.saveName())
         on('account-colour-default', () => { this.colour = null; this.preview() })
+        on('account-icon-none', () => { this.icon = null; this.preview() })
         const typed = (id, what) => {
             const el = document.getElementById(id)
             if (el) el.addEventListener('input', what)
         }
         typed('account-name', () => this.preview())
         typed('account-colour', () => { this.colour = this.valueOf('account-colour'); this.preview() })
+        typed('account-icon-search', () => this.offerIcons())
         on('account-save-password', () => this.savePassword())
         on('account-sharing', () => this.openSharing())
         on('account-sign-out', () => this.signOut())
@@ -114,10 +118,11 @@ export class Account {
         const section = document.getElementById('drawer-account')
         if (section) section.hidden = !this.person
         const who = document.getElementById('account-who')
-        if (who) this.drawChip(who, this.person && this.person.name, this.person && this.person.colour)
+        if (who) this.drawChip(who, this.person && this.person.name, this.person && this.person.colour, this.person && this.person.icon)
         const name = document.getElementById('account-name')
         if (name && this.person) name.value = this.person.name || ''
         this.colour = (this.person && this.person.colour) || null
+        this.icon = (this.person && this.person.icon) || null
         this.preview()
         const admin = document.getElementById('account-admin')
         if (admin) admin.hidden = !(this.person && this.person.admin)
@@ -127,15 +132,15 @@ export class Account {
         if (all) all.hidden = this.asker === 'stranger'
     }
 
-    /// The person's chip as documents draw it: their name, styled as written, on their colour or
-    /// on the directory's grey (`people.rs`) when they chose none.
-    drawChip(el, name, colour) {
+    /// The person's chip as documents draw it: their icon and their name, styled as written, on
+    /// their colour or on the directory's grey (`people.rs`) when they chose none.
+    drawChip(el, name, colour, icon) {
         el.textContent = ''
         if (!this.person) return
         const renderer = this.app && this.app.renderer
         const said = name || this.person.username
         if (!renderer) { el.textContent = said; return }
-        el.appendChild(renderer.tagChip(this.person.username, { name: said, named: true, colour: colour || DEFAULT_COLOUR }, null))
+        el.appendChild(renderer.tagChip(this.person.username, { name: said, named: true, colour: colour || DEFAULT_COLOUR, icon: icon || null }, null))
     }
 
     /// The chip as the profile's fields would make it, before it is saved.
@@ -143,7 +148,51 @@ export class Account {
         const colour = document.getElementById('account-colour')
         if (colour) colour.value = this.colour || DEFAULT_COLOUR
         const shown = document.getElementById('account-preview')
-        if (shown) this.drawChip(shown, this.valueOf('account-name'), this.colour)
+        if (shown) this.drawChip(shown, this.valueOf('account-name'), this.colour, this.icon)
+        this.offerIcons()
+    }
+
+    /// The library's icon names, fetched once, the first time they are searched.
+    iconNames() {
+        if (!this._iconNames) {
+            this._iconNames = fetch('/icons/index.json')
+                .then((response) => (response.ok ? response.json() : []))
+                .catch(() => [])
+                .then((names) => (Array.isArray(names) ? names.filter((n) => typeof n === 'string') : []))
+        }
+        return this._iconNames
+    }
+
+    /// The icons whose names hold what the search says, those starting with it first; with
+    /// nothing searched, only the one chosen, so that the profile shows what it is.
+    async offerIcons() {
+        const offered = document.getElementById('account-icon-choices')
+        if (!offered) return
+        const searched = this.valueOf('account-icon-search').toLowerCase()
+        let names = this.icon ? [this.icon] : []
+        if (searched) {
+            const all = await this.iconNames()
+            // A search typed while the names were on their way has its own answer coming.
+            if (searched !== this.valueOf('account-icon-search').toLowerCase()) return
+            const starting = all.filter((n) => n.startsWith(searched))
+            const holding = all.filter((n) => !n.startsWith(searched) && n.includes(searched))
+            names = [...starting, ...holding].slice(0, ICONS_OFFERED)
+        }
+        const renderer = this.app && this.app.renderer
+        offered.textContent = ''
+        for (const name of names) {
+            const choice = document.createElement('button')
+            choice.type = 'button'
+            choice.className = 'account-icon-choice'
+            choice.title = name
+            choice.dataset.icon = name
+            choice.setAttribute('aria-pressed', String(name === this.icon))
+            if (renderer) choice.appendChild(renderer.createIconElement(name))
+            else choice.textContent = name
+            choice.addEventListener('click', () => { this.icon = name; this.preview() })
+            offered.appendChild(choice)
+        }
+        if (searched && names.length === 0) offered.textContent = 'No icon has that name.'
     }
 
     valueOf(id) {
@@ -180,7 +229,7 @@ export class Account {
         const name = this.valueOf('account-name')
         if (!name) return this.say('account-name-said', 'A name cannot be empty.', true)
         try {
-            this.person = await this.post('/account/me', { name, colour: this.colour || '' })
+            this.person = await this.post('/account/me', { name, colour: this.colour || '', icon: this.icon || '' })
             this.paint()
             this.say('account-name-said', 'Saved.')
         } catch (e) {

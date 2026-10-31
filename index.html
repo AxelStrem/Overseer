@@ -55,7 +55,12 @@
                         <button id="account-colour-default" class="drawer-action quiet">Default</button>
                         <span id="account-preview"></span>
                     </div>
-                    <button id="account-save-name" class="drawer-action">Save the name and colour</button>
+                    <div class="account-colour">
+                        <label class="account-field">Chip icon <input id="account-icon-search" type="search" autocomplete="off" placeholder="search, e.g. bot"></label>
+                        <button id="account-icon-none" class="drawer-action quiet">None</button>
+                    </div>
+                    <div id="account-icon-choices" class="account-icon-choices"></div>
+                    <button id="account-save-name" class="drawer-action">Save the name, colour and icon</button>
                     <div id="account-name-said" class="account-said" role="status"></div>
                     <label class="account-field">Current password <input id="account-current" type="password" autocomplete="current-password"></label>
                     <label class="account-field">New password <input id="account-password" type="password" autocomplete="new-password"></label>
