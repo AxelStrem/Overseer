@@ -122,7 +122,7 @@ fn base_none_leaves_an_inherited_block_empty() {
     let theme = theme_of(&nodes, "plain");
     let backdrop = key(theme, "backdrop").expect("the key itself stays");
     assert!(names(backdrop).is_empty(), "layers left: {:?}", names(backdrop));
-    assert_eq!(value(key(theme, "accent").unwrap()), "blue", "the rest of the theme is kept");
+    assert_eq!(value(find(&nodes, "a").unwrap()), "blue", "the rest of the theme is kept");
 }
 
 #[test]

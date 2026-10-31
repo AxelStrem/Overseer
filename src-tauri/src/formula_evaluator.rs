@@ -1605,6 +1605,52 @@ impl FormulaEvaluator {
         path: &[String],
         context: &EvaluationContext,
     ) -> Result<OverseerValue, OverseerError> {
+        Self::follow_path_reference(path, context).or_else(|why| {
+            let Some((at, rest)) = Self::past_a_copy(path, context) else {
+                return Err(why);
+            };
+            let Some(node) = Self::resolve_path_to_node(&at, context.document_root) else {
+                return Err(why);
+            };
+            let from = EvaluationContext::new_with_current(node, at, context.document_root);
+            Self::follow_path_reference(&rest, &from).map_err(|_| why)
+        })
+    }
+
+    /// Where a `/` or `..` path that found nothing went into a copy of a context, and the steps
+    /// from that context on: a copy holds only what its container changes, and the rest is the
+    /// copy above's, which the same steps written bare find by climbing - see `contexts`.
+    fn past_a_copy(path: &[String], context: &EvaluationContext) -> Option<(Vec<String>, Vec<String>)> {
+        let reader = &context.node_path;
+        let root = context.document_root;
+        let (mut at, steps) = if path.first()? == "/" {
+            let steps = &path[1..];
+            let first = steps.first()?;
+            let end = (1..=reader.len()).rev().find(|end| {
+                Self::resolve_path_to_node(&reader[..*end], root)
+                    .is_some_and(|node| Self::accessible_child(node, first).is_some())
+            })?;
+            (reader[..end].to_vec(), steps)
+        } else {
+            let (hops, idx) = Self::steps_up(path)?;
+            (reader[..reader.len().checked_sub(hops)?].to_vec(), &path[idx..])
+        };
+        let mut node = Self::resolve_path_to_node(&at, root)?;
+        for (i, step) in steps.iter().enumerate() {
+            let next = Self::accessible_child(node, step)?;
+            if crate::contexts::is_copy(next) {
+                return Some((at, steps[i..].to_vec()));
+            }
+            at.push(next.name.clone());
+            node = next;
+        }
+        None
+    }
+
+    fn follow_path_reference(
+        path: &[String],
+        context: &EvaluationContext,
+    ) -> Result<OverseerValue, OverseerError> {
         debug_evaluator!(
             "[EVAL] resolve_path_reference {:?} at {:?}",
             path,
@@ -4914,6 +4960,16 @@ impl FormulaEvaluator {
         path: &[String],
         context: &'a EvaluationContext,
     ) -> Option<(Vec<String>, &'a OverseerNode)> {
+        Self::follow_path_and_node(path, context).or_else(|| {
+            let (at, rest) = Self::past_a_copy(path, context)?;
+            Self::follow_from_ancestors(&at, &rest, context.document_root)
+        })
+    }
+
+    fn follow_path_and_node<'a>(
+        path: &[String],
+        context: &'a EvaluationContext,
+    ) -> Option<(Vec<String>, &'a OverseerNode)> {
         if path.is_empty() {
             return None;
         }
@@ -5003,13 +5059,19 @@ impl FormulaEvaluator {
             };
             return Some((walked, current));
         }
-        // Nearest ancestor from which the whole path can be followed.
-        let mut end = context.node_path.len();
+        Self::follow_from_ancestors(&context.node_path, path, context.document_root)
+    }
+
+    /// The nearest ancestor from which the whole path can be followed, and where that lands.
+    fn follow_from_ancestors<'a>(
+        from: &[String],
+        path: &[String],
+        root: &'a [OverseerNode],
+    ) -> Option<(Vec<String>, &'a OverseerNode)> {
+        let mut end = from.len();
         while end > 0 {
-            if let Some(mut node) =
-                Self::resolve_path_to_node(&context.node_path[..end], context.document_root)
-            {
-                let mut walked: Vec<String> = context.node_path[..end].to_vec();
+            if let Some(mut node) = Self::resolve_path_to_node(&from[..end], root) {
+                let mut walked: Vec<String> = from[..end].to_vec();
                 let mut ok = true;
                 for seg in path {
                     if let Some(next) = node

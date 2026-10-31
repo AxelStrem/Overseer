@@ -47,7 +47,12 @@ A context (`context theme { ... }`) is the other thing the writer gives back fro
 from the tree. Once templates are instantiated, `contexts.rs` works out what each container that
 declares one sees - the context from above with the container's declarations merged onto it by the
 same merge an instance uses - and puts a copy of each in front of that container's children,
-marked `_context_copy`. Being first, a copy is what the ordinary climb of a formula's lookup meets;
+marked `_context_copy`. A copy holds only what its container changes: the keys declared there,
+those that read them or a context that changed, and what those read, so that a theme overridden in a
+list's template is not the whole theme once per entry. Being first, a copy is what the ordinary
+climb of a formula's lookup meets, and a key it does not hold is looked for further up - by a bare
+path as by any climb, and by `/` and `..` paths through `past_a_copy`; the page's variables inherit
+the same way;
 searches that go down into other containers, method chains, and the page leave contexts out. The
 declarations themselves are left as they were read, and are not worked out where they stand, so
 the writer takes the copies out and writes the rest as it would any node. The page reads a few

@@ -786,7 +786,10 @@ tab project (label="Project") {
   one of those - so a theme that reads `$(mode == "dark" ? ... : ...)` follows a
   `context mode = "dark"` written below it. A context that reads none of them is worked out where
   it was declared, or where something it reads was last declared again: a container that declares
-  `context hover-text = true` changes nothing of what `$(accent)` is inside it.
+  `context hover-text = true` changes nothing of what `$(accent)` is inside it. Within a context
+  the same goes for its keys: a key that reads nothing changed has the value it has above. A key
+  that reads a name which is neither a key of the context nor a context is worked out again, for
+  that name may be another node there.
 - **Templates and mounts** see the contexts of where they are used: an instance's body, or an entry
   of a list, sees those around the instance; a mounted document sees those of the document that
   mounts it. A context a template declares is declared again in every instance.

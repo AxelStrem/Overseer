@@ -113,6 +113,26 @@ describe('the theme', () => {
     expect(document.documentElement.style.getPropertyValue('--ov-surface')).toBe('#ffffff')
   })
 
+  it('a copy that holds one key leaves the rest to the element above', () => {
+    const app = new OverseerApp()
+    app.currentDocument = [
+      theme([key('accent', '#2563eb'), key('background', '#ffffff')]),
+      { name: 'outer', node_type: 'div', parameters: {}, is_hierarchy_transparent: false, children: [
+        theme([key('accent', '#7c3aed'), key('surface', '#eeeeee')]),
+        { name: 'inner', node_type: 'div', parameters: {}, is_hierarchy_transparent: false, children: [
+          theme([key('surface', '#16203a')]),
+          field('inside', 'in'),
+        ] },
+      ] },
+    ]
+    app.renderer.renderDocument(app.currentDocument)
+    const inner = elementAt(['outer', 'inner'])
+    expect(inner.style.getPropertyValue('--ov-surface')).toBe('#16203a')
+    expect(inner.style.getPropertyValue('--ov-accent')).toBe('')
+    expect(inner.classList.contains('ov-themed-background')).toBe(false)
+    expect(elementAt(['outer']).style.getPropertyValue('--ov-accent')).toBe('#7c3aed')
+  })
+
   it('drawn again in another, leaves nothing of the last behind', () => {
     const app = new OverseerApp()
     const body = { name: 't', node_type: 'tab', parameters: {}, is_hierarchy_transparent: true, children: [field('shown', 'x')] }

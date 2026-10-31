@@ -16,6 +16,14 @@
 //! declared there is the same as the copy above, and a lookup climbs on to that one - an entry
 //! whose template declares one context carries one copy, not one of every context in view.
 //!
+//! The same holds inside a copy: it keeps only the keys its container changes - those declared
+//! there, those whose formulas read one of them or a context that changed - and what those read.
+//! A key it leaves out has the value of the copy above, where a read climbs on to, and which the
+//! page's stylesheet hands down: a comment that says one backdrop does not carry the whole theme,
+//! once for each comment. A key that reads anything but the context's own keys and other contexts
+//! stays, for what it reads may be another thing here. A copy stays whole where there is nothing
+//! to climb on to, or where a `base=` starts it over.
+//!
 //! Being first among its container's children, a copy is what a formula reading `theme/accent`
 //! meets as it climbs from where it is - the existing lookup, with nothing taught about contexts
 //! but to leave them out of searches that go *down* into other containers, where a copy would be
@@ -29,6 +37,7 @@
 //! be refused, since a document that never asked for a theme cannot be told its names are taken.
 
 use crate::types::{OverseerNode, OverseerValue};
+use std::rc::Rc;
 
 /// The type a declaration is written with.
 pub const CONTEXT: &str = "context";
@@ -89,10 +98,13 @@ struct Seen {
     node: OverseerNode,
     declared: bool,
     reads: Vec<String>,
+    /// The same for each of the node's children, in order.
+    key_reads: Vec<Vec<String>>,
 }
 
-/// What a container sees, by name, in the order the names were first declared.
-type Visible = Vec<Seen>;
+/// What a container sees, by name, in the order the names were first declared. Shared, for every
+/// container walked starts from what the one around it sees, and a theme is dozens of nodes.
+type Visible = Vec<Rc<Seen>>;
 
 fn visible<'a>(seen: &'a Visible, name: &str) -> Option<&'a OverseerNode> {
     seen.iter().find(|s| s.name == name).map(|s| &s.node)
@@ -101,18 +113,27 @@ fn visible<'a>(seen: &'a Visible, name: &str) -> Option<&'a OverseerNode> {
 fn set_visible(seen: &mut Visible, name: &str, node: OverseerNode, declared: bool) {
     let mut reads = Vec::new();
     words_of(&node, &mut reads);
-    match seen.iter_mut().find(|s| s.name == name) {
-        Some(slot) => {
-            slot.node = node;
-            slot.declared |= declared;
-            slot.reads = reads;
-        }
-        None => seen.push(Seen {
-            name: name.to_string(),
-            node,
-            declared,
-            reads,
-        }),
+    let key_reads = node
+        .children
+        .iter()
+        .map(|key| {
+            let mut words = Vec::new();
+            words_of(key, &mut words);
+            words
+        })
+        .collect();
+    let slot = seen.iter_mut().find(|s| s.name == name);
+    let declared = declared || slot.as_ref().is_some_and(|s| s.declared);
+    let worked_out = Rc::new(Seen {
+        name: name.to_string(),
+        node,
+        declared,
+        reads,
+        key_reads,
+    });
+    match slot {
+        Some(slot) => *slot = worked_out,
+        None => seen.push(worked_out),
     }
 }
 
@@ -161,6 +182,89 @@ fn changed_here(here: &Visible, declared: &[&OverseerNode]) -> Vec<bool> {
             return changed;
         }
     }
+}
+
+/// The names of a declaration's keys, looked through wrappers.
+fn key_names<'a>(nodes: &'a [OverseerNode], out: &mut Vec<&'a str>) {
+    for node in nodes {
+        if crate::addressing::is_wrapper(node) {
+            key_names(&node.children, out);
+        } else {
+            out.push(&node.name);
+        }
+    }
+}
+
+/// Which keys of a context a container's copy keeps, one for each child of the context. See the
+/// top of this file for what and why. `changed` names the contexts the container changes, `here`
+/// is all it sees.
+fn keys_held(context: &Seen, declared: &[&OverseerNode], changed: &[&str], here: &Visible) -> Vec<bool> {
+    let keys = &context.node.children;
+    let mut said = Vec::new();
+    for declaration in declared.iter().filter(|d| d.name == context.name) {
+        key_names(&declaration.children, &mut said);
+    }
+    let is_key = |word: &str| keys.iter().any(|key| key.name == word);
+    let mut held: Vec<bool> = keys
+        .iter()
+        .zip(&context.key_reads)
+        .map(|(key, words)| {
+            key.name.is_empty()
+                || said.contains(&key.name.as_str())
+                || words.iter().any(|word| {
+                    changed.contains(&word.as_str())
+                        || !(is_key(word) || here.iter().any(|seen| seen.name == *word))
+                })
+        })
+        .collect();
+    // What reads a key that changed has changed, and so on.
+    loop {
+        let mut grew = false;
+        for index in 0..keys.len() {
+            let reads_one = context.key_reads[index]
+                .iter()
+                .any(|word| keys.iter().zip(&held).any(|(key, &is)| is && key.name == *word));
+            if !held[index] && reads_one {
+                held[index] = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    // What a kept key reads is found beside it. That is no change: what reads *that* can go.
+    loop {
+        let mut grew = false;
+        for index in 0..keys.len() {
+            if !held[index] {
+                continue;
+            }
+            for (other, key) in keys.iter().enumerate() {
+                if !held[other] && context.key_reads[index].iter().any(|word| *word == key.name) {
+                    held[other] = true;
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            return held;
+        }
+    }
+}
+
+/// What a container's copy of a context holds. `above` is what it sees from above.
+fn copy_of(context: &Seen, declared: &[&OverseerNode], changed: &[&str], here: &Visible, above: &Visible) -> OverseerNode {
+    let starts_over = declared
+        .iter()
+        .any(|d| d.name == context.name && d.parameters.contains_key("base"));
+    if starts_over || visible(above, &context.name).is_none() {
+        return context.node.clone();
+    }
+    let mut held = keys_held(context, declared, changed, here).into_iter();
+    let mut copy = context.node.clone();
+    copy.children.retain(|_| held.next().unwrap_or(true));
+    copy
 }
 
 /// What the walk found to do, done once it is over: the tree is only read while it walks, so that
@@ -329,11 +433,23 @@ fn walk_scope(
         } else {
             changed_here(&here, &declared)
         };
+        let changed = here
+            .iter()
+            .zip(&carried)
+            .filter(|(_, &carry)| carry)
+            .map(|(seen, _)| seen.name.as_str())
+            .collect::<Vec<_>>();
         let copies = here
             .iter()
             .zip(&carried)
             .filter(|(_, &carry)| carry)
-            .map(|(seen, _)| seen.node.clone())
+            .map(|(seen_here, _)| {
+                if always {
+                    seen_here.node.clone()
+                } else {
+                    copy_of(seen_here, &declared, &changed, &here, seen)
+                }
+            })
             .collect::<Vec<_>>();
         // A copy goes first so that a lookup meets it before the declaration of the same name.
         // With no declaration here - only the environment, at the top of a document that declares
