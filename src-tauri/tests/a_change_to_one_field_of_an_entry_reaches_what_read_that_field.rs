@@ -158,12 +158,16 @@ fn flagging_a_cell_reaches_its_own_face_and_not_every_cell_on_the_board() {
     ))
     .expect("minesweeper");
     let graph = graph_of(&source);
-    let mines: Vec<String> = graph
+    // The template's own `mine`, worked out outside the board, reads no cells; only the board's
+    // cells are compared, in a fixed order rather than the graph's.
+    let mut mines: Vec<String> = graph
         .values()
         .into_iter()
         .filter_map(|v| v.strip_suffix("/mine#_computed_value"))
+        .filter(|v| v.starts_with("game/Field/"))
         .map(str::to_string)
         .collect();
+    mines.sort();
     assert!(mines.len() > 1, "no cells found: {:?}", graph.values().iter().take(20).collect::<Vec<_>>());
     let cell = &mines[0];
     let other = &mines[1];
