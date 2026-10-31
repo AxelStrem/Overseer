@@ -1364,6 +1364,15 @@ impl FormulaEvaluator {
                             )));
                         }
                     }
+                    // Read where the node really is. The path built above is the reader's with the
+                    // segments added - `A1/next_v/v` for `Row.at(1, 0)/v` - and a formula nobody
+                    // had worked out yet was worked out there, so a bare name in it climbed to
+                    // the reader's cell instead of its own, and the read was recorded against a
+                    // path that does not exist. Outside a pass there is no map of real paths,
+                    // and the path stays as it was.
+                    if let Some((_, real)) = Self::path_in_pass(cur) {
+                        p = real;
+                    }
                     return FormulaEvaluator::get_effective_value_for_node(
                         cur,
                         &p,
