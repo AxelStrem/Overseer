@@ -674,7 +674,7 @@ impl FileOperations {
         indent_level: usize,
         in_list_body: bool,
         fallback_indent_unit: &str,
-        list_indent_hint: Option<usize>,
+        list_indent_hint: Option<&str>,
         force_emit_template_children: bool,
     ) -> Result<()> {
         // A mount's children belong to another file. Loading one fills them in, which changes
@@ -969,7 +969,6 @@ impl FileOperations {
             // around it. The closing brace has to follow, or an entry opens at one depth
             // and closes at another - which is what a newly added entry did, and why the
             // next save reflowed it and differed from the one before.
-            let mut entry_indent: Option<String> = None;
             if in_list_body {
                 let mut required_indent = snapshot.as_ref().and_then(|snap| {
                     let text = if snap.full_text.contains("\r\n") {
@@ -983,8 +982,8 @@ impl FileOperations {
                         }
                         if let Some(dash_idx) = line.find('-') {
                             let prefix = &line[..dash_idx];
-                            if prefix.chars().all(|c| c == ' ') {
-                                return Some(prefix.len());
+                            if prefix.chars().all(|c| c == ' ' || c == '\t') {
+                                return Some(prefix.to_string());
                             }
                         }
                         break;
@@ -992,7 +991,10 @@ impl FileOperations {
                     None
                 });
                 if let Some(hint) = list_indent_hint {
-                    required_indent = Some(required_indent.map(|val| val.max(hint)).unwrap_or(hint));
+                    required_indent = Some(match required_indent {
+                        Some(own) if own.len() >= hint.len() => own,
+                        _ => hint.to_string(),
+                    });
                 }
                 // Nothing to copy from: no neighbour to line up with, and no text of its own to
                 // read one out of. That is the first entry appended to a list, and the honest
@@ -1003,21 +1005,14 @@ impl FileOperations {
                 // the cursor at. Unset, the correction below had nothing to correct to and the
                 // entry stayed where the cursor happened to be: for a list nested inside a
                 // template entry, its parent list's depth, two levels short.
-                let required_indent = required_indent.or(Some(indent.len()));
-                if let Some(required_indent) = required_indent {
-                    entry_indent = Some(" ".repeat(required_indent));
-                    let line_start = output.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
-                    let current_slice = &output[line_start..];
-                    let current_spaces = current_slice.chars().take_while(|c| *c == ' ').count();
-                    if current_spaces < required_indent {
-                        output.push_str(&" ".repeat(required_indent - current_spaces));
-                    } else if current_spaces > required_indent {
-                        let mut to_remove = current_spaces - required_indent;
-                        while to_remove > 0 && output.ends_with(' ') {
-                            output.pop();
-                            to_remove -= 1;
-                        }
-                    }
+                //
+                // An indent is kept as the text it is, not as a width: a neighbour's may hold tabs,
+                // and counting those as spaces wrote each new entry twice as deep as the last.
+                let required_indent = required_indent.unwrap_or_else(|| indent.clone());
+                let line_start = output.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
+                if output[line_start..].trim().is_empty() {
+                    output.truncate(line_start);
+                    output.push_str(&required_indent);
                 }
                 // Determine if this is a simple primitive list item (only when not template-derived)
                 let is_template_instance = node.template.is_some()
@@ -1319,7 +1314,7 @@ impl FileOperations {
                 if !output.ends_with('\n') {
                     output.push('\n');
                 }
-                output.push_str(entry_indent.as_deref().unwrap_or(&indent));
+                output.push_str(&required_indent);
                 output.push_str("}\n");
                 Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                 return Ok(());
@@ -1718,8 +1713,8 @@ impl FileOperations {
             }
             // Children under a list node are list-body items (render as '-')
             let children_in_list_body = node.node_type == "list";
-            let mut list_indent_hints: VecDeque<usize> = VecDeque::new();
-            let mut last_list_indent_hint: Option<usize> = None;
+            let mut list_indent_hints: VecDeque<String> = VecDeque::new();
+            let mut last_list_indent_hint: Option<String> = None;
             if children_in_list_body {
                 if let Some(snap) = snapshot.as_ref() {
                     if let Some(body_text) = Self::snapshot_block_inner(snap) {
@@ -1728,10 +1723,10 @@ impl FileOperations {
                             if line.trim().is_empty() {
                                 continue;
                             }
-                            let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
-                            let content = &line[leading_spaces..];
+                            let content = line.trim_start_matches([' ', '\t']);
                             if depth == 0 && content.starts_with("- {") {
-                                list_indent_hints.push_back(leading_spaces);
+                                list_indent_hints
+                                    .push_back(line[..line.len() - content.len()].to_string());
                             }
                             let open_count = content.chars().filter(|c| *c == '{').count() as i32;
                             let close_count = content.chars().filter(|c| *c == '}').count() as i32;
@@ -1954,10 +1949,8 @@ impl FileOperations {
                 let current_list_hint = if children_in_list_body {
                     if let Some(hint) = list_indent_hints.pop_front() {
                         last_list_indent_hint = Some(hint);
-                        Some(hint)
-                    } else {
-                        last_list_indent_hint
                     }
+                    last_list_indent_hint.as_deref()
                 } else {
                     None
                 };
@@ -2577,8 +2570,17 @@ impl FileOperations {
                 }),
                 None => {
                     let mut text = String::from("\n");
-                    let level = entry_indent.len() / unit.len().max(1);
-                    Self::serialize_node_context(child, &mut text, level, true, unit, None, false)?;
+                    let tabs = entry_indent.matches('\t').count();
+                    let level = tabs + (entry_indent.len() - tabs) / unit.len().max(1);
+                    Self::serialize_node_context(
+                        child,
+                        &mut text,
+                        level,
+                        true,
+                        unit,
+                        Some(&entry_indent),
+                        false,
+                    )?;
                     Ok(Some(text.trim().to_string()))
                 }
             }
