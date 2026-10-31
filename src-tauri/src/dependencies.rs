@@ -24,8 +24,10 @@
 //! and the `mine` of each, recorded once for all of them as `Field/*/mine`. A change to a cell's
 //! flag reaches neither, where a read of the whole board was reached by it, and on the
 //! minesweeper board that was every cell's mine and neighbour count worked out again for a flag.
-//! Whatever reads an entry any other way - its own value, a lookup by key, an index - reads the
-//! list whole, as before.
+//! One cell of a grid named by its place, `Board.at(x, y)`, is exact too: which cells the grid
+//! holds, `Board#_entries`, and the cell - or, for `Board.at(x, y)/alive`, only the field read
+//! below it. Whatever reads an entry any other way - its own value, a lookup by key, an index -
+//! reads the list whole, as before.
 //!
 //! # A path is a number while this is running
 //!

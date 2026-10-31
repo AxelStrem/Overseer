@@ -1380,7 +1380,7 @@ impl FormulaEvaluator {
                 // saying so. Still an error when a segment names something that is not there,
                 // which is a mistake in the document rather than a fact about the data - that is
                 // handled below and deliberately left alone.
-                let found = Self::eval_expr_to_nodes(base, context);
+                let found = Self::eval_expr_to_nodes(base, context, true);
                 if let Some(matched) = &found {
                     if matched.is_empty() {
                         return Ok(OverseerValue::Null);
@@ -3939,6 +3939,19 @@ impl FormulaEvaluator {
                     list = picked?.into_iter().map(ListItem::Node).collect();
                     // A cell stands for its value, as `first()` gives one.
                     if call.name == "at" && calls.len() == 1 {
+                        // Read as which cells the grid holds and that one cell - see
+                        // `one_cell_of_a_grid`.
+                        let paths = grid
+                            .and_then(Self::path_in_pass)
+                            .zip(list.first().and_then(|item| match item {
+                                ListItem::Node(cell) => Self::path_in_pass(cell),
+                                ListItem::Value(_) => None,
+                            }));
+                        if let Some(((_, grid_path), (_, cell_path))) = paths {
+                            crate::dependencies::note_read_of_entries(&grid_path);
+                            read.path = cell_path.into();
+                            read.entries_alone = false;
+                        }
                         return Ok(list
                             .first()
                             .and_then(|item| match item {
@@ -4449,10 +4462,58 @@ impl FormulaEvaluator {
         expr: &FormulaExpression,
         context: &'a EvaluationContext,
     ) -> Option<&'a OverseerNode> {
-        match Self::eval_expr_to_nodes(expr, context) {
+        match Self::eval_expr_to_nodes(expr, context, false) {
             Some(found) if found.len() == 1 => Some(found[0]),
             _ => None,
         }
+    }
+
+    /// The one cell `Board.at(x, y)` names, with its read recorded - `None` when the chain is
+    /// anything else, and `Some(None)` when it names nothing.
+    ///
+    /// What is read is which cells the grid holds, `Board#_entries`, and the cell itself: a toggle
+    /// of one cell reaches what read that cell, and a grid made over again reaches all of them.
+    /// When the caller reads on below the cell - `Board.at(x, y)/alive` - it records the field it
+    /// lands on, and the cell is left out. A read of the whole cell would be reached by a change
+    /// to any of its fields, and a neighbour count is one of them: on a game of life's board each
+    /// count reached its neighbours' and so every count on the board, as the whole grid did.
+    ///
+    /// Only where the pass knows where the cell really is. Elsewhere the caller cannot say which
+    /// path it read below the cell, and the grid is read whole, as it always was.
+    fn one_cell_of_a_grid<'a>(
+        base: &FormulaExpression,
+        calls: &[MethodCall],
+        context: &'a EvaluationContext,
+        followed: bool,
+    ) -> Option<Option<&'a OverseerNode>> {
+        if calls.len() != 1 || calls[0].name != "at" {
+            return None;
+        }
+        if !matches!(
+            base,
+            FormulaExpression::PathReference(_) | FormulaExpression::FieldReference(_)
+        ) {
+            return None;
+        }
+        let (walked, grid) = Self::named_node(base, context)?;
+        let cell = match Self::grid_pick(grid, &calls[0], context)? {
+            Ok(cells) if cells.len() == 1 => cells[0],
+            Ok(_) => return None,
+            Err(_) => {
+                crate::dependencies::note_read(&walked);
+                return Some(None);
+            }
+        };
+        match (Self::path_in_pass(grid), Self::path_in_pass(cell)) {
+            (Some((_, grid_path)), Some((_, cell_path))) => {
+                crate::dependencies::note_read_of_entries(&grid_path);
+                if !followed {
+                    crate::dependencies::note_read(&cell_path);
+                }
+            }
+            _ => crate::dependencies::note_read(&walked),
+        }
+        Some(Some(cell))
     }
 
     /// What a grid's own methods pick out of its cells, row by row: `cells()` all of them,
@@ -4519,6 +4580,17 @@ impl FormulaEvaluator {
                     grid.name, columns, rows, call.name, places
                 )
             })));
+        }
+        // A grid is filled row by row, so one cell is found by its place without reading the name
+        // of every other - eight `at()`s in each of four hundred neighbour counts did that. A
+        // grid laid out any other way is searched.
+        if call.name == "at" {
+            let wanted = (places[0], places[1]);
+            if let Some(cell) = grid.children.get(places[1] * columns + places[0]) {
+                if crate::addressing::place_in(&grid.node_type, &cell.name) == Some(wanted) {
+                    return Some(Ok(vec![cell]));
+                }
+            }
         }
         let picked = grid
             .children
@@ -4637,9 +4709,13 @@ impl FormulaEvaluator {
     ///
     /// Several matches is different again, and still an error: which of them `/name` meant is a
     /// question the document has not answered.
+    ///
+    /// `followed` says the caller reads on below what this names, and records that read itself
+    /// - see `one_cell_of_a_grid`.
     fn eval_expr_to_nodes<'a>(
         expr: &FormulaExpression,
         context: &'a EvaluationContext,
+        followed: bool,
     ) -> Option<Vec<&'a OverseerNode>> {
         match expr {
             FormulaExpression::PathReference(_) | FormulaExpression::FieldReference(_) => {
@@ -4650,6 +4726,13 @@ impl FormulaEvaluator {
                 Some(vec![node])
             }
             FormulaExpression::MethodChain { base, calls } => {
+                // One cell of a grid, `Board.at(x, y)`, reads which cells the grid holds and that
+                // cell, not the whole grid: a game of life's neighbour count read through eight of
+                // these was reached by a toggle anywhere on the board, and every count on it was
+                // worked out again for each step.
+                if let Some(read) = Self::one_cell_of_a_grid(base, calls, context, followed) {
+                    return read.map(|cell| vec![cell]);
+                }
                 // Resolve base container node
                 let base_node = Self::eval_expr_to_node(base, context)?;
                 // Start from base's accessible children
