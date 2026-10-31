@@ -824,13 +824,14 @@ context mode = "system"
   library's `themes` folder; one in a `themes` folder beside `settings.os`, or in a user's library,
   is offered beside them, and takes the place of a shipped one of the same name. Its keys are `background`, `surface`,
   `text`, `muted`, `line`, `accent`, `success`, `warning`, `danger`, `font`, `mono`, `radius`,
-  `size`, `leading`, `numerals` and `backdrop` (below). `font` is the font of the page, and `mono`
+  `size`, `leading`, `numerals`, `motion` and `backdrop` (below). `font` is the font of the page, and `mono`
   the one the values of `string` and number fields, code in markdown and the markdown editor are
   drawn in - a monospace font, unless a theme says otherwise: `- mono = $(font)` draws values in
   the page's font. `size` is the size of the text (`14px`), which values and text follow and labels,
   headings, chips and buttons do not - their kinds say theirs; `leading` the height of a line, as
   a factor of the size (`1.5`); `numerals` is `proportional` or `tabular`, digits of one width so
-  that figures line up down a column. The shipped theme keeps each mode's colours under `light`
+  that figures line up down a column; `motion` is `full`, the default, or `none`, which stills every
+  node's `motion` and draws a hold's fill without moving. The shipped theme keeps each mode's colours under `light`
   and `dark` and picks one by `mode`, as `- surface = $(mode == "dark" ? dark/surface :
   light/surface)`, so `context theme { - dark { - surface = "#000" } }` changes the dark colour
   alone and the light one stays as it was. `light` and `dark` are keys of the theme, not kinds of
@@ -890,6 +891,8 @@ context mode = "system"
     the `style`.
   - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
   - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box a filter is typed in.
+  - `hold`: `style`, how a press held on a node with `on hold` is shown while it lasts - `fill`,
+    `ring` or `none` (see "on hold").
 
   Sizes are written as text, `"14px"`; weights and factors as numbers. A `table`, a `tab` bar and
   a `filter` can also say how the kinds inside them look: `- table { - button { - height =
@@ -1403,6 +1406,9 @@ div Cell (hold="2s") {
 ```
 
 A hold is run as a click is: from the node's own place, as one change and one step to take back.
+While a press is held, the theme's `hold { style }` can show it: `fill` fills the node from the
+bottom over the hold time, `ring` draws a ring that closes over it, and `none`, the default, shows
+nothing. Either goes away as soon as the press is let go, moves off or becomes the hold.
 `press` runs another node's `on click`, never its `on hold`. On an entry of a movable list, a
 long press that begins dragging the entry is a drag, and not a hold.
 
@@ -1937,6 +1943,20 @@ list Ideas (entry=<Card>, layout="flow", min-width=260px) { }
 div Card (layout="horizontal", alignment="center", shadow="soft") { }
 ```
 
+`motion` moves a node, by name: `pop` (it grows a little and settles back), `shake`, `fade` (it
+appears), `burst` (dots fly out from its middle and fade, in its text colour) and `pulse`. `pulse`
+runs for as long as `motion` says it. The others play once, when the value of `motion` **changes**
+to them - not when the node is drawn, and not when the document is opened - so a formula says when:
+`motion=$(flagged ? "pop" : "")` pops once as the flag goes in, and never again until it has come
+out and gone back in. To play the same motion again, a value can carry anything after a colon,
+which only makes it a new value: `motion=$("burst:" + digs)` bursts at every dig. A name the page
+does not know moves nothing. The theme's `motion = none`, or a system set to reduce motion, stills
+all of it.
+
+```overseer
+div Cell (motion=$(open ? (mine ? "burst" : "fade") : (flagged ? "pop" : ""))) { }
+```
+
 `view="table"` draws a list as a table, a column for each field of its entries, with `header=true`
 for a heading naming them and `sticky=true` to keep the heading in view while the rows scroll. A
 node of an entry that says `span="row"` is not a column but a line of its own across the row,
@@ -2328,7 +2348,7 @@ div Tasks {
 ## Reserved Keywords
 
 - **Layout**: `layout` (`vertical`, `horizontal`, `flow`, `inherit`, `opposite`), `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`, `alignment`, `min-width`
-- **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `value-padding`
+- **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
 - **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)

@@ -97,6 +97,14 @@ const gridPlaceIn = (type, name) => {
 }
 
 const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
+/// The motions a node's `motion=` can name, each a class in the stylesheet: those played once, as
+/// the value changes to them, and `pulse`, which runs for as long as the value says it.
+const MOTIONS_ONCE = ['pop', 'shake', 'fade', 'burst']
+const MOTIONS_LOOPING = ['pulse']
+/// How the theme's `hold/style` draws a hold under way: each is a class in the stylesheet.
+const HOLD_STYLES = ['fill', 'ring']
+/// The dots a `burst` throws.
+const BURST_DOTS = 8
 /// The ways a button can be drawn, the theme's `button/style`; `solid` is the stylesheet's own.
 const BUTTON_STYLES = ['outline', 'plain']
 /// The kinds of element a theme says something about, and those of them that hold others - a
@@ -2052,6 +2060,7 @@ export class OverseerRenderer {
                     if (node.__uid) element.dataset.uid = node.__uid
                 }
             } catch (_) { /* no-op */ }
+            try { this.applyMotion(element, node, path) } catch (_) { /* never break a render over a motion */ }
 
             // Guard against null/undefined container (can occur during selective patch attempts when DOM node not found)
             if (!container) { if (DEBUG_MODE) console.warn('renderNode: null container for path', path, 'node', node); return }
@@ -4090,6 +4099,7 @@ export class OverseerRenderer {
         const stop = () => {
             if (timer) clearTimeout(timer)
             timer = null
+            this.hideHoldFill(element)
         }
         const abandon = () => {
             if (!timer) return
@@ -4098,11 +4108,14 @@ export class OverseerRenderer {
         }
         const arm = (onTime) => {
             stop()
+            const ms = this.holdTimeOf(node)
             timer = setTimeout(() => {
                 timer = null
+                this.hideHoldFill(element)
                 if (this._entryDrag && this._entryDrag.started) return
                 onTime()
-            }, this.holdTimeOf(node))
+            }, ms)
+            this.showHoldFill(element, ms)
         }
 
         element.addEventListener('click', (event) => {
@@ -8313,6 +8326,126 @@ export class OverseerRenderer {
         return null
     }
 
+    /** A theme key as the element itself says it, or else the nearest element above. */
+    themeAt(element, key) {
+        const own = element.style && element.style.getPropertyValue(`--ov-${key}`)
+        return own ? own.trim() : this.themeAbove(element, key)
+    }
+
+    /** Whether motion is wanted where this element is: the theme's `motion`, and the system's. */
+    motionWanted(element) {
+        if (this.themeAt(element, 'motion') === 'none') return false
+        try {
+            if (typeof window !== 'undefined' && window.matchMedia &&
+                window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false
+        } catch (_) { /* a page without media queries moves */ }
+        return true
+    }
+
+    /**
+     * A node's `motion=`, a named motion. A looping one (`pulse`) is drawn for as long as the value
+     * names it. One played once (`pop`, `shake`, `fade`, `burst`) plays when the worked-out value
+     * changes to it - never because the node was drawn again, which an unrelated press does to
+     * whole containers: the value last seen is remembered by the document and the node's address,
+     * across every redraw. An address seen for the first time plays nothing, so opening a document
+     * does not play every motion in it. `name:<anything>` is the motion `name`, the rest only there
+     * to give a new value, so that the same motion can be played again.
+     */
+    applyMotion(element, node, path) {
+        if (!element || !element.classList || !node?.parameters || node.parameters.motion === undefined) return
+        // A formula not worked out yet says nothing - not even that the motion has changed.
+        if (this.parameterHasFormula(node, 'motion') && node.parameters._computed_motion === undefined) return
+        const said = String(this.getParameterValue(node, 'motion') ?? '').trim()
+        const name = said.split(':')[0].trim().toLowerCase()
+        if (!this._motionsSeen) this._motionsSeen = new Map()
+        const file = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+        const key = `${file}\n${JSON.stringify(Array.isArray(path) ? path : [])}`
+        const seen = this._motionsSeen.has(key)
+        const before = this._motionsSeen.get(key)
+        this._motionsSeen.set(key, said)
+
+        for (const way of MOTIONS_LOOPING) element.classList.toggle(`ov-motion-${way}`, way === name)
+        if (!MOTIONS_ONCE.includes(name) || !seen || before === said) return
+        // Whether motion is wanted is known only once the element is in the page, under its theme.
+        queueMicrotask(() => {
+            if (!element.isConnected || !this.motionWanted(element)) return
+            this.playMotionOnce(element, name)
+        })
+    }
+
+    /** One motion played on an element, its class taken off again once it has run. */
+    playMotionOnce(element, name) {
+        const cls = `ov-motion-${name}`
+        for (const way of MOTIONS_ONCE) element.classList.remove(`ov-motion-${way}`)
+        // Read the layout between taking the class off and putting it back, or the browser sees
+        // no change and plays nothing.
+        void element.offsetWidth
+        element.classList.add(cls)
+        const placed = name === 'burst' ? this.anchorOverlays(element) : () => {}
+        let dots = null
+        if (name === 'burst') {
+            dots = document.createElement('span')
+            dots.className = 'ov-burst'
+            dots.setAttribute('aria-hidden', 'true')
+            for (let i = 0; i < BURST_DOTS; i++) {
+                const dot = document.createElement('i')
+                dot.style.setProperty('--ov-burst-angle', `${Math.round(i * 360 / BURST_DOTS)}deg`)
+                dots.appendChild(dot)
+            }
+            element.appendChild(dots)
+        }
+        // A timer as well as `animationend`: an element that never draws - hidden, or under a
+        // stylesheet that turned the motion off - sends no event.
+        let done = false
+        const end = () => {
+            if (done) return
+            done = true
+            element.classList.remove(cls)
+            if (dots) dots.remove()
+            placed()
+        }
+        element.addEventListener('animationend', (event) => { if (event.target === element || event.target === dots?.lastChild) end() })
+        setTimeout(end, 1000)
+    }
+
+    /**
+     * Makes an element the place what is drawn over it - a burst, a hold's fill - is positioned
+     * from, if it is not one already, and gives back what undoes that.
+     */
+    anchorOverlays(element) {
+        if (element.classList.contains('ov-overlay-anchor')) return () => {}
+        let position = ''
+        try { position = getComputedStyle(element).position } catch (_) { /* no layout */ }
+        if (position && position !== 'static') return () => {}
+        element.classList.add('ov-overlay-anchor')
+        return () => element.classList.remove('ov-overlay-anchor')
+    }
+
+    /**
+     * What a hold under way looks like, the theme's `hold/style`: a fill or a ring that grows over
+     * the hold time, drawn over the element and taken off when the press ends one way or another.
+     * Where motion is not wanted it is a still tint for as long as the press lasts.
+     */
+    showHoldFill(element, ms) {
+        this.hideHoldFill(element)
+        const style = this.themeAt(element, 'hold-style')
+        if (!HOLD_STYLES.includes(style)) return
+        const fill = document.createElement('span')
+        fill.className = `ov-hold ov-hold-${style}`
+        if (!this.motionWanted(element)) fill.classList.add('ov-hold-still')
+        fill.setAttribute('aria-hidden', 'true')
+        fill.style.setProperty('--ov-hold-time', `${ms}ms`)
+        fill._unanchor = this.anchorOverlays(element)
+        element.appendChild(fill)
+    }
+
+    hideHoldFill(element) {
+        for (const fill of element.querySelectorAll(':scope > .ov-hold')) {
+            if (fill._unanchor) fill._unanchor()
+            fill.remove()
+        }
+    }
+
     /** The document's own top: what it wrote there last time is taken off first. */
     applyDocumentContexts(nodes) {
         const root = typeof document !== 'undefined' ? document.documentElement : null
@@ -11618,7 +11751,9 @@ export class OverseerRenderer {
                     }
                     return false
             }
-            
+            // A field patched in place rather than drawn again: its motion may have changed with it.
+            try { this.applyMotion(element, newNode, pathArray) } catch (_) { /* never break a patch over a motion */ }
+
             return true
         } catch (error) {
             if (DEBUG_MODE) console.warn('Failed to update single element:', error)
