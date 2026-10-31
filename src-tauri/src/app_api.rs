@@ -1469,17 +1469,27 @@ pub(crate) fn settle_after_change(
     }
     // Entries made or taken out, carried through the graph - see `follow_the_shape`. The graph is
     // the one a settle between two actions already carried, or the one held for the text.
+    //
+    // The one a settle between actions carried is used whether or not the shape moved: it took
+    // the graph out of the cache, so the way below finds none, and works the document out whole.
+    // An `each` that toggles cells followed by an `inc` - a game of life's step - settled the
+    // whole board after its selective pass on every tick, and that was half of what a tick cost.
     if let (Some(changed), Some(mut following)) = (
-        report.filter(|changed| changed.structural && !changed.shape_unknown),
-        following,
+        report.filter(|changed| !changed.shape_unknown),
+        following.filter(|following| {
+            following.graph.is_some() || report.is_some_and(|changed| changed.structural)
+        }),
     ) {
-        let graph = following
-            .graph
-            .take()
-            .or_else(|| crate::document_cache::take_graph(as_it_stood));
+        let graph = following.graph.take().or_else(|| {
+            changed
+                .structural
+                .then(|| crate::document_cache::take_graph(as_it_stood))
+                .flatten()
+        });
         if let Some(mut graph) = graph {
             let mut unseen = changed.fields[following.fields_settled.min(changed.fields.len())..].to_vec();
-            unseen.extend(changed.view_state.iter().map(|(address, _)| address.clone()));
+            let viewers = &changed.view_state[following.viewers_settled.min(changed.view_state.len())..];
+            unseen.extend(viewers.iter().map(|(address, _)| address.clone()));
             if follow_the_shape(nodes, &mut graph, &unseen, &changed.shapes).is_some() {
                 return Some(Some(graph));
             }
@@ -1550,7 +1560,8 @@ pub(crate) fn settle_so_far(nodes: &mut Vec<OverseerNode>) -> bool {
         return false;
     };
     let mut unseen = fields[following.fields_settled.min(fields.len())..].to_vec();
-    unseen.extend(crate::actions::viewers_so_far());
+    let viewers = crate::actions::viewers_so_far();
+    unseen.extend(viewers[following.viewers_settled.min(viewers.len())..].iter().cloned());
     if follow_the_shape(nodes, &mut graph, &unseen, &shapes).is_none() {
         // The graph may be half carried, and it is gone from the cache: nothing after this can
         // follow anything with it.
@@ -1560,6 +1571,7 @@ pub(crate) fn settle_so_far(nodes: &mut Vec<OverseerNode>) -> bool {
     crate::actions::shapes_seen_to(shapes.len());
     following.graph = Some(graph);
     following.fields_settled = fields.len();
+    following.viewers_settled = viewers.len();
     crate::actions::keep_following(following);
     true
 }

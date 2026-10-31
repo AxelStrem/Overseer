@@ -110,6 +110,8 @@ struct PassRoot {
     paths: Option<std::collections::HashMap<usize, Vec<String>>>,
     /// The name of every node outside the contexts - see `may_be_found_below`.
     names: Option<std::collections::HashSet<String>>,
+    /// The same, for what is under each node a bare name was looked for below, by its pointer.
+    below: std::collections::HashMap<usize, std::collections::HashSet<String>>,
 }
 
 /// Represents a parsed formula expression
@@ -885,7 +887,13 @@ impl FormulaEvaluator {
     pub fn begin_pass_over(root: *const [OverseerNode]) {
         Self::begin_pass_memo();
         Self::with_pass_root(|slot| {
-            *slot = Some(PassRoot { root: root as *const OverseerNode, len: root.len(), paths: None, names: None })
+            *slot = Some(PassRoot {
+                root: root as *const OverseerNode,
+                len: root.len(),
+                paths: None,
+                names: None,
+                below: Default::default(),
+            })
         });
     }
 
@@ -970,6 +978,44 @@ impl FormulaEvaluator {
                 }
                 let mut out = std::collections::HashSet::new();
                 gather(root, &mut out);
+                out
+            });
+            names.contains(name)
+        })
+    }
+
+    /// Whether a search going down from this node could find a node of this name - the same
+    /// question as `may_be_found_below`, asked of the node the search starts from.
+    ///
+    /// A bare name climbing out of a cell of a grid searches under the grid on its way up, and
+    /// that is every node of every cell: `W`, read from each of a game of life's 400 cells and
+    /// found two steps further up, cost 0.87 ms a read where `/life/W` cost 0.025. What is under
+    /// a node is gathered once a pass, the first time a search starts there.
+    fn may_be_found_under(root: &[OverseerNode], node: &OverseerNode, name: &str) -> bool {
+        if !Self::may_be_found_below(root, name) {
+            return false;
+        }
+        Self::with_pass_root(|slot| {
+            let Some(held) = slot.as_mut() else { return true };
+            if held.root != root.as_ptr() || held.len != root.len() {
+                return true;
+            }
+            let names = held.below.entry(node as *const OverseerNode as usize).or_insert_with(|| {
+                // What `find_value_by_name_deep_from` can land on: no context, and no wrapper,
+                // which it looks through without matching.
+                fn gather(nodes: &[OverseerNode], out: &mut std::collections::HashSet<String>) {
+                    for n in nodes {
+                        if crate::contexts::is_context(n) {
+                            continue;
+                        }
+                        if !crate::addressing::is_wrapper(n) && !out.contains(&n.name) {
+                            out.insert(n.name.clone());
+                        }
+                        gather(&n.children, out);
+                    }
+                }
+                let mut out = std::collections::HashSet::new();
+                gather(&node.children, &mut out);
                 out
             });
             names.contains(name)
@@ -1494,7 +1540,7 @@ impl FormulaEvaluator {
                     }
                     // c) Deep search under ancestor (first match)
                     let mut below: Vec<String> = Vec::new();
-                    let found_below = if Self::may_be_found_below(context.document_root, field_name) {
+                    let found_below = if Self::may_be_found_under(context.document_root, ancestor, field_name) {
                         FormulaEvaluator::find_value_by_name_deep_from(ancestor, field_name, &mut below)
                     } else {
                         None

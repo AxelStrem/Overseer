@@ -355,6 +355,9 @@ pub struct Following {
     pub graph: Option<crate::dependencies::Graph>,
     /// How many of the report's fields a settle between actions has already seen to.
     pub fields_settled: usize,
+    /// And of the viewer's values. A guarded press writes nothing else, and a settle at the end
+    /// that saw to them all again redid everything the settle between actions had done.
+    pub viewers_settled: usize,
 }
 
 thread_local! {
@@ -492,7 +495,7 @@ pub fn start_reporting() {
 #[must_use]
 pub fn follow_against(text: &str) -> FollowingGuard {
     FOLLOWING.with(|f| {
-        *f.borrow_mut() = Some(Following { text: text.to_string(), graph: None, fields_settled: 0 })
+        *f.borrow_mut() = Some(Following { text: text.to_string(), graph: None, fields_settled: 0, viewers_settled: 0 })
     });
     FollowingGuard
 }
