@@ -3029,9 +3029,22 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     margin: 0 1px;
 }
 
-/* A chip's name written as markdown, kept on one line as a plain name is. */
+/* A chip's name, kept on one line. A chip is never wider than the place it is drawn in - a
+ * table's column is a fixed share of the width, and a chip that kept its own ran over the
+ * column beside it - so a name that does not fit is cut short, and its icon and cross stay. */
+.tag-chip {
+    max-width: 100%;
+    min-width: 0;
+}
 .tag-chip .chip-name {
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+.tag-chip > .chip-icon,
+.tag-chip > .tag-remove {
+    flex-shrink: 0;
 }
 .tag-chip .chip-name code {
     font-size: inherit;

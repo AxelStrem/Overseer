@@ -5649,8 +5649,20 @@ export class OverseerRenderer {
         chip.className = 'tag-chip'
         chip.dataset.tag = tag
         const name = (known && known.name) || tag
-        if (known && known.named) this.setChipName(chip, name)
-        else this.setTextWithIcons(chip, name)
+        // The name is held in one span, as `setChipName` holds a marked-up one, so that a chip
+        // wider than its column can cut the name short with an ellipsis: the text of a flex
+        // box is never given one.
+        if (known && known.named && NAME_MARKUP.test(name)) this.setChipName(chip, name)
+        else if (name !== '') {
+            const held = document.createElement('span')
+            held.className = 'chip-name'
+            this.setTextWithIcons(held, name)
+            if (held.dataset.text !== undefined) {
+                chip.dataset.text = held.dataset.text
+                delete held.dataset.text
+            }
+            chip.appendChild(held)
+        }
         // An entry's own icon, from the library, comes before whatever its name says.
         if (known && typeof known.icon === 'string' && LIBRARY_ICON.test(known.icon.trim())) {
             const icon = this.createIconElement(known.icon.trim())
@@ -5668,6 +5680,13 @@ export class OverseerRenderer {
         if (known && known.hover) chip.title = String(known.hover)
         // A chip that is only an icon still says what it is, when asked.
         else if (nameAsText(name) === '') chip.title = tag
+        // A name cut short is still there to read, on the pointer.
+        chip.addEventListener('mouseenter', () => {
+            const held = chip.querySelector('.chip-name')
+            const said = nameAsText(name)
+            if (!held || !said || held.scrollWidth <= held.clientWidth || chip.title.startsWith(said)) return
+            chip.title = chip.title ? `${said} - ${chip.title}` : said
+        })
         if (!known) {
             // A tag the vocabulary does not list. Shown rather than hidden: it is in the
             // document, and dropping it from the display would misreport what the field holds.
