@@ -1739,7 +1739,8 @@ fn css_size_text(value: &OverseerValue) -> Option<String> {
 /// Each column carries what the renderer needs and nothing else: the field's name, to match a
 /// cell to a column; its label, which becomes the heading; its width, which moves from the cell
 /// to the column because a percentage on a grid item is a percentage of its own column; whether
-/// it takes a line of its own below the rest; and whether it is a separator.
+/// it takes a line of its own below the rest; whether it is a separator; and where in its cell
+/// the field says its value sits (`alignment`), which its heading follows.
 ///
 /// A mark has no name of its own - every one is called `mark` - so two of them in a row would be
 /// one column. A mark's column is named by its place among the template's marks instead,
@@ -1784,12 +1785,18 @@ fn table_columns(template: &OverseerNode) -> String {
         } else {
             child.name.clone()
         };
+        // Where a field says its value sits, its heading sits too, so the two line up.
+        let align = match child.parameters.get("alignment") {
+            Some(OverseerValue::String(s)) if child.node_type != "mark" => s.clone(),
+            _ => String::new(),
+        };
         columns.push(serde_json::json!({
             "name": name,
             "label": label,
             "width": width,
             "span": spans_the_row,
             "separator": is_separator,
+            "align": align,
         }));
     }
     serde_json::to_string(&columns).unwrap_or_else(|_| "[]".to_string())

@@ -1414,8 +1414,31 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     padding: var(--ov-table-row-padding, 8px) var(--ov-table-row-rule--side, 8px) !important;
 }
 
-.overseer-list.view-table > .table-row:hover {
-    background-image: var(--ov-table-row-pointed--tint, none);
+/* The tint is a layer of its own over the row rather than its background, so it can fade in and
+   out - a background image cannot - and so it leaves a row's own colour and backdrop in place. It
+   lies over the cells, which a tint this faint does not hide, and lets the pointer through. A row
+   that is pressed has its own veil in the same place (`.overseer-pressable`), and keeps it. */
+.overseer-list.view-table > .table-row {
+    position: relative;
+}
+.overseer-list.view-table > .table-row:not(.overseer-pressable)::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--ov-table-row-pointed--tint, none);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease-in-out;
+}
+.overseer-list.view-table > .table-row:not(.overseer-pressable):hover::after {
+    opacity: 1;
+}
+@container style(--ov-motion: none) {
+    .overseer-list.view-table > .table-row:not(.overseer-pressable)::after { transition: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .overseer-list.view-table > .table-row:not(.overseer-pressable)::after { transition: none; }
 }
 
 /* A grid item will not shrink below its content unless told it may, and these are columns of a
@@ -1440,6 +1463,29 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     min-width: 0;
     padding: var(--ov-field-value-frame--pad, 1px 0);
     min-height: 0;
+}
+
+/* A field's `alignment` in a table column: its value - text, figure or chips - in the middle of
+   the cell or at its end, and its heading with it. */
+.overseer-list.view-table > .table-row > .overseer-field.column-center {
+    justify-content: center;
+}
+.overseer-list.view-table > .table-row > .overseer-field.column-far {
+    justify-content: flex-end;
+}
+.overseer-list.view-table > .table-row > .overseer-field.column-center > .field-value,
+.table-heading.column-center {
+    text-align: center;
+}
+.overseer-list.view-table > .table-row > .overseer-field.column-far > .field-value,
+.table-heading.column-far {
+    text-align: right;
+}
+.table-heading.sortable.column-center {
+    justify-content: center;
+}
+.table-heading.sortable.column-far {
+    justify-content: flex-end;
 }
 
 /* A button's cell, which the renderer puts around it: the cell fills the column and takes the

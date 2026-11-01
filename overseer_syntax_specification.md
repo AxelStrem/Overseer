@@ -876,7 +876,8 @@ context mode = "system"
     `row { padding, rule, pointed }` - the space above and below a row's cells (`8px`), `rule`,
     which draws the rows as lines of the table rather than as cards, with a line of that thickness
     in `line` under each (`none` for none), and `pointed`, `none` or `tint`, shading the row under
-    the pointer or, on a touch screen, the one last tapped; `cell-padding`, the space after each
+    the pointer or, on a touch screen, the one last tapped - the shade fades in and out, over the
+    row's own colour and backdrop, and comes at once where `motion = none`; `cell-padding`, the space after each
     cell's content, where by default there is `6px` on either side; `detail`, how a `span="row"`
     line is drawn - `frame` as anything else, `bar` (a bar in `accent` down its side, on
     `surface`) or `plain`; and `detail-padding`, the space around that line's content.
@@ -1961,7 +1962,9 @@ div Element (margin-top=5, margin-bottom=15, margin-left=0, margin-right=20) {
 `layout` is `vertical` unless it says `horizontal`, `flow`, `inherit` or `opposite`. `flow` fits as
 many equal columns as there is room for and wraps the rest - three cards across on a wide window,
 one on a narrow one - with `min-width` saying how narrow a column may get. `alignment` places the
-children across the way they run: `near`, `center` or `far`. `shadow` is `soft`, `lifted`,
+children across the way they run: `near`, `center` or `far`. On a field in a list drawn as a
+table it places the value across its cell - text, figure or chips - and the column's heading with
+it: `enum stage (alignment="center")` is a column of centred chips under a centred name. `shadow` is `soft`, `lifted`,
 `floating`, `none`, or a CSS shadow of its own.
 
 ```overseer

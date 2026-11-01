@@ -310,3 +310,24 @@ fn a_width_in_parts_is_written_back_as_it_was_given() {
     assert!(written.contains("width=1.5fr"), "{}", written);
     assert!(written.contains("width=auto"), "{}", written);
 }
+
+#[test]
+fn a_column_carries_where_its_field_says_its_value_sits() {
+    let doc = r#"
+tab t (label="T") {
+    div (hidden=true) {
+        div Row (layout="horizontal") {
+            string handle (label="id", width=10%) = ""
+            string stage (label="stage", width=10%, alignment="center") = ""
+            mark (type="separator")
+            int points (label="pts", width=10%, alignment="far") = 0
+        }
+    }
+
+    list Rows (entry=<Row>, view="table", header=true) { }
+}
+"#;
+    let columns = columns(&resolved(doc), "Rows");
+    let align: Vec<&str> = columns.iter().map(|c| c["align"].as_str().unwrap_or("?")).collect();
+    assert_eq!(align, vec!["", "center", "", "far"]);
+}

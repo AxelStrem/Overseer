@@ -3608,6 +3608,7 @@ export class OverseerRenderer {
             .join(' ')
 
         const column = new Map(across.map((c, i) => [c.name, i + 1]))
+        const aligned = new Map(across.map((c) => [c.name, c.align || '']))
 
         for (const row of Array.from(list.children)) {
             if (row.classList.contains('table-header')) continue
@@ -3634,6 +3635,7 @@ export class OverseerRenderer {
                 held.style.width = ''
                 if (column.has(name)) {
                     cell.style.gridColumn = String(column.get(name))
+                    this.alignInColumn(cell, aligned.get(name))
                 } else if (ownLine.has(name)) {
                     // Its own line under the rest, inside the row - so it keeps the row's box
                     // and whatever colour the row is tinted, rather than becoming a row of its
@@ -3709,10 +3711,21 @@ export class OverseerRenderer {
             cell.className = 'table-heading'
             this.setTextWithIcons(cell, c.label || '')
             cell.style.gridColumn = String(i + 1)
+            this.alignInColumn(cell, c.align)
             if (sortable.includes(c.name)) this.makeHeadingSort(list, cell, c.name, sorts)
             header.appendChild(cell)
         })
         list.insertBefore(header, list.firstChild)
+    }
+
+    /**
+     * A cell or a heading placed across its column as the field's `alignment` says - `near`, the
+     * start, where it says nothing; `center`; or `far`, the end. The heading takes the field's
+     * word, so a centred chip has its name centred over it.
+     */
+    alignInColumn(cell, align) {
+        cell.classList.toggle('column-center', align === 'center')
+        cell.classList.toggle('column-far', align === 'far')
     }
 
     /**

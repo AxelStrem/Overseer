@@ -10,6 +10,7 @@ tab project (label="Project", mutable=true) {
                 string name (label="", font-weight="bold", font-size=13px, padding=0, width=38%) = ""
                 string tag (label="", font-size=11px, font-color="#9ca3af", padding=0, width=24%) = ""
                 string colour (label="", kind="color", font-size=11px, font-color="#9ca3af", padding=0, width=28%) = "#6b7280"
+                string glow (hidden=true) = ""
                 button about (icon="note", margin=0, padding=0, width=10%, hover-text="What this tag is about",
                               background-color="transparent", hover-color=#8882,
                               font-color=$(../About/about == "" ? "#6b7280" : "inherit")) {
@@ -28,36 +29,43 @@ tab project (label="Project", mutable=true) {
                 - tag = "filed"
                 - name = "filed"
                 - colour = "#6b7280"
+                - glow = "#9ca3af"
             }
             - {
                 - tag = "planning"
                 - name = "planning"
                 - colour = "#0f766e"
+                - glow = "#2dd4bf"
             }
             - {
                 - tag = "ready"
                 - name = "ready"
                 - colour = "#1d4ed8"
+                - glow = "#60a5fa"
             }
             - {
                 - tag = "testing"
                 - name = "testing"
                 - colour = "#7c3aed"
+                - glow = "#a78bfa"
             }
             - {
                 - tag = "later"
                 - name = "later"
                 - colour = "#eab308"
+                - glow = "#facc15"
             }
             - {
                 - tag = "finished"
                 - name = "finished"
                 - colour = "#15803d"
+                - glow = "#4ade80"
             }
             - {
                 - tag = "cancelled"
                 - name = "cancelled"
                 - colour = "#9f1239"
+                - glow = "#fb7185"
             }
         }
 
@@ -132,11 +140,12 @@ tab project (label="Project", mutable=true) {
 
         div Comment (layout="vertical", margin=0, spacing=0) {
             context theme {
-                - backdrop {
+                - backdrop (base=none) {
                     - mark {
                         - kind = "icon"
                         - source = $(/project/people/People.find(author)/icon)
-                        - opacity = 0.1
+                        - colour = $(/project/people/People.find(author)/colour)
+                        - opacity = 0.18
                         - size = "120px"
                         - position = "right 16px top 8px"
                     }
@@ -191,30 +200,47 @@ tab project (label="Project", mutable=true) {
             int lines (label="lines", format="trim", width=6%) = 0
         }
 
-        div Item (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center",
+        div Item (layout="horizontal", margin=0, margin-bottom=3px, spacing=6, padding=2, alignment="center",
+                  background-color="inherit",
                   movable=$(pinned == false),
                   border-style=$(working == true ? "solid 2px #22c55e" : "default"),
-                  background-color=$(flags.filter(|t| t == "asked").count() > 0 ? "#38331a" :
-                                    (stage == "testing" ? "#2c2140" :
-                                    (done >= 75 ? "#14321f" :
-                                    (done >= 25 ? "#1c2a3a" : "inherit"))))) {
+                  shadow=$("inset 3px 0 0 " + glow + ", inset 16px 0 16px -14px " + glow + "88, -3px 0 10px -5px " + glow)) {
             context hover-text = true
             context theme {
                 - text = $(waiting > 0 ? muted : "inherit")
+                - backdrop {
+                    - asked_mark {
+                        - kind = $(asked ? "icon" : "none")
+                        - source = "message-circle-question"
+                        - colour = "#facc15"
+                        - opacity = 0.3
+                        - size = "26px"
+                        - position = "left 14px top 6px"
+                    }
+                    - asked_corner {
+                        - kind = $(asked ? "gradient" : "none")
+                        - from = "#facc15cc"
+                        - to = "transparent"
+                        - angle = 225
+                        - center = "2%"
+                        - sharpness = "97%"
+                    }
+                }
             }
             mark (type="grip")
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=7%) = ""
             mark (type="separator")
             enum owner (label="by", vocabulary="/project/people/People", placeholder="", font-size=11px, width=6%,
+                        alignment="center",
                         hover-text="Whose item it is") = ""
             mark (type="separator")
-            string title (label="title", font-size=14px, width=37%,
+            string title (label="title", font-size=14px, width=40%,
                           hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
             mark (type="separator")
-            enum stage (label="stage", vocabulary="/project/Stages", width=6%,
+            enum stage (label="stage", vocabulary="/project/Stages", width=5%, alignment="center",
                         hover-text="Where it is: filed, planning, ready, testing or later",
                         withhold=$(open_kids > 0 ? "finished, cancelled" : "")) = "filed" {
                 on change {
@@ -242,40 +268,40 @@ tab project (label="Project", mutable=true) {
             tags flags (label="flags", vocabulary="/project/Flags", width=6%,
                         hover-text="How it is to be worked") = ""
             mark (type="separator")
-            int points (label="pts", format="trim", width=4%,
+            int points (label="pts", format="trim", width=3%, alignment="center",
                         hover-text="How much work: 1 the smallest thing, 8 most of a day") = 1
             mark (type="separator")
-            enum complexity (label="think", vocabulary="/project/Complexities", width=6%,
+            enum complexity (label="think", vocabulary="/project/Complexities", width=6%, alignment="center",
                              hover-text="How much thinking building it takes") = "unassigned"
             bool pinned (hidden=true) = false
             bool working (hidden=true) = false
 
             timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
             mark (type="separator")
-            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=6%,
+            timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=5%,
                                hover-text="Since its stage or its conversation last changed, or a part of it closed") =
                 $(../said_at > ../touched_at ? ../said_at : ../touched_at)
 
             mark (type="separator")
-            button talk (icon="note", margin=0, width=30px,
+            button talk (icon="note", margin=0, width=36px,
                          font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
                 on click {
                     toggle_fold (path="../Talk")
                 }
             }
-            button work (icon="burger", margin=0, width=30px, hidden=$(../Agents/Work.count() == 0)) {
+            button work (icon="burger", margin=0, width=36px, hidden=$(../Agents/Work.count() == 0)) {
                 on click {
                     toggle_fold (path="../Agents")
                 }
             }
-            button pin (icon="pin", margin=0, width=30px, hover-text="Keep it on top of the list, or let it go",
+            button pin (icon="pin", margin=0, width=36px, hover-text="Keep it on top of the list, or let it go",
                         background-color=$(../pinned == true ? "#f59e0b" : "transparent"),
                         font-color=$(../pinned == true ? "#1a1a1a" : "#6b7280")) {
                 on click {
                     toggle (path="../pinned")
                 }
             }
-            button drop (icon="cross", margin=0, width=30px, hidden=$(open_kids > 0)) {
+            button drop (icon="cross", margin=0, width=36px, hidden=$(open_kids > 0)) {
                 on click {
                     remove (from="/project/Items", keyField="handle", keyValue=$(../handle))
                 }
@@ -331,6 +357,9 @@ tab project (label="Project", mutable=true) {
                 $(../after.filter(|h| /project/Items.filter(|x| x/handle == h).count() > 0).count())
             string colour (hidden=true) =
                 $(/project/Stages.filter(|s| s/tag == ../stage).map(|s| s/colour).first())
+            string glow (hidden=true) =
+                $(/project/Stages.filter(|s| s/tag == ../stage).map(|s| s/glow).first())
+            bool asked (hidden=true) = $(../flags.filter(|t| t == "asked").count() > 0)
             timestamp closed_at (hidden=true) =
                 $(/project/History.filter(|x| x/parent == ../handle).count() == 0 ? ../added :
                   /project/History.filter(|x| x/parent == ../handle)
@@ -401,12 +430,23 @@ tab project (label="Project", mutable=true) {
     // no step of any address: the lists are /project/Items and /project/History as they always
     // were, to the formulas here and to anything reading them alike.
     tab (label="Open", hover-text="What is still to do") {
+        context theme {
+            - table {
+                - frame = "none"
+                - row {
+                    - pointed = "tint"
+                }
+                - field {
+                    - spacing = "4px"
+                }
+            }
+        }
         div (layout="horizontal", margin=0, spacing=10, alignment="center") {
             filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, flags",
                     status="done", hide="waiting", vocabulary="/project/Labels", label="find", width=100%) { }
         }
 
-        div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center") {
+        div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none) {
             textbox handle (label="", placeholder="id", width=10%) = $(fresh_key(/project/Items, /project/History))
             textbox title (label="", placeholder="what needs doing", width=26%) = ""
             textbox parent (label="", placeholder="under", width=10%) = ""

@@ -40,9 +40,11 @@ fn a_project(tag: &str) -> String {
 /// A worked-out field of the entry with this handle, in Items or History.
 fn read(nodes: &[OverseerNode], list: &str, handle: &str, field: &str) -> Option<OverseerValue> {
     fn seek<'a>(node: &'a OverseerNode, name: &str) -> Option<&'a OverseerNode> {
-        node.children.iter().filter(|c| c.node_type != "on" && c.node_type != "button").find_map(|c| {
-            if c.name == name { Some(c) } else { seek(c, name) }
-        })
+        // A context's keys are not the item's fields: the item's theme holds a backdrop layer with
+        // a `colour` of its own.
+        node.children.iter()
+            .filter(|c| c.node_type != "on" && c.node_type != "button" && !overseer::contexts::is_context(c))
+            .find_map(|c| if c.name == name { Some(c) } else { seek(c, name) })
     }
     let list = overseer::addressing::find(nodes, &format!("project/{}", list)).expect(list);
     let entry = list
