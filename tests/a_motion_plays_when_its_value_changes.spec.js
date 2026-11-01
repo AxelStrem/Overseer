@@ -4,7 +4,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // because the node was drawn again - a press elsewhere redraws whole containers, and every flag
 // in a minesweeper would pop again at each dig. The value last seen is remembered by address, so
 // a first draw plays nothing. `pulse` runs while the value names it. The theme's `motion = none`
-// stills it all. A hold under way is drawn as the theme's `hold/style` says, and goes with it.
+// stills it all. A hold under way is drawn as the theme's `hold/style` says, in its `hold/color`,
+// with dots flying out of it where `hold/particles` says so, and goes with it.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -132,7 +133,7 @@ describe('a hold under way', () => {
     Object.defineProperty(event, 'pointerId', { value: 1 })
     element.dispatchEvent(event)
   }
-  const holdTheme = (style) => [theme({ ...base('hold', '-', {}, [key('style', style)]) })]
+  const holdTheme = (style, more = []) => [theme({ ...base('hold', '-', {}, [key('style', style), ...more]) })]
   const onHold = [base('hold', 'on', {}, [base('toggle', 'toggle', { path: { String: './x' } })])]
 
   beforeEach(() => {
@@ -146,8 +147,8 @@ describe('a hold under way', () => {
   })
   afterEach(() => vi.useRealTimers())
 
-  const drawn = (style) => {
-    app.currentDocument = theDocument('', { themed: holdTheme(style), cellExtra: { hold: { String: '2s' } }, cellChildren: onHold })
+  const drawn = (style, more) => {
+    app.currentDocument = theDocument('', { themed: holdTheme(style, more), cellExtra: { hold: { String: '2s' } }, cellChildren: onHold })
     app.renderer.renderDocument(app.currentDocument)
   }
 
@@ -177,5 +178,28 @@ describe('a hold under way', () => {
     drawn('none')
     pointer(at(), 'pointerdown')
     expect(at().querySelector('.ov-hold')).toBeNull()
+  })
+
+  it('is in the colour the theme gives it, with dots flying out for as long as it lasts', () => {
+    drawn('fill', [key('color', '#fbbf24b3'), key('particles', 'dots')])
+    expect(app.renderer.themeAt(at(), 'hold-color')).toMatch(/^rgba\(251, 191, 36, 0\.7/)
+    pointer(at(), 'pointerdown')
+    expect(at().querySelector(':scope > .ov-hold.ov-hold-fill')).not.toBeNull()
+    const dots = at().querySelector(':scope > .ov-hold.ov-hold-dots')
+    expect(dots).not.toBeNull()
+    expect(dots.children.length).toBeGreaterThan(4)
+    pointer(at(), 'pointerup')
+    expect(at().querySelector('.ov-hold')).toBeNull()
+  })
+
+  it('sends out dots with no fill, and none where motion is not wanted', () => {
+    drawn('none', [key('particles', 'dots')])
+    pointer(at(), 'pointerdown')
+    expect(at().querySelector('.ov-hold-fill')).toBeNull()
+    expect(at().querySelector('.ov-hold-dots')).not.toBeNull()
+    pointer(at(), 'pointerup')
+    vi.spyOn(app.renderer, 'motionWanted').mockReturnValue(false)
+    pointer(at(), 'pointerdown')
+    expect(at().querySelector('.ov-hold-dots')).toBeNull()
   })
 })

@@ -22,6 +22,8 @@ context theme {
     }
     - hold {
         - style = "fill"
+        - color = "#fbbf24b3"
+        - particles = "dots"
     }
 }
 

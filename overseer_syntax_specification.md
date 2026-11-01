@@ -895,7 +895,8 @@ context mode = "system"
   - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
   - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box a filter is typed in.
   - `hold`: `style`, how a press held on a node with `on hold` is shown while it lasts - `fill`,
-    `ring` or `none` (see "on hold").
+    `ring` or `none`; `color`, what it is drawn in; and `particles`, `dots` or `none` (see "on
+    hold").
 
   Sizes are written as text, `"14px"`; weights and factors as numbers. A `table`, a `tab` bar and
   a `filter` can also say how the kinds inside them look: `- table { - button { - height =
@@ -1430,7 +1431,10 @@ div Cell (hold="2s") {
 A hold is run as a click is: from the node's own place, as one change and one step to take back.
 While a press is held, the theme's `hold { style }` can show it: `fill` fills the node from the
 bottom over the hold time, `ring` draws a ring that closes over it, and `none`, the default, shows
-nothing. Either goes away as soon as the press is let go, moves off or becomes the hold.
+nothing. Both are drawn in its `color`, as written, or else in the theme's `accent`, faint for a
+fill. `particles = dots` sends dots out from the middle of the node for as long as the press
+lasts, with any `style` or none, and draws none where motion is stilled. Each goes away as soon as
+the press is let go, moves off or becomes the hold.
 `press` runs another node's `on click`, never its `on hold`. On an entry of a movable list, a
 long press that begins dragging the entry is a drag, and not a hold.
 

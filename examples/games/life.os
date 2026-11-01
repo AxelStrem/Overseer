@@ -2,12 +2,30 @@ context theme {
     - backdrop {
         - glow {
             - kind = "gradient"
-            - from = "#22c55e2e"
+            - from = "#22c55e55"
             - to = "transparent"
             - angle = 160
             - motion = $(/life/running ? "turn" : "none")
-            - period = "24s"
+            - period = "18s"
             - center = $(20 + /life/population / 8 + "%")
+        }
+        - tide {
+            - kind = "gradient"
+            - from = "transparent"
+            - to = "#14b8a640"
+            - angle = 300
+            - motion = $(/life/running ? "drift" : "none")
+            - period = "9s"
+            - center = "55%"
+        }
+        - bloom {
+            - kind = "gradient"
+            - from = "#a3e63530"
+            - to = "transparent"
+            - angle = 40
+            - motion = $(/life/running ? "breathe" : "none")
+            - period = "5s"
+            - center = "35%"
         }
         - base {
             - kind = "gradient"

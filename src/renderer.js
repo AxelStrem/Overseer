@@ -128,6 +128,8 @@ function easedValues(element) {
 }
 /// How the theme's `hold/style` draws a hold under way: each is a class in the stylesheet.
 const HOLD_STYLES = ['fill', 'ring']
+// The dots a hold under way sends out with `hold/particles = dots`, in a stream that goes round.
+const HOLD_DOTS = 12
 /// The dots a `burst` throws.
 const BURST_DOTS = 8
 /// The ways a button can be drawn, the theme's `button/style`; `solid` is the stylesheet's own.
@@ -1529,6 +1531,8 @@ export class OverseerRenderer {
         } catch (_) { /* non-fatal */ }
         // What has been drawn afresh in this pass, so nothing inside it is drawn a second time.
         const drawn = []
+        // The elements a changed theme was written on again in this pass - see `restyleContext`.
+        const restyled = new Set()
         const hasLinks = !!document.querySelector('[data-link-proxy]')
         const within = (path) => Array.isArray(path)
             && drawn.some((d) => d.length <= path.length && d.every((s, i) => s === path[i]))
@@ -1544,11 +1548,12 @@ export class OverseerRenderer {
             if (within(path)) continue
             if (entries && this.repaintEntries(node, entries)) continue
             if (redraw(path)) continue
+            const chain = this.ancestorsOf(doc, node)
+            if (chain && this.restyleContext(doc, node, chain, restyled)) continue
             // Not on screen, and nothing to draw while it still is not: a field of a template, a
             // value that is hidden, anything under a hidden container. Every press on tasks.os
             // used to end in drawing the whole document for this, since marking a task done
             // moves the counts kept on the hidden template of a rule.
-            const chain = this.ancestorsOf(doc, node)
             if (chain && this.leftUndrawn(node, chain)) {
                 // Left off the screen where it is, and still on it through a link: a day of a
                 // hidden history drawn as the selected day carries the history's paths. A card's
@@ -1626,6 +1631,32 @@ export class OverseerRenderer {
             return false
         }
         return look(doc) ? chain : null
+    }
+
+    /// A theme that changed, written again where it is said, with nothing drawn again: what it
+    /// changes, the page takes from the variables it writes. A backdrop that follows a count - the
+    /// Game of Life's glow follows its population - used to draw the whole document again on every
+    /// tick, which started every motion on the page over. Its own `motion` and `fonts` are read as
+    /// things are drawn, so a change there is drawn again as before.
+    restyleContext(doc, node, chain, restyled) {
+        const isContext = (n) => (n?.node_type || n?.type) === 'context'
+        const at = isContext(node) ? chain.length : chain.findIndex(isContext)
+        if (at < 0) return false
+        const context = at < chain.length ? chain[at] : node
+        if (!this.isContextCopy(context)) return false
+        const key = at < chain.length ? (chain[at + 1] || node) : null
+        if (context.name === 'theme' && (!key || key.name === 'motion' || key.name === 'fonts')) return false
+        const owner = at > 0 ? chain[at - 1] : null
+        // An unnamed container shares its address with its parent's, so only its uid tells its
+        // element apart.
+        const element = !owner ? document.documentElement
+            : owner.__uid ? document.querySelector(`[data-uid="${String(owner.__uid).replace(/[\\"]/g, '\\$&')}"]`) : null
+        if (!element) return false
+        if (restyled.has(element)) return true
+        restyled.add(element)
+        if (!owner) this.applyDocumentContexts(doc)
+        else this.applyContexts(element, owner.children)
+        return true
     }
 
     /// Whether a node is left off the screen as things stand, by itself or by anything above it -
@@ -8721,19 +8752,37 @@ export class OverseerRenderer {
     /**
      * What a hold under way looks like, the theme's `hold/style`: a fill or a ring that grows over
      * the hold time, drawn over the element and taken off when the press ends one way or another.
-     * Where motion is not wanted it is a still tint for as long as the press lasts.
+     * Where motion is not wanted it is a still tint for as long as the press lasts. `hold/particles
+     * = dots` adds dots flying out from the middle for as long as it lasts, where motion is wanted.
      */
     showHoldFill(element, ms) {
         this.hideHoldFill(element)
+        const moving = this.motionWanted(element)
+        const overlay = (className) => {
+            const span = document.createElement('span')
+            span.className = `ov-hold ${className}`
+            span.setAttribute('aria-hidden', 'true')
+            span.style.setProperty('--ov-hold-time', `${ms}ms`)
+            span._unanchor = this.anchorOverlays(element)
+            element.appendChild(span)
+            return span
+        }
         const style = this.themeAt(element, 'hold-style')
-        if (!HOLD_STYLES.includes(style)) return
-        const fill = document.createElement('span')
-        fill.className = `ov-hold ov-hold-${style}`
-        if (!this.motionWanted(element)) fill.classList.add('ov-hold-still')
-        fill.setAttribute('aria-hidden', 'true')
-        fill.style.setProperty('--ov-hold-time', `${ms}ms`)
-        fill._unanchor = this.anchorOverlays(element)
-        element.appendChild(fill)
+        if (HOLD_STYLES.includes(style)) {
+            const fill = overlay(`ov-hold-${style}`)
+            if (!moving) fill.classList.add('ov-hold-still')
+        }
+        if (this.themeAt(element, 'hold-particles') === 'dots' && moving) {
+            const dots = overlay('ov-hold-dots')
+            for (let i = 0; i < HOLD_DOTS; i++) {
+                const dot = document.createElement('i')
+                // Each a little after the one before, and about a quarter of the way round from it,
+                // so the stream comes out all round rather than in a ring at a time.
+                dot.style.setProperty('--ov-burst-angle', `${(i * 97) % 360}deg`)
+                dot.style.setProperty('--ov-hold-dot-delay', `${i * 50}ms`)
+                dots.appendChild(dot)
+            }
+        }
     }
 
     hideHoldFill(element) {

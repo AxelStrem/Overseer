@@ -226,9 +226,11 @@ export class OverseerApp {
     // Whether new parameters would draw a node any differently. Not when all that moved is the
     // serializer's note of what is overridden, or what this page keeps on a node for itself:
     // marking a task done notes its two lists and the tab as overridden, and drawing the tab again
-    // for that was most of what the first press after opening cost the page.
+    // for that was most of what the first press after opening cost the page. Nor `tick=`, which
+    // the clock reads as it beats: starting the Game of Life drew the whole game again.
     drawnDifferently(before, after) {
-        const unseen = new Set(['_explicit_overrides', '_explicit_child_override', '_override_present', '_uid'])
+        const unseen = new Set(['_explicit_overrides', '_explicit_child_override', '_override_present', '_uid',
+            'tick', '_computed_tick'])
         const was = before || {}
         const now = after || {}
         for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {

@@ -3196,7 +3196,7 @@ body.ov-backdrop-moving {
     z-index: 1;
 }
 .ov-hold-fill {
-    background: color-mix(in srgb, var(--ov-accent) 30%, transparent);
+    background: var(--ov-hold-color, color-mix(in srgb, var(--ov-accent) 30%, transparent));
     transform-origin: bottom;
     animation: ov-hold-fill var(--ov-hold-time, 600ms) linear forwards;
 }
@@ -3210,11 +3210,30 @@ body.ov-backdrop-moving {
     width: 1.6em;
     height: 1.6em;
     border-radius: 50%;
-    background: conic-gradient(var(--ov-accent) var(--ov-hold-turn), color-mix(in srgb, var(--ov-accent) 20%, transparent) 0);
+    background: conic-gradient(var(--ov-hold-color, var(--ov-accent)) var(--ov-hold-turn),
+        color-mix(in srgb, var(--ov-hold-color, var(--ov-accent)) 20%, transparent) 0);
     -webkit-mask: radial-gradient(circle, transparent 55%, #000 57%);
     mask: radial-gradient(circle, transparent 55%, #000 57%);
     animation: ov-hold-ring var(--ov-hold-time, 600ms) linear forwards;
 }
+/* Dots out of the middle, one after another, for as long as the hold lasts: lighter than the
+   fill they fly out of, or they would not show over it. */
+.ov-hold-dots {
+    --ov-hold-dot: color-mix(in srgb, var(--ov-hold-color, var(--ov-accent)) 55%, white);
+}
+.ov-hold-dots > i {
+    position: absolute;
+    left: calc(50% - 2px);
+    top: calc(50% - 2px);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--ov-hold-dot);
+    box-shadow: 0 0 4px var(--ov-hold-dot);
+    opacity: 0;
+    animation: ov-hold-dot 600ms ease-out var(--ov-hold-dot-delay, 0ms) infinite;
+}
+.ov-hold-dots > i:nth-child(3n) { width: 6px; height: 6px; left: calc(50% - 3px); top: calc(50% - 3px); }
 .ov-hold.ov-hold-still {
     animation: none;
     transform: none;
@@ -3225,6 +3244,11 @@ body.ov-backdrop-moving {
     from { transform: scaleY(0); }
     to { transform: scaleY(1); }
 }
+@keyframes ov-hold-dot {
+    from { transform: rotate(var(--ov-burst-angle)) translateY(0); opacity: 1; }
+    60% { opacity: 1; }
+    to { transform: rotate(var(--ov-burst-angle)) translateY(-26px); opacity: 0; }
+}
 @keyframes ov-hold-ring {
     from { --ov-hold-turn: 0deg; }
     to { --ov-hold-turn: 360deg; }
@@ -3234,6 +3258,7 @@ body.ov-backdrop-moving {
     .ov-motion-pop, .ov-motion-shake, .ov-motion-fade, .ov-motion-pulse, .ov-burst > i { animation: none; }
     .ov-burst { display: none; }
     .ov-hold { animation: none; transform: none; --ov-hold-turn: 360deg; }
+    .ov-hold-dots { display: none; }
 }
 
 /* A run of markdown given a motion, `<motion=wave | ...>`: each letter its own span, numbered by
