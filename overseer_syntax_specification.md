@@ -834,7 +834,7 @@ context mode = "system"
   headings, chips and buttons do not - their kinds say theirs; `leading` the height of a line, as
   a factor of the size (`1.5`); `numerals` is `proportional` or `tabular`, digits of one width so
   that figures line up down a column; `motion` is `full`, the default, or `none`, which stills every
-  node's `motion` and `ease` and draws a hold's fill without moving. The shipped theme keeps each mode's colours under `light`
+  node's `motion` and `ease`, every backdrop layer's `motion`, and draws a hold's fill without moving. The shipped theme keeps each mode's colours under `light`
   and `dark` and picks one by `mode`, as `- surface = $(mode == "dark" ? dark/surface :
   light/surface)`, so `context theme { - dark { - surface = "#000" } }` changes the dark colour
   alone and the light one stays as it was. `light` and `dark` are keys of the theme, not kinds of
@@ -960,6 +960,24 @@ context mode = "system"
       - opacity = 0.08
       - size = "180%"
       - position = "right center"
+  }
+  ```
+
+  A layer of either kind can move on its own, in the page alone, for as long as its `motion` says
+  so: `turn` turns it round and round (a gradient's angle), `drift` moves it back and forth (a
+  gradient along its angle, an icon from side to side), and `breathe` fades it out a little and
+  back. `period` is how long one round takes - `"20s"`, `"800ms"`, or a number of seconds - and
+  is 60 seconds for a turn, 20 for a drift and 8 for a breath where it says none. Like every key,
+  `motion` can be a formula, `$(running ? "turn" : "none")`, and a name the page does not know
+  moves nothing. The theme's `motion = none`, or a system set to reduce motion, stills it.
+
+  ```overseer
+  - glow {
+      - kind = "gradient"
+      - from = "#22c55e2e"
+      - to = "transparent"
+      - motion = "turn"
+      - period = "40s"
   }
   ```
 

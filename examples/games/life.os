@@ -4,7 +4,9 @@ context theme {
             - kind = "gradient"
             - from = "#22c55e2e"
             - to = "transparent"
-            - angle = $(160 + /life/generation * 4 % 360)
+            - angle = 160
+            - motion = $(/life/running ? "turn" : "none")
+            - period = "24s"
             - center = $(20 + /life/population / 8 + "%")
         }
         - base {

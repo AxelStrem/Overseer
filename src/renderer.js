@@ -99,6 +99,9 @@ const gridPlaceIn = (type, name) => {
 }
 
 const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
+
+// How a backdrop layer can move on its own, and the seconds one round takes where `period` says none.
+const BACKDROP_MOTIONS = { turn: 60, drift: 20, breathe: 8 }
 /// The motions a node's `motion=` can name, each a class in the stylesheet: those played once, as
 /// the value changes to them, and `pulse`, which runs for as long as the value says it.
 const MOTIONS_ONCE = ['pop', 'shake', 'fade', 'burst']
@@ -8171,6 +8174,7 @@ export class OverseerRenderer {
                 const ownBackdrop = backdrop !== backdropAbove
                 element.classList.toggle('ov-themed-backdrop', ownBackdrop)
                 element.classList.toggle('ov-themed-background', ownBackdrop || (background !== null && background !== above))
+                this.drawBackdropMotion(element)
             } else if (child.name === 'mode') {
                 const mode = this.contextValue(child)
                 if (mode === 'dark' || mode === 'light') element.dataset.ovMode = mode
@@ -8248,30 +8252,49 @@ export class OverseerRenderer {
      * document - once, in `colour` (the text's where it says none; an SVG of the document's keeps
      * its own colours unless given one), at `opacity`, `size` high (of the box's height; larger is
      * cropped by the box) and at `position`, a CSS background position.
+     *
+     * `layers` is the same, one entry for each layer drawn, with its `name`, its `motion` - one of
+     * `BACKDROP_MOTIONS`, or null for a still one - and `period`, in seconds, and for a gradient
+     * what it is made of, so that `drawBackdropMotion` can draw it again in a box of its own.
      */
     backdropLayers(backdrop, textColour = null) {
         const lists = { image: [], size: [], position: [], repeat: [] }
+        const layers = []
         const waiting = []
         const number = (node, otherwise) => {
             const said = parseFloat(this.contextValue(node))
             return Number.isFinite(said) ? said : otherwise
         }
-        const round = (n) => Math.round(n * 100) / 100
         for (const layer of backdrop.children || []) {
             if (!layer?.name || layer.name.startsWith('_')) continue
             const key = (name) => (layer.children || []).find((k) => k?.name === name)
             const kind = this.contextValue(key('kind'))
+            const motionSaid = String(this.contextValue(key('motion')) ?? '').trim()
+            const motion = Object.hasOwn(BACKDROP_MOTIONS, motionSaid) ? motionSaid : null
+            const periodSaid = /^(\d+(?:\.\d+)?)(ms|s)?$/.exec(String(this.contextValue(key('period')) ?? '').trim())
+            const seconds = periodSaid ? parseFloat(periodSaid[1]) / (periodSaid[2] === 'ms' ? 1000 : 1) : 0
+            const period = seconds > 0 ? seconds : (BACKDROP_MOTIONS[motion] || 0)
+            const drawn = () => layers.push({
+                name: layer.name, motion, period, gradient: null,
+                image: lists.image.at(-1), size: lists.size.at(-1),
+                position: lists.position.at(-1), repeat: lists.repeat.at(-1),
+            })
             if (kind === 'gradient') {
                 const from = this.contextValue(key('from'))
                 const to = this.contextValue(key('to'))
                 if (from === null || to === null) continue
-                const angle = number(key('angle'), 180)
-                const center = number(key('center'), 50)
-                const width = 100 - Math.max(0, Math.min(100, number(key('sharpness'), 0)))
-                lists.image.push(`linear-gradient(${round(angle)}deg, ${from} ${round(center - width / 2)}%, ${to} ${round(center + width / 2)}%)`)
+                const gradient = {
+                    from, to,
+                    angle: number(key('angle'), 180),
+                    center: number(key('center'), 50),
+                    width: 100 - Math.max(0, Math.min(100, number(key('sharpness'), 0))),
+                }
+                lists.image.push(this.gradientImage(gradient))
                 lists.size.push('auto')
                 lists.position.push('0% 0%')
                 lists.repeat.push('repeat')
+                drawn()
+                layers.at(-1).gradient = gradient
             } else if (kind === 'icon') {
                 const parts = iconParts(this.contextValue(key('source')))
                 if (!parts.key && !parts.file) continue
@@ -8300,16 +8323,116 @@ export class OverseerRenderer {
                 lists.size.push(`auto ${size}`)
                 lists.position.push(position)
                 lists.repeat.push('no-repeat')
+                drawn()
             }
         }
-        if (!lists.image.length) return { image: 'none', size: 'auto', position: '0% 0%', repeat: 'repeat', waiting }
+        if (!lists.image.length) return { image: 'none', size: 'auto', position: '0% 0%', repeat: 'repeat', layers, waiting }
         return {
             image: lists.image.join(', '),
             size: lists.size.join(', '),
             position: lists.position.join(', '),
             repeat: lists.repeat.join(', '),
+            layers,
             waiting,
         }
+    }
+
+    /**
+     * A backdrop's gradient as CSS. `scale` is how many times larger than the gradient the box it
+     * is painted in is: the blend is drawn that much shorter, about the middle, so that it looks
+     * the same and the box has room to move.
+     */
+    gradientImage(gradient, scale = 1) {
+        const round = (n) => Math.round(n * 100) / 100
+        const at = (place) => round(50 + (place - 50) / scale)
+        const { from, to, angle, center, width } = gradient
+        return `linear-gradient(${round(angle)}deg, ${from} ${at(center - width / 2)}%, ${to} ${at(center + width / 2)}%)`
+    }
+
+    /**
+     * Where a layer of a theme's backdrop moves on its own (`motion`), the whole backdrop is drawn
+     * in boxes of its own, one for each layer, inside a holder behind what the element shows: an
+     * animation of a variable inside `--ov-backdrop` would restyle everything under the theme on
+     * every frame, since a variable's `var()`s are filled in where it is said and then inherited.
+     * The boxes only turn, move and fade (`rotate`, `translate`, `opacity`), which the browser
+     * does without restyling or repainting. A gradient that turns or drifts is drawn in a square
+     * as wide as the box's diagonal - larger for a drift - so that no edge of it ever shows.
+     *
+     * `element` is the one the theme was written on: the page's root, painted by the body, or a
+     * container that paints a backdrop of its own. Drawn again, the boxes are kept, so a redraw
+     * does not start them over; where nothing moves - or motion is not wanted there - the holder
+     * goes and the backdrop is painted as a background again.
+     */
+    drawBackdropMotion(element) {
+        if (!element || typeof document === 'undefined') return
+        const root = element === document.documentElement
+        const painter = root ? document.body : element
+        if (!painter) return
+        const layers = (root || element.classList.contains('ov-themed-backdrop')) ? (element._ovBackdropLayers || []) : []
+        const moving = layers.some((layer) => layer.motion) && this.motionWanted(element)
+        let holder = Array.from(painter.children).find((child) => child.classList.contains('ov-backdrop-motion'))
+        painter.classList.toggle('ov-backdrop-moving', moving)
+        if (!moving) {
+            if (holder) holder.remove()
+            if (painter.dataset.ovBackdropPlaced) {
+                painter.style.position = ''
+                delete painter.dataset.ovBackdropPlaced
+            }
+            return
+        }
+        if (!holder) {
+            holder = document.createElement('div')
+            holder.className = 'ov-backdrop-motion'
+            holder.setAttribute('aria-hidden', 'true')
+            painter.appendChild(holder)
+        }
+        // A container is given its holder before its children are drawn into it; it goes after
+        // them once they are, so that the rules for a container's first child still find theirs.
+        queueMicrotask(() => {
+            if (holder.parentElement === painter && painter.lastElementChild !== holder) painter.appendChild(holder)
+        })
+        // The holder is placed over the element's box, which needs it to be placed itself.
+        if (!root && !painter.dataset.ovBackdropPlaced) {
+            const position = typeof getComputedStyle === 'function' ? getComputedStyle(painter).position : ''
+            if (!position || position === 'static') {
+                painter.style.position = 'relative'
+                painter.dataset.ovBackdropPlaced = '1'
+            }
+        }
+        const kept = new Map(Array.from(holder.children).map((box) => [box.dataset.layer, box]))
+        // Last in the holder is drawn on top, as the first of a background list is.
+        layers.slice().reverse().forEach((layer, index) => {
+            let box = kept.get(layer.name)
+            kept.delete(layer.name)
+            if (!box) {
+                box = document.createElement('div')
+                box.dataset.layer = layer.name
+            }
+            const square = layer.gradient && (layer.motion === 'turn' || layer.motion === 'drift')
+            const scale = layer.motion === 'drift' ? 1.5 : 1
+            const className = ['ov-backdrop-layer', square ? 'ov-backdrop-square' : '',
+                layer.motion ? `ov-backdrop-${layer.motion}` : ''].filter(Boolean).join(' ')
+            if (box.className !== className) box.className = className
+            const style = box.style
+            style.backgroundImage = square ? this.gradientImage(layer.gradient, scale) : layer.image
+            style.backgroundSize = square ? 'auto' : layer.size
+            style.backgroundPosition = square ? 'center' : layer.position
+            style.backgroundRepeat = square ? 'no-repeat' : layer.repeat
+            style.setProperty('--ov-backdrop-scale', String(scale))
+            style.setProperty('--ov-backdrop-period', `${layer.period || 1}s`)
+            if (layer.motion === 'drift') {
+                // Back and forth along the gradient, a quarter of the box's diagonal each way -
+                // a share of the square's side, which is what `translate` takes a share of; an
+                // icon from side to side.
+                const reach = layer.gradient ? 25 / scale : 8
+                const radians = (layer.gradient ? layer.gradient.angle : 90) * Math.PI / 180
+                const round = (n) => Math.round(n * 100) / 100
+                style.setProperty('--ov-backdrop-drift-x', `${round(Math.sin(radians) * reach)}%`)
+                style.setProperty('--ov-backdrop-drift-y', `${round(-Math.cos(radians) * reach)}%`)
+            }
+            if (holder.children[index] !== box) holder.insertBefore(box, holder.children[index] || null)
+        })
+        for (const box of kept.values()) box.remove()
     }
 
     /**
@@ -8355,14 +8478,17 @@ export class OverseerRenderer {
         element.style.setProperty(`${prefix}backdrop-size`, layers.size)
         element.style.setProperty(`${prefix}backdrop-position`, layers.position)
         element.style.setProperty(`${prefix}backdrop-repeat`, layers.repeat)
+        if (prefix === '--ov-') element._ovBackdropLayers = layers.layers
         if (!layers.waiting.length) return
         Promise.all(layers.waiting).then(() => {
             if (!element.isConnected) return
             this.writeBackdrop(element, backdrop, prefix, theme)
-            if (prefix !== '--ov-' || element === document.documentElement) return
+            if (prefix !== '--ov-') return
+            if (element === document.documentElement) return this.drawBackdropMotion(element)
             const own = element.style.getPropertyValue('--ov-backdrop').trim() !== (this.themeAbove(element, 'backdrop') || 'none')
             element.classList.toggle('ov-themed-backdrop', own)
             if (own) element.classList.add('ov-themed-background')
+            this.drawBackdropMotion(element)
         })
     }
 
@@ -8625,8 +8751,10 @@ export class OverseerRenderer {
             if (name.startsWith('--ov-')) root.style.removeProperty(name)
         }
         delete root.dataset.ovMode
+        root._ovBackdropLayers = null
         this._fontsNamed = new Set()
         this.applyContexts(root, Array.isArray(nodes) ? nodes : [])
+        this.drawBackdropMotion(root)
     }
 
     /**

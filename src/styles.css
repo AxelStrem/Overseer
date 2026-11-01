@@ -2460,6 +2460,71 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     background-repeat: var(--ov-backdrop-repeat, repeat);
 }
 
+/* A backdrop with a layer that moves on its own is drawn by `drawBackdropMotion` instead: every
+   layer a box of its own in a holder behind what the element shows, so the element paints none. */
+body.ov-backdrop-moving,
+.ov-themed-backdrop.ov-backdrop-moving {
+    background-image: none;
+    isolation: isolate;
+}
+body.ov-backdrop-moving {
+    position: relative;
+}
+.ov-backdrop-motion {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+    container-type: size;
+}
+.ov-backdrop-layer {
+    position: absolute;
+    inset: 0;
+}
+/* A gradient that turns or drifts: a square as wide as the box's diagonal, times its scale, about
+   the box's middle, so that turned or moved no edge of it shows. */
+.ov-backdrop-square {
+    --ov-backdrop-side: calc((100cqw + 100cqh) * var(--ov-backdrop-scale, 1));
+    inset: auto;
+    width: var(--ov-backdrop-side);
+    height: var(--ov-backdrop-side);
+    left: calc(50% - var(--ov-backdrop-side) / 2);
+    top: calc(50% - var(--ov-backdrop-side) / 2);
+}
+@supports (width: hypot(3px, 4px)) {
+    .ov-backdrop-square {
+        --ov-backdrop-side: calc(hypot(100cqw, 100cqh) * var(--ov-backdrop-scale, 1));
+    }
+}
+.ov-backdrop-turn {
+    animation: ov-backdrop-turn var(--ov-backdrop-period, 60s) linear infinite;
+}
+/* One round there and back is the period; it starts half way, where the layer is drawn still. */
+.ov-backdrop-drift {
+    animation: ov-backdrop-drift calc(var(--ov-backdrop-period, 20s) / 2) ease-in-out infinite alternate;
+    animation-delay: calc(var(--ov-backdrop-period, 20s) / -4);
+}
+.ov-backdrop-breathe {
+    animation: ov-backdrop-breathe calc(var(--ov-backdrop-period, 8s) / 2) ease-in-out infinite alternate;
+}
+@keyframes ov-backdrop-turn {
+    from { rotate: 0turn; }
+    to { rotate: 1turn; }
+}
+@keyframes ov-backdrop-drift {
+    from { translate: calc(var(--ov-backdrop-drift-x, 0%) * -1) calc(var(--ov-backdrop-drift-y, 0%) * -1); }
+    to { translate: var(--ov-backdrop-drift-x, 0%) var(--ov-backdrop-drift-y, 0%); }
+}
+@keyframes ov-backdrop-breathe {
+    from { opacity: 1; }
+    to { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ov-backdrop-layer { animation: none; }
+}
+
 /* A kind of element in the theme: `context theme { - button { - accent = ... } }` gives the
    buttons inside a container a key of their own, and every other kind keeps the container's. Each
    kind's element takes the general keys again from its own, or else from what the container says
