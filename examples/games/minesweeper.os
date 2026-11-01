@@ -20,12 +20,16 @@ context theme {
         - spacing = "0px"
         - number-align = "start"
     }
+    - hold {
+        - style = "fill"
+    }
 }
 
 div (hidden=true) {
     div Cell (hold="1.3s", width=34, height=34, padding=0, margin=0, alignment="center", border-radius=4,
               background-color=$(./opened ? (./mine ? "#ef4444" : "#cbd5e1") : (/game/lost && ./mine ? "#fca5a5" : "#64748b")),
-              shadow=$(./opened ? "inset 0 0 0 1px #94a3b8" : "inset 3px 3px 0 #94a3b8, inset -3px -3px 0 #334155")) {
+              shadow=$(./opened ? "inset 0 0 0 1px #94a3b8" : "inset 3px 3px 0 #94a3b8, inset -3px -3px 0 #334155"),
+              font-color=$(./mine ? "#f97316" : "#94a3b8"), motion=$(./opened ? "burst" : "")) {
         div (hidden=true) {
             bool opened = false
             bool flagged = false
@@ -50,6 +54,7 @@ div (hidden=true) {
         }
 
         string face (hide-labels=true, padding=0, margin=0, font-weight="bold", font-size=18px,
+                     motion=$(../flagged || ../opened && ../mine ? "pop" : ""),
                      font-color=$(!../opened ? (../flagged || /game/won ? "#fbbf24" : "#0f172a") : ../mine ? "#0f172a" : ../around == 1 ? "#1d4ed8" : ../around == 2 ? "#15803d" : ../around == 3 ? "#dc2626" : ../around == 4 ? "#1e3a8a" : ../around == 5 ? "#7f1d1d" : ../around == 6 ? "#0f766e" : ../around == 7 ? "#111827" : "#6b7280"))
             = $(../opened ? (../mine ? "<icon=bomb>" : ../around == 0 ? "" : "" + ../around) : ../flagged || /game/won && ../mine ? "<icon=flag>" : /game/lost && ../mine ? "<icon=bomb>" : "")
 
@@ -81,7 +86,7 @@ div game (mutable="guarded", layout="vertical", alignment="center", height=1fr) 
     div (layout="horizontal", alignment="center", spacing=16, width=fit-content) {
         string flags_left (hide-labels=true, font-size=20px, font-weight="bold", font-color="#fbbf24") = $("<icon=flag> " + (won ? 0 : 10 - Field.cells().filter(|x| x/flagged).count()))
         div new_game (width=44, height=44, padding=0, padding-left=10, layout="horizontal", alignment="center", border-radius=22, shadow="lifted",
-                      background-color=$(lost ? "#ef4444" : won ? "#22c55e" : "#fbbf24")) {
+                      background-color=$(lost ? "#ef4444" : won ? "#22c55e" : "#fbbf24"), motion=$(won ? "pulse" : "pop:" + seed)) {
             string face (hide-labels=true, padding=0, margin=0, font-size=24px, font-color="#0f172a")
                 = $(lost ? "<icon=frown>" : won ? "<icon=party-popper>" : "<icon=smile>")
 
@@ -93,11 +98,12 @@ div game (mutable="guarded", layout="vertical", alignment="center", height=1fr) 
                 }
             }
         }
-        string status (hide-labels=true, font-size=16px) = $(lost ? "Boom. Tap the face to try again." : won ? "Cleared!" : "Tap to flag, hold to dig")
+        text status (hide-labels=true, markdown=true, font-size=16px)
+            = $(lost ? "<motion=jitter | Boom.> Tap the face to try again." : won ? "<motion=rainbow | Cleared!>" : "Tap to flag, hold to dig")
     }
 
     div (height=1fr, layout="horizontal", alignment="center", margin-top=12) {
-        div (width=fit-content, border-radius=12, shadow="floating") {
+        div (width=fit-content, border-radius=12, shadow="floating", motion=$(lost ? "shake" : "")) {
             context theme {
                 - backdrop (base=none) {
                     - board {
