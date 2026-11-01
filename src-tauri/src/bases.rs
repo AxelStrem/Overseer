@@ -164,6 +164,17 @@ fn in_libraries(file: &str) -> Vec<PathBuf> {
     libraries().into_iter().map(|dir| dir.join(path)).collect()
 }
 
+/// The folders bases are looked for in, a line each. A document held worked out is checked
+/// against this as well as against its bases' files: a library put somewhere else changes where a
+/// base is found, and none of the files it was found in before has changed - see `document_cache`.
+pub fn looked_in() -> String {
+    libraries()
+        .iter()
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The file a user names their own library folders in, beside the settings - see `libraries`.
 pub const LIBRARIES: &str = "libraries.txt";
 

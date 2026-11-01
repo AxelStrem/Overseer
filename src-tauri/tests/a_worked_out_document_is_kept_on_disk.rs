@@ -292,3 +292,104 @@ fn the_files_are_kept_within_their_budget() {
     assert!(!held.is_empty(), "nothing was kept at all");
     assert!(held.iter().sum::<usize>() <= one * 3 / 2, "the budget was not kept");
 }
+
+const INHERITS: &str = r#"<kinds/kind.os/kind> kind {
+    - name = "Mine"
+}
+"#;
+
+const KIND: &str = r#"div (hidden=true) {
+    tab kind (label="Kind", mutable=true) {
+        string name = ""
+        string origin = "first"
+        string shown = $(../origin)
+    }
+}
+"#;
+
+/// A library holding the base `INHERITS` names, its `origin` set to this.
+fn library(sandbox: &Sandbox, name: &str, origin: &str) -> PathBuf {
+    let library = sandbox.root.join(name);
+    std::fs::create_dir_all(library.join("kinds")).unwrap();
+    std::fs::write(library.join("kinds/kind.os"), KIND.replace("first", origin)).unwrap();
+    library.canonicalize().unwrap()
+}
+
+fn origin(nodes: &[OverseerNode]) -> Option<OverseerValue> {
+    let params = &overseer::addressing::find(nodes, "kind/shown")?.parameters;
+    params.get("_computed_value").or_else(|| params.get("value")).cloned()
+}
+
+/// `OVERSEER_LIBRARY` for the duration of a test, given back when it ends.
+struct Library(Option<std::ffi::OsString>);
+
+impl Library {
+    fn at(folder: &Path) -> Library {
+        let was = std::env::var_os("OVERSEER_LIBRARY");
+        std::env::set_var("OVERSEER_LIBRARY", folder);
+        Library(was)
+    }
+}
+
+impl Drop for Library {
+    fn drop(&mut self) {
+        match &self.0 {
+            Some(was) => std::env::set_var("OVERSEER_LIBRARY", was),
+            None => std::env::remove_var("OVERSEER_LIBRARY"),
+        }
+    }
+}
+
+/// The document that inherits from the library, worked out with its base as it was, let go to
+/// disk, and shown to come back from there while nothing has changed.
+fn kept_inheriting(sandbox: &Sandbox) {
+    std::fs::write(sandbox.documents.join("inherits.os"), INHERITS).unwrap();
+    let before = open(&sandbox.documents, "inherits.os");
+    assert_eq!(origin(&before), Some(OverseerValue::String("first".into())));
+    push_out(sandbox);
+    assert!(kept(&sandbox.documents, "inherits.os").is_some(), "what was let go was not written down");
+    let whole = resolver::times_worked_out_whole();
+    open(&sandbox.documents, "inherits.os");
+    assert_eq!(
+        resolver::times_worked_out_whole(),
+        whole,
+        "worked out again with nothing changed, so the disk was never read"
+    );
+    push_out(sandbox);
+    assert!(kept(&sandbox.documents, "inherits.os").is_some(), "let go again and not written down");
+}
+
+#[test]
+fn a_base_changed_in_its_library_is_not_read_past() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let sandbox = sandbox("base");
+    let folder = library(&sandbox, "library", "first");
+    let _library = Library::at(&folder);
+    kept_inheriting(&sandbox);
+
+    std::fs::write(folder.join("kinds/kind.os"), KIND.replace("first", "changed in place")).unwrap();
+    let after = open(&sandbox.documents, "inherits.os");
+    assert_eq!(
+        origin(&after),
+        Some(OverseerValue::String("changed in place".into())),
+        "handed back as worked out against the base before it changed"
+    );
+}
+
+#[test]
+fn a_library_put_elsewhere_is_not_read_past() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let sandbox = sandbox("library");
+    let first = library(&sandbox, "library", "first");
+    let second = library(&sandbox, "library_elsewhere", "second");
+    let _first = Library::at(&first);
+    kept_inheriting(&sandbox);
+
+    let _second = Library::at(&second);
+    let after = open(&sandbox.documents, "inherits.os");
+    assert_eq!(
+        origin(&after),
+        Some(OverseerValue::String("second".into())),
+        "handed back as worked out against the library it was looked for in before"
+    );
+}

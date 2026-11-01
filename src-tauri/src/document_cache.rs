@@ -198,6 +198,9 @@ struct Entry {
     /// each stood then - see `actions::mounts_held` and `bases::held`. The text is not all a tree
     /// was worked out from.
     mounts: Vec<(String, String)>,
+    /// The library folders its bases were looked for in - see `bases::looked_in` - or nothing when
+    /// it has no bases.
+    libraries: Option<String>,
     /// The minute what reads the clock in `nodes` was worked out in - see `WorkedOutIn`.
     clock_minute: WorkedOutIn,
 }
@@ -295,6 +298,7 @@ impl Entry {
             bytes: 0,
             used: 0,
             mounts: Vec::new(),
+            libraries: None,
             clock_minute: None,
         }
     }
@@ -354,6 +358,7 @@ impl Entry {
         self.mounts
             .iter()
             .all(|(file, stamp)| crate::actions::mount_stamp(file) == *stamp)
+            && self.libraries.as_ref().is_none_or(|was| *was == crate::bases::looked_in())
     }
 
     /// Whether whoever is asking may read every file it was worked out from - see `access`. What
@@ -426,6 +431,7 @@ fn let_go(entry: Entry) {
                 nodes,
                 graph,
                 mounts: entry.mounts,
+                libraries: entry.libraries,
                 clock_minute: entry.clock_minute,
             },
         );
@@ -552,7 +558,7 @@ pub fn keep_superseded(text: &str, nodes: Vec<OverseerNode>) {
             .find(|leans| *leans != Leans::ALL)
     });
     let mut entry = Entry::new(text, &want);
-    entry.mounts = read_from(&nodes);
+    (entry.mounts, entry.libraries) = read_from(&nodes);
     entry.nodes = Some(nodes);
     entry.used = now();
     entry.tree_leans = leans;
@@ -610,6 +616,7 @@ fn found(store: &mut Vec<Entry>, text: &str, want: &Want) -> Option<(usize, bool
     entry.graph = Some(held.graph);
     entry.used = now();
     entry.mounts = held.mounts;
+    entry.libraries = held.libraries;
     entry.clock_minute = held.clock_minute;
     if !entry.mounts_unchanged() {
         return None;
@@ -716,6 +723,7 @@ pub fn take_nodes(text: &str) -> Option<(Vec<OverseerNode>, WorkedOutIn)> {
         }
         let as_held = (!as_it_stands).then(|| Entry {
             mounts: entry.mounts.clone(),
+            libraries: entry.libraries.clone(),
             tree_leans: entry.tree_leans,
             graph_leans: entry.graph_leans,
             used: now(),
@@ -790,16 +798,19 @@ fn put(text: &str, replaces_the_tree: bool, work: impl FnOnce(&mut Entry, &Want)
 }
 
 /// Every file a tree was worked out from besides its own text and the environment: what its
-/// mounts read and the bases its templates came from. The environment is told by what it says -
-/// see `Entry::look` - rather than by the files it was read from, which are each person's own.
-fn read_from(nodes: &[OverseerNode]) -> Vec<(String, String)> {
+/// mounts read and the bases its templates came from, and the library folders those bases were
+/// looked for in when it has any. The environment is told by what it says - see `Entry::look` -
+/// rather than by the files it was read from, which are each person's own.
+fn read_from(nodes: &[OverseerNode]) -> (Vec<(String, String)>, Option<String>) {
     let mut files = crate::actions::mounts_held(nodes);
-    for held in crate::bases::held(nodes) {
+    let bases = crate::bases::held(nodes);
+    let libraries = (!bases.is_empty()).then(crate::bases::looked_in);
+    for held in bases {
         if !files.contains(&held) {
             files.push(held);
         }
     }
-    files
+    (files, libraries)
 }
 
 pub fn put_nodes(text: &str, nodes: &[OverseerNode], worked_out_in: WorkedOutIn) {
@@ -809,7 +820,7 @@ pub fn put_nodes(text: &str, nodes: &[OverseerNode], worked_out_in: WorkedOutIn)
         return;
     }
     put(text, true, |entry, want| {
-        entry.mounts = read_from(nodes);
+        (entry.mounts, entry.libraries) = read_from(nodes);
         entry.tree_leans = Some(leans_of_tree(nodes, &want.names));
         entry.nodes = Some(nodes.to_vec());
         entry.clock_minute = worked_out_in;
@@ -822,7 +833,7 @@ pub fn own_nodes(text: &str, nodes: Vec<OverseerNode>, worked_out_in: WorkedOutI
         return;
     }
     put(text, true, |entry, want| {
-        entry.mounts = read_from(&nodes);
+        (entry.mounts, entry.libraries) = read_from(&nodes);
         entry.tree_leans = Some(leans_of_tree(&nodes, &want.names));
         entry.nodes = Some(nodes);
         entry.clock_minute = worked_out_in;

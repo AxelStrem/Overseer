@@ -20,7 +20,8 @@
 //! now would give. So a file is named by the text, the folder it was worked out in and the build
 //! that worked it out, and holds all three to be checked against; a rebuilt server finds none of
 //! the old files, since the rules they were worked out by may have changed. The files the
-//! document's mounts were read from are checked as they are for a document held in memory.
+//! document's mounts and bases were read from, and the library folders its bases were looked for
+//! in, are checked as they are for a document held in memory.
 
 use crate::dependencies::Graph;
 use crate::source_registry::SourceRegistry;
@@ -34,11 +35,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// A document as the cache held it: the tree, the graph it was worked out by, the stamps of the
-/// files its mounts read, and the minute what reads the clock was worked out in.
+/// files its mounts and bases read, the library folders its bases were looked for in, and the
+/// minute what reads the clock was worked out in.
 pub struct Held {
     pub nodes: Vec<OverseerNode>,
     pub graph: Graph,
     pub mounts: Vec<(String, String)>,
+    pub libraries: Option<String>,
     pub clock_minute: Option<i64>,
 }
 
@@ -130,6 +133,8 @@ struct Stored {
     seen: String,
     text: String,
     mounts: Vec<(String, String)>,
+    #[serde(default)]
+    libraries: Option<String>,
     clock_minute: Option<i64>,
     /// Every text a snapshot is a view into, once each - the document's own and its mounts'.
     sources: Vec<String>,
@@ -262,6 +267,7 @@ fn stored(text: String, base: Option<PathBuf>, seen: String, build: &str, held: 
         seen,
         text,
         mounts: held.mounts,
+        libraries: held.libraries,
         clock_minute: held.clock_minute,
         sources: snapshots.sources,
         snapshots: snapshots.stored,
@@ -336,6 +342,7 @@ fn unpacked(stored: Stored) -> Option<Held> {
         nodes,
         graph: Graph::from_stored(stored.reads),
         mounts: stored.mounts,
+        libraries: stored.libraries,
         clock_minute: stored.clock_minute,
     })
 }
