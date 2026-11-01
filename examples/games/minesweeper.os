@@ -28,7 +28,7 @@ context theme {
 }
 
 div (hidden=true) {
-    div Cell (hold="1.3s", width=34, height=34, padding=0, margin=0, alignment="center", border-radius=4,
+    div Cell (hold="1.3s", layout="vertical", width=34, height=34, padding=0, margin=0, alignment="center", border-radius=4,
               background-color=$(./opened ? (./mine ? "#ef4444" : "#cbd5e1") : (/game/lost && ./mine ? "#fca5a5" : "#64748b")),
               shadow=$(./opened ? "inset 0 0 0 1px #94a3b8" : "inset 3px 3px 0 #94a3b8, inset -3px -3px 0 #334155"),
               font-color=$(./mine ? "#f97316" : "#94a3b8"), motion=$(./opened ? "burst" : "")) {
@@ -87,7 +87,7 @@ div game (mutable="guarded", layout="vertical", alignment="center", height=1fr) 
 
     div (layout="horizontal", alignment="center", spacing=16, width=fit-content) {
         string flags_left (hide-labels=true, font-size=20px, font-weight="bold", font-color="#fbbf24") = $("<icon=flag> " + (won ? 0 : 10 - Field.cells().filter(|x| x/flagged).count()))
-        div new_game (width=44, height=44, padding=0, padding-left=10, layout="horizontal", alignment="center", border-radius=22, shadow="lifted",
+        div new_game (width=44, height=44, padding=0, spacing=0, layout="vertical", alignment="center", border-radius=22, shadow="lifted",
                       background-color=$(lost ? "#ef4444" : won ? "#22c55e" : "#fbbf24"), motion=$(won ? "pulse" : "pop:" + seed)) {
             string face (hide-labels=true, padding=0, margin=0, font-size=24px, font-color="#0f172a")
                 = $(lost ? "<icon=frown>" : won ? "<icon=party-popper>" : "<icon=smile>")
