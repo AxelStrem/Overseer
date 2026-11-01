@@ -2964,6 +2964,16 @@ impl FormulaEvaluator {
                     "index() is only for a formula inside an array's element".to_string(),
                 ))
             }
+            // depth(): how deep in its tree the entry the formula is in stands, 0 at the top -
+            // for a list drawn with `tree=`, in either of its shapes.
+            "depth" => {
+                if !args.is_empty() {
+                    return Err(OverseerError::FormulaError(
+                        "depth() takes no arguments".to_string(),
+                    ));
+                }
+                Self::depth_in_tree(context)
+            }
             "weekday" | "day_of_month" | "month_of" => {
                 if args.len() != 1 {
                     return Err(OverseerError::FormulaError(format!(
@@ -3236,6 +3246,95 @@ impl<'a> EvaluationContext<'a> {
 }
 
 impl FormulaEvaluator {
+    /// What `depth()` gives: how deep the entry the formula is in stands in the tree of the
+    /// nearest list above it drawn with `tree=`.
+    ///
+    /// A tree whose entries hold their children in a list named by `tree=` has the depth in the
+    /// path itself - each further `<tree>/<entry>` pair is one level down. A tree by a field
+    /// naming the parent's key counts the steps up that chain within the list. A chain that
+    /// meets a parent not in the list ends there; one that meets a cycle ends at it, so every entry
+    /// of a cycle is 0 - the page draws only the first of one at the top, by an order a reader's
+    /// sort can change, which a formula cannot know.
+    fn depth_in_tree(context: &EvaluationContext) -> Result<OverseerValue, OverseerError> {
+        let path = &context.node_path;
+        let mut found = None;
+        for i in (1..path.len()).rev() {
+            let Some(list) = Self::resolve_path_to_node(&path[..i], context.document_root) else {
+                continue;
+            };
+            if list.node_type != "list" {
+                continue;
+            }
+            if let Some(OverseerValue::String(tree)) = list.parameters.get("tree") {
+                if !tree.trim().is_empty() {
+                    found = Some((i, list, tree.trim().to_string()));
+                    break;
+                }
+            }
+        }
+        let Some((at, list, tree)) = found else {
+            return Err(OverseerError::FormulaError(
+                "depth() is only for a formula inside an entry of a list drawn as a tree"
+                    .to_string(),
+            ));
+        };
+        let entry = crate::addressing::step_among(&list.children, &path[at]).ok_or_else(|| {
+            OverseerError::FormulaError("depth(): the entry is not in its list".to_string())
+        })?;
+
+        let holds_its_children = crate::addressing::effective_children(entry)
+            .into_iter()
+            .any(|(_, child)| child.name == tree && child.node_type == "list");
+        if holds_its_children {
+            let mut depth = 0;
+            let mut step = at + 1;
+            while step + 1 < path.len() && path[step] == tree {
+                depth += 1;
+                step += 2;
+            }
+            return Ok(OverseerValue::Integer(depth));
+        }
+
+        // The chain runs through the other entries' keys and parents, so a change to any of
+        // them can move this one: both are read for every entry, and which entries there are.
+        let key = match list.parameters.get("key") {
+            Some(OverseerValue::String(k)) if !k.is_empty() => k.clone(),
+            _ => {
+                return Err(OverseerError::FormulaError(
+                    "depth(): a tree by a parent field needs its list's key=".to_string(),
+                ))
+            }
+        };
+        let list_path = &path[..at];
+        crate::dependencies::note_read_of_entries(list_path);
+        crate::dependencies::note_read_of_every_entry(list_path, std::slice::from_ref(&tree));
+        crate::dependencies::note_read_of_every_entry(list_path, std::slice::from_ref(&key));
+
+        let mut by_key: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (place, child) in list.children.iter().enumerate() {
+            if let Some(k) = crate::addressing::key_of(child, &key) {
+                by_key.entry(k).or_insert(place);
+            }
+        }
+        let parent_of = |place: usize| -> Option<usize> {
+            let said = crate::addressing::key_of(&list.children[place], &tree)?;
+            by_key.get(&said).copied().filter(|p| *p != place)
+        };
+        let Some(start) = list.children.iter().position(|c| std::ptr::eq(c, entry)) else {
+            return Ok(OverseerValue::Integer(0));
+        };
+        let mut seen = vec![start];
+        let mut here = start;
+        while let Some(up) = parent_of(here) {
+            if let Some(cycle_from) = seen.iter().position(|s| *s == up) {
+                return Ok(OverseerValue::Integer(cycle_from as i64));
+            }
+            seen.push(up);
+            here = up;
+        }
+        Ok(OverseerValue::Integer(seen.len() as i64 - 1))
+    }
+
     /// Helper: resolve a path like [root, child, grandchild] to a node reference in document_root
     fn resolve_path_to_node<'a>(
         segments: &[String],

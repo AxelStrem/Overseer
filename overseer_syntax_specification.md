@@ -269,6 +269,7 @@ taken as UTC, and a bare date as its midnight.
 | `weekday(x)`, `day_of_month(x)`, `month_of(x)` | of the local day: 1 for Monday to 7 for Sunday; 1 to 31; 1 to 12 |
 | `minutes_of_day(x)` | minutes since local midnight, for a time of day |
 | `millis_since_epoch(x)` | the moment as a number, for sorting by it |
+| `depth()` | how deep the entry the formula is in stands in its tree, 0 at the top - see "Drawing a list as a tree" |
 | `fresh_key(list, ...)` | a key no entry of the keyed lists given holds - see "A form that fills an entry" |
 | `random(seed, ..., n)` | a whole number from 0 to `n - 1`, fixed by its seed: every argument but the last. The same seed gives the same number on every pass and every machine, so it stays put until the seed changes - `random(today(), Quotes.count())` is a quote of the day; for a fresh draw on demand, seed it with a timestamp an action sets |
 
@@ -504,6 +505,16 @@ its parent, and siblings stand in the order the list shows them, so `sort_by` an
 reader sorts by order the siblings under each parent, and a child never leaves its parent. An
 entry whose parent is not in the list is drawn at the top, and so is the first of a cycle of
 entries naming each other, so nothing in the file goes unseen.
+
+`depth()`, in any formula inside an entry of a tree - a field of it, or a parameter of the entry
+itself - is how deep that entry stands, 0 at the top: how many lists of the tree it is nested in,
+or how many parents up its chain goes. A chain that meets a parent not in the list, or a cycle,
+ends there, and every entry of a cycle is 0. Outside an entry of a tree it is an error. The
+indent is the tree's own, `indent=`, and a `margin-left` of a row does not change it.
+
+```overseer
+string details (hidden=$(depth() > 1)) = ""
+```
 
 A chevron folds the branch under its entry away and brings it back. The fold is how somebody is
 looking, never written: it is kept by the entry's key, in that tab, as a foldable div's is.
