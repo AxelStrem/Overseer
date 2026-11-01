@@ -43,7 +43,11 @@ const item = (n, handle) => base(`Item__${n}`, 'div', {}, [
     base('moved', 'string', { label: { String: 'moved' }, value: { String: '2h' } }),
     base('mark', 'mark', { type: { String: 'separator' } }),
     base('talk', 'button', { icon: { String: 'note' } }, [
-      base('click', 'on', {}, [base('toggle_fold', 'toggle_fold', { path: { String: '../Talk' } })]),
+      // It writes too, so the press goes to the server, and the fold comes from its answer.
+      base('click', 'on', {}, [
+        base('toggle_fold', 'toggle_fold', { path: { String: '../Talk' } }),
+        base('set', 'set', { path: { String: '../handle' } }),
+      ]),
     ]),
   ], true),
   base('Talk', 'div', { foldable: { Boolean: true } }, [

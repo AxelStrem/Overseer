@@ -6701,7 +6701,12 @@ export class OverseerRenderer {
             return kind === 'toggle_fold' || kind === 'unfold'
         })
         const said = action ? this.getParameterValue(action, 'path') : null
-        if (typeof said !== 'string' || said.trim() === '') return null
+        return this.foldPathFrom(own, said)
+    }
+
+    /// Where a fold's `path` leads from the drawn path of the node it is said in.
+    foldPathFrom(own, said) {
+        if (!Array.isArray(own) || typeof said !== 'string' || said.trim() === '') return null
         const at = said.trim().startsWith('/') ? [] : own.slice()
         for (const segment of said.trim().split('/')) {
             const step = segment.trim()
@@ -6714,6 +6719,33 @@ export class OverseerRenderer {
             }
         }
         return at.length > 0 ? at : null
+    }
+
+    /// The folds a press makes when folding is all it does: every action of its `on <event>` a
+    /// `fold`, `unfold` or `toggle_fold` with a written-out `path` to a foldable div that is
+    /// drawn. Null for any other press - one that sets something too, decides with an `if`, or
+    /// names its div by a formula - which the server has to work out.
+    localFoldsOf(node, eventName, own) {
+        const kids = node && Array.isArray(node.children) ? node.children : []
+        const handler = kids.find((c) => c && (c.node_type || c.type) === 'on' && c.name === eventName)
+        const actions = handler && Array.isArray(handler.children) ? handler.children : []
+        if (actions.length === 0) return null
+        const doc = window.app && window.app.currentDocument
+        if (!Array.isArray(doc)) return null
+        const folds = []
+        for (const action of actions) {
+            const how = String(action?.node_type || action?.type || '').toLowerCase()
+            if (how !== 'fold' && how !== 'unfold' && how !== 'toggle_fold') return null
+            const said = action.parameters && action.parameters.path
+            const literal = typeof said === 'string' ? said
+                : said && typeof said === 'object' && typeof said.String === 'string' ? said.String
+                : null
+            const path = this.foldPathFrom(own, literal)
+            const div = path ? this.findNodeByPath(doc, path) : null
+            if (!div || !this.isFoldable(div)) return null
+            folds.push({ div, path, how })
+        }
+        return folds
     }
 
     /// A button that opens a div is drawn pressed while the div is open, so the row says which
@@ -10659,6 +10691,22 @@ export class OverseerRenderer {
         const path = (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
+
+        // A press that only folds changes nothing in the file, so the page folds and the server
+        // is not asked: the round trip took most of a second on a large document, for an answer
+        // that only said which div to fold. Not held behind a press in flight either, since a
+        // fold is the viewer's own and touches nothing that press writes.
+        const folds = withValue === undefined && !path.includes('<phantom>')
+            ? this.localFoldsOf(node, eventName, path)
+            : null
+        if (folds) {
+            for (const { div, path: at, how } of folds) {
+                const now = this.isFolded(div, at)
+                const wanted = how === 'fold' ? true : how === 'unfold' ? false : !now
+                if (wanted !== now) this.setFolded(div, at, wanted)
+            }
+            return
+        }
 
         const busy = this._eventInFlight
         if (!busy) {

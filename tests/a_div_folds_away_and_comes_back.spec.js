@@ -46,8 +46,12 @@ const task = (n, key, folded = false) => base(`Task__${n}`, 'div', {}, [
   base('Extra', 'div', { foldable: { Boolean: true } }, [
     base('more', 'string', { value: { String: `more about ${key}` } }),
   ]),
+  // It writes too, so the press goes to the server, and the folds come from its answer.
   base('hide', 'button', { label: { String: 'hide' } }, [
-    base('click', 'on', {}, [base('fold', 'fold', { path: { String: '../Extra' } })]),
+    base('click', 'on', {}, [
+      base('fold', 'fold', { path: { String: '../Extra' } }),
+      base('set', 'set', { path: { String: '../key' } }),
+    ]),
   ]),
 ])
 
