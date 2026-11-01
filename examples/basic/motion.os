@@ -44,4 +44,6 @@ tab motion (label="Motion", mutable="guarded") {
             toggle (path="/motion/flagged")
         }
     }
+
+    text letters (markdown=true) = "<motion=wave | Waving letters>, <motion=jitter | trembling ones>, <motion=pulse | a pulse>, <color=#E91E63 motion=rainbow | **every colour**>"
 }

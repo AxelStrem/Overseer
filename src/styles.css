@@ -3171,6 +3171,47 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     .ov-hold { animation: none; transform: none; --ov-hold-turn: 360deg; }
 }
 
+/* A run of markdown given a motion, `<motion=wave | ...>`: each letter its own span, numbered by
+ * `--i`, and moving a little behind the one before it. The delays are negative so that every
+ * letter is under way from the first frame. A word's letters stay on one line together. */
+.md-word { white-space: nowrap; }
+.md-motion .md-letter {
+    display: inline-block;
+    white-space: pre;
+}
+.md-motion-wave .md-letter { animation: md-motion-wave 1.4s ease-in-out infinite; animation-delay: calc(var(--i, 0) * 90ms - 14s); }
+.md-motion-jitter .md-letter { animation: md-motion-jitter 0.9s steps(4) infinite; animation-delay: calc(var(--i, 0) * -137ms); }
+.md-motion-pulse .md-letter { animation: ov-motion-pulse 1.4s ease-in-out infinite; animation-delay: calc(var(--i, 0) * 80ms - 14s); }
+.md-motion-rainbow .md-letter { animation: md-motion-rainbow 2.4s linear infinite; animation-delay: calc(var(--i, 0) * 120ms - 24s); }
+
+@keyframes md-motion-wave {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-0.2em); }
+}
+@keyframes md-motion-jitter {
+    0%, 100% { transform: translate(0, 0); }
+    25% { transform: translate(0.04em, -0.05em); }
+    50% { transform: translate(-0.04em, 0.03em); }
+    75% { transform: translate(0.03em, 0.05em); }
+}
+@keyframes md-motion-rainbow {
+    0%, 100% { color: hsl(0 80% 55%); }
+    17% { color: hsl(40 90% 50%); }
+    33% { color: hsl(120 65% 42%); }
+    50% { color: hsl(190 80% 45%); }
+    67% { color: hsl(240 75% 62%); }
+    83% { color: hsl(300 70% 55%); }
+}
+
+/* Where the theme says `motion = none`, or the system asks for less motion, the letters stand
+ * still in the run's own colour. */
+@container style(--ov-motion: none) {
+    .md-motion .md-letter { animation: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .md-motion .md-letter { animation: none; }
+}
+
 /* A filter over a list: text to match and tags to narrow by.
  *
  * Entirely a view. Nothing here is written to the document, which is why it can afford to

@@ -1955,7 +1955,7 @@ to them - not when the node is drawn, and not when the document is opened - so a
 out and gone back in. To play the same motion again, a value can carry anything after a colon,
 which only makes it a new value: `motion=$("burst:" + digs)` bursts at every dig. A name the page
 does not know moves nothing. The theme's `motion = none`, or a system set to reduce motion, stills
-all of it.
+all of it. Markdown can move the letters of a run of text itself (see "Moving letters").
 
 ```overseer
 div Cell (motion=$(open ? (mine ? "burst" : "fade") : (flagged ? "pop" : ""))) { }
@@ -2187,6 +2187,26 @@ Security & Sanitization:
 - Only whitelisted patterns are allowed; anything else is dropped to prevent script injection via `javascript:` URIs.
 
 Use node-level `font-color` for broad styling, and inline color syntax for emphasis or multi-colored text segments.
+
+##### Moving letters
+
+The same mark takes a `motion`, alone or beside a `color`, in either order. Each letter of the run
+moves a little behind the one before it, for as long as the text is shown:
+
+```overseer
+text title (markdown=true) = "<motion=wave | Welcome back>, <color=#E91E63 motion=rainbow | **champion**>"
+```
+
+- `wave` - the letters rise and fall one after another.
+- `jitter` - the letters tremble slightly.
+- `pulse` - the letters fade and return one after another, as a node's `pulse` does.
+- `rainbow` - the letters run through the colours one after another.
+
+Only motions that go on are taken here: those a node plays once (`pop`, `shake`, `fade`, `burst`)
+play as a value changes to them, and a run of text has no such moment of its own. A motion the
+mark does not know moves nothing, and keeps the run's colour if it has one. Where the theme says
+`motion = none`, or the system asks for less motion, the letters stand still, in the run's own
+colour. Where only text can go, the mark is its text, as a colour's is.
 
 ---
 

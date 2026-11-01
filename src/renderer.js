@@ -66,6 +66,8 @@ const ICON_IN_TEXT = /<icon=([^<>]*)>/g
 /// that key. In markdown it reaches the HTML escaped, as any `<` that opens no tag does.
 const CHIP_IN_TEXT = /<#([^<>\s]+)>/g
 const CHIP_IN_HTML = /&lt;#([^<>&\s]+)&gt;/g
+/// The opening of an inline span mark of markdown, `<color=red | ...>` or `<motion=wave | ...>`.
+const SPAN_MARK_IN_TEXT = /<(?:color|motion)=/
 /// The ways a button can answer hover, the theme's `button/hover`; each is a class in the stylesheet.
 // A grid's column by its letters, from 0: A..Z, AA.. - as the engine's `cell_name` names them.
 const gridColumnLetters = (column) => {
@@ -361,13 +363,14 @@ const writtenIcons = (text) => text.replace(ICON_MARK, (_, said) => {
 // its closing each a mark of two private-use characters around the piece as it was written, so that
 // inside code it goes back to that text, and outside it becomes the span. The text between is left
 // to markdown. The colour is held to #RRGGBB, #RGB, a named colour, rgb(a)() or hsl(a)(); any other
-// keeps its text and loses the tag.
+// keeps its text and loses the tag. `<motion=wave | ...>`, alone or beside a colour, is the same
+// mark.
 const COLOUR_MARK = /([A-Za-z0-9%]*)/g
 const markPiece = (piece) => `${encodeURIComponent(piece)
     .replace(/[^A-Za-z0-9%]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`
 const markColourTags = (input) => {
-    if (!input || typeof input !== 'string' || input.indexOf('<color=') === -1) return input
-    return input.replace(/(<color=[^|>]+\|\s*)(.*?)(\s*>)/gms,
+    if (!input || typeof input !== 'string' || !SPAN_MARK_IN_TEXT.test(input)) return input
+    return input.replace(/(<(?:color|motion)=[^|>]+\|\s*)(.*?)(\s*>)/gms,
         (_, opening, inner, closing) => markPiece(opening) + inner + markPiece(closing))
 }
 const writtenPiece = (said) => {
@@ -378,17 +381,54 @@ const isColour = (color) =>
     || /^[a-zA-Z]+$/.test(color)
     || /^rgb(a)?\(\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}\s*,\s*[-+]?\d{1,3}(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
     || /^hsl(a)?\(\s*[-+]?\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(\s*,\s*(0|0?\.\d+|1(\.0+)?))?\s*\)$/.test(color)
+/// The motions a run of markdown can be given, `<motion=wave | ...>`: looping ones alone, since a
+/// text has no moment of its own to play a one-shot motion at. Each is a class in the stylesheet,
+/// which moves every letter of the run a little behind the one before it.
+const TEXT_MOTIONS = ['wave', 'jitter', 'rainbow', 'pulse']
+/// What the opening of a span mark says: a colour, a motion, or both, in either order.
+const spanMarkParts = (opening) => {
+    const parts = {}
+    const said = opening.slice(1, opening.indexOf('|'))
+    for (const m of said.matchAll(/(color|motion)=([\s\S]*?)(?=\s+(?:color|motion)=|\s*$)/g)) parts[m[1]] = m[2].trim()
+    return parts
+}
+const graphemes = (s) => typeof Intl !== 'undefined' && Intl.Segmenter
+    ? Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(s), (g) => g.segment)
+    : Array.from(s)
+// The letters of drawn HTML, each in a span numbered on from `count.n`, so that the stylesheet can
+// put each a little behind the last. Tags pass as they are, and an entity is one letter. A word's
+// letters are kept on one line together.
+const lettersOf = (html, count) => html.split(/(<[^>]*>)/).map((part, i) => i % 2 === 1 ? part
+    : part.split(/(\s+)/).map((word, j) => {
+        if (j % 2 === 1 || !word) return word
+        const letters = word.split(/(&[#A-Za-z0-9]+;)/)
+            .flatMap((piece, k) => k % 2 === 1 ? [piece] : graphemes(piece))
+        return `<span class="md-word">${letters.map((l) =>
+            `<span class="md-letter" style="--i:${count.n++}">${l}</span>`).join('')}</span>`
+    }).join('')).join('')
 const drawColourMarks = (html) => {
-    if (html.indexOf('') === -1) return html
-    // A closing closes a span only when its opening drew one.
+    if (html.indexOf('\ue002') === -1) return html
+    // A closing closes a span only when its opening drew one. While a moving span is open its
+    // letters are drawn one by one.
     const drew = []
-    return html.replace(COLOUR_MARK, (_, said) => {
-        const piece = writtenPiece(said)
-        if (!piece.startsWith('<color=')) return drew.pop() ? '</span>' : ''
-        const color = piece.slice('<color='.length, piece.indexOf('|')).trim()
-        drew.push(isColour(color))
-        return drew[drew.length - 1] ? `<span class="md-inline-color" style="color:${color}">` : ''
-    })
+    const count = { n: 0 }
+    return html.split(COLOUR_MARK).map((part, i) => {
+        if (i % 2 === 0) return drew.includes('moving') ? lettersOf(part, count) : part
+        const piece = writtenPiece(part)
+        if (!SPAN_MARK_IN_TEXT.test(piece)) return drew.pop() ? '</span>' : ''
+        const { color, motion } = spanMarkParts(piece)
+        const way = String(motion ?? '').toLowerCase()
+        const moves = TEXT_MOTIONS.includes(way)
+        if ((color !== undefined && !isColour(color)) || (color === undefined && !moves)) {
+            drew.push(false)
+            return ''
+        }
+        if (moves) count.n = 0
+        drew.push(moves ? 'moving' : true)
+        const classes = [color !== undefined && 'md-inline-color', moves && `md-motion md-motion-${way}`]
+            .filter(Boolean).join(' ')
+        return `<span class="${classes}"${color !== undefined ? ` style="color:${color}"` : ''}>`
+    }).join('')
 }
 const writtenColours = (text) => text.replace(COLOUR_MARK, (_, said) => writtenPiece(said))
 // Code shows its marks as the text they were written as, escaped as the rest of it is.
@@ -487,7 +527,7 @@ const nameHtml = (name) =>
     drawColourMarks(drawIconMarks(chipMarkdown.parseInline(markColourTags(markIcons(String(name ?? ''))))))
 /// Whether a name holds anything inline markdown reads. One that does not is drawn as plain text
 /// with its icons, as a name always was.
-const NAME_MARKUP = /[*_~`\\]|<color=/
+const NAME_MARKUP = /[*_~`\\]|<(?:color|motion)=/
 
 /// A chip's name as plain text, for places that can only hold text: what it shows, its marks gone.
 export const nameAsText = (name) => {
