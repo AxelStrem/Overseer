@@ -238,6 +238,13 @@ const backdropIconText = ({ key, file }) => {
     return coming
 }
 
+// A colour an image can be painted in: not a word that only points at another colour, such as
+// `inherit` or `currentColor`, which inside an icon drawn as a background point at nothing.
+const paintable = (colour) => {
+    const said = colour === null || colour === undefined ? '' : String(colour).trim()
+    return said && !/^(inherit|initial|unset|revert|revert-layer|currentcolor)$/i.test(said) ? said : null
+}
+
 /// Whether a path a document gives for an image may be asked for: one beside the document or
 /// below, with a raster image's extension. Only the document's folder and below, as the server
 /// and the app check again.
@@ -8181,8 +8188,8 @@ export class OverseerRenderer {
                     continue
                 }
                 if (!text) continue
-                const colourSaid = this.contextValue(key('colour') || key('color')) ?? parts.color
-                const colour = colourSaid ?? (parts.key ? textColour : null)
+                const colourSaid = paintable(this.contextValue(key('colour') || key('color')) ?? parts.color)
+                const colour = colourSaid ?? (parts.key ? paintable(textColour) : null)
                 const opacitySaid = String(this.contextValue(key('opacity')) ?? '').trim()
                 let opacity = parseFloat(opacitySaid)
                 if (opacitySaid.endsWith('%')) opacity /= 100
@@ -8241,9 +8248,14 @@ export class OverseerRenderer {
      * it gives a backdrop of its own is then painted with it.
      */
     writeBackdrop(element, backdrop, prefix, theme) {
+        // A text colour that only hands on another, as `inherit` does, is no colour inside an
+        // image, so the one it hands on is looked for further up.
         const said = this.contextValue((theme?.children || []).find((k) => k?.name === 'text'))
-        const textColour = said || element.style.getPropertyValue('--ov-text').trim() ||
-            this.themeAbove(element, 'text') ||
+        let textColour = paintable(said) || paintable(element.style.getPropertyValue('--ov-text'))
+        for (let at = element.parentElement; !textColour && at; at = at.parentElement) {
+            textColour = paintable(at.style && at.style.getPropertyValue('--ov-text'))
+        }
+        textColour = textColour ||
             (document.body && typeof getComputedStyle === 'function' ? getComputedStyle(document.body).color : null) || null
         const layers = this.backdropLayers(backdrop, textColour)
         element.style.setProperty(`${prefix}backdrop`, layers.image)

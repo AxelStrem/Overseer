@@ -131,6 +131,17 @@ tab project (label="Project", mutable=true) {
         }
 
         div Comment (layout="vertical", margin=0, spacing=0) {
+            context theme {
+                - backdrop {
+                    - mark {
+                        - kind = "icon"
+                        - source = $(/project/people/People.find(author)/icon)
+                        - opacity = 0.1
+                        - size = "120px"
+                        - position = "right 16px top 8px"
+                    }
+                }
+            }
             div (layout="horizontal", margin=0, spacing=8, alignment="center") {
                 timestamp at (format="datetime", precision="minutes", font-size=11px, font-color="#9ca3af", margin=0) =
                     "2026-01-01T00:00:00Z"

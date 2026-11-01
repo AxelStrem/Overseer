@@ -194,4 +194,27 @@ describe('an icon in a backdrop', () => {
     expect(svgOf(comment.style.getPropertyValue('--ov-backdrop'))).toContain('stroke="blue"')
     expect(comment.style.getPropertyValue('--ov-backdrop-repeat')).toBe('no-repeat')
   })
+
+  it('takes the colour a text of `inherit` hands on, since an image inherits none', async () => {
+    const app = new OverseerApp()
+    const mark = () => block('backdrop', [icon('mark', { source: 'star' })])
+    app.currentDocument = [
+      { name: 't', node_type: 'tab', parameters: {}, is_hierarchy_transparent: true, children: [
+        div('item', [theme([key('text', '#123456')]),
+          div('row', [theme([key('text', 'inherit')]),
+            div('comment', [theme([mark()]), field('a')]),
+            div('said', [theme([block('backdrop', [icon('mark', { source: 'star', colour: 'inherit' })])]), field('b')]),
+          ]),
+        ]),
+      ] },
+    ]
+    app.renderer.renderDocument(app.currentDocument)
+    for (const at of ['comment', 'said']) {
+      const element = elementAt(['t', 'item', 'row', at])
+      await vi.waitFor(() => expect(element.classList.contains('ov-themed-backdrop')).toBe(true))
+      const svg = svgOf(element.style.getPropertyValue('--ov-backdrop'))
+      expect(svg).toContain('stroke="#123456"')
+      expect(svg).not.toContain('inherit')
+    }
+  })
 })

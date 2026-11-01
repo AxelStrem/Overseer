@@ -946,7 +946,8 @@ context mode = "system"
 
   An `icon` draws one icon over the box: `source` is what `<icon=...>` takes - a library icon's
   name, or an SVG beside the document - and a formula like any key, so each entry of a list can
-  draw its own. `colour` is what the icon is drawn in (the theme's `text` where it says none; an
+  draw its own. `colour` is what the icon is drawn in (the theme's `text` where it says none, and
+  where that is `inherit`, the colour it inherits; an
   SVG of the document's keeps its own colours unless given one), `opacity` how strongly, `0` to `1`
   (`1`), `size` how high, of the box's height (`100%`; larger, and the box crops it), and
   `position` where, as CSS places a background (`center`; `right -10% center` puts it partly past
