@@ -416,8 +416,12 @@ fn narrow(
     // Both ways, since a document worked out again has been narrowed before: what is in the window
     // now may have been out of it last time.
     let list = trail.join("/");
+    let branches = branches_of(node, &order);
     let mut left_out = 0;
+    let mut branches_left_out = std::collections::HashSet::new();
     for (rank, (at, _)) in order.into_iter().enumerate() {
+        // A tree's window counts its top-level branches, each kept whole - see `branches_of`.
+        let rank = branches.as_ref().map_or(rank, |b| b[&at]);
         // Named by this interaction, so it stays - see `keeping_in_view`.
         let in_view = rank < window || addressable.get(at).is_some_and(|segment| is_wanted(segment));
         if in_view {
@@ -429,7 +433,9 @@ fn narrow(
         entry
             .parameters
             .insert(OUT_OF_VIEW.to_string(), OverseerValue::Boolean(true));
-        left_out += 1;
+        if branches.is_none() || branches_left_out.insert(rank) {
+            left_out += 1;
+        }
         // Not drawn, and worked out all the same when something reaches it - see `note_reached`.
         if is_held(&list, &entry.name) {
             entry.parameters.remove(NOT_WORKED_OUT);
@@ -443,6 +449,69 @@ fn narrow(
         LEFT_OUT.to_string(),
         OverseerValue::Integer(left_out as i64),
     );
+}
+
+/// For a list drawn as a tree by a field naming each entry's parent (`tree="parent"`), the place
+/// of each entry's top-level branch among the branches, by the entry's place in the list.
+///
+/// The window of such a list counts branches rather than entries, so that a branch is never cut
+/// in two - a child in view under a parent that is not would be drawn as a branch of its own. An
+/// entry whose parent is not in the list is at the top, and so is the first, in display order, of
+/// a cycle of entries naming each other, as the page draws them. `None` for any other list - a
+/// tree that holds its children inside its entries has only the top-level ones in the list.
+fn branches_of(
+    node: &OverseerNode,
+    order: &[(usize, Option<OverseerValue>)],
+) -> Option<std::collections::HashMap<usize, usize>> {
+    let tree = match node.parameters.get("tree") {
+        Some(OverseerValue::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return None,
+    };
+    let key = match node.parameters.get("key") {
+        Some(OverseerValue::String(s)) if !s.is_empty() => s.clone(),
+        _ => return None,
+    };
+    let rank: std::collections::HashMap<usize, usize> =
+        order.iter().enumerate().map(|(rank, (at, _))| (*at, rank)).collect();
+    let mut by_key = std::collections::HashMap::new();
+    for (at, _) in order {
+        if let Some(k) = crate::addressing::key_of(&node.children[*at], &key) {
+            by_key.entry(k).or_insert(*at);
+        }
+    }
+    let parent_of = |at: usize| -> Option<usize> {
+        let said = crate::addressing::key_of(&node.children[at], &tree)?;
+        by_key.get(&said).copied().filter(|p| *p != at)
+    };
+    let root_of = |at: usize| -> usize {
+        let mut seen = vec![at];
+        let mut here = at;
+        while let Some(up) = parent_of(here) {
+            if let Some(from) = seen.iter().position(|s| *s == up) {
+                // A cycle: its first entry in display order stands at the top.
+                return *seen[from..].iter().min_by_key(|s| rank[*s]).unwrap_or(&up);
+            }
+            seen.push(up);
+            here = up;
+        }
+        here
+    };
+    let roots: Vec<usize> = order.iter().map(|(at, _)| root_of(*at)).collect();
+    let tops: std::collections::HashSet<usize> = roots.iter().copied().collect();
+    let mut branch_rank = std::collections::HashMap::new();
+    for (at, _) in order {
+        if tops.contains(at) && !branch_rank.contains_key(at) {
+            let next = branch_rank.len();
+            branch_rank.insert(*at, next);
+        }
+    }
+    Some(
+        order
+            .iter()
+            .zip(roots)
+            .map(|((at, _), root)| (*at, branch_rank[&root]))
+            .collect(),
+    )
 }
 
 // How many windows more of each list the reader this work is for asked to see, by the list's

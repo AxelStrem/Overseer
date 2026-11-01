@@ -141,7 +141,7 @@ const BURST_DOTS = 8
 const BUTTON_STYLES = ['outline', 'plain']
 /// The kinds of element a theme says something about, and those of them that hold others - a
 /// table's `button` keys are how the buttons in a table look.
-const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'filter']
+const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'filter', 'tree']
 const KINDS_HOLDING = { table: '.overseer-list.view-table', tab: '.tab-bar', filter: '.overseer-filter' }
 
 /// A theme key said in words, as the CSS values the stylesheet reads: each is written beside the
@@ -1453,7 +1453,9 @@ export class OverseerRenderer {
             note.className = 'overseer-entries-left-out'
             const said = document.createElement('span')
             said.className = 'overseer-entries-left-out-count'
-            said.textContent = count === 1 ? '1 earlier entry not shown' : `${count} earlier entries not shown`
+            // A tree's window counts its top-level branches, each with all that is under it.
+            const what = this.treeOf(node) ? ['branch', 'branches'] : ['entry', 'entries']
+            said.textContent = count === 1 ? `1 earlier ${what[0]} not shown` : `${count} earlier ${what[1]} not shown`
             note.appendChild(said)
             const app = typeof window !== 'undefined' ? window.app : null
             if (Array.isArray(path) && app && typeof app.showMoreOf === 'function') {
@@ -1637,6 +1639,7 @@ export class OverseerRenderer {
         }
         // An entry repainted in a board stays in the column it was drawn in until asked again.
         try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
+        try { this.arrangeTrees() } catch (_) { /* never break a repaint over a view */ }
         try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
         return true
     }
@@ -1654,6 +1657,10 @@ export class OverseerRenderer {
         if (this.entriesAreTabs(list)) return false
         const element = this.drawnElementAt(path, 'overseer-list')
         if (!element) return false
+        if (this.treeOf(list)) {
+            this.arrangeTree(element, list)
+            return true
+        }
         const drawnFor = new Map()
         for (const el of element.children) {
             const uid = el.getAttribute('data-uid')
@@ -1745,6 +1752,8 @@ export class OverseerRenderer {
         if (!Array.isArray(path) || path.length === 0 || change.renamed || change.whole) return false
         const view = String(this.getParameterValue(list, 'view') || '')
         if (view === 'table' || view === 'board') return false
+        // A tree works out where each entry stands from the others - see `arrangeTree`.
+        if (this.treeOf(list)) return false
         // Entries that are tabs are drawn as one system, not as rows of the list.
         if (this.entriesAreTabs(list)) return false
         const element = this.drawnElementAt(path, 'overseer-list')
@@ -2186,6 +2195,9 @@ export class OverseerRenderer {
         // A context is what the nodes inside its container see - a theme, a mode - and not one of
         // them: it is read, never drawn.
         if ((node.node_type || node.type) === 'context') return
+
+        // The children of an entry of a tree are drawn as rows of the tree - see `treeOf`.
+        try { if (this.isTreeBranch(node, path)) return } catch (_) { /* drawn as a list */ }
 
         // Record a stable render path on the node for downstream components (charts, events)
         try { node.__overseer_path = Array.isArray(path) ? path.slice() : [] } catch (_) {}
@@ -2785,6 +2797,11 @@ export class OverseerRenderer {
                 if (node.children && Array.isArray(node.children)) {
                     // For list nodes, render in UI-sorted order using _ui_sort_key
                     const renderChildren = () => {
+                        // A tree draws every row of itself, at every depth - see `treeOf`.
+                        if (nodeTypeLower === 'list' && this.treeOf(node) && !this.entriesAreTabs(node)) {
+                            this.drawTreeRows(element, node, path, nextInherited)
+                            return
+                        }
                         let children = node.children
                         if (nodeTypeLower === 'list') children = this.inDisplayOrder(node)
                         // A folded div draws its header and nothing under it.
@@ -2808,6 +2825,7 @@ export class OverseerRenderer {
                     if (nodeTypeLower === 'grid') this.setUpGrid(element, node)
                     if (nodeTypeLower === 'array') this.setUpArray(element, node)
                     if (nodeTypeLower === 'list') {
+                        this.setUpTree(element, node)
                         this.setUpTable(element, node)
                         this.drawEntriesLeftOut(element, node, path)
                         this.setUpBoard(element, node)
@@ -4046,6 +4064,341 @@ export class OverseerRenderer {
         }
     }
 
+    /**
+     * A list drawn as a tree: `tree=` names what makes its hierarchy.
+     *
+     * Either a list inside each entry that holds its children - `tree="Kids"`, the entries
+     * nested in the file - or a field naming the key of each entry's parent - `tree="parent"`,
+     * the entries side by side in the file, as the trackers' items are. Both are drawn the same
+     * way: one row for each entry, in a run directly inside the list's element, each indented by
+     * its depth with lines joining it to its parent. A run rather than boxes inside boxes, so that
+     * a row is as wide as the list whatever its depth, and so that a table's columns can line up
+     * down the whole tree.
+     *
+     * The order is worked out here, never kept in the file: each entry stands under its parent,
+     * and siblings stand in the order the list shows them, so `sort_by` and a reader's sort order
+     * the siblings under each parent and a child never leaves its parent. An entry whose parent
+     * is not in the list stands at the top, and so does the first of a cycle of entries naming
+     * each other, so that nothing in the file goes unseen.
+     */
+    treeOf(list) {
+        if (String(list?.node_type || list?.type || '').toLowerCase() !== 'list') return ''
+        const said = this.getParameterValue(list, 'tree')
+        return said === null || said === undefined ? '' : String(said).trim()
+    }
+
+    /// Whether a list is the children of an entry of a tree that holds them nested, and so is
+    /// drawn as rows of that tree rather than as a list of its own.
+    isTreeBranch(node, path) {
+        if (String(node?.node_type || node?.type || '').toLowerCase() !== 'list') return false
+        if (!Array.isArray(path) || path.length < 2) return false
+        const doc = window.app && window.app.currentDocument
+        if (!doc) return false
+        if (this._treeNamesFor !== doc) {
+            this._treeNamesFor = doc
+            this._treeNames = new Set()
+            const visit = (nodes) => {
+                for (const n of nodes || []) {
+                    const tree = this.treeOf(n)
+                    if (tree) this._treeNames.add(tree)
+                    if (Array.isArray(n?.children)) visit(n.children)
+                }
+            }
+            visit(Array.isArray(doc) ? doc : [doc])
+        }
+        if (!this._treeNames.has(node.name)) return false
+        return this.treeRootAbove(path, node.name) !== null
+    }
+
+    /// Whether a tree list holds its children nested in its entries, rather than naming parents.
+    isNestedTree(list) {
+        const tree = this.treeOf(list)
+        if (!tree) return false
+        const first = (list.children || []).find((e) => e && this.entryField(e, tree))
+        const held = first ? this.entryField(first, tree) : this.entryField(this.templateNamed(this.entryTemplateOf(list)), tree)
+        return String(held?.node_type || held?.type || '').toLowerCase() === 'list'
+    }
+
+    /// The path of the outermost tree list above a path that goes down through the lists its
+    /// entries hold their children in - the list that draws everything inside it.
+    treeRootAbove(path, name = null) {
+        const doc = window.app && window.app.currentDocument
+        if (!doc || !Array.isArray(path)) return null
+        for (let i = 1; i < path.length; i++) {
+            const tree = this.treeOf(this.findNodeByPath(doc, path.slice(0, i)))
+            if (tree && (name === null || tree === name) && path.slice(i).includes(tree)) return path.slice(0, i)
+        }
+        return null
+    }
+
+    /**
+     * A tree list's rows, in the order they are drawn: each with its entry, the path it is drawn
+     * at, its depth from 0, how many children it has, and the place of its parent's row (-1 at
+     * the top).
+     */
+    treeRows(list, path) {
+        const tree = this.treeOf(list)
+        if (!tree || !Array.isArray(path)) return []
+        const shown = (holder) => this.inDisplayOrder(holder).filter((e) => e && typeof e === 'object'
+            && String(e.node_type || e.type || '').toLowerCase() !== 'context'
+            && !(typeof e.name === 'string' && e.name.startsWith('_'))
+            && this.shouldRenderChild(holder, e))
+        let top = shown(list).map((entry) => ({ entry, path: this.childPathFor(list, entry, path) }))
+
+        let kidsOf
+        const isList = (n) => String(n?.node_type || n?.type || '').toLowerCase() === 'list'
+        const branch = top.length ? this.entryField(top[0].entry, tree, tree) : null
+        if (isList(branch)) {
+            // Nested: each entry's own list holds its children.
+            kidsOf = (item) => {
+                const kids = this.entryField(item.entry, tree, tree)
+                if (!isList(kids)) return []
+                const at = this.fieldPathIn(item.entry, item.path, kids)
+                if (!at) return []
+                // Where it would have been drawn, so that a change inside it is drawn again from
+                // there - see `_rerenderSubtree`, which draws the whole tree for it.
+                try { kids.__overseer_path = at.slice() } catch (_) { /* found by looking */ }
+                return shown(kids).map((entry) => ({ entry, path: this.childPathFor(kids, entry, at) }))
+            }
+        } else {
+            // Side by side: each entry names its parent's key.
+            const keyField = this.getParameterValue(list, 'key')
+            const valueOf = (entry, name) => {
+                const field = name ? this.entryField(entry, name) : null
+                const held = field ? this.getNodeValue(field) : null
+                return held === null || held === undefined ? '' : String(held).trim()
+            }
+            const byKey = new Map()
+            for (const item of top) {
+                const key = valueOf(item.entry, keyField)
+                if (key !== '' && !byKey.has(key)) byKey.set(key, item)
+            }
+            const children = new Map(top.map((item) => [item, []]))
+            const hasParent = new Set()
+            for (const item of top) {
+                const said = keyField ? valueOf(item.entry, tree) : ''
+                const parent = said !== '' ? byKey.get(said) : null
+                if (parent && parent !== item) {
+                    children.get(parent).push(item)
+                    hasParent.add(item)
+                }
+            }
+            kidsOf = (item) => children.get(item) || []
+            const roots = top.filter((item) => !hasParent.has(item))
+            // A cycle has no top to be reached from: its first entry stands at the top.
+            const reached = new Set()
+            const reach = (item) => {
+                if (reached.has(item)) return
+                reached.add(item)
+                for (const kid of kidsOf(item)) reach(kid)
+            }
+            roots.forEach(reach)
+            for (const item of top) {
+                if (reached.has(item)) continue
+                roots.push(item)
+                reach(item)
+            }
+            top = top.filter((item) => roots.includes(item))
+        }
+
+        const rows = []
+        const seen = new Set()
+        const walk = (items, depth, parent) => {
+            for (const item of items) {
+                if (seen.has(item.entry)) continue
+                seen.add(item.entry)
+                const at = rows.length
+                rows.push({ entry: item.entry, path: item.path, depth, parent, kids: 0 })
+                if (parent >= 0) rows[parent].kids += 1
+                walk(kidsOf(item), depth + 1, at)
+            }
+        }
+        walk(top, 0, -1)
+        return rows
+    }
+
+    /// Draw a tree list's entries, every row of it, into the list's element - see `treeOf`.
+    drawTreeRows(element, list, path, inherited) {
+        for (const row of this.treeRows(list, path)) this.renderNode(row.entry, element, inherited, row.path)
+    }
+
+    /// Lay a tree list out, if it is one: its rows in order, their folds, and the lines.
+    setUpTree(element, list) {
+        if (!element || !this.treeOf(list) || this.entriesAreTabs(list)) return
+        element.classList.add('view-tree')
+        if (String(this.getParameterValue(list, 'view') || '') !== 'table') {
+            element.classList.remove('layout-horizontal', 'layout-flow')
+            element.classList.add('layout-vertical')
+        }
+        const indent = this.getParameterValue(list, 'indent')
+        if (indent !== null && indent !== undefined && String(indent).trim() !== '') {
+            const size = String(indent).trim()
+            element.style.setProperty('--tree-indent', /^\d+(\.\d+)?$/.test(size) ? `${size}px` : size)
+        }
+        this.arrangeTree(element, list)
+    }
+
+    /// Put a tree list's rows in order, hide what is folded away, and draw the lines.
+    ///
+    /// Written to be run again at any time, as `arrangeBoard` is: a row drawn again after a
+    /// change comes back without its place in the tree, and a parent written anew moves its row.
+    arrangeTree(element, list) {
+        const path = list.__overseer_path || []
+        const rows = this.treeRows(list, path)
+        const drawn = new Map()
+        for (const el of element.querySelectorAll(':scope > [data-uid]')) drawn.set(el.getAttribute('data-uid'), el)
+        const placed = rows.map((row) => (row.entry.__uid && drawn.get(row.entry.__uid)) || null)
+        // A child added or taken away inside an entry of a nested tree is a change to that entry's
+        // own list, which has no element of its own to be drawn again in: its rows are drawn or
+        // taken off here instead.
+        if (placed.some((el) => !el)) {
+            const inherited = { backgroundColor: this.colourHandedAt(element) }
+            rows.forEach((row, i) => {
+                if (placed[i]) return
+                const wrapper = document.createElement('div')
+                this.renderNode(row.entry, wrapper, inherited, row.path)
+                const fresh = wrapper.firstElementChild
+                if (!fresh) return
+                const before = placed.slice(0, i).filter(Boolean).pop()
+                if (before) before.after(fresh)
+                else element.insertBefore(fresh, placed.find(Boolean) || element.querySelector(':scope > .overseer-entries-left-out'))
+                placed[i] = fresh
+            })
+        }
+        const kept = new Set(placed.filter(Boolean))
+        for (const el of drawn.values()) {
+            if (el.classList.contains('tree-row') && !kept.has(el)) el.remove()
+        }
+        const present = placed.filter(Boolean)
+        if (present.length) {
+            const set = new Set(present)
+            const now = Array.from(element.children).filter((el) => set.has(el))
+            if (now.length !== present.length || !now.every((el, i) => el === present[i])) {
+                const after = now[now.length - 1].nextSibling
+                for (const el of present) element.insertBefore(el, after)
+            }
+        }
+        // A row folded away under any of its ancestors.
+        const folded = rows.map((row) => row.kids > 0 && this.isTreeFolded(row.path))
+        const away = rows.map(() => false)
+        rows.forEach((row, i) => {
+            if (row.parent >= 0) away[i] = away[row.parent] || folded[row.parent]
+        })
+        element.__treeRows = rows.map((row, i) => ({
+            element: placed[i], depth: row.depth, parent: row.parent, kids: row.kids,
+            folded: folded[i], path: row.path,
+        }))
+        rows.forEach((row, i) => {
+            const el = placed[i]
+            if (!el) return
+            el.classList.add('tree-row')
+            el.classList.toggle('tree-folded-away', away[i])
+            el.dataset.treeDepth = String(row.depth)
+            el.style.setProperty('--tree-depth', String(row.depth))
+        })
+        // The lines reach up across the space between rows, to meet the row above.
+        try {
+            const gap = getComputedStyle(element).rowGap
+            element.style.setProperty('--tree-gap', /^\d+(\.\d+)?px$/.test(gap) ? gap : '0px')
+        } catch (_) { /* rows that touch */ }
+        this.drawTreeLines(element)
+    }
+
+    /// Every tree list on screen laid out again - after anything is drawn again inside one.
+    arrangeTrees() {
+        const doc = window.app && window.app.currentDocument
+        if (!doc) return
+        for (const element of document.querySelectorAll('.overseer-list.view-tree')) {
+            let node = null
+            try { node = this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { node = null }
+            if (node) this.arrangeTree(element, node)
+        }
+    }
+
+    /// The lines of a tree, drawn for the rows that show: a guide down from each ancestor that
+    /// has a sibling still to come, an elbow into the row, and the chevron of a row with children.
+    /// Drawn again whenever what shows changes - a fold, the filter - since a line runs on only
+    /// to a sibling that shows.
+    drawTreeLines(element) {
+        const rows = element.__treeRows
+        if (!Array.isArray(rows)) return
+        const shows = rows.map((row) => !!row.element
+            && !row.element.classList.contains('tree-folded-away')
+            && !row.element.classList.contains('filtered-out'))
+        // Whether a row is the last of its siblings that shows, and whether any child of it shows.
+        const last = rows.map(() => true)
+        const anyKidShows = rows.map(() => false)
+        const lastSeen = new Map()
+        rows.forEach((row, i) => {
+            if (!shows[i]) return
+            if (lastSeen.has(row.parent)) last[lastSeen.get(row.parent)] = false
+            lastSeen.set(row.parent, i)
+            if (row.parent >= 0) anyKidShows[row.parent] = true
+        })
+        rows.forEach((row, i) => {
+            const el = row.element
+            if (!el) return
+            el.querySelector(':scope > .tree-lines')?.remove()
+            if (!shows[i]) return
+            const lines = document.createElement('div')
+            lines.className = 'tree-lines'
+            const line = (kind, column) => {
+                const piece = document.createElement('span')
+                piece.className = kind
+                piece.style.setProperty('--tree-column', String(column))
+                lines.appendChild(piece)
+            }
+            // Up the chain: a guide in the column of each ancestor below the top that has a
+            // sibling still to come under the same parent.
+            for (let at = row.parent; at >= 0; at = rows[at].parent) {
+                if (rows[at].depth >= 1 && !last[at]) line('tree-guide', rows[at].depth - 1)
+            }
+            if (row.depth > 0) {
+                line(last[i] ? 'tree-elbow tree-elbow-last' : 'tree-elbow', row.depth - 1)
+                line(row.kids > 0 ? 'tree-branch' : 'tree-branch tree-branch-leaf', row.depth - 1)
+            }
+            if (row.kids > 0) {
+                // Down from under the chevron to the first child, when one shows.
+                if (anyKidShows[i]) line('tree-stem', row.depth)
+                const chevron = document.createElement('button')
+                chevron.type = 'button'
+                chevron.className = 'tree-chevron'
+                chevron.style.setProperty('--tree-column', String(row.depth))
+                chevron.setAttribute('aria-expanded', row.folded ? 'false' : 'true')
+                chevron.setAttribute('aria-label', row.folded ? 'Unfold' : 'Fold')
+                // Not the start of a drag, nor a press of the row it is on.
+                chevron.addEventListener('pointerdown', (event) => event.stopPropagation())
+                chevron.addEventListener('click', (event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    this.setTreeFolded(row.path, !row.folded)
+                    const doc = window.app && window.app.currentDocument
+                    let list = null
+                    try { list = this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { list = null }
+                    if (list) this.arrangeTree(element, list)
+                })
+                lines.appendChild(chevron)
+            }
+            el.appendChild(lines)
+        })
+    }
+
+    /// Whether a tree's row has its children folded away. Kept as a div's fold is - by the entry's
+    /// key, in this tab - and never written: it is only how somebody is looking.
+    isTreeFolded(path) {
+        // Apart from a div's fold, since an entry can be a foldable div as well.
+        const state = this.foldsHere().get(`tree:${this.foldKeyFor(path)}`)
+        return !!(state && state.folded)
+    }
+
+    setTreeFolded(path, folded) {
+        const folds = this.foldsHere()
+        const key = `tree:${this.foldKeyFor(path)}`
+        if (folded) folds.set(key, { folded: true })
+        else folds.delete(key)
+        this.keepFolds()
+    }
+
     /** Put every board's entries back in the columns they now belong in. */
     arrangeBoards() {
         const doc = window.app && window.app.currentDocument
@@ -4381,6 +4734,9 @@ export class OverseerRenderer {
         if (said !== true && String(said).toLowerCase() !== 'true') return
         if (this.getEffectiveMutableMode(node, element) !== 'true') return
         if (this.entriesAreTabs(node)) return
+        // A tree that holds its children nested has rows that are entries of other lists, which
+        // a drag in this one cannot move yet.
+        if (this.isNestedTree(node)) return
         // Nor is there anywhere to drag to while a reader has it sorted: the order on screen is
         // not the list's, and a drag in it would write an order nobody can see.
         if (this.isColumnSorted(node)) {
@@ -5235,14 +5591,18 @@ export class OverseerRenderer {
      * or a button. An `on change` that copies the entry elsewhere holds lines named after its
      * fields - `- labels = $(../labels)` - and a field placed before `labels` would otherwise
      * answer with that formula instead of the field.
+     *
+     * `within`, when given, names a list not to look into: the list an entry of a tree holds its
+     * children in, whose fields are theirs and not the entry's.
      */
-    entryField(entry, name) {
+    entryField(entry, name, within = null) {
         const seek = (node) => {
             for (const child of (node && node.children) || []) {
                 if (!child) continue
                 const type = String(child.node_type || child.type || '').toLowerCase()
                 if (type === 'on' || type === 'button') continue
                 if (child.name === name) return child
+                if (within && child.name === within && type === 'list') continue
                 const found = seek(child)
                 if (found) return found
             }
@@ -5310,8 +5670,30 @@ export class OverseerRenderer {
             if (!list || !Array.isArray(list.children)) continue
             const wanted = state.text.trim().toLowerCase()
             let showing = 0
+            let total = list.children.length
 
-            for (const entry of list.children) {
+            // A tree is filtered at every depth, and a match keeps its ancestors in sight - dimmed
+            // where they do not match themselves - while the rest of the tree goes.
+            const tree = this.treeOf(list)
+            if (tree) {
+                const rows = this.treeRows(list, state.target)
+                const matches = rows.map((row) => this.entryMatchesFilter(row.entry, wanted, state, tree))
+                const leadsToOne = rows.map(() => false)
+                for (let i = rows.length - 1; i >= 0; i--) {
+                    const parent = rows[i].parent
+                    if (parent >= 0 && (matches[i] || leadsToOne[i])) leadsToOne[parent] = true
+                }
+                rows.forEach((row, i) => {
+                    if (matches[i]) showing += 1
+                    for (const element of byPath.get(JSON.stringify(row.path)) || []) {
+                        element.classList.toggle('filtered-out', !matches[i] && !leadsToOne[i])
+                        element.classList.toggle('tree-ancestor', !matches[i] && leadsToOne[i])
+                    }
+                })
+                total = rows.length
+            }
+
+            for (const entry of tree ? [] : list.children) {
                 const matches = this.entryMatchesFilter(entry, wanted, state)
                 if (matches) showing += 1
                 const path = JSON.stringify([...state.target, entry.name])
@@ -5321,7 +5703,6 @@ export class OverseerRenderer {
             }
 
             for (const label of document.querySelectorAll(`[data-filter-count='${key}']`)) {
-                const total = list.children.length
                 const narrowed = wanted !== '' || this.tagsPicked(state) || state.status.size > 0
                     || state.enums.size > 0 || state.hiding
                 label.textContent = narrowed ? `${showing} of ${total}` : `${total}`
@@ -5329,16 +5710,18 @@ export class OverseerRenderer {
         }
         // A board's columns say how many they show, and the filter has just changed that.
         for (const board of document.querySelectorAll('.overseer-board')) this.countBoardColumns(board)
+        // A tree's lines run on only to what shows.
+        for (const tree of document.querySelectorAll('.overseer-list.view-tree')) this.drawTreeLines(tree)
     }
 
     /** Whether one entry survives the filter. Empty filter, everything survives. */
-    entryMatchesFilter(entry, wanted, state) {
+    entryMatchesFilter(entry, wanted, state, within = null) {
         // Searched all the way down, not just among the entry's own children. An entry's fields
         // sit inside the layout divs that arrange them - `title` is a grandchild of the row in
         // every document written so far - so looking only at direct children found nothing and
         // quietly filtered everything away.
         const fieldText = (name) => {
-            const child = this.entryField(entry, name)
+            const child = this.entryField(entry, name, within)
             if (!child) return ''
             const value = this.getParameterValue(child, 'value')
             return value === null || value === undefined ? '' : String(value)
@@ -5348,7 +5731,7 @@ export class OverseerRenderer {
         // list has no value of its own, and the conversation on a project item is a list of
         // comments that `find` should read all of.
         const searchText = (name) => {
-            const child = this.entryField(entry, name)
+            const child = this.entryField(entry, name, within)
             return child ? textWithoutIcons(this.valuesWithin(child).join(' ')) : ''
         }
 
@@ -5635,6 +6018,7 @@ export class OverseerRenderer {
         const anchor = this._anchorForPath(path)
         this.updateNodeValue(node, after)
         try { this.arrangeBoards() } catch (_) { /* never break a write over a view */ }
+        try { this.arrangeTrees() } catch (_) { /* never break a write over a view */ }
         try { this.arrangeGrips() } catch (_) { /* never break a write over a view */ }
         if (this.declaresEvent(node, 'change') && window.app.currentFile) {
             try {
@@ -11789,6 +12173,7 @@ export class OverseerRenderer {
 
             // A value that decides which column of a board its entry stands in moves the entry.
             try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
+            try { this.arrangeTrees() } catch (_) { /* never break a repaint over a view */ }
             try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
             if (DEBUG_MODE) console.log(`✅ Selective update completed: ${updateCount} elements updated`)
             return updateCount > 0
@@ -11825,8 +12210,15 @@ export class OverseerRenderer {
     _rerenderSubtree(documentArray, pathArray) {
         try {
             // Determine the node at this path to infer expected container class
-            const node = this.findNodeByPath(documentArray, pathArray)
+            let node = this.findNodeByPath(documentArray, pathArray)
             if (!node) return false
+            // The children of an entry of a tree are rows of the tree, drawn with the whole of it.
+            if (this.isTreeBranch(node, pathArray)) {
+                const top = this.treeRootAbove(pathArray, node.name)
+                node = this.findNodeByPath(documentArray, top)
+                pathArray = top
+                if (!node) return false
+            }
             const nodeType = (node.node_type || node.type || '').toLowerCase()
             const expectedClass = (() => {
                 switch (nodeType) {
@@ -11850,6 +12242,7 @@ export class OverseerRenderer {
                 const done = this.repaintTab(node, el, pathArray, { backgroundColor: bg })
                 try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
                 try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
+                try { this.arrangeTrees() } catch (_) { /* never break a repaint over a view */ }
                 try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
                 try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return done
@@ -11872,6 +12265,7 @@ export class OverseerRenderer {
                 // of its column.
                 try { this.arrangeTables() } catch (_) { /* never break a repaint over a view */ }
                 try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
+                try { this.arrangeTrees() } catch (_) { /* never break a repaint over a view */ }
                 try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
                 try { this.applyFilters() } catch (_) { /* never break a repaint over a view */ }
                 return true

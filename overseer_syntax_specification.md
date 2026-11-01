@@ -470,6 +470,57 @@ list Ranked (entry=<Food>, view="board", by="tier", layout="vertical", movable=t
 list Unranked (entry=<Food>, layout="horizontal", movable=true) { }
 ```
 
+#### Drawing a list as a tree
+
+`tree=` draws a list as an outline: each entry under its parent, indented by its depth, with lines
+joining it to its parent and a chevron on each entry that has children. It names what makes the
+hierarchy, which can be either of two things:
+
+- **A list inside each entry** that holds its children, made from the same template - the entries
+  nest in the file, and a total over a branch is a plain `sum`:
+
+  ```overseer
+  div Part (layout="horizontal") {
+      string name = ""
+      int own = 1
+      int total = $(own + Parts.sum(|x| x/total))
+      list Parts (entry=<Part>, key="name") { }
+  }
+
+  list Parts (entry=<Part>, key="name", tree="Parts") { }
+  ```
+
+- **A field of each entry naming its parent's key** - the entries stand side by side in the file,
+  as a project tracker's items do, and an entry keeps its address whatever its parent:
+
+  ```overseer
+  list Items (entry=<Item>, key="handle", tree="parent") { }
+  ```
+
+Either way the tree is drawn as one run of rows, each as wide as the list allows at its depth,
+and each entry keeps its own address - `o/Parts/[Car]/Parts/[Engine]/name` for a nested one. The
+order is worked out as it is drawn, and nothing in the file has to keep it: an entry stands under
+its parent, and siblings stand in the order the list shows them, so `sort_by` and a column a
+reader sorts by order the siblings under each parent, and a child never leaves its parent. An
+entry whose parent is not in the list is drawn at the top, and so is the first of a cycle of
+entries naming each other, so nothing in the file goes unseen.
+
+A chevron folds the branch under its entry away and brings it back. The fold is how somebody is
+looking, never written: it is kept by the entry's key, in that tab, as a foldable div's is.
+
+A filter on a tree looks at every depth. An entry that matches is shown with its ancestors, which
+are dimmed where they do not match themselves, and the rest of the tree is hidden; the filter
+counts the entries that match. `window` counts top-level branches, each kept whole, and the
+note under the list says how many branches it left out.
+
+`indent=` on the list is how far each depth stands in (`18px` unless the theme's `tree` key says
+otherwise). The theme's `tree` key says how the lines look: `indent`, `color` (the theme's `line`
+where it says none), `thickness` (`1px`), `style` (`solid`, `dashed`, `dotted`), and `elbow`, how
+far down a row its line comes in - the middle of the row unless it says, such as `"14px"`.
+
+Dragging a nested tree's entries is not offered yet; a tree by a parent field reorders as any
+movable list does.
+
 ### 8. Grids
 
 A grid holds `columns` x `rows` cells, every one made from its `entry=` - a template, or a field
@@ -895,6 +946,8 @@ context mode = "system"
     the `style`.
   - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
   - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box a filter is typed in.
+  - `tree`: `indent` (`18px`), `color`, `thickness`, `style` and `elbow` of a list drawn as a tree
+    (see "Drawing a list as a tree").
   - `hold`: `style`, how a press held on a node with `on hold` is shown while it lasts - `fill`,
     `ring` or `none`; `color`, what it is drawn in; and `particles`, `dots` or `none` (see "on
     hold").
@@ -913,7 +966,7 @@ context mode = "system"
   container's theme: a `table` key changes the table's heading and rows, not the fields in it -
   unless it holds that kind's keys, as above. The kinds are `button`, `checkbox`, `chip` (tags and
   enums), `tab` (a tab bar and its tabs), `table` (a list drawn as a table), `field`, `chart`,
-  `separator` and `filter`. Each of them changes what its look takes from the theme, and nothing
+  `separator`, `filter` and `tree`. Each of them changes what its look takes from the theme, and nothing
   it draws in a fixed way: a solid button's label is light or dark to read on its colour whatever
   its `text`, and `button/label` says otherwise.
 - **`backdrop` is what is painted over `background`**: layers, each a key of its own, drawn in the
@@ -2438,7 +2491,7 @@ div Tasks {
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
-- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
+- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
 - **Grids**: `entry`, `columns`, `rows`, `header`
 - **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`

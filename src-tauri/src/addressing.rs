@@ -125,7 +125,7 @@ pub fn cell_place(name: &str) -> Option<(usize, usize)> {
 /// Through wrappers, because grouping an entry's fields for layout must not change what the
 /// entry is called. It did once: a day whose date was put in a row with the rest of its
 /// summary lost its key, and every address that named it by date stopped resolving.
-fn key_of(node: &OverseerNode, field: &str) -> Option<String> {
+pub fn key_of(node: &OverseerNode, field: &str) -> Option<String> {
     let child = effective_children(node)
         .into_iter()
         .map(|(_, child)| child)

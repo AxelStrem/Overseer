@@ -927,6 +927,111 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     opacity: 0.35;
 }
 
+/* A list drawn as a tree: each row stands in from the list's edge by its depth, with a column's
+   room left for its chevron, and the lines are drawn in that margin - one column of `indent` for
+   each depth, a line down the middle of the column. The theme's `tree` key says how they look:
+   `indent`, `color` (the theme's `line` where it says none), `thickness`, `style`, and `elbow`,
+   how far down a row its line comes in (the middle where it says nothing). */
+.overseer-list.view-tree {
+    --tree-indent: var(--ov-tree-indent, 18px);
+    --tree-line: var(--ov-tree-thickness, 1px) var(--ov-tree-style, solid) var(--ov-tree-color, var(--ov-line));
+    --tree-elbow-y: var(--ov-tree-elbow, 50%);
+    --tree-chevron: 14px;
+}
+
+.overseer-list.view-tree > .tree-row {
+    position: relative;
+    margin-left: calc((var(--tree-depth, 0) + 1) * var(--tree-indent)) !important;
+}
+
+/* A row the filter keeps only because something under it matches. */
+.overseer-list.view-tree > .tree-ancestor {
+    opacity: 0.5;
+}
+
+.tree-lines {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 100%;
+    width: calc((var(--tree-depth, 0) + 1) * var(--tree-indent));
+    pointer-events: none;
+}
+
+.tree-lines > span {
+    position: absolute;
+    left: calc(var(--tree-column) * var(--tree-indent) + var(--tree-indent) / 2);
+}
+
+/* Down past the row, from an ancestor that has a sibling still to come; up across the gap, to
+   meet the row above. */
+.tree-lines > .tree-guide,
+.tree-lines > .tree-elbow {
+    top: calc(-1 * var(--tree-gap, 0px));
+    bottom: 0;
+    border-left: var(--tree-line);
+}
+
+/* The last child: down only as far as its own line in. */
+.tree-lines > .tree-elbow-last {
+    bottom: auto;
+    height: calc(var(--tree-gap, 0px) + var(--tree-elbow-y));
+}
+
+/* Across into the row: to its chevron, or to the row itself where it has none. */
+.tree-lines > .tree-branch {
+    top: var(--tree-elbow-y);
+    width: calc(var(--tree-indent) - var(--tree-chevron) / 2 - 2px);
+    border-top: var(--tree-line);
+}
+
+.tree-lines > .tree-branch-leaf {
+    width: calc(var(--tree-indent) * 1.5 - 3px);
+}
+
+/* Down from under the chevron to the first child. */
+.tree-lines > .tree-stem {
+    top: calc(var(--tree-elbow-y) + var(--tree-chevron) / 2 + 2px);
+    bottom: 0;
+    border-left: var(--tree-line);
+}
+
+.tree-lines > .tree-chevron {
+    position: absolute;
+    left: calc(var(--tree-column) * var(--tree-indent) + var(--tree-indent) / 2 - var(--tree-chevron) / 2);
+    top: calc(var(--tree-elbow-y) - var(--tree-chevron) / 2);
+    width: var(--tree-chevron);
+    height: var(--tree-chevron);
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    color: var(--ov-tree-color, var(--ov-muted));
+    cursor: pointer;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tree-lines > .tree-chevron::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-1px) rotate(45deg);
+    transition: transform 120ms ease;
+}
+
+.tree-lines > .tree-chevron[aria-expanded="false"]::before {
+    transform: translateX(-1px) rotate(-45deg);
+}
+
+.tree-lines > .tree-chevron:hover {
+    color: var(--ov-accent);
+}
+
 /* A list drawn as a board: a column for each value of a field, side by side. A board wider than
    the page scrolls sideways rather than squeezing its columns, on a phone as well - a column too
    narrow for its cards says less than one scrolled to. */
@@ -3517,6 +3622,13 @@ body.ov-backdrop-moving {
  * Three classes puts this at (0,3,0), above every layout rule rather than merely tied with the
  * ones that exist today. */
 .filtered-out.filtered-out.filtered-out {
+    display: none !important;
+}
+
+/* A row of a tree folded away under one of its ancestors. Below `.filtered-out`, which the filter
+ * test holds above every other rule, and level with the layout rules that force a display, which
+ * it comes after. */
+.tree-folded-away.tree-folded-away {
     display: none !important;
 }
 
