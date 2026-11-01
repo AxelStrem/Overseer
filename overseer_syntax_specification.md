@@ -834,7 +834,7 @@ context mode = "system"
   headings, chips and buttons do not - their kinds say theirs; `leading` the height of a line, as
   a factor of the size (`1.5`); `numerals` is `proportional` or `tabular`, digits of one width so
   that figures line up down a column; `motion` is `full`, the default, or `none`, which stills every
-  node's `motion` and draws a hold's fill without moving. The shipped theme keeps each mode's colours under `light`
+  node's `motion` and `ease` and draws a hold's fill without moving. The shipped theme keeps each mode's colours under `light`
   and `dark` and picks one by `mode`, as `- surface = $(mode == "dark" ? dark/surface :
   light/surface)`, so `context theme { - dark { - surface = "#000" } }` changes the dark colour
   alone and the light one stays as it was. `light` and `dark` are keys of the theme, not kinds of
@@ -1961,6 +1961,18 @@ all of it. Markdown can move the letters of a run of text itself (see "Moving le
 div Cell (motion=$(open ? (mine ? "burst" : "fade") : (flagged ? "pop" : ""))) { }
 ```
 
+`ease` makes a node's colours ease into their new values rather than change at once: its
+background, text and border colours, its `shadow` and its opacity, each time any of them changes,
+over the duration `ease` gives (`"900ms"`, `"0.9s"`, or a number of milliseconds). A change that
+comes while one is still easing starts from where it had got to. Being a value like any other, it
+can differ by direction - a cell of a game of life that lights up at once and dims slowly as it
+dies. Size does not ease. The theme's `motion = none`, or a system set to reduce motion, turns it
+off.
+
+```overseer
+div Cell (background-color=$(alive ? "#4ade80" : "#0f2a1d"), ease=$(alive ? "120ms" : "900ms")) { }
+```
+
 `view="table"` draws a list as a table, a column for each field of its entries, with `header=true`
 for a heading naming them and `sticky=true` to keep the heading in view while the rows scroll. A
 node of an entry that says `span="row"` is not a column but a line of its own across the row,
@@ -2372,7 +2384,7 @@ div Tasks {
 ## Reserved Keywords
 
 - **Layout**: `layout` (`vertical`, `horizontal`, `flow`, `inherit`, `opposite`), `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`, `alignment`, `min-width`
-- **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `value-padding`
+- **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `ease`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
 - **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)

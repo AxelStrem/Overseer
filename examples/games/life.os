@@ -27,7 +27,7 @@ div (hidden=true) {
     div Cell (width=16, height=16, padding=0, margin=0, border-radius=5,
               background-color=$(./alive ? "#4ade80" : "#0f2a1d"),
               shadow=$(./alive ? "0 0 8px #4ade80, inset 0 0 0 1px #bbf7d0" : "inset 0 0 0 2px #06170f"),
-              motion=$(./alive ? "fade" : "")) {
+              ease=$(./alive ? "120ms" : "900ms")) {
         div (hidden=true) {
             bool alive = false
             int x = $(column())

@@ -103,6 +103,26 @@ const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
 /// the value changes to them, and `pulse`, which runs for as long as the value says it.
 const MOTIONS_ONCE = ['pop', 'shake', 'fade', 'burst']
 const MOTIONS_LOOPING = ['pulse']
+/// What a node's `ease=` eases: its colours, shadow and opacity. Size would move the layout of the
+/// whole page at every frame.
+const EASED_PROPERTIES = ['backgroundColor', 'color', 'borderTopColor', 'borderRightColor',
+    'borderBottomColor', 'borderLeftColor', 'boxShadow', 'opacity']
+
+/// An `ease=` value as milliseconds: `"900ms"`, `"0.9s"`, or a bare number of ms; 0 for none.
+function easeDuration(value) {
+    const said = String(value ?? '').trim().toLowerCase()
+    const m = said.match(/^(\d+(?:\.\d+)?)\s*(ms|s)?$/)
+    if (!m) return 0
+    return Math.round(parseFloat(m[1]) * (m[2] === 's' ? 1000 : 1))
+}
+
+/// The eased properties of an element as it is drawn now.
+function easedValues(element) {
+    const style = getComputedStyle(element)
+    const values = {}
+    for (const property of EASED_PROPERTIES) values[property] = style[property]
+    return values
+}
 /// How the theme's `hold/style` draws a hold under way: each is a class in the stylesheet.
 const HOLD_STYLES = ['fill', 'ring']
 /// The dots a `burst` throws.
@@ -2108,6 +2128,7 @@ export class OverseerRenderer {
                 }
             } catch (_) { /* no-op */ }
             try { this.applyMotion(element, node, path) } catch (_) { /* never break a render over a motion */ }
+            try { this.applyEase(element, node, path) } catch (_) { /* never break a render over an easing */ }
 
             // Guard against null/undefined container (can occur during selective patch attempts when DOM node not found)
             if (!container) { if (DEBUG_MODE) console.warn('renderNode: null container for path', path, 'node', node); return }
@@ -8476,6 +8497,53 @@ export class OverseerRenderer {
         })
     }
 
+    /**
+     * A node's `ease=`, a duration: whenever its colours, shadow or opacity change, they ease from
+     * what was drawn before to what is drawn now. A redraw puts a new element in place of the old
+     * one, so a CSS transition has nothing to start from; the values last drawn are remembered by
+     * the document and the node's address instead, as `motion` remembers its own. Where the old
+     * element is still easing, it is still in the page while its replacement is drawn, and the new
+     * element starts from where the old one had got to. An address seen for the first time eases
+     * nothing, so opening a document does not animate.
+     */
+    applyEase(element, node, path) {
+        if (!element || !node?.parameters || node.parameters.ease === undefined) return
+        if (this.parameterHasFormula(node, 'ease') && node.parameters._computed_ease === undefined) return
+        const duration = easeDuration(this.getParameterValue(node, 'ease'))
+        if (!this._easesSeen) this._easesSeen = new Map()
+        const file = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+        const key = `${file}\n${JSON.stringify(Array.isArray(path) ? path : [])}`
+        const seen = this._easesSeen.get(key)
+        let from = seen ? seen.values : null
+        // Read now, while an old element still easing is in the page: once it is replaced, where
+        // its easing had got to is lost. One not easing is where it was last drawn, and is not read,
+        // which on a board of hundreds of cells would work out the style of each.
+        if (seen && seen.animation && seen.animation.playState === 'running' && seen.element.isConnected) {
+            try { from = easedValues(seen.element) } catch (_) { /* the values last drawn will do */ }
+        }
+        const entry = { element, values: from, animation: null }
+        this._easesSeen.set(key, entry)
+        queueMicrotask(() => {
+            if (this._easesSeen.get(key) !== entry || !element.isConnected) return
+            // An element patched in place may still be easing towards its old value; what it is
+            // drawn as now is read without that easing.
+            if (seen && seen.animation && seen.element === element) seen.animation.cancel()
+            let to
+            try { to = easedValues(element) } catch (_) { return }
+            entry.values = to
+            if (!from || !duration || typeof element.animate !== 'function' || !this.motionWanted(element)) return
+            const start = {}
+            const end = {}
+            for (const property of EASED_PROPERTIES) {
+                if (from[property] === to[property]) continue
+                start[property] = from[property]
+                end[property] = to[property]
+            }
+            if (!Object.keys(end).length) return
+            entry.animation = element.animate([start, end], { duration, easing: 'ease-out' })
+        })
+    }
+
     /** One motion played on an element, its class taken off again once it has run. */
     playMotionOnce(element, name) {
         const cls = `ov-motion-${name}`
@@ -11872,6 +11940,7 @@ export class OverseerRenderer {
             }
             // A field patched in place rather than drawn again: its motion may have changed with it.
             try { this.applyMotion(element, newNode, pathArray) } catch (_) { /* never break a patch over a motion */ }
+            try { this.applyEase(element, newNode, pathArray) } catch (_) { /* never break a patch over an easing */ }
 
             return true
         } catch (error) {
