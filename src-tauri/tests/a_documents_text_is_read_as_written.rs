@@ -1,6 +1,7 @@
 //! `GET /v1/source` gives a document's text as it is written, and its version, to whoever may
 //! read the document - for a program that reads documents with a parser of its own, as the
-//! agentic loop's tracker scripts do. It reaches what a read reaches and nothing more.
+//! agentic loop's tracker scripts do. It reaches what a read reaches and nothing more. A caller
+//! that already holds the text's version is told so, and not sent the text again.
 //!
 //!   cargo test --features server --test a_documents_text_is_read_as_written
 #![cfg(feature = "server")]
@@ -225,4 +226,60 @@ fn it_reaches_what_a_read_reaches_and_no_more() {
     // A stranger is asked to sign in, and a name that is no document is refused.
     assert_eq!(source(port, "ap31/foods.os", &[]).status, 401);
     assert_eq!(source(port, "ap31/foods.txt", &[key]).status, 400);
+}
+
+#[test]
+fn a_text_unchanged_since_the_version_held_is_not_sent_again() {
+    let server = start(4873, "unchanged");
+    let port = server.port;
+    let key = bobs_key(&server);
+    let first = source(port, "ap31/foods.os", &[key.clone()]);
+    assert_eq!(first.status, 200, "{}", first.body);
+    let version = first.json()["version"].as_str().unwrap().to_string();
+    let tag = format!("\"{}\"", version);
+    assert!(first.headers.to_ascii_lowercase().contains(&format!("etag: {}", tag.to_ascii_lowercase())), "{}", first.headers);
+
+    let path = format!("/v1/source?document=ap31/foods.os&since={}", version);
+    let since = ask(port, "GET", &path, &[key.clone()], None);
+    assert_eq!(since.status, 304, "{}", since.body);
+    assert!(since.body.is_empty(), "a 304 carries no text: {}", since.body);
+    let matched = source(port, "ap31/foods.os", &[key.clone(), format!("If-None-Match: {}", tag)]);
+    assert_eq!(matched.status, 304, "{}", matched.body);
+    assert!(matched.body.is_empty());
+
+    // A version that is not the text's own gets the text, as a caller that holds none does.
+    let stale = source(port, "ap31/foods.os", &[key.clone(), "If-None-Match: \"0-0\"".into()]);
+    assert_eq!(stale.status, 200);
+    assert_eq!(stale.json()["text"].as_str().unwrap(), FOODS);
+
+    let set = ask(
+        port,
+        "POST",
+        "/v1/node?document=ap31/foods.os&address=foods/apple",
+        &[key.clone()],
+        json("{\"value\":{\"String\":\"Pear\"}}"),
+    );
+    assert_eq!(set.status, 200, "{}", set.body);
+    let after = ask(port, "GET", &path, &[key], None);
+    assert_eq!(after.status, 200, "{}", after.body);
+    let read = after.json();
+    assert!(read["text"].as_str().unwrap().contains("string apple = \"Pear\""));
+    assert_ne!(read["version"].as_str().unwrap(), version);
+}
+
+#[test]
+fn a_version_held_does_not_get_past_a_refusal() {
+    let server = start(4874, "refused");
+    let port = server.port;
+    let key = bobs_key(&server);
+    let text = std::fs::read_to_string(
+        std::env::temp_dir()
+            .join(format!("overseer-source-refused-{}", std::process::id()))
+            .join("documents/ap31/private.os"),
+    )
+    .unwrap();
+    let version = overseer::app_api::version_of(&text);
+    let path = format!("/v1/source?document=ap31/private.os&since={}", version);
+    assert_eq!(ask(port, "GET", &path, &[key], None).status, 404);
+    assert_eq!(ask(port, "GET", &path, &[], None).status, 401);
 }

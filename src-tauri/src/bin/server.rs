@@ -905,20 +905,45 @@ async fn read_at(
     Ok(Json(json!(view)))
 }
 
+#[derive(serde::Deserialize)]
+struct SourceQuery {
+    document: String,
+    /// The version the caller already holds, as `If-None-Match` says it too.
+    #[serde(default)]
+    since: Option<String>,
+}
+
 /// A document's text as it is written - see `DocumentRoot::source`.
+///
+/// A caller that names the version it holds, by `since` or `If-None-Match`, is answered
+/// `304 Not Modified` with no body while the text is still that version: a program reading the
+/// same large document again and again is sent it only when it changed. Refusals come first, so a
+/// 304 tells nothing to whoever may not read the document.
 async fn read_source(
     State(service): State<Service>,
     Extension(caller): Extension<Caller>,
-    axum::extract::Query(which): axum::extract::Query<Which>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    headers: HeaderMap,
+    axum::extract::Query(which): axum::extract::Query<SourceQuery>,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let documents = service.documents.clone();
+    let document = which.document;
     let source = tokio::task::spawn_blocking(move || {
-        documents.as_asker(caller.asker(), || documents.source(&which.document))
+        documents.as_asker(caller.asker(), || documents.source(&document))
     })
         .await
         .map_err(|e| respond(RequestError::Failed(format!("reading panicked: {}", e))))?
         .map_err(respond)?;
-    Ok(Json(json!(source)))
+    let tag = format!("\"{}\"", source.version);
+    let held = |version: &str| version.trim().trim_start_matches("W/").trim_matches('"') == source.version;
+    let unchanged = which.since.as_deref().is_some_and(held)
+        || headers
+            .get(header::IF_NONE_MATCH)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.split(',').any(held));
+    if unchanged {
+        return Ok((StatusCode::NOT_MODIFIED, [(header::ETAG, tag)]).into_response());
+    }
+    Ok(([(header::ETAG, tag)], Json(json!(source))).into_response())
 }
 
 /// Append an entry to the list at an address.

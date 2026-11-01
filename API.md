@@ -228,6 +228,12 @@ leaves to its templates left out - for a program that reads documents with a par
 bases are not read with it. It is only for reading: changes go through the writes below, which
 keep the text's layout.
 
+The version comes as the answer's `ETag` too. A program that reads the same document again names
+the version it holds, as `--url-query since=<version>` or `If-None-Match: "<version>"`, and while
+the text is still that version it is answered `304 Not Modified`, with no body; once it changed,
+it gets the text and its new version as above. A document it may not read is refused all the
+same.
+
 ## Setting a value: `POST /v1/node`
 
 ```bash
