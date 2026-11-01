@@ -400,7 +400,12 @@ export class OverseerApp {
         event.preventDefault()
         this.undoLastChange()
     })
-        
+    // A hidden page does not catch up - see `catchUpSoon` - so it does once it is shown, once for
+    // however many writes it heard meanwhile.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'hidden' && this.behindTheFile()) this.catchUpSoon()
+    })
+
         // Welcome screen
     const welcomeOpen = document.getElementById('welcome-open-btn')
     if (welcomeOpen) welcomeOpen.addEventListener('click', () => this.openFile())
@@ -2010,11 +2015,15 @@ tab Main {
 
     /// Catch up with the file once nothing is in the way, asked again until then. However many
     /// writes are heard meanwhile, it is one catch-up, to the last.
+    ///
+    /// Not while the page is hidden: a tab left open all day would otherwise have the server work
+    /// the document out again for every write it hears, for nobody to see. It is left behind, and
+    /// catches up when it is shown - see `initializeEventListeners`.
     catchUpSoon(wait = 0) {
-        if (this._catchingUp || this._catchUpTimer) return
+        if (this._catchingUp || this._catchUpTimer || this.pageIsHidden()) return
         this._catchUpTimer = setTimeout(() => {
             this._catchUpTimer = null
-            if (!this.currentFile || !this.behindTheFile()) return
+            if (!this.currentFile || !this.behindTheFile() || this.pageIsHidden()) return
             if (this.busyForCatchingUp()) { this.catchUpSoon(300); return }
             this._catchingUp = true
             let failed = false
@@ -2040,6 +2049,10 @@ tab Main {
                     if (this.behindTheFile()) this.catchUpSoon(wait)
                 })
         }, wait)
+    }
+
+    pageIsHidden() {
+        return typeof document !== 'undefined' && document.visibilityState === 'hidden'
     }
 
     /// Show what the file says now, described against what this page holds - the answer an edit
