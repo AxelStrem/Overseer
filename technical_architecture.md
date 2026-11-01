@@ -92,6 +92,12 @@ theme it is based on changes, as for the files its mounts and bases read.
 | `app_api.rs` | the entry points both front ends call |
 | `server.rs`, `bin/server.rs` | the same, over HTTP |
 
+The page's own pages - the one shown while a document loads, and the one an error is shown on -
+are documents too, `src/pages/*.os`. They are needed exactly when there is no server to work them
+out, so the page carries them worked out already, in the shipped theme, light and dark, as
+`src/pages/*.json`, and fills in the error's fields itself before drawing it. A test works them out
+again and fails while the two differ; run with `OVERSEER_WRITE_PAGES=1`, it writes them.
+
 ## What makes it fast enough
 
 A real document is tens of thousands of nodes with formulas over lists, and the naive version

@@ -967,9 +967,31 @@ context mode = "system"
 
   A layer of either kind can move on its own, in the page alone, for as long as its `motion` says
   so: `turn` turns it round and round (a gradient's angle), `drift` moves it back and forth (a
-  gradient along its angle, an icon from side to side), and `breathe` fades it out a little and
-  back. `period` is how long one round takes - `"20s"`, `"800ms"`, or a number of seconds - and
-  is 60 seconds for a turn, 20 for a drift and 8 for a breath where it says none. Like every key,
+  gradient along its angle, an icon from side to side), `breathe` fades it out a little and
+  back, and `appear` fades it in from nothing, once, and leaves it. `period` is how long one round
+  takes - `"20s"`, `"800ms"`, or a number of seconds - and is 60 seconds for a turn, 20 for a
+  drift, 8 for a breath and 4 for an appearance where it says none.
+
+  An `icon` layer can also `sparkle`: it is drawn as `count` small copies (12 where it says none),
+  each `size` high (`5%` of the box's height where it says none), at a place picked at random,
+  fading in and out once a `period` (6 seconds) and turning up somewhere else each time, each at
+  its own moment. Its `source` can name several icons, comma-separated, and a library name ending
+  in `*` stands for every library icon whose name starts so - `"eye-*"` for `eye-off`,
+  `eye-closed` and the rest - and each copy is one of them. Stilled, a sparkle draws nothing: its
+  copies are only ever where and while they show. A gradient does not sparkle, and is drawn still.
+
+  ```overseer
+  - stars {
+      - kind = "icon"
+      - source = "star, sparkles"
+      - opacity = 0.3
+      - size = "3%"
+      - count = 24
+      - motion = "sparkle"
+  }
+  ```
+
+  Like every key,
   `motion` can be a formula, `$(running ? "turn" : "none")`, and a name the page does not know
   moves nothing. The theme's `motion = none`, or a system set to reduce motion, stills it.
 

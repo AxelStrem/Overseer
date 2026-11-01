@@ -2312,6 +2312,76 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     display: flex;
 }
 
+/* The page's own pages - loading, an error - are documents drawn into a `.page-display` of their
+   screen (see `drawPage` in main.js), and fill the window below the bar as a document whose top
+   says `height=1fr` does. */
+#main:has(.screen.active > .page-display, #welcome-screen.active) {
+    display: flex;
+    flex-direction: column;
+}
+#main:has(.screen.active > .page-display, #welcome-screen.active) > #content-area {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+.page-display {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+.screen > .page-display > .takes-height-parts {
+    flex: var(--ov-height-parts) 1 0;
+}
+/* Its message as text, for when the page could not be drawn; hidden once it is. */
+#error-message {
+    padding: 0 40px;
+    color: var(--ov-muted, inherit);
+}
+#error-back-btn {
+    align-self: center;
+    margin: 0 0 40px;
+    padding: 8px 20px;
+    border-radius: var(--ov-radius, 8px);
+    border: 1px solid var(--ov-line, currentColor);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+#error-back-btn:hover {
+    border-color: var(--ov-accent, currentColor);
+}
+
+/* No document open: the name, what to do, and what there is to open, clear of the drawer's edge,
+   with the eye the loading page shows faint behind it. */
+#welcome-screen {
+    position: relative;
+    isolation: isolate;
+    padding: 40px 48px;
+}
+#welcome-screen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: var(--ov-muted, currentColor);
+    opacity: 0.06;
+    -webkit-mask: url("/icons/eye.svg") center / auto 60% no-repeat;
+    mask: url("/icons/eye.svg") center / auto 60% no-repeat;
+}
+#welcome-screen > h2 {
+    font-size: 32px;
+    font-weight: 300;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0 0 8px;
+}
+#welcome-screen > p {
+    color: var(--ov-muted, inherit);
+    margin: 0 0 28px;
+}
+
 .welcome-screen {
     justify-content: center;
     align-items: center;
@@ -2555,6 +2625,30 @@ body.ov-backdrop-moving {
 .ov-backdrop-breathe {
     animation: ov-backdrop-breathe calc(var(--ov-backdrop-period, 8s) / 2) ease-in-out infinite alternate;
 }
+.ov-backdrop-appear {
+    animation: ov-backdrop-appear var(--ov-backdrop-period, 4s) ease-in both;
+}
+/* Each copy of a sparkle is placed by `drawSparkles`, about its middle, and fades in and out once a
+   period; it is placed anew each round, while it cannot be seen. */
+.ov-backdrop-sparkles > i {
+    position: absolute;
+    width: var(--ov-sparkle-side, 5cqh);
+    height: var(--ov-sparkle-side, 5cqh);
+    translate: -50% -50%;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    opacity: 0;
+    animation: ov-backdrop-sparkle var(--ov-backdrop-period, 6s) ease-in-out infinite;
+}
+@keyframes ov-backdrop-appear {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes ov-backdrop-sparkle {
+    0%, 100% { opacity: 0; scale: 0.6; }
+    50% { opacity: 1; scale: 1; }
+}
 @keyframes ov-backdrop-turn {
     from { rotate: 0turn; }
     to { rotate: 1turn; }
@@ -2568,7 +2662,7 @@ body.ov-backdrop-moving {
     to { opacity: 0.35; }
 }
 @media (prefers-reduced-motion: reduce) {
-    .ov-backdrop-layer { animation: none; }
+    .ov-backdrop-layer, .ov-backdrop-sparkles > i { animation: none; }
 }
 
 /* A kind of element in the theme: `context theme { - button { - accent = ... } }` gives the

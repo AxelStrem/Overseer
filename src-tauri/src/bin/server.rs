@@ -469,6 +469,13 @@ fn session_cookie(headers: &HeaderMap, token: Option<&str>) -> String {
     )
 }
 
+/// The eye the page's own pages are drawn over, faint behind a form page's card: written into the
+/// page, as nothing else may be fetched before signing in.
+const FORM_PAGE_EYE: &str = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' \
+fill='none' stroke='%23808890' stroke-opacity='0.14' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E\
+%3Cpath d='M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0'/%3E\
+%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E\")";
+
 /// A page of its own, needing nothing else from the server: it is shown to people who cannot
 /// yet be given anything else, the application's own styles included.
 fn form_page(status: StatusCode, title: &str, said: Option<&str>, body: &str) -> Response {
@@ -479,19 +486,23 @@ fn form_page(status: StatusCode, title: &str, said: Option<&str>, body: &str) ->
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
 <title>{title} - Overseer</title><style>\
-body{{font-family:system-ui,sans-serif;background:#f6f7f8;color:#1f2329;display:flex;\
-justify-content:center;padding:12vh 16px;margin:0}}\
-main{{background:#fff;border-radius:12px;padding:28px;width:100%;max-width:340px;\
+body{{font-family:system-ui,sans-serif;background:#f6f7f8 {eye} center/auto 70vh no-repeat fixed;\
+color:#1f2329;display:flex;flex-direction:column;align-items:center;padding:12vh 16px;margin:0;\
+min-height:100vh;box-sizing:border-box}}\
+.mark{{font-size:22px;font-weight:300;letter-spacing:.3em;text-transform:uppercase;margin:0 0 20px;\
+padding-left:.3em;opacity:.8}}\
+main{{background:#fff;border-radius:12px;padding:28px;width:100%;max-width:340px;box-sizing:border-box;\
 box-shadow:0 1px 3px #0002}}\
 h1{{font-size:20px;margin:0 0 18px}}label{{display:block;font-size:13px;margin:12px 0 4px}}\
 input{{box-sizing:border-box;width:100%;padding:8px 10px;font:inherit;border:1px solid #cdd0d4;\
 border-radius:6px}}button{{margin-top:20px;width:100%;padding:9px;font:inherit;border:0;\
 border-radius:6px;background:#3d5f8a;color:#fff;cursor:pointer}}\
 .said{{color:#b91c1c;font-size:14px}}.fixed{{font-weight:600}}\
-@media (prefers-color-scheme:dark){{body{{background:#131416;color:#e9eaec}}\
+@media (prefers-color-scheme:dark){{body{{background-color:#131416;color:#e9eaec}}\
 main{{background:#1b1d20}}input{{background:#131416;color:inherit;border-color:#2e3135}}\
 button{{background:#4d6d96}}}}\
-</style></head><body><main><h1>{title}</h1>{said}{body}</main></body></html>",
+</style></head><body><div class=\"mark\">Overseer</div><main><h1>{title}</h1>{said}{body}</main></body></html>",
+        eye = FORM_PAGE_EYE,
         title = escaped_for_html(title),
         said = said,
         body = body,

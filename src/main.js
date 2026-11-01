@@ -25,12 +25,54 @@ import { OverseerRenderer, textWithoutIcons, nodeFitsAddress, millisecondsSaid }
 import { FileManager } from './file-manager.js'
 import { Drawer } from './drawer.js'
 import { Account } from './account.js'
+// The page's own pages, as Overseer documents worked out ahead of time in the shipped theme, light
+// and dark: there is no server to work them out while a document loads, nor often when an error is
+// shown. See `src/pages` and the test `the_built_in_pages_are_bundled_resolved`.
+import loadingPage from './pages/loading.json'
+import errorPage from './pages/error.json'
 
 // The shortest beat a document's clock keeps, however often its `tick=` asks: each beat is a
 // round trip to the server, and the document worked out again.
 const TICK_AT_MOST_EVERY = 50
 // How often a stopped clock is looked at, to start soon after its `tick=` says so.
 const TICK_STOPPED_LOOK = 250
+
+/// Whether this page was opened at a document's address in a browser - see the bridge.
+function opensADocument() {
+    try {
+        if (typeof window === 'undefined' || window.__OVERSEER_HOST__ !== 'browser') return false
+        const path = decodeURIComponent(window.location.pathname || '')
+        return path.startsWith('/doc/') || path.startsWith('/examples/') ||
+            !!new URLSearchParams(window.location.search).get('doc')
+    } catch (_) {
+        return false
+    }
+}
+
+/// A built-in page in the mode the page is drawn in: the open document's, else the one the
+/// settings chose, else the computer's.
+function pageInMode(page) {
+    let mode = null
+    try {
+        mode = document.documentElement.dataset.ovMode || null
+        const chosen = window.app && window.app.drawer && window.app.drawer.settings && window.app.drawer.settings.mode
+        if (!mode && (chosen === 'light' || chosen === 'dark')) mode = chosen
+        if (!mode) mode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    } catch (_) { /* light */ }
+    // A copy: drawing a document writes into its nodes.
+    return JSON.parse(JSON.stringify(page[mode === 'dark' ? 'dark' : 'light']))
+}
+
+/// The field of a built-in page by its name, wherever it is.
+function pageField(nodes, name) {
+    for (const node of nodes || []) {
+        if (!node || typeof node !== 'object') continue
+        if (node.name === name && node.node_type !== 'context') return node
+        const inside = pageField(node.children, name)
+        if (inside) return inside
+    }
+    return null
+}
 
 // Shallow document equality check used to avoid unnecessary re-renders
 // If serialization fails, assume different to be safe and apply update.
@@ -62,7 +104,10 @@ export class OverseerApp {
         window.app = this
         
         this.initializeEventListeners()
-        this.showWelcomeScreen()
+        // A page opened at a document's address is loading it from the start, and says so rather
+        // than welcoming whoever opened it for a moment first.
+        if (opensADocument()) this.showLoadingScreen()
+        else this.showWelcomeScreen()
     }
     
     // Adopt a new document while preserving the original root array reference if possible so
@@ -465,6 +510,8 @@ export class OverseerApp {
     async loadFile(filePath) {
         try {
             this.setStatus('Loading file...', filePath, 'info')
+            const loading = document.getElementById('loading-screen')
+            if (!this.currentFile && loading && !loading.classList.contains('active')) this.showLoadingScreen()
 
             if (DEBUG_MODE) this.setStatus('DEBUG: Starting file load...')
 
@@ -2418,12 +2465,43 @@ tab Main {
         this.showScreen('editor-screen')
     }
 
+    /// The page shown while a document is on its way: `pages/loading.os`.
+    showLoadingScreen() {
+        this.drawPage(loadingPage, 'loading-display')
+        this.showScreen('loading-screen')
+    }
+
     showError(title, error) {
         console.error(title, error)
         const msg = error && error.message ? error.message : (typeof error === 'string' ? error : JSON.stringify(error))
-        document.getElementById('error-message').textContent = `${title}: ${msg}`
+        // Said as text as well, which is what shows should the page itself fail to draw.
+        const said = document.getElementById('error-message')
+        if (said) said.textContent = `${title}: ${msg}`
+        const drawn = this.drawPage(errorPage, 'error-display', { title, message: msg })
+        if (said) said.hidden = drawn
         this.showScreen('error-screen')
         this.setStatus('Error occurred', msg, 'error')
+    }
+
+    /// Draws a built-in page into the element of that id, with the values of some of its fields
+    /// given: whether it was drawn.
+    drawPage(page, into, values = {}) {
+        const target = document.getElementById(into)
+        if (!target || !this.renderer || typeof this.renderer.renderPage !== 'function') return false
+        try {
+            const nodes = pageInMode(page)
+            for (const [name, value] of Object.entries(values)) {
+                const field = pageField(nodes, name)
+                if (!field) continue
+                field.parameters = { ...(field.parameters || {}), value: { String: String(value) } }
+                delete field.parameters._computed_value
+            }
+            this.renderer.renderPage(nodes, target)
+            return true
+        } catch (e) {
+            console.warn('[Overseer] a page of its own could not be drawn', e)
+            return false
+        }
     }
 
     showScreen(screenId) {
@@ -2433,7 +2511,8 @@ tab Main {
         })
         
         // Show the target screen
-        document.getElementById(screenId).classList.add('active')
+        const screen = document.getElementById(screenId)
+        if (screen) screen.classList.add('active')
     }
 
 

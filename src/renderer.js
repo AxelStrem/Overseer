@@ -101,7 +101,12 @@ const gridPlaceIn = (type, name) => {
 const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
 
 // How a backdrop layer can move on its own, and the seconds one round takes where `period` says none.
-const BACKDROP_MOTIONS = { turn: 60, drift: 20, breathe: 8 }
+const BACKDROP_MOTIONS = { turn: 60, drift: 20, breathe: 8, appear: 4, sparkle: 6 }
+/// A `sparkle` layer: how many copies it draws where `count` says none, and the most it draws, so
+/// that a large number cannot fill the page with elements; and the most icons a `*` brings in.
+const SPARKLE_COUNT = 12
+const SPARKLE_MOST = 200
+const SPARKLE_SOURCES = 32
 /// The motions a node's `motion=` can name, each a class in the stylesheet: those played once, as
 /// the value changes to them, and `pulse`, which runs for as long as the value says it.
 const MOTIONS_ONCE = ['pop', 'shake', 'fade', 'burst']
@@ -263,6 +268,56 @@ const backdropIconText = ({ key, file }) => {
         .then((svg) => { backdropIcons.set(at, svg) })
     backdropIcons.set(at, coming)
     return coming
+}
+
+// The library's icon names, which a `sparkle` layer's `eye-*` is matched against: the list once it
+// has come, or the promise while it is on its way. A page that cannot have it matches nothing.
+let libraryIconNames
+const iconNamesNow = () => {
+    if (libraryIconNames !== undefined) return libraryIconNames
+    const asked = typeof fetch === 'function'
+        ? fetch('/icons/index.json').then((r) => (r.ok ? r.json() : []))
+        : Promise.resolve([])
+    libraryIconNames = asked
+        .catch(() => [])
+        .then((names) => { libraryIconNames = Array.isArray(names) ? names.filter((n) => typeof n === 'string') : [] })
+    return libraryIconNames
+}
+
+// What a `sparkle` layer's `source` names, one icon or several: comma-separated, and each either
+// an icon as `<icon=...>` takes it or a library name ending in `*`, for every icon whose name
+// starts so. A promise while the library's names are on their way.
+const sparkleSources = (said) => {
+    const out = []
+    let waiting = null
+    for (const part of String(said ?? '').split(',').map((s) => s.trim()).filter(Boolean)) {
+        const pattern = /^([a-z0-9-]*)\*$/i.exec(part)
+        if (!pattern) {
+            out.push(part)
+            continue
+        }
+        const names = iconNamesNow()
+        if (names instanceof Promise) {
+            waiting = names
+            continue
+        }
+        const start = pattern[1].toLowerCase()
+        out.push(...names.filter((n) => n.startsWith(start)))
+    }
+    if (waiting) return waiting
+    return Array.from(new Set(out)).slice(0, SPARKLE_SOURCES)
+}
+
+// The sparkle layers of a backdrop, short enough to compare as a variable: what they draw, and how
+// many of how large. `none` for a backdrop without one.
+const sparkleSignature = (layers) => {
+    const said = (layers || []).filter((l) => l.sparkle)
+        .map((l) => `${l.name}:${l.period}:${l.sparkle.count}:${l.sparkle.size}:${l.sparkle.images.join('')}`)
+        .join('|')
+    if (!said) return 'none'
+    let hash = 0
+    for (let i = 0; i < said.length; i++) hash = (hash * 31 + said.charCodeAt(i)) | 0
+    return `s${(hash >>> 0).toString(36)}`
 }
 
 // A colour an image can be painted in: not a word that only points at another colour, such as
@@ -1987,6 +2042,28 @@ export class OverseerRenderer {
             if (depth < bestDepth) { bestDepth = depth; el = cand }
         }
         return el
+    }
+
+    /**
+     * One of the page's own pages - the one shown while a document loads, or an error - drawn
+     * into `container` as a document is into the page's content, its theme the whole page's as a
+     * document's is. Nothing of it is anyone's to change, and the document's tabs, which it has
+     * none of, are left as they are.
+     */
+    renderPage(nodes, container) {
+        const content = this.contentDisplay
+        const tabs = this.tabContainer
+        const readOnly = this.readOnly
+        this.contentDisplay = container
+        this.tabContainer = null
+        this.readOnly = true
+        try {
+            return this._renderDocumentProfiled(nodes)
+        } finally {
+            this.contentDisplay = content
+            this.tabContainer = tabs
+            this.readOnly = readOnly
+        }
     }
 
     renderDocument(overseerDocument) {
@@ -8204,6 +8281,7 @@ export class OverseerRenderer {
                 // What it was above, to tell whether this container's background is its own.
                 const above = this.themeAbove(element, 'background')
                 const backdropAbove = this.themeAbove(element, 'backdrop') || 'none'
+                const sparkleAbove = this.themeAbove(element, 'backdrop-sparkle') || 'none'
                 this.writeTheme(element, child)
                 // The text's colour is worked out where it is said - the page's body - and handed
                 // down as a colour, not as the variable: so a container with a theme of its own
@@ -8215,7 +8293,7 @@ export class OverseerRenderer {
                 // leaves out - all of it, for one started over with `base=none` - does not show
                 // the one around it through.
                 const backdrop = element.style.getPropertyValue('--ov-backdrop').trim() || backdropAbove
-                const ownBackdrop = backdrop !== backdropAbove
+                const ownBackdrop = backdrop !== backdropAbove || this.ownSparkle(element, sparkleAbove)
                 element.classList.toggle('ov-themed-backdrop', ownBackdrop)
                 element.classList.toggle('ov-themed-background', ownBackdrop || (background !== null && background !== above))
                 this.drawBackdropMotion(element)
@@ -8340,6 +8418,49 @@ export class OverseerRenderer {
                 drawn()
                 layers.at(-1).gradient = gradient
             } else if (kind === 'icon') {
+                const opacitySaid = String(this.contextValue(key('opacity')) ?? '').trim()
+                let opacity = parseFloat(opacitySaid)
+                if (opacitySaid.endsWith('%')) opacity /= 100
+                opacity = Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1
+                const colourOf = (parts) => {
+                    const said = paintable(this.contextValue(key('colour') || key('color')) ?? parts.color)
+                    return said ?? (parts.key ? paintable(textColour) : null)
+                }
+                // A bare number is a share of the box's height; anything else must be one CSS
+                // length, and a place only words and lengths, so nothing can reach the other layers.
+                const sizeOf = (otherwise) => {
+                    const said = String(this.contextValue(key('size')) ?? otherwise).trim()
+                    return /^\d+(\.\d+)?$/.test(said) ? `${said}%`
+                        : /^\d+(\.\d+)?(%|px|em|rem|vh|vw|vmin|vmax)$/.test(said) ? said : otherwise
+                }
+                if (motion === 'sparkle') {
+                    // Drawn only as it moves, by `drawBackdropMotion`: still, there is nothing of
+                    // it to paint, as its copies are where and while they show.
+                    const sources = sparkleSources(this.contextValue(key('source')))
+                    if (sources instanceof Promise) {
+                        waiting.push(sources)
+                        continue
+                    }
+                    const images = []
+                    for (const source of sources) {
+                        const parts = iconParts(source)
+                        if (!parts.key && !parts.file) continue
+                        const text = backdropIconText(parts)
+                        if (text instanceof Promise) {
+                            waiting.push(text)
+                            continue
+                        }
+                        const svg = text && this.backdropIconSvg(text, colourOf(parts), opacity)
+                        if (svg) images.push(`url("data:image/svg+xml,${encodeURIComponent(svg)}")`)
+                    }
+                    if (!images.length) continue
+                    const count = Math.round(number(key('count'), SPARKLE_COUNT))
+                    layers.push({
+                        name: layer.name, motion, period, gradient: null,
+                        sparkle: { images, count: Math.max(0, Math.min(SPARKLE_MOST, count)), size: sizeOf('5%') },
+                    })
+                    continue
+                }
                 const parts = iconParts(this.contextValue(key('source')))
                 if (!parts.key && !parts.file) continue
                 const text = backdropIconText(parts)
@@ -8348,19 +8469,9 @@ export class OverseerRenderer {
                     continue
                 }
                 if (!text) continue
-                const colourSaid = paintable(this.contextValue(key('colour') || key('color')) ?? parts.color)
-                const colour = colourSaid ?? (parts.key ? paintable(textColour) : null)
-                const opacitySaid = String(this.contextValue(key('opacity')) ?? '').trim()
-                let opacity = parseFloat(opacitySaid)
-                if (opacitySaid.endsWith('%')) opacity /= 100
-                opacity = Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1
-                const svg = this.backdropIconSvg(text, colour, opacity)
+                const svg = this.backdropIconSvg(text, colourOf(parts), opacity)
                 if (!svg) continue
-                // A bare number is a share of the box's height; anything else must be one CSS
-                // length, and a place only words and lengths, so nothing can reach the other layers.
-                const sizeSaid = String(this.contextValue(key('size')) ?? '100%').trim()
-                const size = /^\d+(\.\d+)?$/.test(sizeSaid) ? `${sizeSaid}%`
-                    : /^\d+(\.\d+)?(%|px|em|rem|vh|vw|vmin|vmax)$/.test(sizeSaid) ? sizeSaid : '100%'
+                const size = sizeOf('100%')
                 const placeSaid = String(this.contextValue(key('position')) ?? '').trim()
                 const position = /^[a-z0-9.%\s-]+$/i.test(placeSaid) ? placeSaid : 'center'
                 lists.image.push(`url("data:image/svg+xml,${encodeURIComponent(svg)}")`)
@@ -8452,6 +8563,11 @@ export class OverseerRenderer {
                 box = document.createElement('div')
                 box.dataset.layer = layer.name
             }
+            if (layer.sparkle) {
+                this.drawSparkles(box, layer)
+                if (holder.children[index] !== box) holder.insertBefore(box, holder.children[index] || null)
+                return
+            }
             const square = layer.gradient && (layer.motion === 'turn' || layer.motion === 'drift')
             const scale = layer.motion === 'drift' ? 1.5 : 1
             const className = ['ov-backdrop-layer', square ? 'ov-backdrop-square' : '',
@@ -8477,6 +8593,39 @@ export class OverseerRenderer {
             if (holder.children[index] !== box) holder.insertBefore(box, holder.children[index] || null)
         })
         for (const box of kept.values()) box.remove()
+    }
+
+    /**
+     * A `sparkle` layer's box: `count` copies of its icons, each at a place and of an icon picked
+     * at random, fading in and out over the layer's period, each at its own time. A copy is placed
+     * anew each time it has faded out, so the sparkles wander over the box. Drawn again with the
+     * same icons, count and size, the copies are kept as they are, so a redraw does not start them
+     * over.
+     */
+    drawSparkles(box, layer) {
+        const { images, count, size } = layer.sparkle
+        const signature = sparkleSignature([layer])
+        box.className = 'ov-backdrop-layer ov-backdrop-sparkles'
+        box.style.setProperty('--ov-backdrop-period', `${layer.period || 1}s`)
+        if (box.dataset.sparkle === signature) return
+        box.dataset.sparkle = signature
+        box.textContent = ''
+        // A share of the box is a share of its height, as an icon layer's `size` is.
+        box.style.setProperty('--ov-sparkle-side', size.endsWith('%') ? `${parseFloat(size)}cqh` : size)
+        const place = (copy) => {
+            copy.style.backgroundImage = images[Math.floor(Math.random() * images.length)]
+            copy.style.left = `${(Math.random() * 100).toFixed(2)}%`
+            copy.style.top = `${(Math.random() * 100).toFixed(2)}%`
+        }
+        for (let i = 0; i < count; i++) {
+            const copy = document.createElement('i')
+            // Started part way through, each at its own place in the round, so that they do not
+            // all come in together the moment the page is drawn.
+            copy.style.animationDelay = `${(-Math.random() * (layer.period || 1)).toFixed(2)}s`
+            place(copy)
+            copy.addEventListener('animationiteration', () => place(copy))
+            box.appendChild(copy)
+        }
     }
 
     /**
@@ -8522,6 +8671,10 @@ export class OverseerRenderer {
         element.style.setProperty(`${prefix}backdrop-size`, layers.size)
         element.style.setProperty(`${prefix}backdrop-position`, layers.position)
         element.style.setProperty(`${prefix}backdrop-repeat`, layers.repeat)
+        // A sparkle paints nothing into the lists above, so what it is is said beside them: a
+        // container whose backdrop differs from the one around it only by a sparkle still has
+        // a backdrop of its own.
+        element.style.setProperty(`${prefix}backdrop-sparkle`, sparkleSignature(layers.layers))
         if (prefix === '--ov-') element._ovBackdropLayers = layers.layers
         if (!layers.waiting.length) return
         Promise.all(layers.waiting).then(() => {
@@ -8529,7 +8682,7 @@ export class OverseerRenderer {
             this.writeBackdrop(element, backdrop, prefix, theme)
             if (prefix !== '--ov-') return
             if (element === document.documentElement) return this.drawBackdropMotion(element)
-            const own = element.style.getPropertyValue('--ov-backdrop').trim() !== (this.themeAbove(element, 'backdrop') || 'none')
+            const own = this.ownBackdrop(element)
             element.classList.toggle('ov-themed-backdrop', own)
             if (own) element.classList.add('ov-themed-background')
             this.drawBackdropMotion(element)
@@ -8618,6 +8771,18 @@ export class OverseerRenderer {
             if (said) return said.trim()
         }
         return null
+    }
+
+    /** Whether a container's backdrop sparkles otherwise than the one around it. */
+    ownSparkle(element, above = this.themeAbove(element, 'backdrop-sparkle') || 'none') {
+        const own = element.style.getPropertyValue('--ov-backdrop-sparkle').trim() || above
+        return own !== above
+    }
+
+    /** Whether a container's backdrop is other than the one around it, and so is painted by it. */
+    ownBackdrop(element) {
+        return element.style.getPropertyValue('--ov-backdrop').trim() !== (this.themeAbove(element, 'backdrop') || 'none') ||
+            this.ownSparkle(element)
     }
 
     /** A theme key as the element itself says it, or else the nearest element above. */

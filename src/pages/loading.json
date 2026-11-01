@@ -1,0 +1,2730 @@
+{
+  "dark": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "background",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#f6f7f8"
+                    }
+                  }
+                },
+                {
+                  "name": "surface",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#ffffff"
+                    }
+                  }
+                },
+                {
+                  "name": "text",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#1f2329"
+                    }
+                  }
+                },
+                {
+                  "name": "muted",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#686e76"
+                    }
+                  }
+                },
+                {
+                  "name": "line",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#e2e4e7"
+                    }
+                  }
+                },
+                {
+                  "name": "accent",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#3d5f8a"
+                    }
+                  }
+                },
+                {
+                  "name": "success",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#2f9e6e"
+                    }
+                  }
+                },
+                {
+                  "name": "warning",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#d4932a"
+                    }
+                  }
+                },
+                {
+                  "name": "danger",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#d9534f"
+                    }
+                  }
+                }
+              ],
+              "name": "light",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                }
+              }
+            },
+            {
+              "children": [
+                {
+                  "name": "background",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#131416"
+                    }
+                  }
+                },
+                {
+                  "name": "surface",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#1b1d20"
+                    }
+                  }
+                },
+                {
+                  "name": "text",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#e9eaec"
+                    }
+                  }
+                },
+                {
+                  "name": "muted",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#9a9fa6"
+                    }
+                  }
+                },
+                {
+                  "name": "line",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#2e3135"
+                    }
+                  }
+                },
+                {
+                  "name": "accent",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#6b8cb5"
+                    }
+                  }
+                },
+                {
+                  "name": "success",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#3fae7a"
+                    }
+                  }
+                },
+                {
+                  "name": "warning",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#d6a63a"
+                    }
+                  }
+                },
+                {
+                  "name": "danger",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#e0716c"
+                    }
+                  }
+                }
+              ],
+              "name": "dark",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                }
+              }
+            },
+            {
+              "name": "muted",
+              "node_type": "-",
+              "parameters": {
+                "_computed_value": {
+                  "String": "#9a9fa6"
+                },
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "Formula": "mode == \"dark\" ? dark/muted : light/muted"
+                }
+              }
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "name": "kind",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "icon"
+                        }
+                      }
+                    },
+                    {
+                      "name": "source",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "eye-*"
+                        }
+                      }
+                    },
+                    {
+                      "name": "colour",
+                      "node_type": "-",
+                      "parameters": {
+                        "_computed_value": {
+                          "String": "#9a9fa6"
+                        },
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Formula": "muted"
+                        }
+                      }
+                    },
+                    {
+                      "name": "opacity",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Float": 0.35
+                        }
+                      }
+                    },
+                    {
+                      "name": "size",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "3%"
+                        }
+                      }
+                    },
+                    {
+                      "name": "count",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Integer": 24
+                        }
+                      }
+                    },
+                    {
+                      "name": "motion",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "sparkle"
+                        }
+                      }
+                    },
+                    {
+                      "name": "period",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "7s"
+                        }
+                      }
+                    }
+                  ],
+                  "name": "watchers",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    }
+                  }
+                },
+                {
+                  "children": [
+                    {
+                      "name": "kind",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "icon"
+                        }
+                      }
+                    },
+                    {
+                      "name": "source",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "eye"
+                        }
+                      }
+                    },
+                    {
+                      "name": "colour",
+                      "node_type": "-",
+                      "parameters": {
+                        "_computed_value": {
+                          "String": "#9a9fa6"
+                        },
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Formula": "muted"
+                        }
+                      }
+                    },
+                    {
+                      "name": "opacity",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Float": 0.12
+                        }
+                      }
+                    },
+                    {
+                      "name": "size",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "70%"
+                        }
+                      }
+                    },
+                    {
+                      "name": "motion",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "appear"
+                        }
+                      }
+                    },
+                    {
+                      "name": "period",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "6s"
+                        }
+                      }
+                    }
+                  ],
+                  "name": "eye",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    }
+                  }
+                }
+              ],
+              "name": "backdrop",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "base": {
+                  "BorderStyle": "None"
+                }
+              }
+            }
+          ],
+          "name": "theme",
+          "node_type": "context",
+          "parameters": {
+            "_context_copy": {
+              "Boolean": true
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "name": "kind",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "icon"
+                        }
+                      }
+                    },
+                    {
+                      "name": "source",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "eye-*"
+                        }
+                      }
+                    },
+                    {
+                      "name": "colour",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Formula": "muted"
+                        }
+                      }
+                    },
+                    {
+                      "name": "opacity",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Float": 0.35
+                        }
+                      }
+                    },
+                    {
+                      "name": "size",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "3%"
+                        }
+                      }
+                    },
+                    {
+                      "name": "count",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Integer": 24
+                        }
+                      }
+                    },
+                    {
+                      "name": "motion",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "sparkle"
+                        }
+                      }
+                    },
+                    {
+                      "name": "period",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "7s"
+                        }
+                      }
+                    }
+                  ],
+                  "name": "watchers",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    }
+                  }
+                },
+                {
+                  "children": [
+                    {
+                      "name": "kind",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "icon"
+                        }
+                      }
+                    },
+                    {
+                      "name": "source",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "eye"
+                        }
+                      }
+                    },
+                    {
+                      "name": "colour",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Formula": "muted"
+                        }
+                      }
+                    },
+                    {
+                      "name": "opacity",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Float": 0.12
+                        }
+                      }
+                    },
+                    {
+                      "name": "size",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "70%"
+                        }
+                      }
+                    },
+                    {
+                      "name": "motion",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "appear"
+                        }
+                      }
+                    },
+                    {
+                      "name": "period",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "6s"
+                        }
+                      }
+                    }
+                  ],
+                  "name": "eye",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    }
+                  }
+                }
+              ],
+              "name": "backdrop",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "base": {
+                  "BorderStyle": "None"
+                }
+              }
+            }
+          ],
+          "name": "theme",
+          "node_type": "context",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "title",
+              "node_type": "text",
+              "parameters": {
+                "font-size": {
+                  "CssSize": {
+                    "Pixels": 44.0
+                  }
+                },
+                "font-weight": {
+                  "Integer": 300
+                },
+                "markdown": {
+                  "Boolean": true
+                },
+                "value": {
+                  "String": "<motion=pulse | OVERSEER>"
+                }
+              }
+            }
+          ],
+          "is_hierarchy_transparent": true,
+          "name": "div",
+          "node_type": "div",
+          "parameters": {
+            "_effective_alignment": {
+              "String": "center"
+            },
+            "_effective_layout": {
+              "String": "horizontal"
+            },
+            "alignment": {
+              "String": "center"
+            },
+            "height": {
+              "CssSize": {
+                "Fraction": 1.0
+              }
+            },
+            "layout": {
+              "String": "horizontal"
+            },
+            "width": {
+              "CssSize": "FitContent"
+            }
+          }
+        }
+      ],
+      "name": "page",
+      "node_type": "div",
+      "parameters": {
+        "_effective_alignment": {
+          "String": "center"
+        },
+        "_effective_layout": {
+          "String": "vertical"
+        },
+        "alignment": {
+          "String": "center"
+        },
+        "border-style": {
+          "BorderStyle": "None"
+        },
+        "height": {
+          "CssSize": {
+            "Fraction": 1.0
+          }
+        },
+        "layout": {
+          "String": "vertical"
+        }
+      }
+    },
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "name": "background",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#f6f7f8"
+                }
+              }
+            },
+            {
+              "name": "surface",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#ffffff"
+                }
+              }
+            },
+            {
+              "name": "text",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#1f2329"
+                }
+              }
+            },
+            {
+              "name": "muted",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#686e76"
+                }
+              }
+            },
+            {
+              "name": "line",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#e2e4e7"
+                }
+              }
+            },
+            {
+              "name": "accent",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#3d5f8a"
+                }
+              }
+            },
+            {
+              "name": "success",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#2f9e6e"
+                }
+              }
+            },
+            {
+              "name": "warning",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#d4932a"
+                }
+              }
+            },
+            {
+              "name": "danger",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#d9534f"
+                }
+              }
+            }
+          ],
+          "name": "light",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "background",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#131416"
+                }
+              }
+            },
+            {
+              "name": "surface",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#1b1d20"
+                }
+              }
+            },
+            {
+              "name": "text",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#e9eaec"
+                }
+              }
+            },
+            {
+              "name": "muted",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#9a9fa6"
+                }
+              }
+            },
+            {
+              "name": "line",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#2e3135"
+                }
+              }
+            },
+            {
+              "name": "accent",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#6b8cb5"
+                }
+              }
+            },
+            {
+              "name": "success",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#3fae7a"
+                }
+              }
+            },
+            {
+              "name": "warning",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#d6a63a"
+                }
+              }
+            },
+            {
+              "name": "danger",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#e0716c"
+                }
+              }
+            }
+          ],
+          "name": "dark",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "name": "background",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#131416"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/background : light/background"
+            }
+          }
+        },
+        {
+          "name": "surface",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#1b1d20"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/surface : light/surface"
+            }
+          }
+        },
+        {
+          "name": "text",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#e9eaec"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/text : light/text"
+            }
+          }
+        },
+        {
+          "name": "muted",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#9a9fa6"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/muted : light/muted"
+            }
+          }
+        },
+        {
+          "name": "line",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#2e3135"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/line : light/line"
+            }
+          }
+        },
+        {
+          "name": "accent",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#6b8cb5"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/accent : light/accent"
+            }
+          }
+        },
+        {
+          "name": "success",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#3fae7a"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/success : light/success"
+            }
+          }
+        },
+        {
+          "name": "warning",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#d6a63a"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/warning : light/warning"
+            }
+          }
+        },
+        {
+          "name": "danger",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#e0716c"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/danger : light/danger"
+            }
+          }
+        },
+        {
+          "name": "font",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+            }
+          }
+        },
+        {
+          "name": "mono",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace"
+            }
+          }
+        },
+        {
+          "name": "radius",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "8px"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "style",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "box"
+                }
+              }
+            }
+          ],
+          "name": "checkbox",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "hover",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "background"
+                }
+              }
+            }
+          ],
+          "name": "button",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "style",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "solid"
+                }
+              }
+            },
+            {
+              "name": "thickness",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "1px"
+                }
+              }
+            },
+            {
+              "name": "length",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "full"
+                }
+              }
+            }
+          ],
+          "name": "separator",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        }
+      ],
+      "name": "theme",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        }
+      }
+    },
+    {
+      "name": "mode",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        },
+        "value": {
+          "String": "dark"
+        }
+      }
+    },
+    {
+      "children": [
+        {
+          "name": "handle",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
+          "name": "name",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        }
+      ],
+      "name": "me",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        }
+      }
+    }
+  ],
+  "light": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "background",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#f6f7f8"
+                    }
+                  }
+                },
+                {
+                  "name": "surface",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#ffffff"
+                    }
+                  }
+                },
+                {
+                  "name": "text",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#1f2329"
+                    }
+                  }
+                },
+                {
+                  "name": "muted",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#686e76"
+                    }
+                  }
+                },
+                {
+                  "name": "line",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#e2e4e7"
+                    }
+                  }
+                },
+                {
+                  "name": "accent",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#3d5f8a"
+                    }
+                  }
+                },
+                {
+                  "name": "success",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#2f9e6e"
+                    }
+                  }
+                },
+                {
+                  "name": "warning",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#d4932a"
+                    }
+                  }
+                },
+                {
+                  "name": "danger",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#d9534f"
+                    }
+                  }
+                }
+              ],
+              "name": "light",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                }
+              }
+            },
+            {
+              "children": [
+                {
+                  "name": "background",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#131416"
+                    }
+                  }
+                },
+                {
+                  "name": "surface",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#1b1d20"
+                    }
+                  }
+                },
+                {
+                  "name": "text",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#e9eaec"
+                    }
+                  }
+                },
+                {
+                  "name": "muted",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#9a9fa6"
+                    }
+                  }
+                },
+                {
+                  "name": "line",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#2e3135"
+                    }
+                  }
+                },
+                {
+                  "name": "accent",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#6b8cb5"
+                    }
+                  }
+                },
+                {
+                  "name": "success",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#3fae7a"
+                    }
+                  }
+                },
+                {
+                  "name": "warning",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#d6a63a"
+                    }
+                  }
+                },
+                {
+                  "name": "danger",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "#e0716c"
+                    }
+                  }
+                }
+              ],
+              "name": "dark",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                }
+              }
+            },
+            {
+              "name": "muted",
+              "node_type": "-",
+              "parameters": {
+                "_computed_value": {
+                  "String": "#686e76"
+                },
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "Formula": "mode == \"dark\" ? dark/muted : light/muted"
+                }
+              }
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "name": "kind",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "icon"
+                        }
+                      }
+                    },
+                    {
+                      "name": "source",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "eye-*"
+                        }
+                      }
+                    },
+                    {
+                      "name": "colour",
+                      "node_type": "-",
+                      "parameters": {
+                        "_computed_value": {
+                          "String": "#686e76"
+                        },
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Formula": "muted"
+                        }
+                      }
+                    },
+                    {
+                      "name": "opacity",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Float": 0.35
+                        }
+                      }
+                    },
+                    {
+                      "name": "size",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "3%"
+                        }
+                      }
+                    },
+                    {
+                      "name": "count",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Integer": 24
+                        }
+                      }
+                    },
+                    {
+                      "name": "motion",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "sparkle"
+                        }
+                      }
+                    },
+                    {
+                      "name": "period",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "7s"
+                        }
+                      }
+                    }
+                  ],
+                  "name": "watchers",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    }
+                  }
+                },
+                {
+                  "children": [
+                    {
+                      "name": "kind",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "icon"
+                        }
+                      }
+                    },
+                    {
+                      "name": "source",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "eye"
+                        }
+                      }
+                    },
+                    {
+                      "name": "colour",
+                      "node_type": "-",
+                      "parameters": {
+                        "_computed_value": {
+                          "String": "#686e76"
+                        },
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Formula": "muted"
+                        }
+                      }
+                    },
+                    {
+                      "name": "opacity",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Float": 0.12
+                        }
+                      }
+                    },
+                    {
+                      "name": "size",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "70%"
+                        }
+                      }
+                    },
+                    {
+                      "name": "motion",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "appear"
+                        }
+                      }
+                    },
+                    {
+                      "name": "period",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "6s"
+                        }
+                      }
+                    }
+                  ],
+                  "name": "eye",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    }
+                  }
+                }
+              ],
+              "name": "backdrop",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "base": {
+                  "BorderStyle": "None"
+                }
+              }
+            }
+          ],
+          "name": "theme",
+          "node_type": "context",
+          "parameters": {
+            "_context_copy": {
+              "Boolean": true
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "name": "kind",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "icon"
+                        }
+                      }
+                    },
+                    {
+                      "name": "source",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "eye-*"
+                        }
+                      }
+                    },
+                    {
+                      "name": "colour",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Formula": "muted"
+                        }
+                      }
+                    },
+                    {
+                      "name": "opacity",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Float": 0.35
+                        }
+                      }
+                    },
+                    {
+                      "name": "size",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "3%"
+                        }
+                      }
+                    },
+                    {
+                      "name": "count",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Integer": 24
+                        }
+                      }
+                    },
+                    {
+                      "name": "motion",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "sparkle"
+                        }
+                      }
+                    },
+                    {
+                      "name": "period",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "7s"
+                        }
+                      }
+                    }
+                  ],
+                  "name": "watchers",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    }
+                  }
+                },
+                {
+                  "children": [
+                    {
+                      "name": "kind",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "icon"
+                        }
+                      }
+                    },
+                    {
+                      "name": "source",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "eye"
+                        }
+                      }
+                    },
+                    {
+                      "name": "colour",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Formula": "muted"
+                        }
+                      }
+                    },
+                    {
+                      "name": "opacity",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "Float": 0.12
+                        }
+                      }
+                    },
+                    {
+                      "name": "size",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "70%"
+                        }
+                      }
+                    },
+                    {
+                      "name": "motion",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "appear"
+                        }
+                      }
+                    },
+                    {
+                      "name": "period",
+                      "node_type": "-",
+                      "parameters": {
+                        "_label_layout": {
+                          "String": "horizontal"
+                        },
+                        "value": {
+                          "String": "6s"
+                        }
+                      }
+                    }
+                  ],
+                  "name": "eye",
+                  "node_type": "-",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    }
+                  }
+                }
+              ],
+              "name": "backdrop",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "base": {
+                  "BorderStyle": "None"
+                }
+              }
+            }
+          ],
+          "name": "theme",
+          "node_type": "context",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "title",
+              "node_type": "text",
+              "parameters": {
+                "font-size": {
+                  "CssSize": {
+                    "Pixels": 44.0
+                  }
+                },
+                "font-weight": {
+                  "Integer": 300
+                },
+                "markdown": {
+                  "Boolean": true
+                },
+                "value": {
+                  "String": "<motion=pulse | OVERSEER>"
+                }
+              }
+            }
+          ],
+          "is_hierarchy_transparent": true,
+          "name": "div",
+          "node_type": "div",
+          "parameters": {
+            "_effective_alignment": {
+              "String": "center"
+            },
+            "_effective_layout": {
+              "String": "horizontal"
+            },
+            "alignment": {
+              "String": "center"
+            },
+            "height": {
+              "CssSize": {
+                "Fraction": 1.0
+              }
+            },
+            "layout": {
+              "String": "horizontal"
+            },
+            "width": {
+              "CssSize": "FitContent"
+            }
+          }
+        }
+      ],
+      "name": "page",
+      "node_type": "div",
+      "parameters": {
+        "_effective_alignment": {
+          "String": "center"
+        },
+        "_effective_layout": {
+          "String": "vertical"
+        },
+        "alignment": {
+          "String": "center"
+        },
+        "border-style": {
+          "BorderStyle": "None"
+        },
+        "height": {
+          "CssSize": {
+            "Fraction": 1.0
+          }
+        },
+        "layout": {
+          "String": "vertical"
+        }
+      }
+    },
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "name": "background",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#f6f7f8"
+                }
+              }
+            },
+            {
+              "name": "surface",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#ffffff"
+                }
+              }
+            },
+            {
+              "name": "text",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#1f2329"
+                }
+              }
+            },
+            {
+              "name": "muted",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#686e76"
+                }
+              }
+            },
+            {
+              "name": "line",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#e2e4e7"
+                }
+              }
+            },
+            {
+              "name": "accent",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#3d5f8a"
+                }
+              }
+            },
+            {
+              "name": "success",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#2f9e6e"
+                }
+              }
+            },
+            {
+              "name": "warning",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#d4932a"
+                }
+              }
+            },
+            {
+              "name": "danger",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#d9534f"
+                }
+              }
+            }
+          ],
+          "name": "light",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "background",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#131416"
+                }
+              }
+            },
+            {
+              "name": "surface",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#1b1d20"
+                }
+              }
+            },
+            {
+              "name": "text",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#e9eaec"
+                }
+              }
+            },
+            {
+              "name": "muted",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#9a9fa6"
+                }
+              }
+            },
+            {
+              "name": "line",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#2e3135"
+                }
+              }
+            },
+            {
+              "name": "accent",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#6b8cb5"
+                }
+              }
+            },
+            {
+              "name": "success",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#3fae7a"
+                }
+              }
+            },
+            {
+              "name": "warning",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#d6a63a"
+                }
+              }
+            },
+            {
+              "name": "danger",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "#e0716c"
+                }
+              }
+            }
+          ],
+          "name": "dark",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "name": "background",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#f6f7f8"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/background : light/background"
+            }
+          }
+        },
+        {
+          "name": "surface",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#ffffff"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/surface : light/surface"
+            }
+          }
+        },
+        {
+          "name": "text",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#1f2329"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/text : light/text"
+            }
+          }
+        },
+        {
+          "name": "muted",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#686e76"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/muted : light/muted"
+            }
+          }
+        },
+        {
+          "name": "line",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#e2e4e7"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/line : light/line"
+            }
+          }
+        },
+        {
+          "name": "accent",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#3d5f8a"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/accent : light/accent"
+            }
+          }
+        },
+        {
+          "name": "success",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#2f9e6e"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/success : light/success"
+            }
+          }
+        },
+        {
+          "name": "warning",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#d4932a"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/warning : light/warning"
+            }
+          }
+        },
+        {
+          "name": "danger",
+          "node_type": "-",
+          "parameters": {
+            "_computed_value": {
+              "String": "#d9534f"
+            },
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Formula": "mode == \"dark\" ? dark/danger : light/danger"
+            }
+          }
+        },
+        {
+          "name": "font",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+            }
+          }
+        },
+        {
+          "name": "mono",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace"
+            }
+          }
+        },
+        {
+          "name": "radius",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "8px"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "style",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "box"
+                }
+              }
+            }
+          ],
+          "name": "checkbox",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "hover",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "background"
+                }
+              }
+            }
+          ],
+          "name": "button",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "style",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "solid"
+                }
+              }
+            },
+            {
+              "name": "thickness",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "1px"
+                }
+              }
+            },
+            {
+              "name": "length",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "full"
+                }
+              }
+            }
+          ],
+          "name": "separator",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        }
+      ],
+      "name": "theme",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        }
+      }
+    },
+    {
+      "name": "mode",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        },
+        "value": {
+          "String": "light"
+        }
+      }
+    },
+    {
+      "children": [
+        {
+          "name": "handle",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
+          "name": "name",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        }
+      ],
+      "name": "me",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        }
+      }
+    }
+  ]
+}
