@@ -60,8 +60,8 @@ list Shares (entry=<Share>) {
 }
 "#;
 
-const DARK_MUTED: &str = "#94a3b8";
-const LIGHT_MUTED: &str = "#64748b";
+const DARK_MUTED: &str = "#9a9fa6";
+const LIGHT_MUTED: &str = "#686e76";
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -205,17 +205,17 @@ fn a_document_that_reads_the_theme_is_worked_out_for_each_way_of_seeing_it() {
     let card = CARD.replace("string author = \"\"", "string author = \"\"\n    string colour = $(theme/accent)");
     let (documents, _) = served("theme", &card);
     let (mine, worked) = open(&documents, "ap31", "light");
-    assert_eq!(value(find(&mine, "colour")), "#2563eb");
+    assert_eq!(value(find(&mine, "colour")), "#3d5f8a");
 
     let (mine, again) = open(&documents, "ap31", "dark");
     assert_eq!(again, worked + 1, "a document that reads the theme was handed over in another scheme");
-    assert_eq!(value(find(&mine, "colour")), "#3b82f6");
+    assert_eq!(value(find(&mine, "colour")), "#6b8cb5");
 
     // Each person's themes are looked for beside their own settings first, so a theme put there
     // is theirs alone: bob does not see the theme as ap31 does, even where the two say the same.
     let (bobs, again) = open(&documents, "bob", "light");
     assert_eq!(again, worked + 2);
-    assert_eq!(value(find(&bobs, "colour")), "#2563eb");
+    assert_eq!(value(find(&bobs, "colour")), "#3d5f8a");
 }
 
 #[test]

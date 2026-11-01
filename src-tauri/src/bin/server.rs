@@ -479,17 +479,18 @@ fn form_page(status: StatusCode, title: &str, said: Option<&str>, body: &str) ->
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
 <title>{title} - Overseer</title><style>\
-body{{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;display:flex;\
+body{{font-family:system-ui,sans-serif;background:#f6f7f8;color:#1f2329;display:flex;\
 justify-content:center;padding:12vh 16px;margin:0}}\
 main{{background:#fff;border-radius:12px;padding:28px;width:100%;max-width:340px;\
 box-shadow:0 1px 3px #0002}}\
 h1{{font-size:20px;margin:0 0 18px}}label{{display:block;font-size:13px;margin:12px 0 4px}}\
-input{{box-sizing:border-box;width:100%;padding:8px 10px;font:inherit;border:1px solid #cbd5e1;\
+input{{box-sizing:border-box;width:100%;padding:8px 10px;font:inherit;border:1px solid #cdd0d4;\
 border-radius:6px}}button{{margin-top:20px;width:100%;padding:9px;font:inherit;border:0;\
-border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}}\
+border-radius:6px;background:#3d5f8a;color:#fff;cursor:pointer}}\
 .said{{color:#b91c1c;font-size:14px}}.fixed{{font-weight:600}}\
-@media (prefers-color-scheme:dark){{body{{background:#0f172a;color:#e2e8f0}}\
-main{{background:#1e293b}}input{{background:#0f172a;color:inherit;border-color:#334155}}}}\
+@media (prefers-color-scheme:dark){{body{{background:#131416;color:#e9eaec}}\
+main{{background:#1b1d20}}input{{background:#131416;color:inherit;border-color:#2e3135}}\
+button{{background:#4d6d96}}}}\
 </style></head><body><main><h1>{title}</h1>{said}{body}</main></body></html>",
         title = escaped_for_html(title),
         said = said,

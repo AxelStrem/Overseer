@@ -4,15 +4,15 @@
     /* The theme's keys, as the page writes them from the document's `theme` context - on the root
        for the user's, and on any container that changes it for what is inside. These are the
        shipped theme's light values, for the moment before a document has been worked out. */
-    --ov-background: #f8fafc;
+    --ov-background: #f6f7f8;
     --ov-surface: #ffffff;
-    --ov-text: #1e293b;
-    --ov-muted: #64748b;
-    --ov-line: #e2e8f0;
-    --ov-accent: #2563eb;
-    --ov-success: #10b981;
-    --ov-warning: #f59e0b;
-    --ov-danger: #ef4444;
+    --ov-text: #1f2329;
+    --ov-muted: #686e76;
+    --ov-line: #e2e4e7;
+    --ov-accent: #3d5f8a;
+    --ov-success: #2f9e6e;
+    --ov-warning: #d4932a;
+    --ov-danger: #d9534f;
     --ov-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --ov-mono: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
     --ov-radius: 8px;
@@ -33,7 +33,7 @@
     --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
     /* A shade laid over whatever is beneath, so that a highlight keeps the colour of a tinted
        row rather than covering it with the page's own. */
-    --hover-tint: rgba(15, 23, 42, 0.05);
+    --hover-tint: rgba(20, 22, 26, 0.05);
 }
 
 /* Global Styles */
@@ -84,7 +84,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    background: var(--ov-surface);
+    background: color-mix(in srgb, var(--ov-surface) 95%, var(--ov-accent));
     border-right: 1px solid var(--ov-line);
     overflow-y: auto;
     z-index: 50;
@@ -2686,7 +2686,7 @@ body.ov-backdrop-moving {
 }
 
 [data-ov-mode="light"] {
-    --hover-tint: rgba(15, 23, 42, 0.05);
+    --hover-tint: rgba(20, 22, 26, 0.05);
 }
 
 [data-ov-mode="dark"] .error-details {
@@ -2697,15 +2697,15 @@ body.ov-backdrop-moving {
 
 @media (prefers-color-scheme: dark) {
     :root:not([data-ov-mode]) {
-        --ov-background: #0f172a;
-        --ov-surface: #1e293b;
-        --ov-text: #f1f5f9;
-        --ov-muted: #94a3b8;
-        --ov-line: #334155;
-        --ov-accent: #3b82f6;
-        --ov-success: #22c55e;
-        --ov-warning: #eab308;
-        --ov-danger: #f87171;
+        --ov-background: #131416;
+        --ov-surface: #1b1d20;
+        --ov-text: #e9eaec;
+        --ov-muted: #9a9fa6;
+        --ov-line: #2e3135;
+        --ov-accent: #6b8cb5;
+        --ov-success: #3fae7a;
+        --ov-warning: #d6a63a;
+        --ov-danger: #e0716c;
         --hover-tint: rgba(255, 255, 255, 0.06);
     }
 }

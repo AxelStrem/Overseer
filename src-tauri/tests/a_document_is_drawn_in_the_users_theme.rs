@@ -55,12 +55,12 @@ fn with_no_settings_a_document_is_drawn_in_the_shipped_theme_as_the_page_is() {
     let (_sandbox, documents) = sandbox("shipped", &[("p.os", READER)]);
 
     let light = documents.open("p.os").expect("open");
-    assert_eq!(text_at(&light, "t/accent").as_deref(), Some("#2563eb"));
+    assert_eq!(text_at(&light, "t/accent").as_deref(), Some("#3d5f8a"));
     assert_eq!(text_at(&light, "t/surface").as_deref(), Some("#ffffff"));
     assert_eq!(text_at(&light, "t/seen").as_deref(), Some("light"), "an unreported scheme is light");
 
     let dark = environment::seen_as(Some("dark"), || documents.open("p.os")).expect("open dark");
-    assert_eq!(text_at(&dark, "t/surface").as_deref(), Some("#1e293b"));
+    assert_eq!(text_at(&dark, "t/surface").as_deref(), Some("#1b1d20"));
     assert_eq!(text_at(&dark, "t/seen").as_deref(), Some("dark"));
 
     // Held worked out under each scheme apart: the light page is not handed the dark copy.
@@ -98,7 +98,7 @@ fn a_part_of_a_document_changes_how_one_kind_of_element_looks_and_keeps_the_rest
     let nodes = documents.open("p.os").expect("open");
     assert_eq!(text_at(&nodes, "t/outside").as_deref(), Some("box"), "the shipped theme draws boxes");
     assert_eq!(text_at(&nodes, "t/side/inside").as_deref(), Some("switch"));
-    assert_eq!(text_at(&nodes, "t/side/accent").as_deref(), Some("#2563eb"), "the other keys are kept");
+    assert_eq!(text_at(&nodes, "t/side/accent").as_deref(), Some("#3d5f8a"), "the other keys are kept");
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn a_mode_the_settings_choose_is_not_the_systems() {
     let (_sandbox, documents) =
         sandbox("chosen", &[("p.os", READER), (environment::FILE, settings)]);
     let nodes = environment::seen_as(Some("light"), || documents.open("p.os")).expect("open");
-    assert_eq!(text_at(&nodes, "t/surface").as_deref(), Some("#1e293b"));
+    assert_eq!(text_at(&nodes, "t/surface").as_deref(), Some("#1b1d20"));
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn choosing_a_mode_writes_it_to_the_settings() {
     let written = std::fs::read_to_string(sandbox.0.join(environment::FILE)).unwrap();
     assert_eq!(written, environment::DEFAULT.replace("context mode = \"system\"", "context mode = \"dark\""));
     let nodes = documents.open("p.os").expect("open");
-    assert_eq!(text_at(&nodes, "t/surface").as_deref(), Some("#1e293b"));
+    assert_eq!(text_at(&nodes, "t/surface").as_deref(), Some("#1b1d20"));
 }
 
 #[test]

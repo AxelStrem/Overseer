@@ -50,12 +50,12 @@ fn a_document_changes_the_dark_background_and_the_light_one_stays_shipped() {
     let (_sandbox, documents) = sandbox("background", &[("p.os", DOCUMENT)]);
 
     let light = environment::seen_as(Some("light"), || documents.open("p.os")).expect("open light");
-    assert_eq!(text_at(&light, "t/background").as_deref(), Some("#f8fafc"));
-    assert_eq!(text_at(&light, "t/accent").as_deref(), Some("#2563eb"));
+    assert_eq!(text_at(&light, "t/background").as_deref(), Some("#f6f7f8"));
+    assert_eq!(text_at(&light, "t/accent").as_deref(), Some("#3d5f8a"));
 
     let dark = environment::seen_as(Some("dark"), || documents.open("p.os")).expect("open dark");
     assert_eq!(text_at(&dark, "t/background").as_deref(), Some("#000000"));
-    assert_eq!(text_at(&dark, "t/accent").as_deref(), Some("#3b82f6"));
+    assert_eq!(text_at(&dark, "t/accent").as_deref(), Some("#6b8cb5"));
 }
 
 #[test]
@@ -65,9 +65,9 @@ fn a_part_changes_one_light_colour_and_keeps_the_rest_of_what_is_above() {
 
     let light = environment::seen_as(Some("light"), || documents.open("p.os")).expect("open light");
     assert_eq!(text_at(&light, "t/side/accent").as_deref(), Some("#ff0000"));
-    assert_eq!(text_at(&light, "t/side/background").as_deref(), Some("#f8fafc"));
+    assert_eq!(text_at(&light, "t/side/background").as_deref(), Some("#f6f7f8"));
 
     let dark = environment::seen_as(Some("dark"), || documents.open("p.os")).expect("open dark");
-    assert_eq!(text_at(&dark, "t/side/accent").as_deref(), Some("#3b82f6"));
+    assert_eq!(text_at(&dark, "t/side/accent").as_deref(), Some("#6b8cb5"));
     assert_eq!(text_at(&dark, "t/side/background").as_deref(), Some("#000000"));
 }

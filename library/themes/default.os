@@ -1,25 +1,25 @@
 context theme {
     - light {
-        - background = "#f8fafc"
+        - background = "#f6f7f8"
         - surface = "#ffffff"
-        - text = "#1e293b"
-        - muted = "#64748b"
-        - line = "#e2e8f0"
-        - accent = "#2563eb"
-        - success = "#10b981"
-        - warning = "#f59e0b"
-        - danger = "#ef4444"
+        - text = "#1f2329"
+        - muted = "#686e76"
+        - line = "#e2e4e7"
+        - accent = "#3d5f8a"
+        - success = "#2f9e6e"
+        - warning = "#d4932a"
+        - danger = "#d9534f"
     }
     - dark {
-        - background = "#0f172a"
-        - surface = "#1e293b"
-        - text = "#f1f5f9"
-        - muted = "#94a3b8"
-        - line = "#334155"
-        - accent = "#3b82f6"
-        - success = "#22c55e"
-        - warning = "#eab308"
-        - danger = "#f87171"
+        - background = "#131416"
+        - surface = "#1b1d20"
+        - text = "#e9eaec"
+        - muted = "#9a9fa6"
+        - line = "#2e3135"
+        - accent = "#6b8cb5"
+        - success = "#3fae7a"
+        - warning = "#d6a63a"
+        - danger = "#e0716c"
     }
     - background = $(mode == "dark" ? dark/background : light/background)
     - surface = $(mode == "dark" ? dark/surface : light/surface)
