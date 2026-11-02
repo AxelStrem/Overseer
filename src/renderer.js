@@ -6561,15 +6561,16 @@ export class OverseerRenderer {
     }
 
     /**
-     * How a field's chips are drawn: `pill`, rounded at the ends, or `box`, a rectangle with
-     * its corners only softened. Asked for with `shape`; without it an enum is a box and tags
+     * How a field's chips are drawn: `pill`, rounded at the ends, `box`, a rectangle with
+     * its corners only softened, or `slant`, a box leaning right, for a third kind of label that
+     * sits beside both - a project's milestones beside its tags and stage. Asked for with `shape`; without it an enum is a box and tags
      * are pills, so a field holding one of a list and a field holding a set of labels can be
      * told apart at a glance wherever they sit side by side. `kind` stands in for the field's
      * type when there is no field to read it from - a filter over a list with no entries yet.
      */
     chipShape(node, kind = null) {
         const asked = String((node && this.getParameterValue(node, 'shape')) || '').trim().toLowerCase()
-        if (asked === 'pill' || asked === 'box') return asked
+        if (asked === 'pill' || asked === 'box' || asked === 'slant') return asked
         const type = String((node && (node.node_type || node.type)) || kind || '').toLowerCase()
         return type === 'enum' ? 'box' : 'pill'
     }

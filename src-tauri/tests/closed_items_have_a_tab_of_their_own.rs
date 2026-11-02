@@ -51,7 +51,7 @@ fn the_open_list_and_the_closed_one_are_on_tabs_of_their_own() {
 #[test]
 fn the_lists_keep_their_addresses() {
     let nodes = app_api::load_document(EXAMPLE.to_string()).expect("the example loads");
-    for address in ["project/Items", "project/History", "project/Labels", "project/NewTask"] {
+    for address in ["project/Items", "project/History", "project/Labels", "project/Milestones", "project/NewTask"] {
         assert!(addressing::find(&nodes, address).is_some(), "nothing at {}", address);
     }
 }

@@ -5,6 +5,7 @@
             - handle = "editor"
             - title = "Rewrite the document editor"
             - labels = "feature"
+            - milestones = "beta"
             - points = 3
         }
         - {
@@ -13,6 +14,7 @@
             - title = "Parser mishandles nested blocks"
             - parent = "editor"
             - labels = "bug"
+            - milestones = "alpha, beta"
             - points = 2
         }
         - {
@@ -98,6 +100,18 @@
             - colour = "#7057ff"
         }
     }
+    - Milestones {
+        - {
+            - tag = "alpha"
+            - name = "alpha"
+            - colour = "#d97706"
+        }
+        - {
+            - tag = "beta"
+            - name = "beta"
+            - colour = "#0891b2"
+        }
+    }
     - History {
         - {
             - finished_at = "2026-09-05T17:20:00+04:00"
@@ -124,6 +138,7 @@
             - handle = "roundtrip"
             - parent = "parser"
             - labels = "bug, docs"
+            - milestones = "alpha"
             - points = 6
             div Talk {
                 list Comments {

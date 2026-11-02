@@ -3292,6 +3292,20 @@ body.ov-backdrop-moving {
     border-radius: 3px;
 }
 
+/* A box leaning right, its top edge ahead of its bottom one: a third shape, for labels that sit
+ * beside both tags and an enum. The chip is skewed and what it holds is skewed back, so the
+ * name and its icon stay upright; the margin keeps the overhanging corners off the neighbours. */
+.chip-slant .tag-chip,
+.chip-slant .tag-add {
+    border-radius: 3px;
+    transform: skewX(-14deg);
+    margin-left: 2px;
+    margin-right: 2px;
+}
+.chip-slant .tag-chip > * {
+    transform: skewX(14deg);
+}
+
 /* A tag the document's list does not mention. Not hidden - it is in the document, and drawing
  * only the known ones would misreport what the field holds - but marked, because it is usually
  * a typo or a tag someone has since removed from the list. */

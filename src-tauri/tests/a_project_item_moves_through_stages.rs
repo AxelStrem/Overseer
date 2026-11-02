@@ -271,6 +271,22 @@ fn an_items_complexity_is_written_after_its_points_and_kept_on_the_record() {
 }
 
 #[test]
+fn an_items_milestones_are_written_after_its_tags_and_kept_on_the_record() {
+    serialised(|| {
+        let (_root, file) = a_project("milestones");
+        set(&file, "brace", "milestones", "alpha, beta");
+        let lines = entry_lines(&on_disk(&file), "brace");
+        let labels = lines.iter().position(|l| l.starts_with("- labels = ")).expect("labels");
+        assert_eq!(lines.get(labels + 1).map(String::as_str), Some("- milestones = \"alpha, beta\""), "{:?}", lines);
+
+        pick(&file, "brace", "finished");
+        let record = entry_lines(&on_disk(&file), "brace");
+        assert!(record.contains(&"- milestones = \"alpha, beta\"".to_string()), "the record lost them: {:?}", record);
+        assert_eq!(value_at(&file, "project/History/[brace]/milestones"), OverseerValue::String("alpha, beta".into()));
+    });
+}
+
+#[test]
 fn every_project_has_the_same_complexity_scale() {
     let nodes = app_api::load_document(EXAMPLE.to_string()).expect("open");
     let scale = overseer::addressing::find(&nodes, "project/Complexities").expect("a Complexities list");

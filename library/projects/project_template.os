@@ -1,7 +1,7 @@
 tab project (label="Project", mutable=true) {
     context vocabulary = "/project/Items, /project/History"
     string name (label="", font-size=22px) = "Untitled project"
-    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Milestones:** the releases or goals an item counts towards, picked from the project's list of them as tags are, and drawn leaning so they read apart from the tags beside them. Say what each one means here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
 
     div (hidden=true) {
         div Label (layout="vertical", width=360px, margin=0, spacing=0, padding=2, border-radius=8px,
@@ -246,7 +246,7 @@ tab project (label="Project", mutable=true) {
                         alignment="center",
                         hover-text="Whose item it is") = ""
             mark (type="separator")
-            string title (label="title", font-size=14px, width=39%,
+            string title (label="title", font-size=14px, width=31%,
                           hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
@@ -273,6 +273,9 @@ tab project (label="Project", mutable=true) {
             mark (type="separator")
             tags labels (label="tags", vocabulary="/project/Labels", width=8%,
                          hover-text="The parts of the project it is in") = ""
+            mark (type="separator")
+            tags milestones (label="milestones", vocabulary="/project/Milestones", shape="slant", width=8%,
+                             hover-text="The milestones it counts towards") = ""
             mark (type="separator")
             tags flags (label="flags", vocabulary="/project/Flags", width=6%,
                         hover-text="How it is to be worked") = ""
@@ -385,13 +388,14 @@ tab project (label="Project", mutable=true) {
                 timestamp finished_at (format="datetime", precision="minutes", width=16%) =
                     "2026-01-01T00:00:00Z"
                 timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
-                string title (width=30%) = ""
+                string title (width=24%) = ""
                 enum status (label="", vocabulary="/project/Statuses", width=10%) = "finished"
                 string handle (label="", font-size=11px, width=8%) = ""
                 string owner (hidden=true) = ""
                 string parent (hidden=true) = ""
                 tags after (hidden=true) = ""
-                tags labels (label="", vocabulary="/project/Labels", width=16%) = ""
+                tags labels (label="", vocabulary="/project/Labels", width=12%) = ""
+                tags milestones (label="", vocabulary="/project/Milestones", shape="slant", width=10%) = ""
                 tags flags (hidden=true) = ""
                 int points (label="", format="trim", width=5%) = 0
                 enum complexity (label="", vocabulary="/project/Complexities", width=6%) = "unassigned"
@@ -458,17 +462,19 @@ tab project (label="Project", mutable=true) {
             }
         }
         div (layout="horizontal", margin=0, spacing=10, alignment="center") {
-            filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, flags",
+            filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, milestones, flags",
                     status="done", hide="waiting", vocabulary="/project/Labels", label="find", width=100%) { }
         }
 
         div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none) {
             textbox handle (label="", placeholder="id", width=10%) = $(fresh_key(/project/Items, /project/History))
-            textbox title (label="", placeholder="what needs doing", width=26%) = ""
+            textbox title (label="", placeholder="what needs doing", width=18%) = ""
             textbox parent (label="", placeholder="under", width=10%) = ""
             textbox after (label="", placeholder="after", vocabulary="/project/Items, /project/History",
-                           width=12%) = ""
-            textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=12%) = ""
+                           width=10%) = ""
+            textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=10%) = ""
+            textbox milestones (label="", placeholder="milestones", vocabulary="/project/Milestones",
+                                shape="slant", width=12%) = ""
             textbox flags (label="", placeholder="flags", vocabulary="/project/Flags", width=10%) = "manual"
             textbox points (label="", placeholder="pts", width=7%) = "5"
             button add (label="+ task", margin=0, width=12%) {
@@ -513,6 +519,27 @@ tab project (label="Project", mutable=true) {
                         refuse = "this tag is there already"
                     }
                     append (list="/project/Labels", from="..")
+                }
+            }
+        }
+
+        text milestones_header (markdown=true) = "## Milestones"
+
+        list Milestones (entry=<Label>, key="tag", layout="horizontal", spacing=6, border-style=none, padding=0) { }
+
+        div NewMilestone (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none, padding=0) {
+            textbox tag (label="", placeholder="milestone", width=120px) = ""
+            textbox name (label="", placeholder="shown as", width=200px) = ""
+            textbox colour (label="", kind="color", width=56px) = "#6b7280"
+            button add (icon="plus", label="milestone", margin=0) {
+                on click {
+                    if (cond=$(../tag == "")) {
+                        refuse = "say a milestone"
+                    }
+                    if (cond=$(/project/Milestones.filter(|x| x/tag == ../tag).count() > 0)) {
+                        refuse = "this milestone is there already"
+                    }
+                    append (list="/project/Milestones", from="..")
                 }
             }
         }

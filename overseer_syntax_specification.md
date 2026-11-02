@@ -1925,11 +1925,14 @@ tab project (label="Project") {
 ```
 
 `shape` says how its chips are drawn: `pill`, rounded at the ends, which tags are unless told
-otherwise, or `box`, a rectangle with softened corners, which an `enum` is. A filter's row of
-chips takes the shape of the field it narrows by.
+otherwise; `box`, a rectangle with softened corners, which an `enum` is; or `slant`, a box leaning
+right, its top edge ahead of its bottom one, for a third kind of label beside those two - a
+project's milestones beside its tags and stages. A filter's row of chips takes the shape of the
+field it narrows by.
 
 ```overseer
 tags labels (vocabulary="/project/Labels", shape="box") = "perf"
+tags milestones (vocabulary="/project/Milestones", shape="slant") = "beta"
 ```
 
 Handed to a formula, a `tags` field reads as a list, so a document can ask what it holds:
