@@ -956,6 +956,32 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     left: 0;
 }
 
+/* A tree in a table whose theme draws no lines stands each row in whole by its depth - its card,
+   its colours and its shadow with it - and the tree's column gives up the room, so the columns
+   after it stay where they are. A row is a subgrid, which hands its margin on to the cells on its
+   edge as a margin of their own, and so to the width of the first column: the cell there takes
+   it back, and it and the rest before the tree's column are shifted over by the depth instead,
+   into the tree cell's padding. Where the tree's column is the first, the margin is its own. */
+.overseer-list.view-tree.view-table.tree-unlined > .tree-row {
+    margin-left: calc(var(--tree-depth, 0) * var(--tree-indent)) !important;
+}
+
+.overseer-list.view-tree.view-table.tree-unlined > .tree-row > .tree-edge {
+    margin-left: calc(-1 * var(--tree-depth, 0) * var(--tree-indent)) !important;
+}
+
+.overseer-list.view-tree.view-table.tree-unlined > .tree-row > .tree-before {
+    transform: translateX(calc(var(--tree-depth, 0) * var(--tree-indent)));
+}
+
+.overseer-list.view-tree.view-table.tree-unlined[data-tree-at="1"] > .tree-row > .tree-cell {
+    padding-left: calc(var(--ov-table-cell-padding--start, 6px) + var(--tree-indent)) !important;
+}
+
+.overseer-list.view-tree.view-table.tree-unlined[data-tree-at="1"] > .tree-row > .tree-lines > .tree-chevron {
+    left: calc(var(--tree-indent) / 2 - var(--tree-chevron) / 2);
+}
+
 /* A row the filter keeps only because something under it matches. */
 .overseer-list.view-tree > .tree-ancestor {
     opacity: 0.5;

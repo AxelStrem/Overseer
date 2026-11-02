@@ -3739,6 +3739,10 @@ export class OverseerRenderer {
                 const held = cell.classList.contains('table-cell') ? cell.firstElementChild : cell
                 const name = held.classList.contains('overseer-mark') ? `mark#${marks++}` : this.fieldNameOf(held)
                 cell.classList.toggle('tree-cell', treeAt > 0 && column.get(name) === treeAt)
+                // The cells before the tree's column, which move with a row that stands in whole
+                // (see `.tree-unlined`), the first of them on the row's edge.
+                cell.classList.toggle('tree-before', treeAt > 1 && column.get(name) < treeAt)
+                cell.classList.toggle('tree-edge', treeAt > 1 && column.get(name) === 1)
                 // The column owns the width now. Left on the cell, a percentage would be read
                 // against its own column rather than the row, and every cell would be a sliver
                 // of the space it asked for.
@@ -4352,6 +4356,11 @@ export class OverseerRenderer {
             if (row.parent >= 0) anyKidShows[row.parent] = true
         })
         const treeAt = element.classList.contains('view-table') ? element.dataset.treeAt : ''
+        // A theme whose `tree/style` is `none` draws no lines: only the chevrons, and the rows
+        // standing in by their depth say where each one is - in a table, the whole row.
+        let unlined = false
+        try { unlined = getComputedStyle(element).getPropertyValue('--ov-tree-style').trim() === 'none' } catch (_) { /* not drawn */ }
+        element.classList.toggle('tree-unlined', unlined)
         // In a table the lines are measured, as only the drawn page knows the two things they
         // need: how far it is up to the row above, across its margins and borders, and where the
         // middle of the row's first line is - a row's lines of its own (a fold opened, a bar)
@@ -4395,13 +4404,14 @@ export class OverseerRenderer {
             lines.className = 'tree-lines'
             if (treeAt) {
                 lines.style.gridColumn = treeAt
-                const at = measured.get(i)
+                const at = measured && measured.get(i)
                 if (at) {
                     lines.style.setProperty('--tree-gap', `${at.gap}px`)
                     if (at.elbow) lines.style.setProperty('--tree-elbow-y', at.elbow)
                 }
             }
             const line = (kind, column) => {
+                if (unlined) return
                 const piece = document.createElement('span')
                 piece.className = kind
                 piece.style.setProperty('--tree-column', String(column))
@@ -4808,10 +4818,10 @@ export class OverseerRenderer {
             || this.getParameterValue(node, 'sort') != null
             || (node.children || []).some((c) => c?.parameters?._ui_sort_key !== undefined)
         // A tree's row is dragged with its branch, to a place among the rows - see
-        // `followTreeDrag`. Not in a tree kept sorted, whose order among siblings is not the
-        // file's: a tree by a parent field reorders there as any sorted list does, and one that
-        // holds its children nested, whose rows are entries of other lists, not at all.
-        const tree = this.treeOf(node) !== '' && !sorted && element.classList.contains('view-tree')
+        // `followTreeDrag`; in a tree kept sorted, only to where its order puts it. Not one that
+        // holds its children nested and is kept sorted, whose rows are entries of other lists.
+        const tree = this.treeOf(node) !== '' && element.classList.contains('view-tree')
+            && !(sorted && this.isNestedTree(node))
         if (!tree && this.isNestedTree(node)) return
         element.dataset.movable = '1'
         element.dataset.entryTemplate = this.entryTemplateOf(node)
@@ -5173,17 +5183,25 @@ export class OverseerRenderer {
             if (row.depth < depth) break
             if (row.depth === depth) { next = row; break }
         }
+        // A tree kept sorted draws siblings in its order, and the file's only among ties: a row
+        // goes only where that order puts it among its new siblings.
+        const key = drag.list.dataset.sorted === '1' ? this.sortKeyOf(tree.branch[0].entry) : undefined
+        const outOfOrder = drag.list.dataset.sorted === '1'
+            && ((prev && this.compareSortKeys(this.sortKeyOf(prev.entry), key) > 0)
+                || (next && this.compareSortKeys(this.sortKeyOf(next.entry), key) < 0))
         if (depth < least || depth > most || (parent ? parent.depth !== depth - 1 : depth !== 0)
-            || (drag.list.dataset.treeMove !== 'anywhere' && parent !== tree.parent)) {
+            || (drag.list.dataset.treeMove !== 'anywhere' && parent !== tree.parent) || outOfOrder) {
             line.hidden = true
             return
         }
         drag.treeDrop = { depth, parent, prev, next }
         const table = drag.list.classList.contains('view-table')
+        // A tree cell on the row's edge stands in with a row that stands in whole.
+        const inWithRow = table && drag.list.classList.contains('tree-unlined') && drag.list.dataset.treeAt === '1'
         const startOf = (row) => {
             const cell = table ? row.element.querySelector('.tree-cell') : null
             const r = (cell || row.element).getBoundingClientRect()
-            return cell ? r.left : r.left - (row.depth + 1) * indent
+            return cell ? r.left - (inWithRow ? row.depth * indent : 0) : r.left - (row.depth + 1) * indent
         }
         const ref = below || above
         const list = drag.list.getBoundingClientRect()

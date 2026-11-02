@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // A list that is both `view="table"` and `tree=` keeps its columns aligned: the rows stay as wide
 // as the table, and only the cell of one column - the key's, which is what a parent names, or
 // the first where the key is no column - stands in by its depth, with the tree's lines over it.
+// Where the theme draws no lines, the whole row stands in instead.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -105,5 +106,30 @@ describe('a tree drawn inside a table', () => {
     open(doc([['site', ''], ['pages', 'site']], 'missing'))
     expect(list().dataset.treeAt).toBe('1')
     expect(field(rows()[1], 'title').classList.contains('tree-cell')).toBe(true)
+  })
+
+  it('draws no lines where the theme says none, only the chevrons, and stands the rows in whole', () => {
+    open(doc([['site', ''], ['pages', 'site'], ['about', 'pages']]))
+    list().style.setProperty('--ov-tree-style', 'none')
+    app.renderer.drawTreeLines(list())
+    expect(list().classList.contains('tree-unlined')).toBe(true)
+    expect(list().querySelectorAll('.tree-guide, .tree-elbow, .tree-branch, .tree-stem')).toHaveLength(0)
+    expect(list().querySelectorAll('.tree-chevron')).toHaveLength(2)
+    // The cells before the tree's column move with the row; the first of them is on its edge.
+    for (const row of rows()) {
+      expect(field(row, 'title').classList.contains('tree-before')).toBe(true)
+      expect(field(row, 'title').classList.contains('tree-edge')).toBe(true)
+      expect(field(row, 'parent').classList.contains('tree-before')).toBe(false)
+    }
+  })
+
+  it('draws its lines again once the theme says how', () => {
+    open(doc([['site', ''], ['pages', 'site']]))
+    list().style.setProperty('--ov-tree-style', 'none')
+    app.renderer.drawTreeLines(list())
+    list().style.setProperty('--ov-tree-style', 'dashed')
+    app.renderer.drawTreeLines(list())
+    expect(list().classList.contains('tree-unlined')).toBe(false)
+    expect(list().querySelectorAll('.tree-elbow')).toHaveLength(1)
   })
 })

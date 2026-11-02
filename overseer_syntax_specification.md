@@ -536,8 +536,11 @@ note under the list says how many branches it left out.
 
 `indent=` on the list is how far each depth stands in (`18px` unless the theme's `tree` key says
 otherwise). The theme's `tree` key says how the lines look: `indent`, `color` (the theme's `line`
-where it says none), `thickness` (`1px`), `style` (`solid`, `dashed`, `dotted`), and `elbow`, how
-far down a row its line comes in - the middle of the row unless it says, such as `"14px"`.
+where it says none), `thickness` (`1px`), `style` (`solid`, `dashed`, `dotted`, or `none` for no
+lines), and `elbow`, how far down a row its line comes in - the middle of the row unless it says,
+such as `"14px"`. Without lines, the chevrons and the indent show the hierarchy alone, and in a
+table the whole row stands in by its depth - its frame, colours and shadow with it - while the
+key's column gives up the room, so the columns after it stay aligned.
 
 `movable=true` on a tree lets an entry be dragged among its siblings, its whole branch with it.
 `movable="anywhere"` also lets it go anywhere in the tree: the gap between rows it is let go in
@@ -547,8 +550,9 @@ parent's list; in one by a parent field, it writes the parent field and moves th
 next to its new siblings, as one change with the field's `on change` run in it. Its children stay
 where they are in the file, since they name it. An entry never goes under itself or its own branch:
 that is refused even when asked for some other way than a drag, as is a parent change under
-`movable=true`. A tree kept in an order of its own (`sort_by`) is reordered only as any sorted list
-is, and a nested one not at all.
+`movable=true`. A tree by a parent field kept in an order of its own (`sort_by`) moves the same way,
+but only to where that order puts it among its new siblings - the file's order decides only among
+the ones it ties with; a nested one kept in an order is not moved at all.
 
 ```overseer
 list Parts (entry=<Part>, key="name", tree="Parts", movable="anywhere") { }
@@ -979,7 +983,7 @@ context mode = "system"
     the `style`.
   - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
   - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box a filter is typed in.
-  - `tree`: `indent` (`18px`), `color`, `thickness`, `style` and `elbow` of a list drawn as a tree
+  - `tree`: `indent` (`18px`), `color`, `thickness`, `style` (`none`: no lines) and `elbow` of a list drawn as a tree
     (see "Drawing a list as a tree").
   - `hold`: `style`, how a press held on a node with `on hold` is shown while it lasts - `fill`,
     `ring` or `none`; `color`, what it is drawn in; and `particles`, `dots` or `none` (see "on

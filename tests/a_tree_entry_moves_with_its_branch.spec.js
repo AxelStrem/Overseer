@@ -50,6 +50,16 @@ const nested = (movable) => [base('t', 'tab', { mutable: { Boolean: true } }, [
   }, [part('Car', [['Engine', [['Pistons', []]]], ['Wheels', []]]), part('Bicycle')]),
 ])]
 
+// Kept in an order of its own, pinned first: pin, then site > pages, and launch.
+const keyed = ([handle, parent, key]) => base(handle, 'div', { _ui_sort_key: { Integer: key } },
+  [text('handle', handle), text('parent', parent)])
+const sorted = () => [base('t', 'tab', { mutable: { Boolean: true } }, [
+  base('Tasks', 'list', {
+    entry: { Template: '<Task>' }, key: { String: 'handle' }, tree: { String: 'parent' },
+    movable: { String: 'anywhere' }, sort_by: { String: '|x| x/pinned' },
+  }, [['pin', '', 0], ['site', '', 1], ['pages', 'site', 1], ['launch', '', 1]].map(keyed)),
+])]
+
 const anywhere = { String: 'anywhere' }
 const siblings = { Boolean: true }
 
@@ -232,6 +242,25 @@ describe('a tree entry moves with its branch', () => {
     })])
     invoke.mockClear()
     drag('deploy', 98, -18)
+    expect(moves()).toEqual([])
+  })
+
+  it('moves a row of a tree kept sorted under another parent, among the rows it ties with', () => {
+    open(sorted())
+    // Rows: pin, site, pages, launch. launch carried in under site, after pages.
+    drag('launch', 58, 18)
+    expect(moves()).toEqual([expect.objectContaining({
+      entry_path: at('Tasks', 'launch'),
+      before: null,
+      setting: { node_path: ['parent'], value: { String: 'site' } },
+    })])
+  })
+
+  it('does not drop a row of a tree kept sorted where its order would not put it', () => {
+    open(sorted())
+    // Above pin, which sorts before everything else.
+    drag('launch', 2)
+    drag('pages', 2, -18)
     expect(moves()).toEqual([])
   })
 })
