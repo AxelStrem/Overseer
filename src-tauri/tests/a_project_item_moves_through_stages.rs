@@ -1,9 +1,11 @@
 //! A project item moves through stages, and finishing is one of them.
 //!
-//! Every project has the same stages - filed, planning, ready, testing, later - and
+//! Every project has the same stages - filed, planning, ready, testing, parts, later - and
 //! `finished`, which is not a place an item stays: picking it records the item in History and
 //! takes it off the list, which is what a finish button used to do. `cancelled` closes it the
 //! same way, with the record's status saying so, and a cancelled part counts towards nothing.
+//! An item at parts waits on nothing but its parts, and moves to testing as the last of them
+//! closes, in the same step.
 //! How hard an item is to think through - its complexity - goes with it onto the record.
 //! Checked against the example project, made from the template every project is.
 //!
@@ -232,7 +234,78 @@ fn every_project_offers_the_same_stages_in_order() {
             _ => None,
         })
         .collect();
-    assert_eq!(tags, ["filed", "planning", "ready", "testing", "later", "finished", "cancelled"]);
+    assert_eq!(tags, ["filed", "planning", "ready", "testing", "parts", "later", "finished", "cancelled"]);
+}
+
+/// What the stage picker holds back from an item, as the page reads it.
+fn withheld(file: &str, handle: &str) -> String {
+    let nodes = app_api::load_document(on_disk(file)).expect("open");
+    let node = overseer::addressing::find(&nodes, &format!("project/Items/[{}]/stage", handle)).expect("a stage");
+    match node.parameters.get("_computed_withhold").or_else(|| node.parameters.get("withhold")) {
+        Some(OverseerValue::String(s)) => s.clone(),
+        other => panic!("withhold reads {:?}", other),
+    }
+}
+
+#[test]
+fn parts_is_offered_only_while_an_item_has_open_parts() {
+    serialised(|| {
+        let (_root, file) = a_project("partsoffer");
+        assert!(withheld(&file, "brace").contains("parts"), "offered to an item with no parts");
+        assert!(!withheld(&file, "parser").contains("parts"), "held back from an item with parts open");
+    });
+}
+
+#[test]
+fn a_parts_item_moves_to_testing_when_its_last_part_closes() {
+    // parser holds brace, open, and roundtrip, finished: brace is its last open part.
+    serialised(|| {
+        let (root, file) = a_project("partsdone");
+        pick(&file, "parser", "parts");
+        let steps = overseer::undo::depth(&root, "p.os");
+        pick(&file, "brace", "finished");
+        assert_eq!(overseer::undo::depth(&root, "p.os"), steps + 1, "the close was more than one step");
+        assert_eq!(value_at(&file, "project/Items/[parser]/stage"), OverseerValue::String("testing".into()));
+        assert_eq!(
+            value_at(&file, "project/Items/[parser]/touched_at"),
+            value_at(&file, "project/History/[brace]/finished_at"),
+            "the parent's move is not dated"
+        );
+
+        app_api::undo_document(&file).expect("undo");
+        assert_eq!(value_at(&file, "project/Items/[parser]/stage"), OverseerValue::String("parts".into()));
+    });
+}
+
+#[test]
+fn a_cancelled_last_part_moves_a_parts_item_to_testing_too() {
+    serialised(|| {
+        let (_root, file) = a_project("partscancel");
+        pick(&file, "parser", "parts");
+        pick(&file, "brace", "cancelled");
+        assert_eq!(value_at(&file, "project/Items/[parser]/stage"), OverseerValue::String("testing".into()));
+    });
+}
+
+#[test]
+fn a_parts_item_waits_while_other_parts_are_open() {
+    // editor holds parser, rows and undo: finishing rows leaves two open.
+    serialised(|| {
+        let (_root, file) = a_project("partsmore");
+        pick(&file, "editor", "parts");
+        pick(&file, "rows", "finished");
+        assert_eq!(value_at(&file, "project/Items/[editor]/stage"), OverseerValue::String("parts".into()));
+    });
+}
+
+#[test]
+fn a_parent_at_another_stage_stays_where_it_is_when_its_last_part_closes() {
+    serialised(|| {
+        let (_root, file) = a_project("partsready");
+        pick(&file, "parser", "ready");
+        pick(&file, "brace", "finished");
+        assert_eq!(value_at(&file, "project/Items/[parser]/stage"), OverseerValue::String("ready".into()));
+    });
 }
 
 /// Set a field of an open item, as the page does when a chip is picked.
