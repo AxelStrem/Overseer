@@ -3644,6 +3644,10 @@ export class OverseerRenderer {
         list.dataset.columns = String(columns)
         list.dataset.header = this.getParameterValue(node, 'header') ? '1' : ''
         list.dataset.stickyHeader = this.getParameterValue(node, 'sticky') ? '1' : ''
+        // A tree in a table draws its outline down one column: its key's, since the key is what
+        // a parent names - see `arrangeTable`.
+        if (this.treeOf(node) && !this.entriesAreTabs(node)) list.dataset.treeKey = String(this.getParameterValue(node, 'key') || '')
+        else delete list.dataset.treeKey
         // The columns a reader may sort by, and how they are sorted now - for the heading, which
         // is drawn again with every arrangement and has only the element to go by.
         const sortable = this.sortableColumnsOf(node)
@@ -3704,6 +3708,12 @@ export class OverseerRenderer {
 
         const column = new Map(across.map((c, i) => [c.name, i + 1]))
         const aligned = new Map(across.map((c) => [c.name, c.align || '']))
+        // The column a tree's lines are drawn in, and its rows stand in by their depth: the key's,
+        // or the first where the key is not a column. Kept on the element for `drawTreeLines`,
+        // which draws the lines again without the table.
+        const treeAt = list.dataset.treeKey === undefined ? 0 : (column.get(list.dataset.treeKey) || 1)
+        if (treeAt) list.dataset.treeAt = String(treeAt)
+        else delete list.dataset.treeAt
 
         for (const row of Array.from(list.children)) {
             if (row.classList.contains('table-header')) continue
@@ -3719,10 +3729,16 @@ export class OverseerRenderer {
             // marks, as the resolver numbered the template's: `mark#0`, `mark#1`.
             let marks = 0
             for (let cell of Array.from(row.children)) {
+                // A tree's lines are no cell: they lie over the start of the tree's column.
+                if (cell.classList.contains('tree-lines')) {
+                    cell.style.gridColumn = treeAt ? String(treeAt) : ''
+                    continue
+                }
                 cell = this.tableCellFor(cell)
                 if (!cell) continue
                 const held = cell.classList.contains('table-cell') ? cell.firstElementChild : cell
                 const name = held.classList.contains('overseer-mark') ? `mark#${marks++}` : this.fieldNameOf(held)
+                cell.classList.toggle('tree-cell', treeAt > 0 && column.get(name) === treeAt)
                 // The column owns the width now. Left on the cell, a percentage would be read
                 // against its own column rather than the row, and every cell would be a sliver
                 // of the space it asked for.
@@ -4335,6 +4351,41 @@ export class OverseerRenderer {
             lastSeen.set(row.parent, i)
             if (row.parent >= 0) anyKidShows[row.parent] = true
         })
+        const treeAt = element.classList.contains('view-table') ? element.dataset.treeAt : ''
+        // In a table the lines are measured, as only the drawn page knows the two things they
+        // need: how far it is up to the row above, across its margins and borders, and where the
+        // middle of the row's first line is - a row's lines of its own (a fold opened, a bar)
+        // would otherwise pull the elbow down into them. Where the theme says the elbow, it is
+        // the theme's.
+        let measured = null
+        if (treeAt) {
+            let elbowSaid = ''
+            try { elbowSaid = getComputedStyle(element).getPropertyValue('--ov-tree-elbow').trim() } catch (_) { /* not drawn */ }
+            measured = new Map()
+            let above = null
+            rows.forEach((row, i) => {
+                const el = row.element
+                if (!shows[i] || !el.isConnected || el.offsetHeight === 0) return
+                const style = getComputedStyle(el)
+                const box = el.getBoundingClientRect()
+                const top = box.top + parseFloat(style.borderTopWidth || '0')
+                const bottom = box.bottom - parseFloat(style.borderBottomWidth || '0')
+                const cell = el.querySelector(':scope > .tree-cell')
+                measured.set(i, {
+                    gap: above === null ? 0 : Math.max(0, top - above),
+                    elbow: elbowSaid || !cell ? '' : `${cell.getBoundingClientRect().top - top + cell.offsetHeight / 2}px`,
+                })
+                above = bottom
+            })
+            // Drawn before the page laid the table out: measured again once it has.
+            if (measured.size === 0 && shows.some(Boolean) && !element.__treeMeasureAsked) {
+                element.__treeMeasureAsked = true
+                requestAnimationFrame(() => {
+                    element.__treeMeasureAsked = false
+                    if (element.isConnected) this.drawTreeLines(element)
+                })
+            }
+        }
         rows.forEach((row, i) => {
             const el = row.element
             if (!el) return
@@ -4342,6 +4393,14 @@ export class OverseerRenderer {
             if (!shows[i]) return
             const lines = document.createElement('div')
             lines.className = 'tree-lines'
+            if (treeAt) {
+                lines.style.gridColumn = treeAt
+                const at = measured.get(i)
+                if (at) {
+                    lines.style.setProperty('--tree-gap', `${at.gap}px`)
+                    if (at.elbow) lines.style.setProperty('--tree-elbow-y', at.elbow)
+                }
+            }
             const line = (kind, column) => {
                 const piece = document.createElement('span')
                 piece.className = kind

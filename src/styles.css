@@ -939,9 +939,21 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     --tree-chevron: 14px;
 }
 
-.overseer-list.view-tree > .tree-row {
+.overseer-list.view-tree:not(.view-table) > .tree-row {
     position: relative;
     margin-left: calc((var(--tree-depth, 0) + 1) * var(--tree-indent)) !important;
+}
+
+/* A tree in a table keeps its rows the table's width, so the columns stay aligned: only the cell
+   of the tree's column stands in, and the lines lie over the start of that column - placed there
+   by the row's grid, down the whole row. */
+.overseer-list.view-tree.view-table > .tree-row > .tree-cell {
+    padding-left: calc(var(--ov-table-cell-padding--start, 6px) + (var(--tree-depth, 0) + 1) * var(--tree-indent)) !important;
+}
+
+.overseer-list.view-tree.view-table > .tree-row > .tree-lines {
+    right: auto;
+    left: 0;
 }
 
 /* A row the filter keeps only because something under it matches. */

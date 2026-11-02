@@ -516,6 +516,12 @@ indent is the tree's own, `indent=`, and a `margin-left` of a row does not chang
 string details (hidden=$(depth() > 1)) = ""
 ```
 
+A tree that is also `view="table"` keeps its columns aligned: each row is as wide as the table,
+and only one column stands in by depth and carries the lines and chevrons - the column of the
+list's `key`, since that is what a parent names, or the first column where the key is not one.
+The elbow comes in at the middle of the row's first line, below which the row's own lines (a
+`span="row"` field, a fold opened) may follow.
+
 A chevron folds the branch under its entry away and brings it back. The fold is how somebody is
 looking, never written: it is kept by the entry's key, in that tab, as a foldable div's is.
 

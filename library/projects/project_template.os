@@ -229,13 +229,13 @@ tab project (label="Project", mutable=true) {
             }
             mark (type="grip")
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
-            string handle (label="id", font-size=11px, width=7%) = ""
+            string handle (label="id", font-size=11px, width=10%) = ""
             mark (type="separator")
             enum owner (label="by", vocabulary="/project/people/People", placeholder="", font-size=11px, width=6%,
                         alignment="center",
                         hover-text="Whose item it is") = ""
             mark (type="separator")
-            string title (label="title", font-size=14px, width=40%,
+            string title (label="title", font-size=14px, width=37%,
                           hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
@@ -471,7 +471,7 @@ tab project (label="Project", mutable=true) {
             }
         }
 
-        list Items (entry=<Item>, key="handle", layout="vertical", spacing=1, view="table", header=true, sticky=true, movable=true, sortable="handle, stage, parent, flags, points, moved_at", sort_by=$(|x| x/pinned == true ? 0 : 1)) { }
+        list Items (entry=<Item>, key="handle", tree="parent", layout="vertical", spacing=1, view="table", header=true, sticky=true, movable=true, sortable="handle, stage, parent, flags, points, moved_at", sort_by=$(|x| x/pinned == true ? 0 : 1)) { }
 
         div (layout="horizontal", margin=0, spacing=16, alignment="center") {
             int open_now (label="open") = $(/project/Items.count())
