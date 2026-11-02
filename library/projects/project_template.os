@@ -212,7 +212,7 @@ tab project (label="Project", mutable=true) {
                 - backdrop {
                     - working_mark {
                         - kind = $(working ? "icon" : "none")
-                        - source = "loader-circle"
+                        - source = "cog"
                         - colour = "#22c55e"
                         - opacity = 0.6
                         - size = "20px"
