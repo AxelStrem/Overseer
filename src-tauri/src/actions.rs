@@ -619,6 +619,29 @@ fn is_the_viewers(nodes: &[OverseerNode], indices: &[usize]) -> bool {
     crate::mutability::along(nodes, indices).is_guarded()
 }
 
+/// How a list's entries may be moved by hand, as its `movable=` says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Movable {
+    No,
+    /// `movable=true`: anywhere in the list, and to other movable lists; in a tree, among the
+    /// entry's siblings.
+    Siblings,
+    /// `movable="anywhere"`: in a tree, to any level of it as well.
+    Anywhere,
+}
+
+/// The name of the list at these indices, for a refusal to name it by.
+fn list_name_at(nodes: &Vec<OverseerNode>, at: &[usize]) -> String {
+    let mut level = nodes.as_slice();
+    let mut name = String::new();
+    for &i in at {
+        let Some(node) = level.get(i) else { break };
+        name = node.name.clone();
+        level = &node.children;
+    }
+    name
+}
+
 /// Refuses an entry the template gave - see `resolver::GIVEN_ENTRY`. It is the template's, so
 /// nothing done in the instance takes it out, moves it or writes into it.
 fn refuse_a_given_entry(entry: &OverseerNode, doing: &str) -> Result<(), OverseerError> {
@@ -4216,12 +4239,24 @@ impl ActionExecutor {
                 .ok_or_else(|| {
                     OverseerError::ValidationError(format!("{} is not a list", to_list_path))
                 })?;
-            for list in [source, target] {
-                if !Self::says_movable(list) {
+            for (list, at) in [(source, &from), (target, &to)] {
+                if Self::movable_at(nodes, at) == Movable::No {
                     return Err(OverseerError::ValidationError(format!(
                         "{} does not say movable=true, so its entries stay where they are",
                         list.name
                     )));
+                }
+            }
+            // A tree that says `movable=true` keeps an entry among its siblings: only
+            // `movable="anywhere"` lets it go to another level of the same tree.
+            if from != to {
+                if let (Some(root), Some(other)) = (Self::tree_root_of(nodes, &from), Self::tree_root_of(nodes, &to)) {
+                    if root == other && Self::movable_at(nodes, &root) != Movable::Anywhere {
+                        return Err(OverseerError::ValidationError(format!(
+                            "{} says movable=true, so its entries move only among their siblings",
+                            list_name_at(nodes, &root)
+                        )));
+                    }
                 }
             }
             let item = source.children.get(from_pos).cloned().ok_or_else(|| {
@@ -4320,13 +4355,132 @@ impl ActionExecutor {
         Ok(())
     }
 
-    /// Whether a list lets its entries be moved by hand - `movable=true`.
-    fn says_movable(list: &OverseerNode) -> bool {
+    /// What a list says of moving its entries by hand: `movable=true`, `movable="anywhere"` (a
+    /// tree's entries going to any level of it), or nothing.
+    fn says_movable(list: &OverseerNode) -> Option<Movable> {
         match list.parameters.get("movable") {
-            Some(OverseerValue::Boolean(b)) => *b,
-            Some(OverseerValue::String(s)) => s.trim().eq_ignore_ascii_case("true"),
-            _ => false,
+            Some(OverseerValue::Boolean(true)) => Some(Movable::Siblings),
+            Some(OverseerValue::Boolean(false)) => Some(Movable::No),
+            Some(OverseerValue::String(s)) if s.trim().eq_ignore_ascii_case("true") => Some(Movable::Siblings),
+            Some(OverseerValue::String(s)) if s.trim().eq_ignore_ascii_case("anywhere") => Some(Movable::Anywhere),
+            Some(_) => Some(Movable::No),
+            None => None,
         }
+    }
+
+    /// How the entries of the list at these indices may be moved. The lists a nested tree's
+    /// entries hold their children in are made from the template, which says nothing of it: the
+    /// tree's root list speaks for every level of it.
+    fn movable_at(nodes: &Vec<OverseerNode>, list: &[usize]) -> Movable {
+        let Some(node) = Self::get_node_ref_by_indices(nodes, list) else { return Movable::No };
+        if let Some(said) = Self::says_movable(node) {
+            return said;
+        }
+        match Self::tree_root_of(nodes, list) {
+            Some(root) if root.as_slice() != list => Self::get_node_ref_by_indices(nodes, &root)
+                .and_then(Self::says_movable)
+                .unwrap_or(Movable::No),
+            _ => Movable::No,
+        }
+    }
+
+    /// The outermost list drawn with `tree=` that the list at these indices is part of: the tree
+    /// list itself, or one of the lists named by its `tree=` that its entries, and theirs, hold
+    /// their children in. Unnamed divs between them are layout, and are passed over.
+    pub(crate) fn tree_root_of(nodes: &Vec<OverseerNode>, list: &[usize]) -> Option<Vec<usize>> {
+        let at = |i: usize| Self::get_node_ref_by_indices(nodes, &list[..i]);
+        if at(list.len()).map_or(true, |n| n.node_type != "list") {
+            return None;
+        }
+        for i in 1..=list.len() {
+            let Some(node) = at(i) else { continue };
+            if node.node_type != "list" {
+                continue;
+            }
+            let Some(tree) = Self::tree_of(node) else { continue };
+            let inside = (i + 1..=list.len())
+                .filter_map(|j| at(j))
+                .filter(|n| n.node_type == "list")
+                .all(|n| n.name == tree);
+            if inside {
+                return Some(list[..i].to_vec());
+            }
+        }
+        None
+    }
+
+    /// What a list's `tree=` names: the field of each entry that holds its children, or names
+    /// its parent.
+    fn tree_of(list: &OverseerNode) -> Option<String> {
+        match list.parameters.get("tree") {
+            Some(OverseerValue::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            _ => None,
+        }
+    }
+
+    /// Refuse a move within a tree by a parent field that would give the entry a parent it
+    /// cannot have: itself or one of its own descendants, which would cut its branch out of the
+    /// tree, or a key the list does not hold. An empty parent puts it at the top. A tree that
+    /// says `movable=true` keeps its entries among their siblings, so their parent does not change.
+    pub fn refuse_a_parent_it_cannot_have(
+        nodes: &Vec<OverseerNode>,
+        entry_path: &str,
+        to_list_path: &str,
+        field: &[String],
+        value: &OverseerValue,
+    ) -> Result<(), OverseerError> {
+        let find = |path: &str| {
+            let (segments, _explicit_param, anchored) = Self::split_path_and_param(path);
+            Self::resolve_target_indices(nodes, &[], anchored, &segments)
+        };
+        let (Some(entry_at), Some(to)) = (find(entry_path), find(to_list_path)) else { return Ok(()) };
+        let Some(list) = Self::get_node_ref_by_indices(nodes, &to) else { return Ok(()) };
+        let Some(tree) = Self::tree_of(list) else { return Ok(()) };
+        if field.len() != 1 || field[0] != tree {
+            return Ok(());
+        }
+        let Some(entry) = Self::get_node_ref_by_indices(nodes, &entry_at) else { return Ok(()) };
+        let wanted = crate::addressing::key_of_value(value).unwrap_or_default();
+        let had = crate::addressing::key_of(entry, &tree).unwrap_or_default();
+        if wanted != had && Self::movable_at(nodes, &to) != Movable::Anywhere {
+            return Err(OverseerError::ValidationError(format!(
+                "{} says movable=true, so its entries move only among their siblings",
+                list.name
+            )));
+        }
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        let Some(OverseerValue::String(key)) = list.parameters.get("key") else { return Ok(()) };
+        let parent_of: std::collections::HashMap<String, String> = list
+            .children
+            .iter()
+            .filter_map(|e| Some((crate::addressing::key_of(e, key)?, crate::addressing::key_of(e, &tree).unwrap_or_default())))
+            .collect();
+        if !parent_of.contains_key(&wanted) {
+            return Err(OverseerError::ValidationError(format!(
+                "{} holds no entry {} to go under",
+                list.name, wanted
+            )));
+        }
+        let own = crate::addressing::key_of(entry, key).unwrap_or_default();
+        // Up from the new parent: meeting the entry means it would be under itself. A chain
+        // that loops without meeting it is a cycle already in the file, and ends there.
+        let mut seen = std::collections::HashSet::new();
+        let mut here = wanted;
+        while seen.insert(here.clone()) {
+            if here == own {
+                return Err(OverseerError::ValidationError(format!(
+                    "{} cannot go under itself or its own branch",
+                    own
+                )));
+            }
+            match parent_of.get(&here) {
+                Some(up) if !up.is_empty() => here = up.clone(),
+                _ => break,
+            }
+        }
+        Ok(())
     }
 
     /// Whether an entry says it stays where it is - `movable=false` on the entry itself, usually

@@ -2036,10 +2036,23 @@ pub fn move_entry_at(
 ) -> Result<ResolvedUpdate> {
     change_document(path, document, session, move |nodes| {
         let before = before.map(|b| format!("/{}", b.join("/")));
+        let entry_path = format!("/{}", entry_path.join("/"));
+        let to_list_path = format!("/{}", to_list_path.join("/"));
+        // A drop in a tree by a parent field gives the entry its new parent: refused before
+        // anything moves when it would put the entry under itself.
+        if let Some(set) = &setting {
+            crate::actions::ActionExecutor::refuse_a_parent_it_cannot_have(
+                nodes,
+                &entry_path,
+                &to_list_path,
+                &set.node_path,
+                &set.value,
+            )?;
+        }
         let landed = crate::actions::ActionExecutor::move_entry(
             nodes,
-            &format!("/{}", entry_path.join("/")),
-            &format!("/{}", to_list_path.join("/")),
+            &entry_path,
+            &to_list_path,
             before.as_deref(),
         )?;
         if let Some(set) = setting {

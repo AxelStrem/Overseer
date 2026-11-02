@@ -389,6 +389,10 @@ says. By hand, its entries are reordered only among those its order ties: those 
 order the file has them, so that is the order a drag writes. The entry moves in one change: it is
 never in both lists or in neither, and one undo puts it back.
 
+On a list drawn as a tree, `movable=true` keeps an entry among its siblings, and
+`movable="anywhere"` lets it go anywhere in the tree - see "Drawing a list as a tree". A tree's
+entries are not dragged into other lists, nor theirs into it.
+
 An entry can say it stays where it is with `movable=false` of its own, usually in its template and
 often as a formula, while the rest of its list moves around it:
 
@@ -535,8 +539,20 @@ otherwise). The theme's `tree` key says how the lines look: `indent`, `color` (t
 where it says none), `thickness` (`1px`), `style` (`solid`, `dashed`, `dotted`), and `elbow`, how
 far down a row its line comes in - the middle of the row unless it says, such as `"14px"`.
 
-Dragging a nested tree's entries is not offered yet; a tree by a parent field reorders as any
-movable list does.
+`movable=true` on a tree lets an entry be dragged among its siblings, its whole branch with it.
+`movable="anywhere"` also lets it go anywhere in the tree: the gap between rows it is let go in
+says where, and how far right or left it was carried, one depth for each `indent`, how deep - as in
+an outliner. In a tree whose entries hold their children, that moves the entry into its new
+parent's list; in one by a parent field, it writes the parent field and moves the entry in the file
+next to its new siblings, as one change with the field's `on change` run in it. Its children stay
+where they are in the file, since they name it. An entry never goes under itself or its own branch:
+that is refused even when asked for some other way than a drag, as is a parent change under
+`movable=true`. A tree kept in an order of its own (`sort_by`) is reordered only as any sorted list
+is, and a nested one not at all.
+
+```overseer
+list Parts (entry=<Part>, key="name", tree="Parts", movable="anywhere") { }
+```
 
 ### 8. Grids
 

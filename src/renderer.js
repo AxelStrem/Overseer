@@ -4301,7 +4301,7 @@ export class OverseerRenderer {
             if (row.parent >= 0) away[i] = away[row.parent] || folded[row.parent]
         })
         element.__treeRows = rows.map((row, i) => ({
-            element: placed[i], depth: row.depth, parent: row.parent, kids: row.kids,
+            element: placed[i], entry: row.entry, depth: row.depth, parent: row.parent, kids: row.kids,
             folded: folded[i], path: row.path,
         }))
         rows.forEach((row, i) => {
@@ -4501,9 +4501,11 @@ export class OverseerRenderer {
      */
     dropTargetsFor(drag) {
         const out = []
+        // A tree's row goes to a place in its own tree, its branch with it.
+        if (drag.list.dataset.treeMove) return [drag.list]
         const template = drag.list.dataset.movable === '1' ? (drag.list.dataset.entryTemplate || '') : null
         for (const list of template === null ? [] : document.querySelectorAll('.overseer-list[data-movable="1"]')) {
-            if (list.dataset.board) continue
+            if (list.dataset.board || list.dataset.treeMove) continue
             const accepts = list === drag.list
                 ? list.dataset.sorted !== '1' || this.entriesTiedWith(list, drag.entry).length > 1
                 :(template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
@@ -4789,27 +4791,32 @@ export class OverseerRenderer {
      */
     makeEntriesMovable(element, node) {
         if (!element || !node) return
-        const said = this.getParameterValue(node, 'movable')
-        if (said !== true && String(said).toLowerCase() !== 'true') return
+        const said = String(this.getParameterValue(node, 'movable') ?? '').trim().toLowerCase()
+        if (said !== 'true' && said !== 'anywhere') return
         if (this.getEffectiveMutableMode(node, element) !== 'true') return
         if (this.entriesAreTabs(node)) return
-        // A tree that holds its children nested has rows that are entries of other lists, which
-        // a drag in this one cannot move yet.
-        if (this.isNestedTree(node)) return
         // Nor is there anywhere to drag to while a reader has it sorted: the order on screen is
         // not the list's, and a drag in it would write an order nobody can see.
         if (this.isColumnSorted(node)) {
             delete element.dataset.movable
             return
         }
-        element.dataset.movable = '1'
-        element.dataset.entryTemplate = this.entryTemplateOf(node)
         // A list drawn in an order worked out from its entries has an order to drag into only
         // among the entries it ties, which it draws in the file's order: an entry dropped in it
         // from elsewhere lands where the order puts it.
         const sorted = this.getParameterValue(node, 'sort_by') != null
             || this.getParameterValue(node, 'sort') != null
             || (node.children || []).some((c) => c?.parameters?._ui_sort_key !== undefined)
+        // A tree's row is dragged with its branch, to a place among the rows - see
+        // `followTreeDrag`. Not in a tree kept sorted, whose order among siblings is not the
+        // file's: a tree by a parent field reorders there as any sorted list does, and one that
+        // holds its children nested, whose rows are entries of other lists, not at all.
+        const tree = this.treeOf(node) !== '' && !sorted && element.classList.contains('view-tree')
+        if (!tree && this.isNestedTree(node)) return
+        element.dataset.movable = '1'
+        element.dataset.entryTemplate = this.entryTemplateOf(node)
+        if (tree) element.dataset.treeMove = said === 'anywhere' ? 'anywhere' : 'siblings'
+        else delete element.dataset.treeMove
         if (sorted) element.dataset.sorted = '1'
         else delete element.dataset.sorted
         this.listenForEntryDrags(element)
@@ -4999,6 +5006,13 @@ export class OverseerRenderer {
             inner.removeAttribute('data-uid')
         }
         ghost.classList.add('overseer-drag-ghost')
+        if (drag.list.dataset.treeMove) {
+            // Lifted out of the tree: it stands where the pointer holds it, without its lines.
+            ghost.classList.remove('tree-row')
+            for (const lines of ghost.querySelectorAll('.tree-lines')) lines.remove()
+            drag.tree = this.treeDragFrom(drag)
+            for (const row of drag.tree?.branch || []) row.element?.classList.add('is-dragged')
+        }
         ghost.style.width = `${rect.width}px`
         ghost.style.margin = '0'
         const shell = this.dragShellFor(drag.entry, rect)
@@ -5087,6 +5101,164 @@ export class OverseerRenderer {
         return null
     }
 
+    /**
+     * Where a tree's row stands as it is lifted: the rows of the tree, those of its branch, which
+     * go with it, and the rest, which it can be dropped among - with its depth, its parent's row
+     * and the sibling it stands before, to tell a drop where it already was.
+     */
+    treeDragFrom(drag) {
+        const rows = drag.list.__treeRows || []
+        const at = rows.findIndex((row) => row.element === drag.entry)
+        if (at < 0) return null
+        const depth = rows[at].depth
+        let end = at + 1
+        while (end < rows.length && rows[end].depth > depth) end += 1
+        const next = rows[end] && rows[end].depth === depth ? rows[end] : null
+        return {
+            rows, depth, next,
+            branch: rows.slice(at, end),
+            rest: rows.slice(0, at).concat(rows.slice(end)),
+            parent: rows[at].parent >= 0 ? rows[rows[at].parent] : null,
+        }
+    }
+
+    /// How far each depth of a tree stands in, in pixels - its `indent=`, or the theme's.
+    treeIndentOf(element) {
+        let said = NaN
+        try { said = parseFloat(getComputedStyle(element).getPropertyValue('--tree-indent')) } catch (_) { /* unlaid */ }
+        return said > 0 ? said : 18
+    }
+
+    /**
+     * A tree's row dragged over its tree: the gap between the rows drawn there that the pointer
+     * is nearest is where it goes, and how far right it has been carried, a depth for each
+     * `indent`, how deep - as in an outliner. In a gap, the depths open run from the row below's,
+     * which it would otherwise cut from its parent, to one under the row above, unless that row
+     * is folded. With `movable=true` only the depth and parent it has are open, so it stays among
+     * its siblings.
+     */
+    followTreeDrag(drag) {
+        const tree = drag.tree
+        const line = drag.line
+        const shown = tree.rest.filter((row) => row.element && !row.element.hidden
+            && !row.element.classList.contains('tree-folded-away')
+            && !row.element.classList.contains('filtered-out'))
+        let gap = shown.length
+        for (let i = 0; i < shown.length; i++) {
+            const r = shown[i].element.getBoundingClientRect()
+            if (drag.y < r.top + r.height / 2) { gap = i; break }
+        }
+        const above = gap > 0 ? shown[gap - 1] : null
+        const below = gap < shown.length ? shown[gap] : null
+        const most = above ? above.depth + (above.folded && above.kids > 0 ? 0 : 1) : 0
+        const least = Math.min(below ? below.depth : 0, most)
+        const indent = this.treeIndentOf(drag.list)
+        const depth = drag.list.dataset.treeMove === 'anywhere'
+            ? Math.max(least, Math.min(most, tree.depth + Math.round((drag.x - drag.startX) / indent)))
+            : tree.depth
+        // Read in all the rows but the branch, folded and filtered ones too: the parent is the
+        // nearest row before the gap standing less deep, and the siblings either side are the
+        // nearest at the same depth before anything less deep.
+        const at = below ? tree.rest.indexOf(below) : tree.rest.length
+        let parent = null
+        let prev = null
+        for (let i = at - 1; i >= 0; i--) {
+            const row = tree.rest[i]
+            if (row.depth < depth) { parent = row; break }
+            if (row.depth === depth && !prev) prev = row
+        }
+        let next = null
+        for (let i = at; i < tree.rest.length; i++) {
+            const row = tree.rest[i]
+            if (row.depth < depth) break
+            if (row.depth === depth) { next = row; break }
+        }
+        if (depth < least || depth > most || (parent ? parent.depth !== depth - 1 : depth !== 0)
+            || (drag.list.dataset.treeMove !== 'anywhere' && parent !== tree.parent)) {
+            line.hidden = true
+            return
+        }
+        drag.treeDrop = { depth, parent, prev, next }
+        const table = drag.list.classList.contains('view-table')
+        const startOf = (row) => {
+            const cell = table ? row.element.querySelector('.tree-cell') : null
+            const r = (cell || row.element).getBoundingClientRect()
+            return cell ? r.left : r.left - (row.depth + 1) * indent
+        }
+        const ref = below || above
+        const list = drag.list.getBoundingClientRect()
+        const left = ref ? startOf(ref) + (depth + 1) * indent : list.left
+        const top = below
+            ? below.element.getBoundingClientRect().top - 2
+            : above ? above.element.getBoundingClientRect().bottom - 1 : list.top
+        line.hidden = false
+        line.style.left = `${left}px`
+        line.style.top = `${top}px`
+        line.style.width = `${Math.max(24, list.right - left - 4)}px`
+        line.style.height = '3px'
+    }
+
+    /**
+     * A tree's row let go in a gap of its tree: its entry moves there, its branch with it.
+     *
+     * In a tree that holds its children nested, that is a move into the list of the parent's row
+     * - or the tree's own, at the top - before the sibling that follows. In one by a parent field
+     * it is a move within the list that writes the parent too, as one change with the field's
+     * `on change` run in it: before the sibling that follows, or, after the last of them, before
+     * whatever the file has after the sibling before it - or after the parent, for an only child -
+     * since siblings are drawn in the file's order. Its children stay where they are in the file:
+     * they name it, wherever it is.
+     */
+    dropInTree(drag) {
+        const { tree, treeDrop: to } = drag
+        if (to.parent === tree.parent && to.next === tree.next) return
+        const listNode = this.nodeDrawnBy(drag.list)
+        const name = this.treeOf(listNode)
+        if (!listNode || !name) return
+        const read = (el) => JSON.parse(el.dataset.path)
+        const pathOf = (row) => (row.element && row.element.dataset.path ? read(row.element) : row.path)
+        const entryPath = read(drag.entry)
+        const listPath = read(drag.list)
+        const failed = (err) => console.warn('The move failed:', err)
+        if (this.isNestedTree(listNode)) {
+            let into = listPath
+            if (to.parent) {
+                const kids = this.entryField(to.parent.entry, name, name)
+                into = kids ? this.fieldPathIn(to.parent.entry, pathOf(to.parent), kids) : null
+                if (!into) return
+            }
+            this.moveEntry(drag.entry, entryPath, into, to.next ? pathOf(to.next) : null).catch(failed)
+            return
+        }
+        let before = to.next ? pathOf(to.next) : null
+        const after = to.next ? null : (to.prev || to.parent)
+        if (after) {
+            const entries = listNode.children || []
+            const byEntry = new Map(tree.rows.map((row) => [row.entry, row]))
+            const from = entries.indexOf(after.entry)
+            for (const entry of from < 0 ? [] : entries.slice(from + 1)) {
+                const row = byEntry.get(entry)
+                if (row && row !== tree.branch[0]) { before = pathOf(row); break }
+            }
+        }
+        const keyField = this.getParameterValue(listNode, 'key')
+        const keyOf = (entry) => {
+            const field = keyField ? this.entryField(entry, keyField) : null
+            const held = field ? this.getNodeValue(field) : null
+            return held === null || held === undefined ? '' : String(held).trim()
+        }
+        const entryNode = tree.branch[0].entry || this.nodeDrawnBy(drag.entry)
+        const field = this.entryField(entryNode, name)
+        const fieldPath = field ? this.fieldPathIn(entryNode, entryPath, field) : null
+        // Named from the entry: where it lands, and so what it is called, is the move's to say.
+        const named = fieldPath && fieldPath.slice(0, entryPath.length).every((s, i) => s === entryPath[i])
+            ? fieldPath.slice(entryPath.length)
+            : [name]
+        const parent = to.parent ? keyOf(to.parent.entry) : ''
+        this.moveEntry(drag.entry, entryPath, listPath, before, { node_path: named, value: { String: parent } })
+            .catch(failed)
+    }
+
     /// Move the lifted entry with the pointer, and say where it would land.
     followEntryDrag() {
         const drag = this._entryDrag
@@ -5097,15 +5269,24 @@ export class OverseerRenderer {
             ? document.elementFromPoint(drag.x, drag.y)
             : null
         const wanted = '.board-column.accepts-drop, .overseer-list.accepts-drop'
-        const target = under && under.closest ? under.closest(wanted) : null
+        let target = under && under.closest ? under.closest(wanted) : null
+        // A tree's row is carried left to stand less deep, which takes the pointer past the
+        // tree's edge when the rows start there, as a table's do: level with the tree, it is
+        // still over it.
+        if (drag.tree && target !== drag.list) {
+            const r = drag.list.getBoundingClientRect()
+            if (drag.y >= r.top && drag.y <= r.bottom) target = drag.list
+        }
         for (const shown of document.querySelectorAll('.drop-here')) {
             if (shown !== target) shown.classList.remove('drop-here')
         }
         drag.target = target
         drag.before = null
+        drag.treeDrop = null
         const line = drag.line
         if (!target) { line.hidden = true; return }
         target.classList.add('drop-here')
+        if (target === drag.list && drag.tree) { this.followTreeDrag(drag); return }
         let list = target
         let across
         if (target.classList.contains('board-column')) {
@@ -5164,6 +5345,7 @@ export class OverseerRenderer {
         drag.shell?.remove()
         drag.line?.remove()
         drag.entry.classList.remove('is-dragged')
+        for (const row of drag.tree?.branch || []) row.element?.classList.remove('is-dragged')
         document.body.classList.remove('overseer-dragging')
         for (const list of document.querySelectorAll('.accepts-drop, .drop-here')) {
             list.classList.remove('accepts-drop', 'drop-here')
@@ -5171,6 +5353,10 @@ export class OverseerRenderer {
         this._dragJustEnded = true
         setTimeout(() => { this._dragJustEnded = false }, 0)
         if (!dropped || !drag.target) return
+        if (drag.tree) {
+            if (drag.target === drag.list && drag.treeDrop) this.dropInTree(drag)
+            return
+        }
         if (drag.target.classList.contains('board-column')) {
             this.dropInLane(drag)
             return

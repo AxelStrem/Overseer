@@ -120,6 +120,11 @@ pub fn cell_place(name: &str) -> Option<(usize, usize)> {
     Some((column - 1, row - 1))
 }
 
+/// A value as the text a key compares by - what `key_of` gives for a field holding it.
+pub fn key_of_value(value: &OverseerValue) -> Option<String> {
+    key_text(value)
+}
+
 /// The value a node carries for its list's key field.
 ///
 /// Through wrappers, because grouping an entry's fields for layout must not change what the
