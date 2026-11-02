@@ -3,7 +3,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // A list that is both `view="table"` and `tree=` keeps its columns aligned: the rows stay as wide
 // as the table, and only the cell of one column - the key's, which is what a parent names, or
 // the first where the key is no column - stands in by its depth, with the tree's lines over it.
-// Where the theme draws no lines, the whole row stands in instead.
+// Where the theme draws no lines, or says `stand = "row"`, the whole row stands in instead, and
+// any lines are drawn in the gutter its depth leaves on its left.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -131,5 +132,44 @@ describe('a tree drawn inside a table', () => {
     app.renderer.drawTreeLines(list())
     expect(list().classList.contains('tree-unlined')).toBe(false)
     expect(list().querySelectorAll('.tree-elbow')).toHaveLength(1)
+  })
+
+  it('stands the rows in whole and draws their lines in the gutter on their left where the theme says row', () => {
+    open(doc([['site', ''], ['pages', 'site'], ['about', 'pages'], ['blog', 'site']]))
+    list().style.setProperty('--ov-tree-stand', 'row')
+    app.renderer.drawTreeLines(list())
+    expect(list().classList.contains('tree-stands')).toBe(true)
+    expect(list().classList.contains('tree-unlined')).toBe(false)
+    const [site, pages, about, blog] = rows()
+    // A top-level row has no gutter; each row under it draws its own line in, and the guide of an
+    // ancestor whose siblings are still to come.
+    expect(site.querySelector(':scope > .tree-gutter')).toBeNull()
+    const kinds = (row) => Array.from(row.querySelectorAll(':scope > .tree-gutter > span')).map((s) => s.className)
+    expect(kinds(pages)).toEqual(['tree-elbow', 'tree-branch'])
+    expect(kinds(about)).toEqual(['tree-guide', 'tree-elbow tree-elbow-last', 'tree-branch tree-branch-leaf'])
+    expect(kinds(blog)).toEqual(['tree-elbow tree-elbow-last', 'tree-branch tree-branch-leaf'])
+    // The chevrons stay in the tree's column, and nothing is drawn there under a row's own start.
+    for (const row of rows()) {
+      expect(row.querySelectorAll(':scope > .tree-lines > span')).toHaveLength(0)
+    }
+    expect(list().querySelectorAll('.tree-lines > .tree-chevron')).toHaveLength(2)
+  })
+
+  it("keeps the gutter out of the table's columns when the table is arranged again", () => {
+    open(doc([['site', ''], ['pages', 'site']]))
+    list().style.setProperty('--ov-tree-stand', 'row')
+    app.renderer.drawTreeLines(list())
+    app.renderer.arrangeTables()
+    const gutter = rows()[1].querySelector(':scope > .tree-gutter')
+    expect(gutter).not.toBeNull()
+    expect(gutter.style.gridColumn).toBe('')
+  })
+
+  it('stands only the column with its lines where the theme says column, even without lines', () => {
+    open(doc([['site', ''], ['pages', 'site']]))
+    list().style.setProperty('--ov-tree-style', 'none')
+    list().style.setProperty('--ov-tree-stand', 'column')
+    app.renderer.drawTreeLines(list())
+    expect(list().classList.contains('tree-stands')).toBe(false)
   })
 })

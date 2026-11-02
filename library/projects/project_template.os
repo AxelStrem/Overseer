@@ -1,7 +1,7 @@
 tab project (label="Project", mutable=true) {
     context vocabulary = "/project/Items, /project/History"
     string name (label="", font-size=22px) = "Untitled project"
-    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border, and other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
+    text description (markdown=true, font-size=14px) = "**What it is:** say in a sentence or two what the project is. **Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. Say what the tags mean here. **Tabs:** name each tab and what it holds, starting with this one, the plan, which has two pages: Open, what is still to do, and Closed, what was finished or cancelled. A tab beside this one is the project's own, outside both pages."
 
     div (hidden=true) {
         div Label (layout="vertical", width=360px, margin=0, spacing=0, padding=2, border-radius=8px,
@@ -204,26 +204,37 @@ tab project (label="Project", mutable=true) {
                   background-color="inherit",
                   movable=$(pinned == false),
                   border-style=$(working == true ? "solid 2px #22c55e" : "default"),
-                  shadow=$("inset 3px 0 0 " + glow + ", inset 16px 0 16px -14px " + glow + "88, -3px 0 10px -5px " + glow)) {
+                  shadow=$(stage == "filed" || stage == "later" ? "none" :
+                      "inset 3px 0 0 " + glow + ", inset 16px 0 16px -14px " + glow + "88, -3px 0 10px -5px " + glow)) {
             context hover-text = true
             context theme {
                 - text = $(waiting > 0 ? muted : "inherit")
                 - backdrop {
+                    - working_mark {
+                        - kind = $(working ? "icon" : "none")
+                        - source = "loader-circle"
+                        - colour = "#22c55e"
+                        - opacity = 0.6
+                        - size = "20px"
+                        - position = $("left calc(14% - " + (24 + depth() * 16) + "px) " + (kids > 0 ? "top calc(50% - 6px)" : "center"))
+                        - motion = "turn"
+                        - period = "3s"
+                    }
                     - asked_mark {
-                        - kind = $(asked ? "icon" : "none")
+                        - kind = $(asked && !working ? "icon" : "none")
                         - source = "message-circle-question"
                         - colour = "#facc15"
-                        - opacity = 0.3
-                        - size = "26px"
-                        - position = "left 14px top 6px"
+                        - opacity = 0.45
+                        - size = "20px"
+                        - position = $("left calc(14% - " + (24 + depth() * 16) + "px) " + (kids > 0 ? "top calc(50% - 6px)" : "center"))
                     }
                     - asked_corner {
                         - kind = $(asked ? "gradient" : "none")
                         - from = "#facc15cc"
                         - to = "transparent"
                         - angle = 225
-                        - center = "2%"
-                        - sharpness = "97%"
+                        - center = "1.2%"
+                        - sharpness = "100%"
                     }
                 }
             }
@@ -315,7 +326,9 @@ tab project (label="Project", mutable=true) {
                 }
             }
 
-            int done (view="progress", span="row", margin=0, padding=0,
+            int done (view="progress", span="row", margin=0, margin-left=24px, margin-right=24px, padding=0,
+                      height=5px, color=$(done >= 100 ? "#4ade80" : "#eab308"),
+                      shadow=$(done >= 100 ? "0 0 8px #4ade80" : "none"),
                       hover-text=$(../done - ../done % 1 + "% done"),
                       hidden=$(kids == 0)) = $(kids == 0 || weight == 0 ? 0 :
                           (/project/Items.filter(|x| x/parent == ../handle)
@@ -439,8 +452,9 @@ tab project (label="Project", mutable=true) {
                 }
             }
             - tree {
-                - style = "none"
+                - stand = "row"
                 - indent = "16px"
+                - color = $(muted)
             }
         }
         div (layout="horizontal", margin=0, spacing=10, alignment="center") {

@@ -540,7 +540,11 @@ where it says none), `thickness` (`1px`), `style` (`solid`, `dashed`, `dotted`, 
 lines), and `elbow`, how far down a row its line comes in - the middle of the row unless it says,
 such as `"14px"`. Without lines, the chevrons and the indent show the hierarchy alone, and in a
 table the whole row stands in by its depth - its frame, colours and shadow with it - while the
-key's column gives up the room, so the columns after it stay aligned.
+key's column gives up the room, so the columns after it stay aligned. `stand` says which of a
+table's parts stands in: `"column"`, the key's column, with the lines drawn in it (where there are
+lines), or `"row"`, the whole row (where there are none). A table that says `stand = "row"` and
+draws lines draws them in the gutter its rows leave on the left, where no row lies: each parent's
+line half an indent before its children's edge, coming into each child at its first line.
 
 `movable=true` on a tree lets an entry be dragged among its siblings, its whole branch with it.
 `movable="anywhere"` also lets it go anywhere in the tree: the gap between rows it is let go in
@@ -983,7 +987,7 @@ context mode = "system"
     the `style`.
   - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
   - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box a filter is typed in.
-  - `tree`: `indent` (`18px`), `color`, `thickness`, `style` (`none`: no lines) and `elbow` of a list drawn as a tree
+  - `tree`: `indent` (`18px`), `color`, `thickness`, `style` (`none`: no lines), `elbow` and `stand` (`row` or `column`) of a list drawn as a tree
     (see "Drawing a list as a tree").
   - `hold`: `style`, how a press held on a node with `on hold` is shown while it lasts - `fill`,
     `ring` or `none`; `color`, what it is drawn in; and `particles`, `dots` or `none` (see "on
@@ -1043,7 +1047,7 @@ context mode = "system"
   SVG of the document's keeps its own colours unless given one), `opacity` how strongly, `0` to `1`
   (`1`), `size` how high, of the box's height (`100%`; larger, and the box crops it), and
   `position` where, as CSS places a background (`center`; `right -10% center` puts it partly past
-  the right edge). A `source` there is no icon of draws nothing.
+  the right edge; `left calc(14% - 24px) center`, a little before a point). A `source` there is no icon of draws nothing.
 
   ```overseer
   - mark {
@@ -1056,7 +1060,8 @@ context mode = "system"
   ```
 
   A layer of either kind can move on its own, in the page alone, for as long as its `motion` says
-  so: `turn` turns it round and round (a gradient's angle), `drift` moves it back and forth (a
+  so: `turn` turns it round and round (a gradient's angle; an icon on its own middle, where it
+  stands), `drift` moves it back and forth (a
   gradient along its angle, an icon from side to side), `breathe` fades it out a little and
   back, and `appear` fades it in from nothing, once, and leaves it. `period` is how long one round
   takes - `"20s"`, `"800ms"`, or a number of seconds - and is 60 seconds for a turn, 20 for a

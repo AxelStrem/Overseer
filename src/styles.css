@@ -956,30 +956,66 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     left: 0;
 }
 
-/* A tree in a table whose theme draws no lines stands each row in whole by its depth - its card,
-   its colours and its shadow with it - and the tree's column gives up the room, so the columns
-   after it stay where they are. A row is a subgrid, which hands its margin on to the cells on its
+/* A tree in a table whose theme draws no lines, or says `stand = "row"`, stands each row in whole
+   by its depth - its card, its colours and its shadow with it - and the tree's column gives up the
+   room, so the columns after it stay where they are. A row is a subgrid, which hands its margin on to the cells on its
    edge as a margin of their own, and so to the width of the first column: the cell there takes
    it back, and it and the rest before the tree's column are shifted over by the depth instead,
    into the tree cell's padding. Where the tree's column is the first, the margin is its own. */
-.overseer-list.view-tree.view-table.tree-unlined > .tree-row {
+.overseer-list.view-tree.view-table.tree-stands > .tree-row {
     margin-left: calc(var(--tree-depth, 0) * var(--tree-indent)) !important;
 }
 
-.overseer-list.view-tree.view-table.tree-unlined > .tree-row > .tree-edge {
+.overseer-list.view-tree.view-table.tree-stands > .tree-row > .tree-edge {
     margin-left: calc(-1 * var(--tree-depth, 0) * var(--tree-indent)) !important;
 }
 
-.overseer-list.view-tree.view-table.tree-unlined > .tree-row > .tree-before {
+.overseer-list.view-tree.view-table.tree-stands > .tree-row > .tree-before {
     transform: translateX(calc(var(--tree-depth, 0) * var(--tree-indent)));
 }
 
-.overseer-list.view-tree.view-table.tree-unlined[data-tree-at="1"] > .tree-row > .tree-cell {
+.overseer-list.view-tree.view-table.tree-stands[data-tree-at="1"] > .tree-row > .tree-cell {
     padding-left: calc(var(--ov-table-cell-padding--start, 6px) + var(--tree-indent)) !important;
 }
 
-.overseer-list.view-tree.view-table.tree-unlined[data-tree-at="1"] > .tree-row > .tree-lines > .tree-chevron {
+.overseer-list.view-tree.view-table.tree-stands[data-tree-at="1"] > .tree-row > .tree-lines > .tree-chevron {
     left: calc(var(--tree-indent) / 2 - var(--tree-chevron) / 2);
+}
+
+/* The lines of a row that stands in whole lie in the gutter its depth leaves on its left, from
+   the table's edge to the row's, where no row lies: measured from the row's outside, across its
+   borders, down past it and up across the gap to the row above. Each parent's line runs half an
+   indent before its children's edge, and comes into a child at its first line. */
+.tree-gutter {
+    position: absolute;
+    top: calc(-1 * var(--tree-border-top, 0px));
+    bottom: calc(-1 * var(--tree-border-bottom, 0px));
+    left: calc(-1 * var(--tree-depth, 0) * var(--tree-indent) - var(--tree-border-left, 0px));
+    width: calc(var(--tree-depth, 0) * var(--tree-indent));
+    pointer-events: none;
+}
+
+.tree-gutter > span {
+    position: absolute;
+    left: calc(var(--tree-column) * var(--tree-indent) + var(--tree-indent) / 2);
+}
+
+.tree-gutter > .tree-guide,
+.tree-gutter > .tree-elbow {
+    top: calc(-1 * var(--tree-gap, 0px));
+    bottom: 0;
+    border-left: var(--tree-line);
+}
+
+.tree-gutter > .tree-elbow-last {
+    bottom: auto;
+    height: calc(var(--tree-gap, 0px) + var(--tree-elbow-y));
+}
+
+.tree-gutter > .tree-branch {
+    top: var(--tree-elbow-y);
+    width: calc(var(--tree-indent) / 2);
+    border-top: var(--tree-line);
 }
 
 /* A row the filter keeps only because something under it matches. */

@@ -107,6 +107,67 @@ const BACKDROP_MOTIONS = { turn: 60, drift: 20, breathe: 8, appear: 4, sparkle: 
 const SPARKLE_COUNT = 12
 const SPARKLE_MOST = 200
 const SPARKLE_SOURCES = 32
+
+/**
+ * Where the middle of a backdrop's icon is, as a `transform-origin` of its layer's box, so that an
+ * icon that turns turns on itself rather than about the middle of the box. `position` is the
+ * layer's, as CSS places a background, and `size` how high the icon is: a library icon is square,
+ * so it is as wide, and a share of the box's height is one of the holder's (`cqh`). Null for a
+ * place it cannot read, which then turns about the middle.
+ */
+export function iconTurnOrigin(position, size) {
+    const side = /%$/.test(size) ? `${parseFloat(size)}cqh` : size
+    const tokens = String(position || 'center').match(/calc\([^)]*\)|\S+/g) || []
+    const isEdge = (t) => ['left', 'right', 'top', 'bottom', 'center'].includes(t)
+    // Each axis as an edge it is measured from and how far: the forms CSS takes, of one to four
+    // values.
+    const axes = { x: null, y: null }
+    const axisOf = (edge) => (edge === 'left' || edge === 'right') ? 'x' : (edge === 'top' || edge === 'bottom') ? 'y' : null
+    const place = (axis, edge, offset) => {
+        if (!axis || axes[axis]) return false
+        axes[axis] = { edge, offset }
+        return true
+    }
+    if (tokens.length === 0 || tokens.length > 4) return null
+    if (tokens.every((t) => !isEdge(t)) && tokens.length <= 2) {
+        place('x', 'start', tokens[0])
+        place('y', 'start', tokens[1] ?? '50%')
+    } else if (tokens.length <= 2) {
+        // Keywords or a length after a horizontal one, in either order: `top left`, `left 20%`.
+        const [a, b] = tokens
+        if (isEdge(a) && (b === undefined || isEdge(b))) {
+            const second = b ?? 'center'
+            const aAxis = axisOf(a) || (axisOf(second) === 'x' ? 'y' : 'x')
+            const bAxis = aAxis === 'x' ? 'y' : 'x'
+            if (axisOf(second) && axisOf(second) !== bAxis) return null
+            place(aAxis, a, '0%')
+            place(bAxis, second, '0%')
+        } else if (isEdge(a) && axisOf(a) !== 'y') {
+            place('x', a, '0%')
+            place('y', 'start', b)
+        } else if (!isEdge(a) && isEdge(b) && axisOf(b) !== 'x') {
+            place('x', 'start', a)
+            place('y', b, '0%')
+        } else return null
+    } else {
+        // Each keyword, followed by its offset where one is given: `left 14px top 6px`.
+        for (let i = 0; i < tokens.length; i++) {
+            const edge = tokens[i]
+            if (!isEdge(edge)) return null
+            const offset = tokens[i + 1] !== undefined && !isEdge(tokens[i + 1]) ? tokens[++i] : '0%'
+            const axis = axisOf(edge) || (axes.x ? 'y' : 'x')
+            if (!place(axis, edge, offset)) return null
+        }
+    }
+    const origin = ({ edge, offset }) => {
+        if (edge === 'center') return '50%'
+        const fromEnd = edge === 'right' || edge === 'bottom'
+        // A share in a background's place is one of the room the icon leaves, not of the box.
+        const along = offset.replace(/^calc/, '').replace(/(-?\d+(?:\.\d+)?)%/g, (_, n) => `((100% - ${side}) * ${parseFloat(n) / 100})`)
+        return fromEnd ? `calc(100% - ${along} - ${side} / 2)` : `calc(${along} + ${side} / 2)`
+    }
+    return `${origin(axes.x || { edge: 'center' })} ${origin(axes.y || { edge: 'center' })}`
+}
 /// The motions a node's `motion=` can name, each a class in the stylesheet: those played once, as
 /// the value changes to them, and `pulse`, which runs for as long as the value says it.
 const MOTIONS_ONCE = ['pop', 'shake', 'fade', 'burst']
@@ -3730,6 +3791,7 @@ export class OverseerRenderer {
             let marks = 0
             for (let cell of Array.from(row.children)) {
                 // A tree's lines are no cell: they lie over the start of the tree's column.
+                if (cell.classList.contains('tree-gutter')) continue
                 if (cell.classList.contains('tree-lines')) {
                     cell.style.gridColumn = treeAt ? String(treeAt) : ''
                     continue
@@ -3740,7 +3802,7 @@ export class OverseerRenderer {
                 const name = held.classList.contains('overseer-mark') ? `mark#${marks++}` : this.fieldNameOf(held)
                 cell.classList.toggle('tree-cell', treeAt > 0 && column.get(name) === treeAt)
                 // The cells before the tree's column, which move with a row that stands in whole
-                // (see `.tree-unlined`), the first of them on the row's edge.
+                // (see `.tree-stands`), the first of them on the row's edge.
                 cell.classList.toggle('tree-before', treeAt > 1 && column.get(name) < treeAt)
                 cell.classList.toggle('tree-edge', treeAt > 1 && column.get(name) === 1)
                 // The column owns the width now. Left on the cell, a percentage would be read
@@ -4358,9 +4420,19 @@ export class OverseerRenderer {
         const treeAt = element.classList.contains('view-table') ? element.dataset.treeAt : ''
         // A theme whose `tree/style` is `none` draws no lines: only the chevrons, and the rows
         // standing in by their depth say where each one is - in a table, the whole row.
+        // `tree/stand = "row"` stands the whole row in with its lines as well, and they are drawn
+        // in the gutter that leaves on its left, where no row lies (see `.tree-gutter`).
         let unlined = false
-        try { unlined = getComputedStyle(element).getPropertyValue('--ov-tree-style').trim() === 'none' } catch (_) { /* not drawn */ }
+        let standSaid = ''
+        try {
+            const style = getComputedStyle(element)
+            unlined = style.getPropertyValue('--ov-tree-style').trim() === 'none'
+            standSaid = style.getPropertyValue('--ov-tree-stand').trim()
+        } catch (_) { /* not drawn */ }
+        const stands = !!treeAt && (standSaid === 'row' || (unlined && standSaid !== 'column'))
+        const guttered = stands && !unlined
         element.classList.toggle('tree-unlined', unlined)
+        element.classList.toggle('tree-stands', stands)
         // In a table the lines are measured, as only the drawn page knows the two things they
         // need: how far it is up to the row above, across its margins and borders, and where the
         // middle of the row's first line is - a row's lines of its own (a fold opened, a bar)
@@ -4377,14 +4449,19 @@ export class OverseerRenderer {
                 if (!shows[i] || !el.isConnected || el.offsetHeight === 0) return
                 const style = getComputedStyle(el)
                 const box = el.getBoundingClientRect()
-                const top = box.top + parseFloat(style.borderTopWidth || '0')
-                const bottom = box.bottom - parseFloat(style.borderBottomWidth || '0')
+                const border = (side) => parseFloat(style[`border${side}Width`] || '0')
+                const top = box.top + border('Top')
+                const bottom = box.bottom - border('Bottom')
                 const cell = el.querySelector(':scope > .tree-cell')
                 measured.set(i, {
-                    gap: above === null ? 0 : Math.max(0, top - above),
+                    gap: above === null ? 0 : Math.max(0, top - above.inner),
                     elbow: elbowSaid || !cell ? '' : `${cell.getBoundingClientRect().top - top + cell.offsetHeight / 2}px`,
+                    // A gutter's lines are measured from the row's outside, across its borders,
+                    // so that none of them is drawn over the row or the one above.
+                    outerGap: above === null ? 0 : Math.max(0, box.top - above.outer),
+                    borders: { top: border('Top'), bottom: border('Bottom'), left: border('Left') },
                 })
-                above = bottom
+                above = { inner: bottom, outer: box.bottom }
             })
             // Drawn before the page laid the table out: measured again once it has.
             if (measured.size === 0 && shows.some(Boolean) && !element.__treeMeasureAsked) {
@@ -4398,24 +4475,38 @@ export class OverseerRenderer {
         rows.forEach((row, i) => {
             const el = row.element
             if (!el) return
-            el.querySelector(':scope > .tree-lines')?.remove()
+            for (const old of el.querySelectorAll(':scope > .tree-lines, :scope > .tree-gutter')) old.remove()
             if (!shows[i]) return
             const lines = document.createElement('div')
             lines.className = 'tree-lines'
+            const at = measured && measured.get(i)
             if (treeAt) {
                 lines.style.gridColumn = treeAt
-                const at = measured && measured.get(i)
                 if (at) {
                     lines.style.setProperty('--tree-gap', `${at.gap}px`)
                     if (at.elbow) lines.style.setProperty('--tree-elbow-y', at.elbow)
                 }
             }
+            let gutter = null
+            if (guttered && row.depth > 0) {
+                gutter = document.createElement('div')
+                gutter.className = 'tree-gutter'
+                if (at) {
+                    gutter.style.setProperty('--tree-gap', `${at.outerGap}px`)
+                    gutter.style.setProperty('--tree-border-top', `${at.borders.top}px`)
+                    gutter.style.setProperty('--tree-border-bottom', `${at.borders.bottom}px`)
+                    gutter.style.setProperty('--tree-border-left', `${at.borders.left}px`)
+                    if (at.elbow) gutter.style.setProperty('--tree-elbow-y', `calc(${at.elbow} + ${at.borders.top}px)`)
+                }
+            }
             const line = (kind, column) => {
                 if (unlined) return
+                // In the gutter, a line under the row's own start would lie under the row.
+                if (guttered && (!gutter || kind === 'tree-stem')) return
                 const piece = document.createElement('span')
                 piece.className = kind
                 piece.style.setProperty('--tree-column', String(column))
-                lines.appendChild(piece)
+                ;(gutter || lines).appendChild(piece)
             }
             // Up the chain: a guide in the column of each ancestor below the top that has a
             // sibling still to come under the same parent.
@@ -4449,6 +4540,7 @@ export class OverseerRenderer {
                 lines.appendChild(chevron)
             }
             el.appendChild(lines)
+            if (gutter) el.appendChild(gutter)
         })
     }
 
@@ -5019,7 +5111,7 @@ export class OverseerRenderer {
         if (drag.list.dataset.treeMove) {
             // Lifted out of the tree: it stands where the pointer holds it, without its lines.
             ghost.classList.remove('tree-row')
-            for (const lines of ghost.querySelectorAll('.tree-lines')) lines.remove()
+            for (const lines of ghost.querySelectorAll('.tree-lines, .tree-gutter')) lines.remove()
             drag.tree = this.treeDragFrom(drag)
             for (const row of drag.tree?.branch || []) row.element?.classList.add('is-dragged')
         }
@@ -5197,7 +5289,7 @@ export class OverseerRenderer {
         drag.treeDrop = { depth, parent, prev, next }
         const table = drag.list.classList.contains('view-table')
         // A tree cell on the row's edge stands in with a row that stands in whole.
-        const inWithRow = table && drag.list.classList.contains('tree-unlined') && drag.list.dataset.treeAt === '1'
+        const inWithRow = table && drag.list.classList.contains('tree-stands') && drag.list.dataset.treeAt === '1'
         const startOf = (row) => {
             const cell = table ? row.element.querySelector('.tree-cell') : null
             const r = (cell || row.element).getBoundingClientRect()
@@ -9119,13 +9211,16 @@ export class OverseerRenderer {
                 const svg = this.backdropIconSvg(text, colourOf(parts), opacity)
                 if (!svg) continue
                 const size = sizeOf('100%')
+                // Words, lengths and `calc()` of them: no comma, quote or `url`, which could reach
+                // the other layers.
                 const placeSaid = String(this.contextValue(key('position')) ?? '').trim()
-                const position = /^[a-z0-9.%\s-]+$/i.test(placeSaid) ? placeSaid : 'center'
+                const position = /^[a-z0-9.%\s()+*/-]+$/i.test(placeSaid) && !/url/i.test(placeSaid) ? placeSaid : 'center'
                 lists.image.push(`url("data:image/svg+xml,${encodeURIComponent(svg)}")`)
                 lists.size.push(`auto ${size}`)
                 lists.position.push(position)
                 lists.repeat.push('no-repeat')
                 drawn()
+                if (motion === 'turn') layers.at(-1).origin = iconTurnOrigin(position, size)
             }
         }
         if (!lists.image.length) return { image: 'none', size: 'auto', position: '0% 0%', repeat: 'repeat', layers, waiting }
@@ -9227,6 +9322,8 @@ export class OverseerRenderer {
             style.backgroundRepeat = square ? 'no-repeat' : layer.repeat
             style.setProperty('--ov-backdrop-scale', String(scale))
             style.setProperty('--ov-backdrop-period', `${layer.period || 1}s`)
+            // An icon turns on its own middle; a gradient, drawn in a square, on the box's.
+            style.transformOrigin = layer.origin || ''
             if (layer.motion === 'drift') {
                 // Back and forth along the gradient, a quarter of the box's diagonal each way -
                 // a share of the square's side, which is what `translate` takes a share of; an
