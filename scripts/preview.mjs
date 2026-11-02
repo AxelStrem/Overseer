@@ -170,8 +170,12 @@ window.__preview = {
     split(address) {
         if (Array.isArray(address)) return address.map(String)
         const parts = []
-        let part = '', depth = 0
+        let part = '', depth = 0, escaped = false
         for (const ch of String(address).replace(/^\/+/, '')) {
+            // A key escapes its own slashes and brackets with a backslash, which is kept here
+            // and taken off when the key is matched.
+            if (escaped) { part += ch; escaped = false; continue }
+            if (ch === '\\') { part += ch; escaped = true; continue }
             if (ch === '[') depth++
             if (ch === ']') depth--
             if (ch === '/' && depth === 0) { parts.push(part); part = '' } else part += ch
@@ -213,9 +217,15 @@ window.__preview = {
             const named = this.leaves(here)
             let next
             if (keyed) {
-                const key = keyed[1].replace(/^["']|["']$/g, '')
-                next = named.find((e) => e.name === key)
-                    || named.find((e) => this.leaves(e).some((f) => String(this.valueOf(f)) === key))
+                const key = keyed[1].replace(/^["']|["']$/g, '').replace(/\\(.)/g, '$1')
+                // A keyed list names an entry by its key field alone: another field that holds
+                // the same value - a parent, an after - is no match.
+                let field
+                try { field = here.node_type ? window.app.renderer.getParameterValue(here, 'key') : null } catch (_) { field = null }
+                const holds = field
+                    ? (e) => this.leaves(e).some((f) => f.name === field && String(this.valueOf(f)) === key)
+                    : (e) => this.leaves(e).some((f) => String(this.valueOf(f)) === key)
+                next = named.find((e) => e.name === key) || named.find(holds)
                 if (!next && /^-?\d+$/.test(key)) next = named[Number(key) < 0 ? named.length + Number(key) : Number(key)]
             } else {
                 next = named.find((e) => e.name === part)
