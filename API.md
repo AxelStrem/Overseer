@@ -191,6 +191,12 @@ whatever is added or removed around them. Entries of a list without a key are na
 list first and take the addresses from its answer rather than building them. A `/`, `[` or `]`
 inside a name or key is escaped with `\`.
 
+A list that keeps its entries in parts ([the specification](overseer_syntax_specification.md#keeping-a-list-in-parts))
+is addressed and written as any other: the server reads its parts with the document and writes an
+entry to its part, so `project/History/[stages]` means the same wherever the entry is kept. Such a
+list with a `window` holds only its newest parts in the document as a whole; a read of the list, or
+of anything in it, and a write to an entry, are answered with every part read.
+
 Both the document and the address go in the query string, not the path - both contain slashes.
 `curl --url-query` (curl 7.87 and later) or `-G --data-urlencode` encodes them.
 
@@ -228,11 +234,19 @@ leaves to its templates left out - for a program that reads documents with a par
 bases are not read with it. It is only for reading: changes go through the writes below, which
 keep the text's layout.
 
+`parts` names the files a document's lists keep their entries in, `{}` when it has none: for each
+such list, its parts in the order of their keys, under the names `/v1/source` reads them by -
+`{"History": ["ap31/projects/agentloop.parts/History/2026-W44.os", ...]}`. Their entries are in
+none of the document's text. Each is read as a document of its own, with its own version, and
+whoever may read the document may read its parts.
+
 The version comes as the answer's `ETag` too. A program that reads the same document again names
-the version it holds, as `--url-query since=<version>` or `If-None-Match: "<version>"`, and while
-the text is still that version it is answered `304 Not Modified`, with no body; once it changed,
-it gets the text and its new version as above. A document it may not read is refused all the
-same.
+the `ETag` it holds, as `--url-query since=<tag>` or `If-None-Match: "<tag>"`, and while the text
+is still that version it is answered `304 Not Modified`, with no body; once it changed, it gets
+the text and its new version as above. For a document with parts the `ETag` is the version with
+the parts there are folded in, so a new part gets the answer again even while the text stands as
+it was; a past part, asked for by its own version, is answered `304` until it changes. Without
+parts, the `ETag` is the version. A document it may not read is refused all the same.
 
 ## Setting a value: `POST /v1/node`
 
@@ -320,8 +334,8 @@ once, one made from outside (a sync, a hand edit) within a couple of seconds. On
 page that hears one asks to be caught up, and is answered against what it shows, as its own edits
 are. Reading the document is enough to watch it.
 
-A document that mounts other files also gets a `read` event just before each `changed` one. Its
-data names those files as they stand now, so a write to one of them is heard even though the
+A document that mounts other files, or keeps a list in parts, also gets a `read` event just before
+each `changed` one. Its data names those files as they stand now, so a write to one of them is heard even though the
 document's own file did not move - the version in the `changed` that follows is then the same as
 before. The page's answers name the same thing as `read_from`, and a page sends it back as
 `shown_read_from` when it asks to catch up, so that it is described against what it shows.
@@ -330,8 +344,9 @@ before. The page's answers name the same thing as `read_from`, and a page sends 
 
 Every write goes through the same writer as the page's edits: the document is re-written in place,
 keeping its layout, its comments and the fields it left to the template, and one undo step is
-recorded per write - an event's actions together are one step. Each write is also logged as a line
-of `overseer-writes.jsonl` in the documents folder.
+recorded per write - an event's actions together are one step, the files it wrote through a mount
+or to a list's parts with it. Each write is also logged as a line of `overseer-writes.jsonl` in the
+documents folder.
 
 A document may hold at most 95 MiB, just under the size at which GitHub turns a file away. A write
 that would take a document, or a file it mounts, past that is a 422 that says so, and nothing is

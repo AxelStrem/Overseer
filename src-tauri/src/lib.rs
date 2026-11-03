@@ -18,6 +18,8 @@ pub mod menu;
 pub mod mutability;
 pub mod numbers;
 pub mod parser;
+pub mod parts;
+pub mod partsums;
 pub mod people;
 pub mod resolver;
 pub mod server;

@@ -267,6 +267,7 @@ taken as UTC, and a bare date as its midnight.
 | `date_add_hours(x, n)` | `n` hours after `x`, a timestamp; `n` may be fractional |
 | `same_day(a, b)` | whether two moments fall on the same local day |
 | `weekday(x)`, `day_of_month(x)`, `month_of(x)` | of the local day: 1 for Monday to 7 for Sunday; 1 to 31; 1 to 12 |
+| `day(x)`, `week(x)`, `month(x)`, `year(x)` | the local day, ISO week, month or year `x` falls in, as text that sorts in time order: `"2026-11-03"`, `"2026-W45"`, `"2026-11"`, `"2026"`. A week belongs to the ISO year of its Thursday, so 2026-12-31 is `"2026-W53"` and 2027-01-04 is `"2027-W01"` |
 | `minutes_of_day(x)` | minutes since local midnight, for a time of day |
 | `millis_since_epoch(x)` | the moment as a number, for sorting by it |
 | `depth()` | how deep the entry the formula is in stands in its tree, 0 at the top - see "Drawing a list as a tree" |
@@ -366,7 +367,8 @@ list History (entry=<Day>, key="day", window=3,
 ```
 
 What is left out is still in the file and still saved; it is simply not resolved. A note under
-the list says how many entries that was.
+the list says how many entries that was. A list a template gives is windowed as one the document
+writes.
 
 A window decides what is drawn, not what the list holds. Anything that reaches an entry left out
 finds it as it would be in view, with its template and its formulas worked out: a total over the
@@ -377,6 +379,88 @@ entry it adds up - and the list still draws its window.
 A reader can ask for more: the note under the list offers one window more each time it is
 pressed. That is kept for the reader alone, as long as they are looking - the file, every other
 page and the bot still see the window the document states, and nothing is written or taken back.
+
+#### Keeping a list in parts
+
+A history that grows without end can keep its entries in files of their own. `parts` says, as a
+formula over an entry, which part it belongs to, and each part is a file beside the document,
+under its name: the parts of `History` in `overseer.os` are `overseer.parts/History/<part>.os`.
+
+```overseer
+list History (entry=<Finished>, key="handle", parts=$(|x| week(x/finished_at))) { }
+```
+
+It is still one list. Its entries are addressed, read and written exactly as though the document
+held them - `project/History/[handle]` - and its formulas see all of them: the document's own
+first, as it writes them, then each part's, in the order of the parts' names.
+
+Each entry lives in the part its key names, and the document holds none of them. There is nothing
+to move from one file to another as time goes on: a write to the list puts each entry where its key
+says, so a new week simply starts a new file, and an entry whose key changes moves to its new part.
+Either is one change, and one undo takes it back - a part the change made is taken away again. A
+part holds the list and its entries as the document's writer writes them, against the document's
+template, so what an entry leaves out is still its template's:
+
+```overseer
+list History {
+    - {
+        - handle = "stages"
+        - finished_at = "2026-11-02T22:45:50Z"
+    }
+}
+```
+
+An entry the document itself holds - one written before the list had parts - goes to its part the
+next time the list is written, so giving a list `parts` and writing it once moves it into parts. An
+entry whose key cannot be worked out, or cannot name a file (empty, starting with a dot, or holding
+`/`, `\`, `:` or the like), stays in the document, and the list says why. A part left with no
+entries is kept, empty. A part that does not parse as a whole - a merge left half-done - is never
+written over: the list says which, its entries are not read, and an entry that belongs in it waits
+in the document until it reads again. The `.parts` folder holds no documents of its own, and the
+server does not list what is in it.
+
+A list keeps its parts beside the file it is in, so a list a template gives keeps them beside each
+document made from it. The folder is named by the list alone, so two lists with parts in one
+document need names of their own: two of one name are not written to their parts, and say so. A
+list in a mounted document is read without its parts.
+
+A list with parts and a `window` reads its parts from the newest back, as many as its window needs,
+and an older one only when "more" reaches it: a part nothing reaches is never read, and nothing in
+its entries is worked out. So the window is taken from the last parts by name, which is the newest
+when the parts are periods (`week`, `month`) and `sort_by` puts the newest first. The note under the
+list says how many parts it left. Whatever reads the list as a whole still sees all of it:
+
+- a formula anywhere in the document, or in a template it is made from, that names the list -
+  a `find` in it, a `reduce` over it, a `context` or `vocabulary` of it - has every part read,
+  unless a summary answers it (below). A name in an action is not counted: an action that looks
+  in the list for an entry it has not read runs again with every part read;
+- a read of the list or of anything in it over the API, and a write to an entry, have every part
+  read; an append to the list does not, and puts the entry into its part as it is on disk.
+
+An append checks its key against the entries the list has read.
+
+A total over the list does not need its parts read. A chain of `filter` and `map` ending in
+`count()`, `sum`, `min()`, `max()` or `avg` is answered from the entries the list has read and from
+a summary of each part it has not: what the chain makes of that part's entries. `fresh_key` reads
+the keys of the parts the same way. A summary is made the first time a part is needed, and made
+again only when the part changes, so an append to this week's part leaves the older ones' summaries
+as they were. A chain is summarised when each of its lambdas reads only its entry: the entry's
+fields, constants, and functions of them that read nothing else (`week`, `same_day`,
+`millis_since_epoch` and the like, but not `today`, `now` or `days_since`). One condition of the
+first filter may compare a field with the reader instead, joined to the rest by `&&`. A summary then
+keeps what each entry gave under what that field holds, and each reader looks up its own value:
+
+```overseer
+int kids = $(/project/History.filter(|x| x/parent == ../handle && x/status != "cancelled").count())
+float done = $(/project/History.filter(|x| x/parent == ../handle).map(|x| x/points).sum())
+timestamp last = $(/project/History.map(|x| x/finished_at).max())
+```
+
+Any other formula naming the list has every part read, and gives the same answer. A lambda that
+reads the clock, `.map(|h| minutes_since(h/done_at)).min()`, is the usual case: it can be written as
+`minutes_since(... .map(|h| h/done_at).max())`. The list then says which formula made it read
+everything (the preview lists that among its problems, and `OVERSEER_PROFILE` prints it). A field of
+the entry that a formula works out, read by the chain, has every part read too.
 
 #### Moving entries by hand
 
@@ -2536,7 +2620,7 @@ div Tasks {
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
-- **Lists**: `entry`, `key`, `window`, `sort_by`, `view` (`table`, `board`), `by`, `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
+- **Lists**: `entry`, `key`, `window`, `parts`, `sort_by`, `view` (`table`, `board`), `by`, `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
 - **Grids**: `entry`, `columns`, `rows`, `header`
 - **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`

@@ -2671,13 +2671,18 @@ impl FormulaEvaluator {
                         ));
                     };
                     for entry in list.get_accessible_children() {
-                        let key = entry
-                            .get_accessible_children()
-                            .into_iter()
-                            .find(|c| &c.name == key_field)
-                            .and_then(Self::value_of_node);
+                        // Read as a keyed lookup reads it, without reaching the entry: an entry a
+                        // window left unworked writes its key itself.
+                        let key = Self::key_of(entry, key_field).and_then(Self::value_of_node);
                         if let Some(key) = key {
                             used.push(Self::value_to_string(&key));
+                        }
+                    }
+                    // And those of the parts it has not read, from their summaries.
+                    if crate::parts::leaves_parts_unread(list) {
+                        match Self::unread_keys(list, key_field, context) {
+                            Ok(keys) => used.extend(keys),
+                            Err(_) => crate::resolver::note_missed_under(list),
                         }
                     }
                 }
@@ -2973,6 +2978,37 @@ impl FormulaEvaluator {
                     ));
                 }
                 Self::depth_in_tree(context)
+            }
+            // The period a moment falls in, as text that sorts in time order: what a list's parts
+            // are keyed on, and anything else grouped by day, week, month or year.
+            "day" | "week" | "month" | "year" => {
+                if args.len() != 1 {
+                    return Err(OverseerError::FormulaError(format!(
+                        "{}(x) takes exactly 1 argument",
+                        name
+                    )));
+                }
+                let val = Self::evaluate_expression(&args[0], context)?;
+                let date = Self::to_local_date(&val).ok_or_else(|| {
+                    OverseerError::FormulaError(format!(
+                        "{}: unable to parse argument as date/timestamp",
+                        name
+                    ))
+                })?;
+                use chrono::Datelike;
+                let text = match name {
+                    "day" => date.format("%Y-%m-%d").to_string(),
+                    // The ISO week, numbered within the ISO year it belongs to: the last days of
+                    // December can be week 1 of the next year, and the first days of January the
+                    // last week of the one before.
+                    "week" => {
+                        let week = date.iso_week();
+                        format!("{:04}-W{:02}", week.year(), week.week())
+                    }
+                    "month" => date.format("%Y-%m").to_string(),
+                    _ => format!("{:04}", date.year()),
+                };
+                Ok(OverseerValue::String(text))
             }
             "weekday" | "day_of_month" | "month_of" => {
                 if args.len() != 1 {
@@ -3933,6 +3969,22 @@ fn relative_path_reference(input: &str) -> IResult<&str, FormulaExpression> {
 
 // ================= Method chain evaluation helpers =================
 
+/// A chain over a list that summaries of the parts the list has not read can answer - see
+/// `FormulaEvaluator::summarised`.
+struct Summarised {
+    /// The field a filter compares with its reader, the reader's side, and whether the field is
+    /// on the left.
+    keyed: Option<(String, FormulaExpression, bool)>,
+    /// The filters and maps each entry goes through, that comparison taken out.
+    steps: Vec<MethodCall>,
+    /// What the last step reads of each item, as `sum(|x| x/points)` does.
+    projection: Option<FormulaExpression>,
+    /// The fields of an entry the chain reads.
+    fields: Vec<String>,
+    /// The chain, as its summaries are kept under.
+    name: String,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum ListItem<'a> {
     Node(&'a OverseerNode),
@@ -4077,7 +4129,71 @@ impl FormulaEvaluator {
         let entries: Option<std::rc::Rc<[String]>> = read.entries_alone.then(|| read.path.clone());
         debug_evaluator!("[EVAL] Initial list size: {}", list.len());
 
+        // A list that has not read all its parts: what the chain makes of the entries of the
+        // rest, from their summaries, for its last step to add to what it makes of these - see
+        // `partsums`. A chain no summary answers works the document out again with the list read
+        // whole, as anything reaching past what it holds does.
+        let mut from_parts: Option<(Option<FormulaExpression>, Vec<OverseerValue>)> = None;
+        if let Some(parted) = base_node.filter(|node| crate::parts::leaves_parts_unread(node)) {
+            let answered = Self::summarised(calls)
+                .ok_or_else(|| "no summary answers the chain".to_string())
+                .and_then(|chain| {
+                let written: Vec<&OverseerNode> = parted
+                    .get_accessible_children()
+                    .into_iter()
+                    .filter(|entry| crate::resolver::not_worked_out(entry))
+                    .collect();
+                Ok((chain.projection.clone(), Self::unread_values(parted, &written, &chain, context)?, !written.is_empty()))
+            });
+            match answered {
+                Ok((projection, values, took_some)) => {
+                    // Answered with the rest: the list is no longer the one any index of it
+                    // describes.
+                    if took_some {
+                        list.retain(|item| !matches!(item, ListItem::Node(n) if crate::resolver::not_worked_out(n)));
+                        came_from = None;
+                    }
+                    from_parts = Some((projection, values));
+                }
+                Err(why) => {
+                    if crate::resolver::profile_enabled() {
+                        eprintln!("[PARTS] {} read whole: {}", parted.name, why);
+                    }
+                    crate::resolver::note_missed_under(parted);
+                }
+            }
+        }
+
         for (position, call) in calls.iter().enumerate() {
+            // The last step, given the entries of the parts not read as well: what the chain
+            // made of the entries it holds is read as the summaries read them, by the step's own
+            // lambda, and the step adds up the two together.
+            let stripped;
+            let call = match from_parts.take() {
+                Some((projection, values)) if position + 1 == calls.len() => {
+                    if let Some(projection) = &projection {
+                        list = list
+                            .into_iter()
+                            .map(|item| {
+                                let got = match &item {
+                                    ListItem::Node(n) => {
+                                        Self::eval_lambda_over(projection, None, Some(*n), None, &entries, context)
+                                    }
+                                    ListItem::Value(v) => Self::eval_lambda(projection, None, None, Some(v.clone()), context),
+                                };
+                                ListItem::Value(got.unwrap_or(OverseerValue::Null))
+                            })
+                            .collect();
+                    }
+                    list.extend(values.into_iter().map(ListItem::Value));
+                    stripped = MethodCall { name: call.name.clone(), args: Vec::new() };
+                    &stripped
+                }
+                kept => {
+                    from_parts = kept;
+                    call
+                }
+            };
             if position == 0 {
                 let grid = base_node;
                 if let Some(picked) = grid.and_then(|grid| Self::grid_pick(grid, call, context)) {
@@ -5358,6 +5474,359 @@ impl FormulaEvaluator {
     /// see `resolver::note_reached`.
     fn key_of<'n>(entry: &'n OverseerNode, key: &str) -> Option<&'n OverseerNode> {
         Self::accessible_child(entry, key)
+    }
+
+    /// Whether a chain over a list with parts can be answered from summaries of the parts the list
+    /// has not read, and if so, what is made of each entry - see `partsums`.
+    ///
+    /// The chain filters and maps, and ends in `count`, `sum`, `min`, `max` or `avg`: what it makes
+    /// of each entry is the same wherever the entry is, and the last step adds the entries up in
+    /// any order. Each lambda reads only its entry - its fields, constants, and functions of them
+    /// that read nothing else, no clock among them - so a part is summarised once for every reader.
+    /// The one thing a filter may compare with its reader is a field, `x/parent == ../handle`,
+    /// joined to the rest by `&&`: a summary then keeps what each entry gave by what that field
+    /// holds, and a reader looks its own value up in it.
+    fn summarised(calls: &[MethodCall]) -> Option<Summarised> {
+        let (last, steps) = calls.split_last()?;
+        let mapped = steps.iter().any(|c| c.name == "map");
+        let projection = match (last.name.as_str(), last.args.as_slice()) {
+            ("count", []) => None,
+            ("sum" | "avg" | "average", []) | ("min" | "max", []) if mapped => None,
+            ("sum" | "avg" | "average", [lambda @ FormulaExpression::Lambda { params, .. }]) if params.len() == 1 => {
+                Some(lambda.clone())
+            }
+            _ => return None,
+        };
+        let mut fields = Vec::new();
+        let mut keyed = None;
+        let mut kept = Vec::new();
+        for (position, step) in steps.iter().enumerate() {
+            if !matches!(step.name.as_str(), "filter" | "map") {
+                return None;
+            }
+            let [FormulaExpression::Lambda { params, body }] = step.args.as_slice() else { return None };
+            if params.len() != 1 {
+                return None;
+            }
+            if Self::reads_only_its_entry(body, params, &mut fields) {
+                kept.push(step.clone());
+                continue;
+            }
+            if position != 0 || step.name != "filter" {
+                return None;
+            }
+            let mut conditions = Vec::new();
+            Self::conditions_of(body, &mut conditions);
+            let mut rest = Vec::new();
+            for condition in conditions {
+                if Self::reads_only_its_entry(condition, params, &mut fields) {
+                    rest.push(condition.clone());
+                    continue;
+                }
+                if keyed.is_some() {
+                    return None;
+                }
+                let FormulaExpression::BinaryOp { left, operator: BinaryOperator::Equal, right } = condition else {
+                    return None;
+                };
+                let field_of = |e: &FormulaExpression| match e {
+                    FormulaExpression::PathReference(path) if path.len() == 2 && path[0] == params[0] => Some(path[1].clone()),
+                    _ => None,
+                };
+                let found = match (field_of(left), field_of(right)) {
+                    (Some(field), None) if !Self::mentions_binding(right, &params[0]) => (field, (**right).clone(), true),
+                    (None, Some(field)) if !Self::mentions_binding(left, &params[0]) => (field, (**left).clone(), false),
+                    _ => return None,
+                };
+                fields.push(found.0.clone());
+                keyed = Some(found);
+            }
+            if let Some(rest) = rest.into_iter().reduce(|left, right| FormulaExpression::BinaryOp {
+                left: Box::new(left),
+                operator: BinaryOperator::And,
+                right: Box::new(right),
+            }) {
+                kept.push(MethodCall {
+                    name: "filter".to_string(),
+                    args: vec![FormulaExpression::Lambda { params: params.clone(), body: Box::new(rest) }],
+                });
+            }
+        }
+        if let Some(FormulaExpression::Lambda { params, body }) = &projection {
+            if !Self::reads_only_its_entry(body, params, &mut fields) {
+                return None;
+            }
+        }
+        fields.sort();
+        fields.dedup();
+        let name = format!(
+            "{:?} | {:?} | {:?}",
+            keyed.as_ref().map(|(field, _, on_left)| (field, on_left)),
+            kept,
+            projection
+        );
+        Some(Summarised { keyed, steps: kept, projection, fields, name })
+    }
+
+    /// Whether an expression reads nothing but the entry bound to one of `params` - its fields,
+    /// constants, and functions of them that read nothing else - noting the fields it reads.
+    ///
+    /// Conservative, as `mentions_binding` is: what this cannot see into is taken to read the
+    /// document, and the list is read whole for it.
+    fn reads_only_its_entry(expr: &FormulaExpression, params: &[String], fields: &mut Vec<String>) -> bool {
+        // Functions of their arguments alone. `today`, `now`, `minutes_since` and the like read
+        // the clock, `depth` and `index` the list around the entry, `random` a seed.
+        const PURE: &[&str] = &[
+            "date_add_hours",
+            "date_add_days",
+            "same_day",
+            "day",
+            "week",
+            "month",
+            "year",
+            "weekday",
+            "day_of_month",
+            "month_of",
+            "millis_since_epoch",
+            "minutes_of_day",
+        ];
+        let path_ok = |path: &[String], fields: &mut Vec<String>| {
+            let Some(first) = path.first() else { return false };
+            if !params.contains(first) || path.iter().any(|s| s == "..") {
+                return false;
+            }
+            if let Some(field) = path.get(1) {
+                fields.push(field.clone());
+            }
+            true
+        };
+        match expr {
+            FormulaExpression::Number(_) | FormulaExpression::StringLiteral(_) | FormulaExpression::BooleanLiteral(_) => true,
+            FormulaExpression::FieldReference(name) => params.contains(name),
+            FormulaExpression::PathReference(path) => path_ok(path, fields),
+            FormulaExpression::PathParam { path, .. } => path_ok(path, fields),
+            FormulaExpression::Lambda { params: inner, body } => {
+                let all: Vec<String> = params.iter().chain(inner.iter()).cloned().collect();
+                Self::reads_only_its_entry(body, &all, fields)
+            }
+            FormulaExpression::MethodChain { base, calls } => {
+                Self::reads_only_its_entry(base, params, fields)
+                    && calls.iter().all(|c| c.args.iter().all(|a| Self::reads_only_its_entry(a, params, fields)))
+            }
+            FormulaExpression::UnaryOp { expr, .. } => Self::reads_only_its_entry(expr, params, fields),
+            FormulaExpression::BinaryOp { left, right, .. } => {
+                Self::reads_only_its_entry(left, params, fields) && Self::reads_only_its_entry(right, params, fields)
+            }
+            FormulaExpression::FunctionCall { name, args } => {
+                PURE.contains(&name.as_str()) && args.iter().all(|a| Self::reads_only_its_entry(a, params, fields))
+            }
+            FormulaExpression::Conditional { condition, then_branch, else_branch } => {
+                Self::reads_only_its_entry(condition, params, fields)
+                    && Self::reads_only_its_entry(then_branch, params, fields)
+                    && Self::reads_only_its_entry(else_branch, params, fields)
+            }
+            FormulaExpression::PathFollow { base, segments } => {
+                !segments.iter().any(|s| s == "..") && Self::reads_only_its_entry(base, params, fields)
+            }
+        }
+    }
+
+    /// What a chain makes of the entries of a list's parts it has not read, for its last step to
+    /// add to what it makes of the entries the list holds - see `summarised`. An error says why
+    /// they cannot be had from summaries, and the list is then read whole.
+    ///
+    /// `written` are entries the list holds that nothing has worked out - the rest of a part read
+    /// for the window - which are answered the same way, from what they write and their template.
+    /// Read in the tree, they hold only what they write, and reading one would have the document
+    /// worked out again with it held.
+    fn unread_values(
+        list: &OverseerNode,
+        written: &[&OverseerNode],
+        chain: &Summarised,
+        context: &EvaluationContext,
+    ) -> Result<Vec<OverseerValue>, String> {
+        let (template_key, template) =
+            crate::partsums::template_of(list).ok_or_else(|| "its entries' template is not known".to_string())?;
+        let kept_as = format!("{} | {}", template_key, chain.name);
+        let reader = match &chain.keyed {
+            Some((_, side, _)) => Some(Self::evaluate_expression(side, context).unwrap_or(OverseerValue::Null)),
+            None => None,
+        };
+        let equal = |held: &OverseerValue, wanted: &OverseerValue, on_left: bool| {
+            let verdict = if on_left {
+                Self::apply_binary_operator(held, &BinaryOperator::Equal, wanted)
+            } else {
+                Self::apply_binary_operator(wanted, &BinaryOperator::Equal, held)
+            };
+            verdict.ok().and_then(|v| Self::value_to_bool(&v).ok()).unwrap_or(false)
+        };
+        let mut summaries = Vec::new();
+        if !written.is_empty() {
+            summaries.push(crate::partsums::summary_of_held(&kept_as, written, || {
+                Self::summary_of(written.iter().copied(), &template, chain, context)
+            }));
+        }
+        for (file, stamp) in crate::parts::unread_stamps(list) {
+            let summary = crate::partsums::summary(&kept_as, file, stamp, |entries| {
+                Self::summary_of(entries.iter(), &template, chain, context)
+            })
+            .ok_or_else(|| "one of its parts cannot be read".to_string())?;
+            summaries.push(summary);
+        }
+        let mut out = Vec::new();
+        for summary in summaries {
+            if let Some(why) = &summary.cannot {
+                return Err(why.clone());
+            }
+            match (&chain.keyed, &reader) {
+                (Some((_, _, on_left)), Some(wanted)) => {
+                    if let OverseerValue::String(wanted) = wanted {
+                        out.extend(summary.by_key.get(wanted).into_iter().flatten().cloned());
+                    } else {
+                        for (held, values) in &summary.by_key {
+                            if equal(&OverseerValue::String(held.clone()), wanted, *on_left) {
+                                out.extend(values.iter().cloned());
+                            }
+                        }
+                    }
+                    for (held, value) in &summary.odd {
+                        if equal(held, wanted, *on_left) {
+                            out.push(value.clone());
+                        }
+                    }
+                }
+                _ => out.extend(summary.values.iter().cloned()),
+            }
+        }
+        Ok(out)
+    }
+
+    /// The summary of one part's entries for a chain: each entry made from the template as far as
+    /// the chain reads it, and run through the chain's steps.
+    fn summary_of<'e>(
+        entries: impl Iterator<Item = &'e OverseerNode>,
+        template: &OverseerNode,
+        chain: &Summarised,
+        context: &EvaluationContext,
+    ) -> crate::partsums::Summary {
+        fn holds_a_formula(node: &OverseerNode) -> bool {
+            node.parameters.values().any(|v| matches!(v, OverseerValue::Formula(_)) )
+                || node.children.iter().any(holds_a_formula)
+        }
+        let mut summary = crate::partsums::Summary::default();
+        let cut = crate::partsums::cut_down(template, &chain.fields);
+        for written in entries {
+            let entry = crate::partsums::made_from(&cut, &chain.fields, written, context.document_root);
+            for field in &chain.fields {
+                if Self::accessible_child(&entry, field).is_some_and(holds_a_formula) {
+                    summary.cannot = Some(format!("its entries' field '{}' is worked out by a formula", field));
+                    return summary;
+                }
+            }
+            let Some(value) = Self::through_the_steps(&entry, chain, context) else { continue };
+            match &chain.keyed {
+                Some((field, ..)) => match Self::field_already_known(&entry, field) {
+                    Some(OverseerValue::String(held)) => summary.by_key.entry(held).or_default().push(value),
+                    Some(held) => summary.odd.push((held, value)),
+                    None => {}
+                },
+                None => summary.values.push(value),
+            }
+        }
+        summary
+    }
+
+    /// What a chain's steps make of one entry, as its walk over the list would: `None` when a
+    /// filter leaves it out.
+    fn through_the_steps(entry: &OverseerNode, chain: &Summarised, context: &EvaluationContext) -> Option<OverseerValue> {
+        let mut item = ListItem::Node(entry);
+        let run = |lambda: &FormulaExpression, item: &ListItem| match item {
+            ListItem::Node(n) => Self::eval_lambda(lambda, None, Some(*n), None, context),
+            ListItem::Value(v) => Self::eval_lambda(lambda, None, None, Some(v.clone()), context),
+        };
+        for step in &chain.steps {
+            let got = run(&step.args[0], &item);
+            if step.name == "filter" {
+                if !got.ok().and_then(|v| Self::value_to_bool(&v).ok()).unwrap_or(false) {
+                    return None;
+                }
+            } else {
+                item = ListItem::Value(got.unwrap_or_else(|_| OverseerValue::String("null".to_string())));
+            }
+        }
+        Some(match (&chain.projection, item) {
+            (Some(projection), item) => run(projection, &item).unwrap_or(OverseerValue::Null),
+            (None, ListItem::Value(v)) => v,
+            (None, ListItem::Node(_)) => OverseerValue::Null,
+        })
+    }
+
+    /// The keys a list's parts not read hold, for `fresh_key`.
+    fn unread_keys(list: &OverseerNode, key: &str, context: &EvaluationContext) -> Result<Vec<String>, String> {
+        let x = "x".to_string();
+        let chain = Summarised {
+            keyed: None,
+            steps: vec![MethodCall {
+                name: "map".to_string(),
+                args: vec![FormulaExpression::Lambda {
+                    params: vec![x.clone()],
+                    body: Box::new(FormulaExpression::PathReference(vec![x, key.to_string()])),
+                }],
+            }],
+            projection: None,
+            fields: vec![key.to_string()],
+            name: format!("keys | {}", key),
+        };
+        Ok(Self::unread_values(list, &[], &chain, context)?.iter().map(Self::value_to_string).collect())
+    }
+
+    /// Whether a formula names a list - by its name, as a step of a path - other than through a
+    /// chain that summaries of its parts answer, or `fresh_key`, which reads its keys. A formula
+    /// that does reads the list whole - see `resolver::parts_wanted`.
+    pub fn names_a_list_beyond_summaries(formula: &str, name: &str) -> bool {
+        match Self::parse_expression(formula.trim()) {
+            Ok(expression) => Self::names_beyond_summaries(&expression, name),
+            Err(_) => true,
+        }
+    }
+
+    fn names_beyond_summaries(expr: &FormulaExpression, name: &str) -> bool {
+        let says = |text: &str| text.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|word| word == name);
+        let ends_in_it = |e: &FormulaExpression| match e {
+            FormulaExpression::PathReference(path) => {
+                path.last().is_some_and(|last| last == name) && !path[..path.len() - 1].iter().any(|s| says(s))
+            }
+            FormulaExpression::FieldReference(field) => field == name,
+            _ => false,
+        };
+        let any = |exprs: Vec<&FormulaExpression>| exprs.into_iter().any(|e| Self::names_beyond_summaries(e, name));
+        match expr {
+            FormulaExpression::Number(_) | FormulaExpression::BooleanLiteral(_) => false,
+            FormulaExpression::StringLiteral(text) | FormulaExpression::FieldReference(text) => says(text),
+            FormulaExpression::PathReference(path) => path.iter().any(|s| says(s)),
+            FormulaExpression::PathParam { path, param } => path.iter().any(|s| says(s)) || says(param),
+            FormulaExpression::Lambda { body, .. } => Self::names_beyond_summaries(body, name),
+            FormulaExpression::MethodChain { base, calls } => {
+                let args: Vec<&FormulaExpression> = calls.iter().flat_map(|c| c.args.iter()).collect();
+                if ends_in_it(base) && Self::summarised(calls).is_some() {
+                    any(args)
+                } else {
+                    Self::names_beyond_summaries(base, name) || any(args)
+                }
+            }
+            FormulaExpression::FunctionCall { name: function, args } if function == "fresh_key" => {
+                any(args.iter().filter(|a| !ends_in_it(a)).collect())
+            }
+            FormulaExpression::FunctionCall { args, .. } => any(args.iter().collect()),
+            FormulaExpression::UnaryOp { expr, .. } => Self::names_beyond_summaries(expr, name),
+            FormulaExpression::BinaryOp { left, right, .. } => any(vec![left.as_ref(), right.as_ref()]),
+            FormulaExpression::Conditional { condition, then_branch, else_branch } => {
+                any(vec![condition.as_ref(), then_branch.as_ref(), else_branch.as_ref()])
+            }
+            FormulaExpression::PathFollow { base, segments } => {
+                segments.iter().any(|s| says(s)) || Self::names_beyond_summaries(base, name)
+            }
+        }
     }
 
     /// Whether a chain reaches the entries of its list only through what it hands a lambda, and

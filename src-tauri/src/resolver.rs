@@ -40,10 +40,13 @@ fn resolve_templates_multipass(nodes: &mut Vec<OverseerNode>) {
         let t_pass = std::time::Instant::now();
 
         // Try to resolve templates in this pass
+        WALKED.with(|w| *w.borrow_mut() = (Vec::new(), vec![crate::addressing::Level::default()]));
         for node in nodes.iter_mut() {
+            let stepped = step_into(node);
             if resolve_node_templates(node, &nodes_snapshot, &mut missed) {
                 made_progress = true;
             }
+            step_out(stepped);
         }
         TEMPLATE_PASSES.with(|p| p.set(pass));
         found_a_missed_template = made_progress
@@ -128,6 +131,8 @@ pub fn given_entries(list: &OverseerNode) -> usize {
 /// So a log meant to be read newest-first needs the sort it already wants - see `History` in the
 /// food tracker - and one without a sort shows the first few as authored.
 fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
+    WINDOWED.with(|w| w.borrow_mut().clear());
+    NAMED_BY_FORMULAS.with(|n| n.borrow_mut().clear());
     let snapshot = nodes.clone();
     fn walk(
         nodes: &mut Vec<OverseerNode>,
@@ -141,13 +146,8 @@ fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
             if !wrapper {
                 trail.push(level.segment(&node.name));
             }
-            if node.node_type == "list" {
-                if let Some(window) = window_of(node) {
-                    name_the_entries(node);
-                    // One window more for each time this reader asked - see `reading_more`.
-                    let asked = asked_for_more(&trail.join("/"));
-                    narrow(node, window.saturating_mul(1 + asked), root, trail);
-                }
+            if node.node_type == "list" && window_of(node).is_some() {
+                window_the_list(node, root, trail);
             }
             if wrapper {
                 walk(&mut node.children, root, trail, level);
@@ -158,6 +158,185 @@ fn apply_list_windows(nodes: &mut Vec<OverseerNode>) {
         }
     }
     walk(nodes, &snapshot, &mut Vec::new(), &mut crate::addressing::Level::default());
+}
+
+// The lists this working out has decided the windows of, by address, and which list names a
+// formula of the document reads - see `window_the_list` and `parts_wanted`. Both are begun again
+// with each working out, in `apply_list_windows`.
+thread_local! {
+    static WINDOWED: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+    static NAMED_BY_FORMULAS: std::cell::RefCell<std::collections::HashMap<String, Option<String>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Decide what a windowed list shows: bring in as much of its parts as that needs, if it keeps
+/// its entries in parts, then mark everything past the window.
+///
+/// Once for a list in a working out. A list the document writes is windowed before any template
+/// is copied, by `apply_list_windows`; one a template gives - a project's `History`, from the
+/// project template - only exists once its template has been copied, and is windowed then, in
+/// `resolve_node_templates`, still before any of its entries is made.
+fn window_the_list(node: &mut OverseerNode, root: &[OverseerNode], trail: &mut Vec<String>) {
+    let Some(window) = window_of(node) else { return };
+    let address = trail.join("/");
+    // One window more for each time this reader asked - see `reading_more`.
+    let asked = asked_for_more(&address);
+    let wanted = window.saturating_mul(1 + asked);
+    // A list with parts read whole has every entry worked out, though it draws its window: what
+    // reads it whole reaches every entry, and finding that out by working the document out would
+    // work it out twice.
+    let mut work_out_all = false;
+    if crate::parts::key_of(node).is_some() {
+        let mut named = None;
+        let reading = parts_wanted(node, &address, wanted, root, &mut named);
+        work_out_all = reading.is_none();
+        crate::parts::bring_in(node, &address, reading);
+        match named {
+            Some(what) => {
+                node.parameters.insert(READ_WHOLE.to_string(), OverseerValue::String(format!("read whole, since {} names it", what)));
+            }
+            None => {
+                node.parameters.remove(READ_WHOLE);
+            }
+        }
+    }
+    name_the_entries(node);
+    narrow(node, wanted, root, trail, work_out_all);
+    WINDOWED.with(|w| w.borrow_mut().insert(address));
+}
+
+/// What reaches past the parts a list has read names the list as this - see `note_missed_under`.
+pub const WHOLE: &str = "*";
+
+/// On a windowed list with parts: what in the document names it so that every part is read - for
+/// the document's author, who can rewrite it as a chain its parts' summaries answer.
+pub const READ_WHOLE: &str = "_parts_read_whole";
+
+/// How many entries a windowed list with parts has to read for what is wanted of it: its window,
+/// or every one of them - `None` - when something reads it whole.
+///
+/// Read whole when a formula anywhere in the document, or in what its templates bring, names the
+/// list - a `find` in it, a vocabulary made of it - since what one reads cannot be known before it
+/// is worked out, and a list read short would answer it wrong. Not for a chain the summaries of
+/// its parts answer, a total or a count over it, nor `fresh_key` - see `partsums`. Named by its
+/// name as a step of a path: a false likeness costs only reading it whole, which is what a list
+/// without a window does. What named it is said in `named_by`. Also when this interaction is about something in the list - a write to an old
+/// entry, or a read of the list, which keeps `<list>/*` in view - or a working out before this one
+/// reached past what it held, which a formula that names it some other way, or an action, can. An
+/// append is about the list and nothing in it, and reads no more than the window.
+fn parts_wanted(
+    list: &OverseerNode,
+    address: &str,
+    wanted: usize,
+    root: &[OverseerNode],
+    named_by: &mut Option<String>,
+) -> Option<usize> {
+    if is_held(address, WHOLE) {
+        return None;
+    }
+    let within = format!("{}/", address);
+    if WANTED.with(|w| w.borrow().iter().any(|a| a.starts_with(&within))) {
+        return None;
+    }
+    let named = NAMED_BY_FORMULAS.with(|n| n.borrow().get(&list.name).cloned());
+    let named = named.unwrap_or_else(|| {
+        let mut seen = std::collections::HashSet::new();
+        let named = names_the_list(root, &list.name, &mut seen);
+        NAMED_BY_FORMULAS.with(|n| n.borrow_mut().insert(list.name.clone(), named.clone()));
+        named
+    });
+    if let Some(what) = named {
+        if profile_enabled() {
+            eprintln!("[PARTS] {} read whole: {} names it", address, what);
+        }
+        *named_by = Some(what);
+        return None;
+    }
+    Some(wanted)
+}
+
+/// What among these nodes, or in the templates of other files they are made from, names a list by
+/// its name other than as summaries of its parts answer - see `parts_wanted`. What actions say is
+/// left out: an action is run when it is pressed,
+/// and reaching past what a list holds then works the press out again with the list read whole -
+/// see `note_missed_under`.
+fn names_the_list(nodes: &[OverseerNode], name: &str, seen: &mut std::collections::HashSet<String>) -> Option<String> {
+    let says = |text: &str| text.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|word| word == name);
+    let mut bases = Vec::new();
+    let mut found = None;
+    fn walk<'a>(
+        nodes: &'a [OverseerNode],
+        name: &str,
+        says: &dyn Fn(&str) -> bool,
+        bases: &mut Vec<String>,
+        found: &mut Option<String>,
+    ) {
+        for node in nodes {
+            if found.is_some() || node.node_type == "on" {
+                continue;
+            }
+            if let Some(template) = &node.template {
+                bases.push(template.clone());
+            }
+            // What the engine notes on a node is no formula of the document's: a list's own parts
+            // folder names it.
+            for (key, value) in node.parameters.iter() {
+                if key.starts_with('_') {
+                    continue;
+                }
+                // A path said as text: a vocabulary's lists, a link, what a context names. Not any
+                // text at all: a comment quoting a path names nothing.
+                let a_path = matches!(key.as_str(), "vocabulary" | "link")
+                    || node.node_type == "context" && key == "value";
+                match value {
+                    OverseerValue::Formula(text)
+                        if found.is_none()
+                            && says(text)
+                            && crate::formula_evaluator::FormulaEvaluator::names_a_list_beyond_summaries(text, name) =>
+                    {
+                        *found = Some(format!("$({})", text.split_whitespace().collect::<Vec<_>>().join(" ")));
+                    }
+                    OverseerValue::String(text) if found.is_none() && a_path && says(text) => {
+                        let said = if node.node_type == "context" { node.name.as_str() } else { key.as_str() };
+                        *found = Some(format!("{} \"{}\"", said, text));
+                    }
+                    OverseerValue::Template(template) => bases.push(template.clone()),
+                    _ => {}
+                }
+            }
+            walk(&node.children, name, says, bases, found);
+        }
+    }
+    walk(nodes, name, &says, &mut bases, &mut found);
+    if found.is_some() {
+        return found;
+    }
+    for template in bases {
+        if crate::bases::reference(&template).file.is_none() || !seen.insert(template.clone()) {
+            continue;
+        }
+        if let Some(base) = crate::bases::find(nodes, &template) {
+            if let Some(what) = names_the_list(std::slice::from_ref(&base), name, seen) {
+                return Some(what);
+            }
+        }
+    }
+    None
+}
+
+/// Note that a read or an action looked in a list for something it does not hold, while the list
+/// has parts it has not read: the work is done again with the list read whole - see
+/// `parts_wanted`.
+pub fn note_missed_under(list: &OverseerNode) {
+    if !REACHING.with(std::cell::Cell::get) || COLLECTING.with(std::cell::Cell::get) == 0 {
+        return;
+    }
+    if let Some(address) = crate::parts::address_of_unread(list) {
+        REACHED.with(|reached| {
+            reached.borrow_mut().insert((address.to_string(), WHOLE.to_string()));
+        });
+    }
 }
 
 /// Give every entry the name it would be instantiated with, before anything is instantiated.
@@ -331,6 +510,7 @@ fn narrow(
     window: usize,
     root: &[OverseerNode],
     trail: &mut Vec<String>,
+    work_out_all: bool,
 ) {
     // An entry as written, or as instantiated from the list's template. Only the first kind were
     // counted, which is all a document just parsed holds - and a document worked out again after a
@@ -416,14 +596,19 @@ fn narrow(
     // Both ways, since a document worked out again has been narrowed before: what is in the window
     // now may have been out of it last time.
     let list = trail.join("/");
+    let has_parts = crate::parts::key_of(node).is_some();
     let branches = branches_of(node, &order);
     let mut left_out = 0;
     let mut branches_left_out = std::collections::HashSet::new();
     for (rank, (at, _)) in order.into_iter().enumerate() {
         // A tree's window counts its top-level branches, each kept whole - see `branches_of`.
         let rank = branches.as_ref().map_or(rank, |b| b[&at]);
-        // Named by this interaction, so it stays - see `keeping_in_view`.
-        let in_view = rank < window || addressable.get(at).is_some_and(|segment| is_wanted(segment));
+        // Named by this interaction, so it stays - see `keeping_in_view`. And in a list with parts,
+        // an entry the document still holds itself is worked out to go to its part, which its key
+        // may need its template for - see `parts::written`.
+        let in_view = rank < window
+            || addressable.get(at).is_some_and(|segment| is_wanted(segment))
+            || has_parts && !node.children[at].parameters.contains_key(crate::parts::PART);
         if in_view {
             node.children[at].parameters.remove(OUT_OF_VIEW);
             node.children[at].parameters.remove(NOT_WORKED_OUT);
@@ -437,7 +622,7 @@ fn narrow(
             left_out += 1;
         }
         // Not drawn, and worked out all the same when something reaches it - see `note_reached`.
-        if is_held(&list, &entry.name) {
+        if work_out_all || is_held(&list, &entry.name) {
             entry.parameters.remove(NOT_WORKED_OUT);
         } else {
             entry
@@ -735,11 +920,15 @@ fn is_held(list: &str, entry: &str) -> bool {
     HELD.with(|held| held.borrow().iter().any(|(l, e)| l == list && e == entry))
 }
 
-/// Whether any list in the document shows only part of itself.
+/// Whether any list in the document shows only part of itself - or may, once a template from
+/// another file is copied in: a project's `History` comes with its window from the project
+/// template, and is not in the document as it is parsed.
 pub fn has_a_window(nodes: &[OverseerNode]) -> bool {
-    nodes
-        .iter()
-        .any(|node| (node.node_type == "list" && is_windowed(node)) || has_a_window(&node.children))
+    nodes.iter().any(|node| {
+        (node.node_type == "list" && is_windowed(node))
+            || node.template.as_deref().is_some_and(|t| crate::bases::reference(t).file.is_some())
+            || has_a_window(&node.children)
+    })
 }
 
 /// Whether the document holds an entry nothing has worked out.
@@ -749,6 +938,7 @@ pub fn leaves_anything_unworked(nodes: &[OverseerNode]) -> bool {
             && is_windowed(node)
             && matches!(node.parameters.get(LEFT_OUT), Some(OverseerValue::Integer(n)) if *n > 0)
             && node.children.iter().any(not_worked_out)
+            || node.node_type == "list" && crate::parts::leaves_parts_unread(node)
             || !not_worked_out(node) && leaves_anything_unworked(&node.children)
     })
 }
@@ -971,7 +1161,7 @@ pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
 /// `int x = 1e3` the whole number 1000. The parser reads a literal before it knows the field it is
 /// in, and an entry's field gets its type only from its template. A float that is not whole stays
 /// a float in an `int` field, as written, rather than being cut short.
-fn hold_numbers_as_declared(nodes: &mut [OverseerNode]) {
+pub(crate) fn hold_numbers_as_declared(nodes: &mut [OverseerNode]) {
     for node in nodes.iter_mut() {
         let declared = match node.parameters.get("_original_type") {
             Some(OverseerValue::String(original)) => original.as_str(),
@@ -1054,6 +1244,10 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
         let reached = reaching.take_new();
         if reached.is_empty() {
             break;
+        }
+        if profile_enabled() {
+            let said: Vec<String> = reached.iter().take(8).map(|(list, entry)| format!("{}/{}", list, entry)).collect();
+            eprintln!("[REACHED] {} past a window, worked out again: {}", reached.len(), said.join(", "));
         }
         held.push(holding(reached));
         *nodes = before.clone();
@@ -1921,6 +2115,41 @@ fn as_a_template(
     worked
 }
 
+// Where the walk of `resolve_node_templates` is, named as an address names it: the steps so far,
+// and the names met at each level, for `addressing::Level`. What windows a list a template gave
+// needs its address - see `window_the_list`.
+thread_local! {
+    static WALKED: std::cell::RefCell<(Vec<String>, Vec<crate::addressing::Level>)> =
+        std::cell::RefCell::new((Vec::new(), Vec::new()));
+}
+
+/// Step the walk into a node about to be resolved, unless it is a wrapper, which is no step.
+fn step_into(node: &OverseerNode) -> bool {
+    if crate::addressing::is_wrapper(node) {
+        return false;
+    }
+    WALKED.with(|w| {
+        let (trail, levels) = &mut *w.borrow_mut();
+        if levels.is_empty() {
+            levels.push(crate::addressing::Level::default());
+        }
+        let segment = levels.last_mut().expect("a level").segment(&node.name);
+        trail.push(segment);
+        levels.push(crate::addressing::Level::default());
+    });
+    true
+}
+
+fn step_out(stepped: bool) {
+    if stepped {
+        WALKED.with(|w| {
+            let (trail, levels) = &mut *w.borrow_mut();
+            trail.pop();
+            levels.pop();
+        });
+    }
+}
+
 /// Resolves templates for a single node and its children.
 /// Returns true if any progress was made in this pass, and adds to `missed` the name of each
 /// template it was asked for and could not find.
@@ -1945,6 +2174,20 @@ fn resolve_node_templates(
 
     // Check if the current node is a list that uses a template or simple type.
     if node.node_type == "list" {
+        // Before anything is made from the template, so an entry kept in a part is made as one
+        // written in the document is - see `parts`. A list with a window reads only as much as
+        // that needs, and one a template gave is windowed here - see `window_the_list`. Not in a
+        // template being made ready to copy, which is at no address of the document.
+        let address = WALKED.with(|w| w.borrow().0.join("/"));
+        let windowed = window_of(node).is_some();
+        if windowed && WORKING_OUT.with(|on| on.borrow().is_empty()) {
+            if !WINDOWED.with(|w| w.borrow().contains(&address)) {
+                let mut trail: Vec<String> = address.split('/').map(str::to_string).collect();
+                window_the_list(node, all_nodes, &mut trail);
+            }
+        } else {
+            crate::parts::bring_in(node, &address, None);
+        }
         // A list asked to draw as a table needs its column set worked out before anything else,
         // while the template is in reach. Done first so that nothing here is holding a borrow on
         // the parameters being written to.
@@ -1993,6 +2236,8 @@ fn resolve_node_templates(
                         as_a_template(template_node, &template_path, all_nodes, missed)
                     });
                     if let Some(template_node) = found {
+                        // What the parts it has not read are made from, for their summaries.
+                        crate::partsums::keep_template(node, &template_node);
                         debug_resolver!(
                             "[RESOLVER] Found template node for {}, processing {} children",
                             template_name,
@@ -2649,9 +2894,11 @@ fn resolve_node_templates(
         INSTANTIATING.with(|above| above.borrow_mut().push(key.clone()));
     }
     for child in node.children.iter_mut() {
+        let stepped = step_into(child);
         if resolve_node_templates(child, all_nodes, missed) {
             local_progress = true;
         }
+        step_out(stepped);
     }
     if instantiating.is_some() {
         INSTANTIATING.with(|above| {

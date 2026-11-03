@@ -130,11 +130,16 @@ impl FileOperations {
         // A list entry the template gave is the template's text, not this document's: taken out
         // before anything is written, so that no way of writing a list can put it in the file.
         // Nor a context's copy, which the resolver works out from the declarations the file holds.
+        // Nor an entry kept in a part, which is that file's - see `parts`.
         let without_given;
-        let nodes = if Self::holds_a_given_entry(nodes) || crate::contexts::holds_a_copy(nodes) {
+        let nodes = if Self::holds_a_given_entry(nodes)
+            || crate::contexts::holds_a_copy(nodes)
+            || crate::parts::holds_one(nodes)
+        {
             let mut copy = nodes.to_vec();
             Self::leave_out_given_entries(&mut copy);
             crate::contexts::leave_out_copies(&mut copy);
+            crate::parts::leave_out(&mut copy);
             without_given = copy;
             without_given.as_slice()
         } else {
@@ -258,7 +263,21 @@ impl FileOperations {
         let mut allowed_blank_lines = node.leading_blank_lines as usize;
         let trivia_is_whitespace = trivia.trim().is_empty();
         if in_list_body {
-            allowed_blank_lines = 0;
+            // An entry carries no count of the blank lines before it, so an entry read from the
+            // file is given the ones its own trivia opens with, the newline that ends the entry
+            // before not among them. One the writer made up gets none.
+            let read_from_the_file = Self::snapshot_for(node)
+                .is_some_and(|snap| matches!(snap.origin, SnapshotOrigin::Parsed));
+            allowed_blank_lines = if read_from_the_file {
+                trivia
+                    .chars()
+                    .take_while(|ch| *ch == '\n' || *ch == '\r')
+                    .filter(|ch| *ch == '\n')
+                    .count()
+                    .saturating_sub(1)
+            } else {
+                0
+            };
         } else if output.is_empty() && !trivia_is_whitespace {
             // Nothing has been written yet and the trivia is the top of the file. Its own text
             // already holds whatever blank lines separate the comment blocks in it, so a count
@@ -781,11 +800,13 @@ impl FileOperations {
             .as_ref()
             .map(|snap| !snap.leading_trivia.is_empty() && snap.leading_trivia.trim().is_empty())
             .unwrap_or(false);
-        let allow_snapshot_trivia = if in_list_body {
-            leading_whitespace_only
-        } else {
-            true
-        };
+        // What lies before an entry that was read from the file - a comment, a blank line - is
+        // the document's text, and is given back with it. Only an entry the writer made up has
+        // trivia that is not its own, and from those only the gap is taken.
+        let read_from_the_file = snapshot
+            .as_ref()
+            .is_some_and(|snap| matches!(snap.origin, SnapshotOrigin::Parsed));
+        let allow_snapshot_trivia = !in_list_body || leading_whitespace_only || read_from_the_file;
 
         // An instance someone has written into is given back as the instance wrote it, with what
         // changed since spliced in: the merged node holds the whole template around what it wrote,

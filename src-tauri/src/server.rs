@@ -134,8 +134,11 @@ impl DocumentRoot {
 
     /// Work in a document's folder, under the settings this server keeps beside its documents -
     /// see `environment`. Every document it works out is drawn through them.
-    fn within<T>(&self, dir: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
-        crate::environment::with_file(self.settings_file(), || DocumentManager::with_document(dir, f))
+    ///
+    /// Named by the document's file rather than its folder: a list that keeps its entries in parts
+    /// keeps them beside the file, under its name - see `parts`.
+    fn within<T>(&self, document: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
+        crate::environment::with_file(self.settings_file(), || DocumentManager::with_document_file(document, f))
     }
 
     /// The list of documents kept to hand for whoever is asking: the server's own, or a person's
@@ -295,7 +298,10 @@ impl DocumentRoot {
                 let path = entry.path();
                 let extension = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
                 if path.is_dir() {
-                    walk(&path, root, extensions, out);
+                    // A list's parts are its document's, read with it, and no documents of their own.
+                    if !crate::parts::is_a_parts_folder(&path) {
+                        walk(&path, root, extensions, out);
+                    }
                 } else if extension.is_some_and(|e| extensions.contains(&e)) {
                     if let Ok(relative) = path.strip_prefix(root) {
                         out.push(relative.to_string_lossy().replace('\\', "/"));
@@ -333,8 +339,7 @@ impl DocumentRoot {
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
         // Naming the document is what lets its mounts resolve against its own directory, and
         // what keeps two documents being served at once from deciding for each other.
-        let dir = path.parent().map(|d| d.to_path_buf());
-        self.within(dir, || app_api::load_document_for(text, name, session))
+        self.within(Some(path.clone()), || app_api::load_document_for(text, name, session))
         .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))
     }
 }
@@ -445,6 +450,17 @@ fn wholly_in_view(nodes: &[OverseerNode], address: &str) -> bool {
     })
 }
 
+/// Whether an address is, or goes through, a list holding only the newest of its parts: a read of
+/// the list is a read of all of it, and an entry it has not read is in no part it holds - see
+/// `resolver::parts_wanted`.
+fn reaches_unread_parts(nodes: &[OverseerNode], address: &str) -> bool {
+    let parts: Vec<&str> = address.split('/').collect();
+    (1..=parts.len()).any(|reach| {
+        crate::addressing::find(nodes, &parts[..reach].join("/"))
+            .is_some_and(crate::parts::leaves_parts_unread)
+    })
+}
+
 /// Pull a string argument, accepting either spelling the frontend might send.
 fn arg_str(args: &serde_json::Value, names: &[&str]) -> Option<String> {
     names
@@ -548,12 +564,7 @@ impl DocumentRoot {
         }
 
         let dir = match document {
-            Some(name) => Some(
-                self.resolve(name)?
-                    .parent()
-                    .map(|d| d.to_path_buf())
-                    .ok_or_else(|| RequestError::Failed("document has no directory".into()))?,
-            ),
+            Some(name) => Some(self.resolve(name)?),
             None => None,
         };
         let named = document.is_some();
@@ -1425,12 +1436,18 @@ pub struct WriteOutcome {
     pub child_addresses: Vec<String>,
 }
 
-/// A document's text, by its full name, with the version `watch` reports for it.
+/// A document's text, by its full name, with the version `watch` reports for it, and the part
+/// files its lists keep their entries in, by the names this reads them under.
 #[derive(serde::Serialize)]
 pub struct Source {
     pub document: String,
     pub version: String,
     pub text: String,
+    pub parts: std::collections::BTreeMap<String, Vec<String>>,
+    /// What a reader names to be answered "unchanged": the version, and which parts there are -
+    /// a new part changes it while the document's text stands as it was.
+    #[serde(skip)]
+    pub tag: String,
 }
 
 /// A node, with the addresses of what is under it.
@@ -1580,7 +1597,7 @@ impl DocumentRoot {
         let text = std::fs::read_to_string(&path)
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
         let text_before = text.clone();
-        let dir = path.parent().map(|d| d.to_path_buf());
+        let dir = Some(path.clone());
         let looking_at = crate::viewstate::overlay(session, name);
         let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
         let _more = crate::viewstate::reading_more(session, name);
@@ -1606,7 +1623,7 @@ impl DocumentRoot {
             }
             *since = std::time::Instant::now();
         }
-        let (outcome, nodes, serialized, report, settled_quickly, through_mounts, before) = self.within(dir.clone(), || {
+        let (outcome, mut nodes, serialized, report, settled_quickly, through_mounts, before) = self.within(dir.clone(), || {
             // The quick way, taken whenever it can be: the document as it was last worked out for
             // this very text, when what the write is about is in view there. A write then works
             // out what it reaches and no more, as the page's writes do - see
@@ -1673,7 +1690,7 @@ impl DocumentRoot {
             phase("edit work", &mut since);
             // What landed inside a mount is another file's, and is written there - or refused,
             // before anything is written anywhere.
-            let through_mounts = crate::actions::mounts_written(&nodes, report.as_ref());
+            let mut through_mounts = crate::actions::mounts_written(&nodes, report.as_ref());
             app_api::refuse_writing_through(&through_mounts).map_err(RequestError::ReadOnly)?;
             // What was written changes what derives from it, and the caller is about to be shown
             // the result.
@@ -1684,6 +1701,11 @@ impl DocumentRoot {
                 None
             };
             phase("edit settle", &mut since);
+            // What belongs in a part goes there, worked out from what the write left - see `parts`.
+            let through_parts = crate::parts::written(&mut nodes, report.as_ref());
+            app_api::refuse_writing_through(&through_parts).map_err(RequestError::ReadOnly)?;
+            through_mounts.extend(through_parts);
+            phase("edit parts", &mut since);
             let serialized = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
                 .map_err(|e| RequestError::Failed(format!("could not serialize: {}", e)))?;
             phase("edit serialize", &mut since);
@@ -1726,6 +1748,7 @@ impl DocumentRoot {
             std::io::ErrorKind::PermissionDenied => RequestError::ReadOnly(crate::access::READ_ONLY.into()),
             _ => RequestError::Failed(format!("could not write what '{}' mounts: {}", name, e)),
         })?;
+        crate::parts::restamp(&mut nodes, &along);
         if wrote {
             self.write_document(&path, name, &settled.text)?;
         }
@@ -1904,8 +1927,11 @@ impl DocumentRoot {
         // A read reaches what it names as a write does: an old day the window leaves out is
         // answered worked out, not as it was written - see `resolver::keeping_in_view`. Opened
         // again only then, since a document holding something in view is not the one cached.
-        if !wholly_in_view(&nodes, address) {
-            let _in_view = crate::resolver::keeping_in_view(address);
+        let whole = reaches_unread_parts(&nodes, address);
+        if !wholly_in_view(&nodes, address) || whole {
+            // A list read is read whole: `*` is in it, and is no entry.
+            let wanted = if whole { format!("{}/{}", address, crate::resolver::WHOLE) } else { address.to_string() };
+            let _in_view = crate::resolver::keeping_in_view(&wanted);
             nodes = self.open(name)?;
         }
         let node = crate::addressing::find(&nodes, address)
@@ -1922,12 +1948,33 @@ impl DocumentRoot {
 
     /// A document's text as it is written, and its version - for a program that reads documents
     /// as text, with a parser of its own. Only to read: changes go through the writes, which keep
-    /// the document's layout. Asked of the document alone, its mounts and bases are not read.
+    /// the document's layout. Asked of the document alone, its mounts and bases are not read; the
+    /// parts its lists keep their entries in are named, each to be read as a document of its own.
     pub fn source(&self, name: &str) -> std::result::Result<Source, RequestError> {
         let path = self.resolve(name)?;
         let text = std::fs::read_to_string(&path)
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
-        Ok(Source { document: self.named(name), version: crate::app_api::version_of(&text), text })
+        let document = self.named(name);
+        let version = crate::app_api::version_of(&text);
+        let beside = match document.rsplit_once('/') {
+            Some((folder, _)) => format!("{}/", folder),
+            None => String::new(),
+        };
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let parts: std::collections::BTreeMap<String, Vec<String>> = crate::parts::parts_of(&path)
+            .into_iter()
+            .map(|(list, files)| {
+                let named = files.iter().map(|file| format!("{}{}.parts/{}/{}", beside, stem, list, file)).collect();
+                (list, named)
+            })
+            .collect();
+        let tag = if parts.is_empty() {
+            version.clone()
+        } else {
+            let listing: Vec<&str> = parts.values().flatten().map(String::as_str).collect();
+            format!("{}+{}", version, crate::app_api::version_of(&listing.join("\n")))
+        };
+        Ok(Source { document, version, text, parts, tag })
     }
 
     /// Append an entry to the list at an address, with the given fields.

@@ -295,7 +295,7 @@ window.__preview = {
         const walk = (node, at) => {
             if (node.name && node.node_type !== node.name && kinds.has(node.name)) return
             const params = node.parameters || {}
-            for (const key of ['_inherit_error', '_mount_error', '_parse_error']) {
+            for (const key of ['_inherit_error', '_mount_error', '_parse_error', '_parts_problem', '_parts_read_whole']) {
                 if (params[key] !== undefined) out.push(at + ': ' + this.bare(params[key]))
             }
             if (this.bare(params._computed_value) === failed || (params.value && params.value.Formula && this.valueOf(node) === failed)) {

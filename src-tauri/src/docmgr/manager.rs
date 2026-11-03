@@ -21,6 +21,10 @@ pub struct DocumentId {
 /// [`DocumentManager::with_document`] establishes the answer explicitly and takes precedence.
 static BASE_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// The document currently open in the app, beside `BASE_DIR`: what a list keeps in part files
+/// needs the file's own name as well as its folder - see `parts`.
+static CURRENT_DOCUMENT: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 thread_local! {
     /// The document an operation was told it is working on.
     ///
@@ -30,6 +34,10 @@ thread_local! {
     /// handed a closure rather than a guard, so it cannot be left open across an await and
     /// picked up by unrelated work on the same thread.
     static SCOPED_BASE_DIR: std::cell::RefCell<Option<Option<PathBuf>>> =
+        const { std::cell::RefCell::new(None) };
+
+    /// The file itself, when the operation was told which - see `with_document_file`.
+    static SCOPED_DOCUMENT: std::cell::RefCell<Option<Option<PathBuf>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -54,6 +62,9 @@ impl DocumentManager {
         if let Ok(mut guard) = BASE_DIR.lock() {
             *guard = dir;
         }
+        if let Ok(mut guard) = CURRENT_DOCUMENT.lock() {
+            *guard = path.map(PathBuf::from);
+        }
     }
 
     /// Run `f` with the directory that document-relative paths resolve against.
@@ -65,6 +76,38 @@ impl DocumentManager {
         let result = f();
         SCOPED_BASE_DIR.with(|slot| *slot.borrow_mut() = previous);
         result
+    }
+
+    /// Run `f` working on the document at `file`: its directory is what document-relative paths
+    /// resolve against, as with `with_document`, and the file is what its lists' parts are kept
+    /// beside.
+    pub fn with_document_file<T>(file: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
+        let dir = file.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let previous = SCOPED_DOCUMENT.with(|slot| slot.replace(Some(file)));
+        let result = Self::with_document(dir, f);
+        SCOPED_DOCUMENT.with(|slot| *slot.borrow_mut() = previous);
+        result
+    }
+
+    /// Run `f` on a document that is not the one being worked on - a mounted file, worked out in
+    /// its host's folder - so that its lists do not take the host's parts for their own.
+    pub fn without_document_file<T>(f: impl FnOnce() -> T) -> T {
+        let previous = SCOPED_DOCUMENT.with(|slot| slot.replace(Some(None)));
+        let result = f();
+        SCOPED_DOCUMENT.with(|slot| *slot.borrow_mut() = previous);
+        result
+    }
+
+    /// The file of the document being worked on, if anything said which.
+    pub fn document_file() -> Option<PathBuf> {
+        if let Some(scoped) = SCOPED_DOCUMENT.with(|slot| slot.borrow().clone()) {
+            return scoped;
+        }
+        // Told only the folder, the operation is not working on the app's open document.
+        if Self::scoped_base_dir().is_some() {
+            return None;
+        }
+        CURRENT_DOCUMENT.lock().ok().and_then(|g| g.clone())
     }
 
     /// The directory of the document being worked on, if one was named.

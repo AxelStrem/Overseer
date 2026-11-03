@@ -99,6 +99,8 @@ pub fn mounts_held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
                 // it was read - not this one's to answer for.
                 continue;
             }
+            // And the files a list keeps its entries in - see `parts`.
+            crate::parts::held(node, out);
             walk(&node.children, out);
         }
     }
@@ -945,6 +947,12 @@ impl ActionExecutor {
         }
     }
 
+
+    /// The address of the node at `indices`, as a report names it.
+    #[allow(clippy::ptr_arg)]
+    pub fn address_of(nodes: &Vec<OverseerNode>, indices: &[usize]) -> String {
+        Self::build_disambiguated_path(nodes, indices).join("/")
+    }
 
     /// Build a disambiguated name path (using name#k when needed) from an indices chain
     fn build_disambiguated_path(nodes: &Vec<OverseerNode>, indices: &[usize]) -> Vec<String> {
@@ -2154,9 +2162,16 @@ impl ActionExecutor {
                 let holding = Self::the_one_holding(list_node, &effective_key_field, &key_value, &list_path, "change", |v| {
                     Self::value_equals(v, &key_value)
                 })?;
-                if let Some(item) = holding.and_then(|at| list_node.children.get_mut(at)) {
+                let Some(at) = holding else { return Ok(()) };
+                if let Some(item) = list_node.children.get_mut(at) {
                     Self::set_field_value_on_item(item, &field_name, new_value);
                 }
+                // Said, as every write of one field is: what follows the write - the graph, a
+                // list's parts - goes by what the report names.
+                let mut entry = indices.clone();
+                entry.push(at);
+                let address = Self::build_disambiguated_path(nodes, &entry).join("/");
+                note_field(format!("{}/{}", address, field_name));
                 Ok(())
             }
             "append" => {
@@ -2619,6 +2634,8 @@ impl ActionExecutor {
                     cur = &cur.children[at];
                 }
             } else {
+                // Perhaps in a part of the list it has not read - see `resolver::note_missed_under`.
+                crate::resolver::note_missed_under(cur);
                 return None;
             }
         }
@@ -3021,7 +3038,11 @@ impl ActionExecutor {
             .map_err(|e| format!("Failed to parse mount file '{}': {:?}", path, e))?;
         // Without the environment: what a mount brings in sits inside its host, and sees the
         // contexts of the place it is mounted at - the environment among them, through the host.
-        crate::environment::without(|| crate::resolver::resolve_document(&mut ext_nodes));
+        crate::environment::without(|| {
+            crate::docmgr::manager::DocumentManager::without_document_file(|| {
+                crate::resolver::resolve_document(&mut ext_nodes)
+            })
+        });
 
         if let Some(stamp) = stamp {
             if let Ok(mut cache) = cache.lock() {
@@ -3963,6 +3984,10 @@ impl ActionExecutor {
             .filter(|(_, it)| Self::get_field_value(it, field).map_or(false, &holds))
             .map(|(at, _)| at)
             .collect();
+        if holding.is_empty() {
+            // Perhaps in a part of the list it has not read - see `resolver::note_missed_under`.
+            crate::resolver::note_missed_under(list);
+        }
         if holding.len() > 1 {
             return Err(OverseerError::ValidationError(format!(
                 "{} entries of {} hold {} = {}, so which one to {} is not clear; nothing was changed",

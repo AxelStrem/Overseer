@@ -1327,13 +1327,19 @@ fn change_or_look(
     }
     // What landed inside a mount is another file's, and is written there - or refused, before
     // anything is written anywhere.
-    let through_mounts = if writing {
+    let mut through_mounts = if writing {
         crate::actions::mounts_written(&nodes, report.as_ref())
     } else {
         Vec::new()
     };
     refuse_writing_through(&through_mounts).map_err(OverseerError::ValidationError)?;
     let worked_out_whole = settle_after_change(&mut nodes, held_as, report.as_ref());
+    // What belongs in a part goes there, worked out from what the write left - see `parts`.
+    if writing {
+        let through_parts = crate::parts::written(&mut nodes, report.as_ref());
+        refuse_writing_through(&through_parts).map_err(OverseerError::ValidationError)?;
+        through_mounts.extend(through_parts);
+    }
     phase("settle");
 
     let serialized = OverseerFileHandler::serialize_nodes(&nodes)
@@ -1355,6 +1361,7 @@ fn change_or_look(
     }
     let along = write_through_mounts(through_mounts)
         .map_err(|e| OverseerError::IoError(format!("could not write what it mounts: {}", e)))?;
+    crate::parts::restamp(&mut nodes, &along);
     if wrote {
         write_file_keeping_a_step_back(path, &settled.text)
             .map_err(|e| OverseerError::IoError(format!("could not write the document: {}", e)))?;
@@ -2517,6 +2524,17 @@ pub fn write_through_mounts(
 ) -> std::io::Result<Vec<crate::undo::Along>> {
     let mut along = Vec::new();
     for write in writes {
+        // A file this makes - a list's new part - has nothing to be put back to, and taking the
+        // write back takes the file away. Its step says so by being empty.
+        let at = std::path::Path::new(&write.file);
+        if !at.exists() {
+            if let Some(folder) = at.parent() {
+                std::fs::create_dir_all(folder)?;
+            }
+            if let Some((beside, named)) = crate::undo::beside(at) {
+                crate::undo::remember(&beside, &named, "");
+            }
+        }
         write_file_keeping_a_step_back(&write.file, &write.text)?;
         along.push(crate::undo::Along { file: write.file, wrote: write.text });
     }
@@ -2552,6 +2570,9 @@ pub fn take_back_along(along: Vec<crate::undo::Along>) -> Vec<String> {
         let still = std::fs::read_to_string(at).is_ok_and(|now| now == went.wrote);
         let taken = still && crate::access::may(at, crate::access::Need::Edit) && {
             match crate::undo::beside(at).and_then(|(beside, file)| crate::undo::take(&beside, &file)) {
+                Some(previous) if previous.is_empty() => std::fs::remove_file(at)
+                    .inspect(|_| crate::watch::wrote(at))
+                    .is_ok(),
                 Some(previous) => {
                     let temporary = at.with_extension("os.writing");
                     std::fs::write(&temporary, previous.as_bytes())
