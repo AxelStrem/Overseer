@@ -471,9 +471,13 @@ tab project (label="Project", mutable=true) {
                 - color = $(muted)
             }
         }
-        div (layout="horizontal", margin=0, spacing=10, alignment="center") {
-            filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, milestones, flags",
-                    status="done", hide="waiting", vocabulary="/project/Labels", label="find", width=100%) { }
+        div Narrow (layout="horizontal", margin=0, spacing=10, alignment="center", border-style=none) {
+            textbox find (placeholder="find", narrows="/project/Items", by="title, handle, Comments", width=20%) = ""
+            textbox stage (placeholder="stages", vocabulary="/project/Stages", narrows="/project/Items", by="stage") = ""
+            textbox labels (placeholder="tags", vocabulary="/project/Labels", narrows="/project/Items", by="labels") = ""
+            textbox milestones (placeholder="milestones", vocabulary="/project/Milestones", narrows="/project/Items",
+                                by="milestones", shape="slant") = ""
+            textbox flags (placeholder="flags", vocabulary="/project/Flags", narrows="/project/Items", by="flags") = ""
         }
 
         div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none) {

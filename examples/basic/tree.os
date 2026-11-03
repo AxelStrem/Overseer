@@ -49,7 +49,7 @@ tab outline (label="Outline", mutable=true) {
 }
 
 tab tracker (label="By parent", mutable=true) {
-    filter (target="/tracker/Tasks", text="title", label="find") { }
+    textbox find (placeholder="find", narrows="/tracker/Tasks", by="title") = ""
 
     list Tasks (entry=<Task>, key="handle", tree="parent") {
         - {

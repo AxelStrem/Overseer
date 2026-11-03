@@ -205,7 +205,7 @@ list Priorities (entry=int) {
 - `chart`: A line, pie or bar chart of what its `plot`s say (see "Charts")
 - `image`: A picture kept beside the document (see "Images")
 - `mark`: Something drawn with no value of its own, such as a grip (see "Marks")
-- `filter`: A view over a list, narrowing what it shows (see "Filter")
+- `filter`: The older spelling of a textbox that narrows a list (see "Narrowing a list" and "Filter")
 
 #### Other nodes:
 - `on <event>`: What happens when the node it is written in is pressed or changed: a block of
@@ -623,9 +623,8 @@ The elbow comes in at the middle of the row's first line, below which the row's 
 A chevron folds the branch under its entry away and brings it back. The fold is how somebody is
 looking, never written: it is kept by the entry's key, in that tab, as a foldable div's is.
 
-A filter on a tree looks at every depth. An entry that matches is shown with its ancestors, which
-are dimmed where they do not match themselves, and the rest of the tree is hidden; the filter
-counts the entries that match. `window` counts top-level branches, each kept whole, and the
+A box narrowing a tree looks at every depth. An entry that matches is shown with its ancestors,
+which are dimmed where they do not match themselves, and the rest of the tree is hidden. `window` counts top-level branches, each kept whole, and the
 note under the list says how many branches it left out.
 
 `indent=` on the list is how far each depth stands in (`18px` unless the theme's `tree` key says
@@ -1080,7 +1079,7 @@ context mode = "system"
     dark reads on the button. A button the document colours itself keeps its colours whatever
     the `style`.
   - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
-  - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box a filter is typed in.
+  - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box the older `filter` node is typed in; a textbox that narrows a list looks as a `field` does.
   - `tree`: `indent` (`18px`), `color`, `thickness`, `style` (`none`: no lines), `elbow` and `stand` (`row` or `column`) of a list drawn as a tree
     (see "Drawing a list as a tree").
   - `hold`: `style`, how a press held on a node with `on hold` is shown while it lasts - `fill`,
@@ -1572,6 +1571,29 @@ textbox handle (placeholder="id") = $(fresh_key(/project/Items, /project/History
 holds as its key, leaving out `0`, `o`, `1` and `l`, which read as one another. It is made from
 the keys already used rather than at random: it stays the same while the lists do, rather than
 changing each time the document is worked out, and moves on once an entry is added.
+
+#### Narrowing a list
+
+A textbox that says `narrows` hides the entries of that list it does not match, as it is typed
+into, and `by` names the fields it is matched against. Typed text is found in any of them - the
+fields, not what is on screen, which is formatted and sometimes hidden - and a name that is a list
+or a div searches every field under it, so naming a list of comments finds an entry by anything
+said in them. Given a `vocabulary`, the box picks values instead: an entry must hold every one
+picked when the field holds tags, and any of them when it is an `enum`, which holds one. A list
+narrowed by several boxes shows the entries every one of them lets through.
+
+```overseer
+div Narrow (layout="horizontal", spacing=10) {
+    textbox find (placeholder="find", narrows="/project/Items", by="title, handle, Comments", width=20%) = ""
+    textbox stage (placeholder="stages", vocabulary="/project/Stages", narrows="/project/Items", by="stage") = ""
+    textbox labels (placeholder="tags", vocabulary="/project/Labels", narrows="/project/Items", by="labels") = ""
+}
+```
+
+What such a box holds is a view, as a fold is: it is never written, never sent with a press and
+never emptied by one, it can be typed into where nothing else in the document can be changed, and
+it keeps what it holds while the page is open. A tree keeps a match's ancestors in sight, dimmed,
+and a board's columns count what they show.
 
 #### A whole entry as the thing you press
 
@@ -2095,9 +2117,11 @@ written some other way, so a handler that must not act on it says so in its own 
 
 #### Filter
 
-A view over a list, and nothing more: it writes nothing and the document never changes. What
-is typed is matched against the fields named in `text` — the fields, not what is on screen,
-because what is on screen is formatted and sometimes hidden.
+The older spelling of "Narrowing a list", kept so that documents written with it go on working: a
+new document narrows a list with textboxes instead. A view over a list, and nothing more: it writes
+nothing and the document never changes. What is typed is matched against the fields named in
+`text` — the fields, not what is on screen, because what is on screen is formatted and sometimes
+hidden.
 
 ```overseer
 filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, flags",
@@ -2636,7 +2660,7 @@ div Tasks {
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `ease`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
-- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
+- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `narrows` and `by` (on a `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
@@ -2644,7 +2668,7 @@ div Tasks {
 - **Grids**: `entry`, `columns`, `rows`, `header`
 - **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`
-- **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
+- **Filters** (the older spelling of `narrows`): `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`, `chip`
 - **Tags**: `vocabulary`, `shape`, `chip` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`

@@ -736,6 +736,8 @@ export class OverseerRenderer {
     this.readOnly = false
         // What is typed into textboxes, by path - see `createTextboxElement`.
         this._typed = new Map()
+        // What the textboxes that narrow a list hold, by the box's path - see `createNarrowingBox`.
+        this._narrowings = new Map()
     }
 
     // Compute effective mutability mode at a specific path within a provided document tree.
@@ -6017,9 +6019,25 @@ export class OverseerRenderer {
      * sometimes hidden, and none of that is what you meant to search.
      */
     applyFilters() {
-        if (!this._filters || this._filters.size === 0) return
+        const narrowings = this._narrowings ? [...this._narrowings.values()] : []
+        if ((!this._filters || this._filters.size === 0) && narrowings.length === 0) return
         const doc = window.app && window.app.currentDocument
         if (!doc) return
+
+        // What narrows each list: a `filter` node, which is the older spelling of the same
+        // thing, and every box that names it. An entry shows when all of them let it through.
+        const narrowed = new Map()
+        const conditionsOn = (target) => {
+            const key = target.join('/')
+            if (!narrowed.has(key)) narrowed.set(key, { target, state: null, key, boxes: [] })
+            return narrowed.get(key)
+        }
+        for (const state of (this._filters || new Map()).values()) {
+            if (Array.isArray(state.target)) conditionsOn(state.target).state = state
+        }
+        for (const narrowing of narrowings) {
+            if (narrowing.target.length > 0) conditionsOn(narrowing.target).boxes.push(narrowing)
+        }
 
         // Every element that carries a path, gathered once. Asking the document for each entry
         // in turn instead - `querySelectorAll` per row - cost 338ms for one keystroke over 120
@@ -6033,10 +6051,19 @@ export class OverseerRenderer {
             else byPath.set(element.dataset.path, [element])
         }
 
-        for (const [key, state] of this._filters) {
-            const list = this.findNodeByPath(doc, state.target)
+        for (const { target, state, key, boxes } of narrowed.values()) {
+            const list = this.findNodeByPath(doc, target)
             if (!list || !Array.isArray(list.children)) continue
-            const wanted = state.text.trim().toLowerCase()
+            const wanted = state ? String(state.text || '').trim().toLowerCase() : ''
+            // Only the boxes holding something: an empty one lets everything through.
+            const asking = boxes.filter((box) => String(box.text || '').trim() !== '')
+            const kinds = asking.map((box) => {
+                const field = box.picks ? this.fieldIn(list, box.by[0]) : null
+                return !!field && String(field.node_type || field.type || '').toLowerCase() === 'enum'
+            })
+            const matchOf = (entry, within = null) =>
+                (!state || this.entryMatchesFilter(entry, wanted, state, within))
+                && asking.every((box, i) => this.entryMatchesNarrowing(entry, box, kinds[i], within))
             let showing = 0
             let total = list.children.length
 
@@ -6044,8 +6071,8 @@ export class OverseerRenderer {
             // where they do not match themselves - while the rest of the tree goes.
             const tree = this.treeOf(list)
             if (tree) {
-                const rows = this.treeRows(list, state.target)
-                const matches = rows.map((row) => this.entryMatchesFilter(row.entry, wanted, state, tree))
+                const rows = this.treeRows(list, target)
+                const matches = rows.map((row) => matchOf(row.entry, tree))
                 const leadsToOne = rows.map(() => false)
                 for (let i = rows.length - 1; i >= 0; i--) {
                     const parent = rows[i].parent
@@ -6062,15 +6089,15 @@ export class OverseerRenderer {
             }
 
             for (const entry of tree ? [] : list.children) {
-                const matches = this.entryMatchesFilter(entry, wanted, state)
+                const matches = matchOf(entry)
                 if (matches) showing += 1
-                const path = JSON.stringify([...state.target, entry.name])
+                const path = JSON.stringify([...target, entry.name])
                 for (const element of byPath.get(path) || []) {
                     element.classList.toggle('filtered-out', !matches)
                 }
             }
 
-            for (const label of document.querySelectorAll(`[data-filter-count='${key}']`)) {
+            for (const label of state ? document.querySelectorAll(`[data-filter-count='${key}']`) : []) {
                 const narrowed = wanted !== '' || this.tagsPicked(state) || state.status.size > 0
                     || state.enums.size > 0 || state.hiding
                 label.textContent = narrowed ? `${showing} of ${total}` : `${total}`
@@ -6145,6 +6172,30 @@ export class OverseerRenderer {
         return true
     }
 
+    /**
+     * Whether one entry gets past a box that narrows its list: the text found in any of the
+     * fields `by` names, or for a box that picks, every picked value held by them - or any, when
+     * the field is an enum, which holds only one.
+     */
+    entryMatchesNarrowing(entry, box, anyOf, within = null) {
+        if (box.picks) {
+            const picked = String(box.text || '').split(',').map(s => s.trim()).filter(Boolean)
+            const held = new Set()
+            for (const name of box.by) {
+                const field = this.entryField(entry, name, within)
+                const value = field ? this.getParameterValue(field, 'value') : null
+                for (const one of String(value ?? '').split(',')) held.add(one.trim())
+            }
+            return anyOf ? picked.some((value) => held.has(value)) : picked.every((value) => held.has(value))
+        }
+        const wanted = String(box.text || '').trim().toLowerCase()
+        const haystack = box.by.map((name) => {
+            const child = this.entryField(entry, name, within)
+            return child ? textWithoutIcons(this.valuesWithin(child).join(' ')) : ''
+        }).join(' ').toLowerCase()
+        return haystack.includes(wanted)
+    }
+
     /** Whether any tag is picked, in any of a filter's fields. */
     tagsPicked(state) {
         for (const field of state.tagFields || []) {
@@ -6202,7 +6253,8 @@ export class OverseerRenderer {
             }
         }
 
-        const editable = () => this.getEffectiveMutableMode(node, container) !== 'false'
+        // A box that narrows a list is a view, picked from wherever the document may not be changed.
+        const editable = () => (own && own.view) || this.getEffectiveMutableMode(node, container) !== 'false'
 
         const paint = () => {
             chips.textContent = ''
@@ -7031,6 +7083,7 @@ export class OverseerRenderer {
         const placeholder = this.getParameterValue(node, 'placeholder')
         if (placeholder) input.placeholder = String(placeholder)
         const key = JSON.stringify(Array.isArray(node.__overseer_path) ? node.__overseer_path : [])
+        if (this.getParameterValue(node, 'narrows')) return this.createNarrowingBox(node, key)
         const typed = this._typed.get(key)
         const starting = this.getNodeValue(node)
         input.value = typed !== undefined ? typed : (starting === null || starting === undefined ? '' : String(starting))
@@ -7064,6 +7117,63 @@ export class OverseerRenderer {
         return container
     }
 
+    /**
+     * A textbox that says `narrows=` hides the entries of that list its text does not match, as
+     * it is typed into. Matched against the fields `by` names: typed text is found in any of
+     * them, and tags picked from a `vocabulary` must all be held by a tags field - any of them
+     * by an enum field, which holds one.
+     *
+     * What it holds is a view, like a fold: it is never written, never sent with a press and
+     * never emptied by one, and it can be typed into where nothing else can be changed. It is
+     * kept here by the box's path, so a repaint of the list it narrows does not clear it.
+     */
+    createNarrowingBox(node, key) {
+        const target = String(this.getParameterValue(node, 'narrows') || '').split('/').filter(Boolean)
+        const by = String(this.getParameterValue(node, 'by') || '')
+            .split(',').map(s => s.trim()).filter(Boolean)
+        let narrowing = this._narrowings.get(key)
+        if (!narrowing) {
+            const starting = this.getNodeValue(node)
+            narrowing = { text: starting === null || starting === undefined ? '' : String(starting) }
+            this._narrowings.set(key, narrowing)
+        }
+        // The document may have been reloaded with the box saying something else.
+        Object.assign(narrowing, { target, by, picks: !!this.getParameterValue(node, 'vocabulary') })
+        // Applied after this returns, when the list it narrows is on the page too.
+        setTimeout(() => this.applyFilters(), 0)
+
+        if (narrowing.picks) {
+            return this.createTagsElement(node, {
+                read: () => narrowing.text,
+                write: (text) => { narrowing.text = text; this.applyFilters() },
+                view: true,
+            })
+        }
+
+        const container = document.createElement('div')
+        container.className = 'overseer-field textbox-field'
+        const labelText = this.getParameterValue(node, 'label')
+        if (labelText) {
+            const label = document.createElement('label')
+            this.setTextWithIcons(label, labelText, node)
+            container.appendChild(label)
+        }
+        const input = document.createElement('input')
+        input.type = 'text'
+        input.className = 'textbox-input'
+        const placeholder = this.getParameterValue(node, 'placeholder')
+        if (placeholder) input.placeholder = String(placeholder)
+        input.value = narrowing.text
+        // On input, not on blur: the point of typing into it is watching the list shrink.
+        input.addEventListener('input', () => { narrowing.text = input.value; this.applyFilters() })
+        container.appendChild(input)
+
+        this.applyLayoutStyles(container, node)
+        this.applyFieldDefaultStyles(container, node)
+        this.applyNodeStyles(container, node)
+        return container
+    }
+
     /// Everything typed, as a press sends it: each path once, in the one spelling the door takes.
     typedText() {
         const out = []
@@ -7076,6 +7186,7 @@ export class OverseerRenderer {
     /// Forget what was typed, for a document that is not this one.
     forgetTypedText() {
         this._typed = new Map()
+        this._narrowings = new Map()
     }
 
     /// Put the boxes a press copied from back to what they start with.

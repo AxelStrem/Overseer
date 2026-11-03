@@ -1,5 +1,5 @@
 tab board (label="Board", mutable=true) {
-    filter (target="/board/Tasks", text="handle, title", label="find") { }
+    textbox find (placeholder="find", narrows="/board/Tasks", by="handle, title") = ""
 
     div (hidden=true) {
         div Stage (layout="horizontal") {

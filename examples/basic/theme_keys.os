@@ -67,11 +67,6 @@ context theme {
         - weight = 500
         - padding = "10px 18px"
     }
-    - filter {
-        - width = "320px"
-        - size = "14px"
-        - padding = "7px 12px"
-    }
 }
 
 tab catalogue (label="Catalogue", mutable=true) {
@@ -86,7 +81,10 @@ tab catalogue (label="Catalogue", mutable=true) {
         }
     }
 
-    filter (target="/catalogue/Modules", text="name, note", tags="kinds", vocabulary="/catalogue/Kinds", label="find") { }
+    div (layout="horizontal", spacing=10, alignment="center") {
+        textbox find (placeholder="find", narrows="/catalogue/Modules", by="name, note", width=320px) = ""
+        textbox kinds (placeholder="kinds", vocabulary="/catalogue/Kinds", narrows="/catalogue/Modules", by="kinds") = ""
+    }
 
     list Modules (entry=<Module>, key="name", view="table", header=true) {
         - {
