@@ -4929,11 +4929,15 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         // kept so it can tell an entry's own value from one it inherited, and nothing reads them
         // worked out. Worked out anyway they were a value and a formula per field of every entry -
         // 3,700 of each on the food tracker - stored as `_computed__template_*` for no one.
+        // Nor a lambda - a list's `parts` or `sort_by` - which is applied to each entry where it
+        // is used, and worked out alone is only an error stored on the list.
         let formula_pairs: Vec<(String, String)> = (*node_ptr)
             .parameters
             .iter()
             .filter_map(|(k, v)| match v {
-                OverseerValue::Formula(s) if !k.starts_with("_template_") => Some((k.clone(), s.clone())),
+                OverseerValue::Formula(s) if !k.starts_with("_template_") && !s.trim_start().starts_with('|') => {
+                    Some((k.clone(), s.clone()))
+                }
                 _ => None,
             })
             .collect();

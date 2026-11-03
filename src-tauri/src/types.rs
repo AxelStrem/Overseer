@@ -236,7 +236,9 @@ impl From<HashMap<String, OverseerValue>> for Params {
 impl Serialize for Params {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         if writing_for_the_page() {
-            return serializer.collect_map(self.iter().filter(|(k, _)| !only_for_writing_back(k)));
+            return serializer.collect_map(
+                self.iter().filter(|(k, _)| !only_for_writing_back(k) && !only_for_the_parts(k)),
+            );
         }
         serializer.collect_map(self.iter())
     }
@@ -257,6 +259,17 @@ fn only_for_writing_back(key: &str) -> bool {
                 | "_written_at"
                 | "_written_up"
         )
+}
+
+/// A note the server keeps on a list with parts to read and write them - the folder they are in,
+/// every part's file and stamp, what could not be had - which the page never reads.
+///
+/// Most of them are paths on the server's disk, which no one opening the document is to be told.
+/// The page draws two: how many parts were left unread, and the chips of the entries in them.
+fn only_for_the_parts(key: &str) -> bool {
+    key.starts_with("_parts_")
+        && key != crate::parts::UNREAD_COUNT
+        && key != crate::resolver::UNREAD_VOCABULARY
 }
 
 impl<'de> Deserialize<'de> for Params {
