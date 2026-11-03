@@ -61,7 +61,7 @@ pub fn set_override(setting: Option<Option<(PathBuf, usize)>>) {
 /// `OVERSEER_DISK_CACHE_MB` is the budget, 512 unless it says otherwise. Off for the tests unless
 /// one asks, as the memory cache's budget is their own: several check what is held in memory, and a
 /// document coming back from a file another test left would answer for it.
-fn setting() -> Option<(PathBuf, usize)> {
+pub(crate) fn setting() -> Option<(PathBuf, usize)> {
     if let Some(asked) = OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         return asked;
     }
@@ -91,7 +91,7 @@ fn setting() -> Option<(PathBuf, usize)> {
 /// changes - the one way a stored document could go on being handed out wrong without anybody
 /// noticing is a change nobody thought to raise it for. Every build is a new program, and a new
 /// program finds no files to read.
-fn build() -> Option<&'static str> {
+pub(crate) fn build() -> Option<&'static str> {
     static BUILD: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     BUILD
         .get_or_init(|| {
@@ -355,10 +355,17 @@ static WRITTEN: std::sync::Condvar = std::sync::Condvar::new();
 pub fn store(text: String, base: Option<PathBuf>, seen: String, held: Held) {
     let Some((folder, budget)) = setting() else { return };
     let Some(build) = build() else { return };
-    *WRITING.lock().unwrap_or_else(|e| e.into_inner()) += 1;
-    std::thread::spawn(move || {
+    in_background(move || {
         // A file that cannot be written is a document worked out again later, and nothing more.
         let _ = write(&folder, budget, build, text, base, seen, held);
+    });
+}
+
+/// Run a write on a thread of its own, counted so that `settled` waits for it.
+pub(crate) fn in_background(work: impl FnOnce() + Send + 'static) {
+    *WRITING.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+    std::thread::spawn(move || {
+        work();
         let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
         *writing -= 1;
         WRITTEN.notify_all();
@@ -374,13 +381,20 @@ fn write(
     seen: String,
     held: Held,
 ) -> std::io::Result<()> {
-    std::fs::create_dir_all(folder)?;
     let file = file_for(folder, build, &base, &seen, &text);
     let bytes =
         serde_json::to_vec(&stored(text, base, seen, build, held)).map_err(std::io::Error::other)?;
     if bytes.len() > budget {
         return Ok(());
     }
+    put(folder, &file, &bytes)?;
+    trim(folder, budget);
+    Ok(())
+}
+
+/// Write a file into the folder, making the folder if it is not there yet.
+pub(crate) fn put(folder: &Path, file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::create_dir_all(folder)?;
     // Written beside it and moved into place, so a read never finds half a file.
     static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let part = file.with_extension(format!(
@@ -388,17 +402,16 @@ fn write(
         std::process::id(),
         SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    std::fs::write(&part, &bytes)?;
-    if let Err(e) = std::fs::rename(&part, &file) {
+    std::fs::write(&part, bytes)?;
+    if let Err(e) = std::fs::rename(&part, file) {
         let _ = std::fs::remove_file(&part);
         return Err(e);
     }
-    trim(folder, budget);
     Ok(())
 }
 
 /// Bring the folder back within budget, the files written longest ago going first.
-fn trim(folder: &Path, budget: usize) {
+pub(crate) fn trim(folder: &Path, budget: usize) {
     let Ok(listing) = std::fs::read_dir(folder) else { return };
     let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = listing
         .filter_map(|e| e.ok())

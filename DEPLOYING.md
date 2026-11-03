@@ -73,7 +73,8 @@ these are the settings to turn:
 - `OVERSEER_CACHE_MB` - how much worked-out documents may take in memory. 64 for the server,
   512 for the desktop app; `0` keeps nothing, and every request works its document out afresh.
 - `OVERSEER_DISK_CACHE` - the folder for what is let go, by default `overseer-cache` in the
-  system's temporary folder. Set it empty to keep nothing on disk.
+  system's temporary folder. Set it empty to keep nothing on disk. It holds the summaries of a
+  list's parts too, in `sums/`, which spare a server that has just started reading old parts.
 - `OVERSEER_DISK_CACHE_MB` - how much that folder may hold, 512 by default; `0` turns it off.
 - `MALLOC_ARENA_MAX` - how many heaps the C allocator keeps. The image sets `2`: by default it
   keeps one per busy thread and never gives them back, and a server that holds little at rest

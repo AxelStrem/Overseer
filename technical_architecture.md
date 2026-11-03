@@ -119,6 +119,9 @@ knowing about because each has a cost:
   of what working it out again costs. A file holds the text, the folder and the build it was worked out by,
   and is used only when all three match and the files its mounts read have not changed.
   `OVERSEER_DISK_CACHE_MB` bounds the folder, 512 by default.
+  The summaries a total over a list with parts reads of the parts it has not read go in its
+  `sums/` folder, an eighth of the budget, each named by the part's text, the entries' template,
+  the chain and the build, so a server that has just started reads no part a summary was kept for.
   A document as one viewer sees it, with their guarded values in, is held under the text it
   serializes to, which the file never holds; the viewer's state remembers that text with the
   file's version and the values it was worked out with. A press, a tick or an open of theirs,

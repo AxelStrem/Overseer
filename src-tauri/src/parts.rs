@@ -335,6 +335,13 @@ pub fn entries_in(file: &Path) -> Option<Vec<OverseerNode>> {
     Some(std::mem::take(&mut list_in(&mut nodes)?.children))
 }
 
+/// The entries a part holds, as `entries_in` gives them, with the text they were parsed from.
+pub fn text_and_entries_in(file: &Path) -> Option<(String, Vec<OverseerNode>)> {
+    let (text, mut nodes) = read(file)?;
+    let entries = std::mem::take(&mut list_in(&mut nodes)?.children);
+    Some((text, entries))
+}
+
 /// The address a list with parts not read was worked out at, for what reaches past what it holds
 /// to name it - see `resolver::note_missed_under`.
 pub fn address_of_unread(list: &OverseerNode) -> Option<&str> {
