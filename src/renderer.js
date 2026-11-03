@@ -1503,25 +1503,38 @@ export class OverseerRenderer {
     /// screen would not find them.
     ///
     /// And offer one window more of them, for this reader alone - see `showMoreOf`.
+    ///
+    /// A list kept in parts reads only its newest parts, and how many entries the older ones hold
+    /// is not known without reading them: the note says how many parts were left, and asking for
+    /// more reads them one window at a time.
     drawEntriesLeftOut(element, node, path) {
         try {
             element.querySelector(':scope > .overseer-entries-left-out')?.remove()
-            const raw = node?.parameters?.['_left_out_of_view']
-            const left = (raw && typeof raw === 'object') ? (raw.Integer ?? raw.Float) : raw
-            const count = Number(left)
-            if (!Number.isFinite(count) || count <= 0) return
+            const number = (name) => {
+                const raw = node?.parameters?.[name]
+                const said = Number((raw && typeof raw === 'object') ? (raw.Integer ?? raw.Float) : raw)
+                return Number.isFinite(said) && said > 0 ? said : 0
+            }
+            const count = number('_left_out_of_view')
+            const parts = number('_parts_left_unread')
+            if (count <= 0 && parts <= 0) return
             const note = document.createElement('div')
             note.className = 'overseer-entries-left-out'
             const said = document.createElement('span')
             said.className = 'overseer-entries-left-out-count'
             // A tree's window counts its top-level branches, each with all that is under it.
             const what = this.treeOf(node) ? ['branch', 'branches'] : ['entry', 'entries']
-            said.textContent = count === 1 ? `1 earlier ${what[0]} not shown` : `${count} earlier ${what[1]} not shown`
+            const older = parts === 1 ? '1 older part' : `${parts} older parts`
+            if (count <= 0) said.textContent = `${older} not shown`
+            else {
+                said.textContent = count === 1 ? `1 earlier ${what[0]} not shown` : `${count} earlier ${what[1]} not shown`
+                if (parts > 0) said.textContent += `, and ${older}`
+            }
             note.appendChild(said)
             const app = typeof window !== 'undefined' ? window.app : null
             if (Array.isArray(path) && app && typeof app.showMoreOf === 'function') {
                 const window_ = Number(this.getParameterValue(node, 'window')) || count
-                const more = Math.min(window_, count)
+                const more = parts > 0 ? window_ : Math.min(window_, count)
                 const ask = document.createElement('button')
                 ask.type = 'button'
                 ask.className = 'overseer-show-more'
