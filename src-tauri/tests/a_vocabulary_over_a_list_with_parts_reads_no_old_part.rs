@@ -16,7 +16,7 @@ fn host(title: &str) -> String {
     div (hidden=true) {{
         div Done (layout="horizontal") {{
             string handle = ""
-            string title = {title}
+            string title {title}
             string status = "done"
             string colour (hidden=true) = $(/log/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())
             timestamp done_at = "2026-11-02T10:00:00Z"
@@ -113,7 +113,7 @@ fn held(nodes: &[OverseerNode]) -> usize {
 #[test]
 fn a_vocabulary_is_given_the_entries_of_the_parts_not_read() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let (_sandbox, documents) = sandbox("given", &host("\"\""));
+    let (_sandbox, documents) = sandbox("given", &host("= \"\""));
     let nodes = documents.open("log.os").expect("open");
     assert_eq!(held(&nodes), 1, "only this week is read");
     assert_eq!(said(&nodes, "_parts_read_whole"), None);
@@ -142,7 +142,7 @@ fn a_vocabulary_is_given_the_entries_of_the_parts_not_read() {
 #[test]
 fn a_title_worked_out_by_a_formula_reads_the_list_whole() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let (_sandbox, documents) = sandbox("formula", &host("$(handle)"));
+    let (_sandbox, documents) = sandbox("formula", &host("= $(handle)"));
     let nodes = documents.open("log.os").expect("open");
     assert_eq!(held(&nodes), 3, "every part is read");
     let Some(OverseerValue::String(why)) = said(&nodes, "_parts_read_whole") else {
@@ -150,4 +150,18 @@ fn a_title_worked_out_by_a_formula_reads_the_list_whole() {
     };
     assert!(why.contains("vocabulary"), "{}", why);
     assert_eq!(said(&nodes, "_parts_vocabulary"), None);
+}
+
+#[test]
+fn a_formula_beside_a_written_title_reads_no_old_part() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (_sandbox, documents) = sandbox("beside", &host("(hidden=$(title == \"\")) = \"\""));
+    let nodes = documents.open("log.os").expect("open");
+    assert_eq!(held(&nodes), 1, "only this week is read");
+    assert_eq!(said(&nodes, "_parts_read_whole"), None);
+    let Some(OverseerValue::String(records)) = said(&nodes, "_parts_vocabulary") else {
+        panic!("no vocabulary on the list: {:?}", said(&nodes, "_parts_vocabulary"));
+    };
+    let records: serde_json::Value = serde_json::from_str(&records).unwrap();
+    assert_eq!(records[0]["title"], serde_json::json!("The oldest"));
 }

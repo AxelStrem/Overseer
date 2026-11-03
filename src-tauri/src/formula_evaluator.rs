@@ -5723,16 +5723,12 @@ impl FormulaEvaluator {
         chain: &Summarised,
         context: &EvaluationContext,
     ) -> crate::partsums::Summary {
-        fn holds_a_formula(node: &OverseerNode) -> bool {
-            node.parameters.values().any(|v| matches!(v, OverseerValue::Formula(_)) )
-                || node.children.iter().any(holds_a_formula)
-        }
         let mut summary = crate::partsums::Summary::default();
         let cut = crate::partsums::cut_down(template, &chain.fields);
         for written in entries {
             let entry = crate::partsums::made_from(&cut, &chain.fields, written, context.document_root);
             for field in &chain.fields {
-                if Self::accessible_child(&entry, field).is_some_and(holds_a_formula) {
+                if Self::accessible_child(&entry, field).is_some_and(Self::worked_out) {
                     summary.cannot = Some(format!("its entries' field '{}' is worked out by a formula", field));
                     return summary;
                 }
@@ -5748,6 +5744,18 @@ impl FormulaEvaluator {
             }
         }
         summary
+    }
+
+    /// Whether a field's value, or that of a field under it, is worked out by a formula: its
+    /// `value`, or the `fallback` or `default` an unset value reads - see `unworked`. A formula
+    /// in how the field is shown, `hidden` or `font-color`, or in what its events do, leaves its
+    /// value as written.
+    fn worked_out(node: &OverseerNode) -> bool {
+        let formula = |key: &str| matches!(node.parameters.get(key), Some(OverseerValue::Formula(_)));
+        let unset = matches!(node.parameters.get("value"), Some(OverseerValue::Null));
+        formula("value")
+            || (unset && (formula("fallback") || formula("default")))
+            || node.children.iter().any(|c| c.node_type != "on" && Self::worked_out(c))
     }
 
     /// What a chain's steps make of one entry, as its walk over the list would: `None` when a
@@ -5807,11 +5815,8 @@ impl FormulaEvaluator {
     /// what it names from its top, `/`, which the list itself is not: a closed task's chip in the
     /// colour of its status, `$(/project/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())`.
     pub fn vocabulary_reading(template: &OverseerNode, list: &str, field: &str) -> Option<Option<VocabularyReading>> {
-        fn holds_a_formula(node: &OverseerNode) -> bool {
-            node.parameters.values().any(|v| matches!(v, OverseerValue::Formula(_))) || node.children.iter().any(holds_a_formula)
-        }
         let found = Self::accessible_child(template, field)?;
-        if !holds_a_formula(found) {
+        if !Self::worked_out(found) {
             return Some(Some(VocabularyReading::Written));
         }
         let Some(OverseerValue::Formula(text)) = found.parameters.get("value") else { return Some(None) };
@@ -5821,7 +5826,7 @@ impl FormulaEvaluator {
         beside.sort();
         beside.dedup();
         let written = beside.iter().all(|name| {
-            name != field && Self::accessible_child(template, name).is_some_and(|n| !holds_a_formula(n))
+            name != field && Self::accessible_child(template, name).is_some_and(|n| !Self::worked_out(n))
         });
         if !written {
             return Some(None);

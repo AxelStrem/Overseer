@@ -16,6 +16,11 @@ const TEMPLATE: &str = r#"    div (hidden=true) {
             timestamp done_at = "2026-11-02T10:00:00Z"
             int points = 1
             int twice = $(points * 2)
+            bool failed (hidden=$(failed == false), font-color=$(failed ? "red" : "")) = false {
+                on change {
+                    set (path="../points") = $(../points + 1)
+                }
+            }
         }
         div Item {
             string handle = ""
@@ -61,6 +66,7 @@ const OLDEST: &str = r#"list History {
         - parent = "p"
         - done_at = "2026-10-20T08:00:00Z"
         - points = 3
+        - failed = true
     }
     - {
         - handle = "d"
@@ -279,5 +285,17 @@ fn a_field_worked_out_by_a_formula_is_read_from_every_part() {
         let nodes = documents.open("log.os").expect("open");
         assert_eq!(value(&nodes, "log/doubled"), Some(OverseerValue::Integer(40)));
         assert_eq!(held(&nodes), vec!["a", "d", "c", "b"], "the parts are read once their summary cannot answer");
+    });
+}
+
+#[test]
+fn a_formula_beside_a_fields_value_does_not_stop_its_summary() {
+    serialised(|| {
+        let extra = "    int kept (mutable=false) = $(History.filter(|x| x/failed == false).count())\n";
+        let (_sandbox, documents) = sandbox("beside", &host(extra, true));
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(held(&nodes), vec!["b"], "only this week is read");
+        assert_eq!(said(&nodes, "_parts_read_whole"), None);
+        assert_eq!(value(&nodes, "log/kept"), Some(OverseerValue::Integer(3)));
     });
 }
