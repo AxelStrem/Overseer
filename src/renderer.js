@@ -6568,13 +6568,43 @@ export class OverseerRenderer {
                         at: [...segments, entry.name],
                     })
                 }
+                // A list with parts not read holds only its newest entries; the server says what
+                // the rest give a chip. They are not in the page, so their chips reveal nothing.
+                for (const record of this.unreadVocabularyOf(list)) {
+                    const tag = record.key
+                    if (!tag || found.has(String(tag))) continue
+                    const name = record.name
+                    found.set(String(tag), {
+                        name: name || String(tag),
+                        named: Boolean(name),
+                        colour: record.colour || record.color || null,
+                        icon: record.icon || null,
+                        hover: record.title || null,
+                        offered: at === 0,
+                        at: null,
+                    })
+                }
             } catch (_) { /* a field with no readable vocabulary just has no colours */ }
         })
         return found
     }
 
+    /// What the server read for a vocabulary from the parts a list has not read: one record for
+    /// each entry, its `key` and the fields its chip is drawn from. Empty when it said nothing.
+    unreadVocabularyOf(list) {
+        const raw = list?.parameters?._parts_vocabulary
+        const text = (raw && typeof raw === 'object') ? raw.String : raw
+        if (typeof text !== 'string' || !text) return []
+        try {
+            const records = JSON.parse(text)
+            return Array.isArray(records) ? records.filter(r => r && typeof r === 'object') : []
+        } catch (_) {
+            return []
+        }
+    }
+
     /**
-     * How a field's chips are drawn: `pill`, rounded at the ends, `box`, a rectangle with
+     * How a field's chips are drawn:`pill`, rounded at the ends, `box`, a rectangle with
      * its corners only softened, or `slant`, a box leaning right, for a third kind of label that
      * sits beside both - a project's milestones beside its tags and stage. Asked for with `shape`; without it an enum is a box and tags
      * are pills, so a field holding one of a list and a field holding a set of labels can be

@@ -114,6 +114,20 @@ struct PassRoot {
     below: std::collections::HashMap<usize, std::collections::HashSet<String>>,
 }
 
+/// The name an entry of a part not read is bound to while a field's formula is worked out for it
+/// - see `FormulaEvaluator::vocabulary_reading`. No name a document can write.
+const ENTRY: &str = "__entry";
+
+/// How a field a vocabulary reads is had for an entry in a part not read - see
+/// `FormulaEvaluator::vocabulary_reading`.
+#[derive(Debug, Clone)]
+pub enum VocabularyReading {
+    /// From the summaries, as the entry writes it.
+    Written,
+    /// Worked out for each entry by `lambda`, from the fields `beside` it, summarised.
+    Worked { lambda: FormulaExpression, beside: Vec<String> },
+}
+
 /// Represents a parsed formula expression
 #[derive(Debug, Clone)]
 pub enum FormulaExpression {
@@ -5778,6 +5792,210 @@ impl FormulaEvaluator {
             name: format!("keys | {}", key),
         };
         Ok(Self::unread_values(list, &[], &chain, context)?.iter().map(Self::value_to_string).collect())
+    }
+
+    /// The fields of an entry a vocabulary draws its chip from - see `readVocabulary` in the page.
+    pub const VOCABULARY_FIELDS: [&'static str; 5] = ["name", "title", "colour", "color", "icon"];
+
+    /// How the field `field` of an entry made from `template` can be had for an entry in a part
+    /// not read, for a vocabulary: `None` when the template has no such field, `Some(None)` when
+    /// it cannot be had without reading the part.
+    ///
+    /// A field the entry writes, with no formula about it, is summarised. One worked out by a
+    /// formula is worked out again for each entry, when the formula reads nothing of the entry
+    /// but the fields beside it, by `../`, which are summarised, and nothing of the document but
+    /// what it names from its top, `/`, which the list itself is not: a closed task's chip in the
+    /// colour of its status, `$(/project/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())`.
+    pub fn vocabulary_reading(template: &OverseerNode, list: &str, field: &str) -> Option<Option<VocabularyReading>> {
+        fn holds_a_formula(node: &OverseerNode) -> bool {
+            node.parameters.values().any(|v| matches!(v, OverseerValue::Formula(_))) || node.children.iter().any(holds_a_formula)
+        }
+        let found = Self::accessible_child(template, field)?;
+        if !holds_a_formula(found) {
+            return Some(Some(VocabularyReading::Written));
+        }
+        let Some(OverseerValue::Formula(text)) = found.parameters.get("value") else { return Some(None) };
+        let Ok(expression) = Self::parse_expression(text.trim()) else { return Some(None) };
+        let mut beside = Vec::new();
+        let Some(body) = Self::over_the_entry(&expression, &[], list, &mut beside) else { return Some(None) };
+        beside.sort();
+        beside.dedup();
+        let written = beside.iter().all(|name| {
+            name != field && Self::accessible_child(template, name).is_some_and(|n| !holds_a_formula(n))
+        });
+        if !written {
+            return Some(None);
+        }
+        let lambda = FormulaExpression::Lambda { params: vec![ENTRY.to_string()], body: Box::new(body) };
+        Some(Some(VocabularyReading::Worked { lambda, beside }))
+    }
+
+    /// A formula of an entry's field as a lambda's body over the entry - its `../` read from
+    /// `ENTRY` - if it reads nothing else of the entry or around it; the fields it reads by `../`
+    /// go to `beside`.
+    fn over_the_entry(
+        expr: &FormulaExpression,
+        params: &[String],
+        list: &str,
+        beside: &mut Vec<String>,
+    ) -> Option<FormulaExpression> {
+        let path = |path: &[String], beside: &mut Vec<String>| -> Option<Vec<String>> {
+            let first = path.first()?;
+            if first == ".." {
+                let name = path.get(1).filter(|n| *n != ".." && *n != ".")?;
+                beside.push(name.clone());
+                Some(std::iter::once(ENTRY.to_string()).chain(path[1..].iter().cloned()).collect())
+            } else if first == "/" && !path.iter().any(|s| s == list || s == "..") {
+                Some(path.to_vec())
+            } else if params.contains(first) && !path.iter().any(|s| s == "..") {
+                Some(path.to_vec())
+            } else {
+                None
+            }
+        };
+        let each = |e: &FormulaExpression, beside: &mut Vec<String>| Self::over_the_entry(e, params, list, beside);
+        Some(match expr {
+            FormulaExpression::Number(_) | FormulaExpression::StringLiteral(_) | FormulaExpression::BooleanLiteral(_) => expr.clone(),
+            FormulaExpression::FieldReference(name) if params.contains(name) => expr.clone(),
+            FormulaExpression::FieldReference(_) => return None,
+            FormulaExpression::PathReference(p) => FormulaExpression::PathReference(path(p, beside)?),
+            FormulaExpression::PathParam { path: p, param } => {
+                FormulaExpression::PathParam { path: path(p, beside)?, param: param.clone() }
+            }
+            FormulaExpression::Lambda { params: inner, body } => {
+                let all: Vec<String> = params.iter().chain(inner.iter()).cloned().collect();
+                FormulaExpression::Lambda {
+                    params: inner.clone(),
+                    body: Box::new(Self::over_the_entry(body, &all, list, beside)?),
+                }
+            }
+            FormulaExpression::MethodChain { base, calls } => {
+                let base = Box::new(each(base, beside)?);
+                let mut made = Vec::new();
+                for call in calls {
+                    let mut args = Vec::new();
+                    for arg in &call.args {
+                        args.push(each(arg, beside)?);
+                    }
+                    made.push(MethodCall { name: call.name.clone(), args });
+                }
+                FormulaExpression::MethodChain { base, calls: made }
+            }
+            FormulaExpression::UnaryOp { operator, expr } => {
+                FormulaExpression::UnaryOp { operator: operator.clone(), expr: Box::new(each(expr, beside)?) }
+            }
+            FormulaExpression::BinaryOp { left, operator, right } => FormulaExpression::BinaryOp {
+                left: Box::new(each(left, beside)?),
+                operator: operator.clone(),
+                right: Box::new(each(right, beside)?),
+            },
+            FormulaExpression::FunctionCall { name, args } => {
+                let mut made = Vec::new();
+                for arg in args {
+                    made.push(each(arg, beside)?);
+                }
+                FormulaExpression::FunctionCall { name: name.clone(), args: made }
+            }
+            FormulaExpression::Conditional { condition, then_branch, else_branch } => FormulaExpression::Conditional {
+                condition: Box::new(each(condition, beside)?),
+                then_branch: Box::new(each(then_branch, beside)?),
+                else_branch: Box::new(each(else_branch, beside)?),
+            },
+            FormulaExpression::PathFollow { base, segments } if !segments.iter().any(|s| s == "..") => {
+                FormulaExpression::PathFollow { base: Box::new(each(base, beside)?), segments: segments.clone() }
+            }
+            FormulaExpression::PathFollow { .. } => return None,
+        })
+    }
+
+    /// What a vocabulary takes of each entry in a list's parts not read: its key, and those of
+    /// `VOCABULARY_FIELDS` its template holds, as text - see `vocabulary_reading`. A field is read
+    /// by one chain of its own, so each is summarised and kept on its own; none of them filters,
+    /// so within a part they give one value for each entry, in the same order. An entry without a
+    /// key is left out.
+    pub fn unread_vocabulary(
+        list: &OverseerNode,
+        key: &str,
+        context: &EvaluationContext,
+    ) -> Result<Vec<(String, Vec<(String, String)>)>, String> {
+        let (_, template) =
+            crate::partsums::template_of(list).ok_or_else(|| "its entries' template is not known".to_string())?;
+        let mut kept: std::collections::HashMap<String, Vec<OverseerValue>> = std::collections::HashMap::new();
+        let mut written = |field: &str| -> Result<Vec<OverseerValue>, String> {
+            if let Some(values) = kept.get(field) {
+                return Ok(values.clone());
+            }
+            let x = "x".to_string();
+            let chain = Summarised {
+                keyed: None,
+                steps: vec![MethodCall {
+                    name: "map".to_string(),
+                    args: vec![FormulaExpression::Lambda {
+                        params: vec![x.clone()],
+                        body: Box::new(FormulaExpression::PathReference(vec![x, field.to_string()])),
+                    }],
+                }],
+                projection: None,
+                fields: vec![field.to_string()],
+                name: format!("vocabulary | {}", field),
+            };
+            let values = Self::unread_values(list, &[], &chain, context)?;
+            kept.insert(field.to_string(), values.clone());
+            Ok(values)
+        };
+        let keys = written(key)?;
+        let mut fields = Vec::new();
+        for field in Self::VOCABULARY_FIELDS {
+            if field == key {
+                continue;
+            }
+            let values = match Self::vocabulary_reading(&template, &list.name, field) {
+                None => continue,
+                Some(None) => return Err(format!("its entries' field '{}' cannot be had from summaries", field)),
+                Some(Some(VocabularyReading::Written)) => written(field)?,
+                Some(Some(VocabularyReading::Worked { lambda, beside })) => {
+                    let mut read = Vec::new();
+                    for name in &beside {
+                        let values = written(name)?;
+                        if values.len() != keys.len() {
+                            return Err(format!("its entries' field '{}' did not give one value each", name));
+                        }
+                        read.push(values);
+                    }
+                    (0..keys.len())
+                        .map(|at| {
+                            let mut entry = OverseerNode::new(ENTRY.to_string());
+                            for (name, values) in beside.iter().zip(&read) {
+                                let mut held = OverseerNode::new(name.clone());
+                                held.parameters.insert("value".to_string(), values[at].clone());
+                                entry.children.push(held);
+                            }
+                            Self::eval_lambda(&lambda, None, Some(&entry), None, context).unwrap_or(OverseerValue::Null)
+                        })
+                        .collect()
+                }
+            };
+            if values.len() != keys.len() {
+                return Err(format!("its entries' field '{}' did not give one value each", field));
+            }
+            fields.push((field, values));
+        }
+        let text = |value: &OverseerValue| match value {
+            OverseerValue::Null => None,
+            value => Some(Self::value_to_string(value)).filter(|s| !s.is_empty() && s != "null"),
+        };
+        Ok(keys
+            .iter()
+            .enumerate()
+            .filter_map(|(at, key)| {
+                let key = text(key)?;
+                let said = fields
+                    .iter()
+                    .filter_map(|(field, values)| Some((field.to_string(), text(&values[at])?)))
+                    .collect();
+                Some((key, said))
+            })
+            .collect())
     }
 
     /// Whether a formula names a list - by its name, as a step of a path - other than through a

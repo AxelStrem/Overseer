@@ -431,7 +431,7 @@ when the parts are periods (`week`, `month`) and `sort_by` puts the newest first
 list says how many parts it left. Whatever reads the list as a whole still sees all of it:
 
 - a formula anywhere in the document, or in a template it is made from, that names the list -
-  a `find` in it, a `reduce` over it, a `context` or `vocabulary` of it - has every part read,
+  a `find` in it, a `reduce` over it, a `link` or a `context` naming it - has every part read,
   unless a summary answers it (below). A name in an action is not counted: an action that looks
   in the list for an entry it has not read runs again with every part read;
 - a read of the list or of anything in it over the API, and a write to an entry, have every part
@@ -461,6 +461,16 @@ reads the clock, `.map(|h| minutes_since(h/done_at)).min()`, is the usual case: 
 `minutes_since(... .map(|h| h/done_at).max())`. The list then says which formula made it read
 everything (the preview lists that among its problems, and `OVERSEER_PROFILE` prints it). A field of
 the entry that a formula works out, read by the chain, has every part read too.
+
+A `vocabulary` naming the list, its own or a `context vocabulary`, does not have its parts read
+either. What a chip is drawn from - each entry's key, `name`, `title`, `colour` and `icon` - is
+summarised the same way for the parts not read, so a `<#key>` naming an old entry draws as it would
+with every part read. That entry is not in the page, so its chip shows nothing when pressed. A
+field the template works out by a formula is worked out again for each of those entries when the
+formula reads only the fields beside it (`../status`) and what it names from the document's top -
+a closed item's chip in its status's colour,
+`$(/project/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())`. Any other formula
+there has the vocabulary read every part.
 
 #### Moving entries by hand
 

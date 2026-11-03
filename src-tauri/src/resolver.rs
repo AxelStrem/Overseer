@@ -217,9 +217,10 @@ pub const READ_WHOLE: &str = "_parts_read_whole";
 /// or every one of them - `None` - when something reads it whole.
 ///
 /// Read whole when a formula anywhere in the document, or in what its templates bring, names the
-/// list - a `find` in it, a vocabulary made of it - since what one reads cannot be known before it
+/// list - a `find` in it, a link into it - since what one reads cannot be known before it
 /// is worked out, and a list read short would answer it wrong. Not for a chain the summaries of
-/// its parts answer, a total or a count over it, nor `fresh_key` - see `partsums`. Named by its
+/// its parts answer, a total or a count over it, nor `fresh_key` - see `partsums` - nor a
+/// vocabulary made of it, given the entries it does not hold by `name_unread_entries`. Named by its
 /// name as a step of a path: a false likeness costs only reading it whole, which is what a list
 /// without a window does. What named it is said in `named_by`. Also when this interaction is about something in the list - a write to an old
 /// entry, or a read of the list, which keeps `<list>/*` in view - or a working out before this one
@@ -242,7 +243,11 @@ fn parts_wanted(
     let named = NAMED_BY_FORMULAS.with(|n| n.borrow().get(&list.name).cloned());
     let named = named.unwrap_or_else(|| {
         let mut seen = std::collections::HashSet::new();
-        let named = names_the_list(root, &list.name, &mut seen);
+        let mut vocabulary = None;
+        let named = names_the_list(root, &list.name, &mut seen, &mut vocabulary);
+        // A vocabulary is given the entries of the parts not read from their summaries - see
+        // `name_unread_entries` - unless they cannot give what its chips are drawn from.
+        let named = named.or_else(|| vocabulary.filter(|_| !summaries_name_its_entries(list, root)));
         NAMED_BY_FORMULAS.with(|n| n.borrow_mut().insert(list.name.clone(), named.clone()));
         named
     });
@@ -261,7 +266,16 @@ fn parts_wanted(
 /// left out: an action is run when it is pressed,
 /// and reaching past what a list holds then works the press out again with the list read whole -
 /// see `note_missed_under`.
-fn names_the_list(nodes: &[OverseerNode], name: &str, seen: &mut std::collections::HashSet<String>) -> Option<String> {
+///
+/// A vocabulary naming it - a `vocabulary` parameter, or a `context vocabulary` - is said in
+/// `vocabulary` rather than as what names it: its chips are drawn from the summaries of the parts
+/// not read - see `name_unread_entries`.
+fn names_the_list(
+    nodes: &[OverseerNode],
+    name: &str,
+    seen: &mut std::collections::HashSet<String>,
+    vocabulary: &mut Option<String>,
+) -> Option<String> {
     let says = |text: &str| text.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|word| word == name);
     let mut bases = Vec::new();
     let mut found = None;
@@ -271,6 +285,7 @@ fn names_the_list(nodes: &[OverseerNode], name: &str, seen: &mut std::collection
         says: &dyn Fn(&str) -> bool,
         bases: &mut Vec<String>,
         found: &mut Option<String>,
+        vocabulary: &mut Option<String>,
     ) {
         for node in nodes {
             if found.is_some() || node.node_type == "on" {
@@ -299,16 +314,21 @@ fn names_the_list(nodes: &[OverseerNode], name: &str, seen: &mut std::collection
                     }
                     OverseerValue::String(text) if found.is_none() && a_path && says(text) => {
                         let said = if node.node_type == "context" { node.name.as_str() } else { key.as_str() };
-                        *found = Some(format!("{} \"{}\"", said, text));
+                        let what = format!("{} \"{}\"", said, text);
+                        if said == "vocabulary" {
+                            vocabulary.get_or_insert(what);
+                        } else {
+                            *found = Some(what);
+                        }
                     }
                     OverseerValue::Template(template) => bases.push(template.clone()),
                     _ => {}
                 }
             }
-            walk(&node.children, name, says, bases, found);
+            walk(&node.children, name, says, bases, found, vocabulary);
         }
     }
-    walk(nodes, name, &says, &mut bases, &mut found);
+    walk(nodes, name, &says, &mut bases, &mut found, vocabulary);
     if found.is_some() {
         return found;
     }
@@ -317,12 +337,30 @@ fn names_the_list(nodes: &[OverseerNode], name: &str, seen: &mut std::collection
             continue;
         }
         if let Some(base) = crate::bases::find(nodes, &template) {
-            if let Some(what) = names_the_list(std::slice::from_ref(&base), name, seen) {
+            if let Some(what) = names_the_list(std::slice::from_ref(&base), name, seen, vocabulary) {
                 return Some(what);
             }
         }
     }
     None
+}
+
+/// Whether summaries of a list's parts can give a vocabulary what it draws a chip from: the
+/// list's key as its entries write it, and each of `FormulaEvaluator::VOCABULARY_FIELDS` its
+/// entries' template holds as `FormulaEvaluator::vocabulary_reading` can have it. Not when the
+/// template cannot be found.
+fn summaries_name_its_entries(list: &OverseerNode, root: &[OverseerNode]) -> bool {
+    use crate::formula_evaluator::{FormulaEvaluator, VocabularyReading};
+    let Some(OverseerValue::Template(path)) = list.parameters.get("entry") else { return false };
+    let Some(template) = crate::bases::find(root, path) else { return false };
+    let key = match list.parameters.get("key") {
+        Some(OverseerValue::String(key)) if !key.is_empty() => key.as_str(),
+        _ => "tag",
+    };
+    matches!(FormulaEvaluator::vocabulary_reading(&template, &list.name, key), Some(Some(VocabularyReading::Written)))
+        && FormulaEvaluator::VOCABULARY_FIELDS
+            .iter()
+            .all(|field| !matches!(FormulaEvaluator::vocabulary_reading(&template, &list.name, field), Some(None)))
 }
 
 /// Note that a read or an action looked in a list for something it does not hold, while the list
@@ -1283,8 +1321,122 @@ fn resolve_document_once(nodes: &mut Vec<OverseerNode>) {
         eprintln!("[PHASE]   sortkeys {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
 
+    // What a vocabulary names in the parts a list has not read - see `name_unread_entries`.
+    let t = std::time::Instant::now();
+    name_unread_entries(nodes);
+    if profiling {
+        eprintln!("[PHASE]   vocabularies {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    }
+
     // Phase 1: initialize and validate mount nodes (lazy placeholders only)
     initialize_and_validate_mount_nodes(nodes);
+}
+
+/// On a list with parts not read that a vocabulary names: what the vocabulary takes of the
+/// entries in those parts - each one's key, and the fields its chip is drawn from - as a JSON
+/// array of objects, `[{"key": "a", "title": "..."}]`. Read from the summaries of its parts, so
+/// a chip naming an old entry draws as it would with the list read whole, and nothing reads the
+/// parts for it - see `names_the_list`.
+pub const UNREAD_VOCABULARY: &str = "_parts_vocabulary";
+
+/// Give each list with parts not read that a vocabulary names its `UNREAD_VOCABULARY`, and take
+/// it from a list that no longer wants it.
+///
+/// A vocabulary names its lists as paths, by the last step of each: a false likeness costs only
+/// the summaries of a list nobody draws chips from.
+fn name_unread_entries(nodes: &mut Vec<OverseerNode>) {
+    fn said(nodes: &[OverseerNode], names: &mut std::collections::HashSet<String>) {
+        for node in nodes {
+            let text = if node.node_type == "context" && node.name == "vocabulary" {
+                node.parameters.get("_computed_value").or_else(|| node.parameters.get("value"))
+            } else {
+                node.parameters.get("vocabulary")
+            };
+            if let Some(OverseerValue::String(text)) = text {
+                for path in text.split(',') {
+                    if let Some(last) = path.split('/').map(str::trim).filter(|s| !s.is_empty()).last() {
+                        names.insert(last.to_string());
+                    }
+                }
+            }
+            said(&node.children, names);
+        }
+    }
+    fn lists(
+        nodes: &[OverseerNode],
+        root: &[OverseerNode],
+        names: &std::collections::HashSet<String>,
+        at: &mut Vec<usize>,
+        found: &mut Vec<(Vec<usize>, Option<String>)>,
+    ) {
+        for (index, node) in nodes.iter().enumerate() {
+            at.push(index);
+            if node.node_type == "list" {
+                let wanted = crate::parts::leaves_parts_unread(node) && names.contains(&node.name);
+                if wanted {
+                    found.push((at.clone(), records_of(node, root)));
+                } else if node.parameters.contains_key(UNREAD_VOCABULARY) {
+                    found.push((at.clone(), None));
+                }
+            }
+            lists(&node.children, root, names, at, found);
+            at.pop();
+        }
+    }
+    fn records_of(list: &OverseerNode, root: &[OverseerNode]) -> Option<String> {
+        let key = match list.parameters.get("key") {
+            Some(OverseerValue::String(key)) if !key.is_empty() => key.as_str(),
+            _ => "tag",
+        };
+        let context = crate::formula_evaluator::EvaluationContext {
+            current_node: list,
+            parent_node: None,
+            document_root: root,
+            node_path: Vec::new(),
+            var_bindings: std::collections::HashMap::new(),
+        };
+        match crate::formula_evaluator::FormulaEvaluator::unread_vocabulary(list, key, &context) {
+            Ok(records) => {
+                let records: Vec<serde_json::Value> = records
+                    .into_iter()
+                    .map(|(key, fields)| {
+                        let mut record = serde_json::Map::new();
+                        record.insert("key".to_string(), serde_json::Value::String(key));
+                        for (field, text) in fields {
+                            record.insert(field, serde_json::Value::String(text));
+                        }
+                        serde_json::Value::Object(record)
+                    })
+                    .collect();
+                serde_json::to_string(&records).ok()
+            }
+            Err(why) => {
+                if profile_enabled() {
+                    eprintln!("[PARTS] {}: no vocabulary from its parts, since {}", list.name, why);
+                }
+                None
+            }
+        }
+    }
+    let mut names = std::collections::HashSet::new();
+    said(nodes, &mut names);
+    let mut found = Vec::new();
+    lists(nodes, nodes, &names, &mut Vec::new(), &mut found);
+    for (at, records) in found {
+        let Some((first, rest)) = at.split_first() else { continue };
+        let mut node = &mut nodes[*first];
+        for index in rest {
+            node = &mut node.children[*index];
+        }
+        match records {
+            Some(records) => {
+                node.parameters.insert(UNREAD_VOCABULARY.to_string(), OverseerValue::String(records));
+            }
+            None => {
+                node.parameters.remove(UNREAD_VOCABULARY);
+            }
+        }
+    }
 }
 
 /// Selective resolution that only processes specific field paths
