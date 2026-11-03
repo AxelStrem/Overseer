@@ -556,6 +556,6 @@ tab project (label="Project", mutable=true) {
     }
 
     tab (label="Closed", hover-text="Finished and cancelled items, newest first") {
-        list History (entry=<Finished>, key="handle", layout="vertical", spacing=1, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) { }
+        list History (entry=<Finished>, key="handle", window=20, parts=$(|x| week(x/finished_at)), layout="vertical", spacing=1, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) { }
     }
 }
