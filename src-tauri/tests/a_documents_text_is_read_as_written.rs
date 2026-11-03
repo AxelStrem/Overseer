@@ -12,11 +12,16 @@ use std::process::{Child, Command, Stdio};
 
 const TOKEN: &str = "the-service-token-of-this-test";
 
-const SHARING: &str = "div (hidden=true) {\r\n    div Share {\r\n        string document = \"\"\r\n        string with = \"\"\r\n        string can = \"read\"\r\n    }\r\n}\r\n\r\nlist Shares (entry=<Share>) {\r\n    - {\r\n        - document = \"foods.os\"\r\n        - with = \"bob\"\r\n        - can = \"edit\"\r\n    }\r\n}\r\n";
+const SHARING: &str = "div (hidden=true) {\r\n    div Share {\r\n        string document = \"\"\r\n        string with = \"\"\r\n        string can = \"read\"\r\n    }\r\n}\r\n\r\nlist Shares (entry=<Share>) {\r\n    - {\r\n        - document = \"foods.os\"\r\n        - with = \"bob\"\r\n        - can = \"edit\"\r\n    }\r\n    - {\r\n        - document = \"log.os\"\r\n        - with = \"bob\"\r\n    }\r\n}\r\n";
 
 // CRLF, a comment and a field left to its template: what a parser of the text has to see as it
 // is, and what a resolved read would not give back.
 const FOODS: &str = "// the catalogue\r\ntab foods (mutable=true) {\r\n    string apple = \"Apple\"\r\n}\r\n";
+
+// A list that keeps each entry in a part of its own, as a history keeps a week in each.
+const LOG: &str = "div (hidden=true) {\r\n    div Done {\r\n        string handle = \"\"\r\n    }\r\n}\r\n\r\nlist History (entry=<Done>, key=\"handle\", parts=$(|x| x/handle)) { }\r\n";
+const PART_A: &str = "list History {\r\n    - {\r\n        - handle = \"a\"\r\n    }\r\n}\r\n";
+const PART_B: &str = "list History {\r\n    - {\r\n        - handle = \"b\"\r\n    }\r\n}\r\n";
 
 struct Server {
     child: Child,
@@ -45,6 +50,10 @@ fn start(port: u16, name: &str) -> Server {
     write(&root, "ap31/foods.os", FOODS);
     write(&root, "ap31/private.os", "string entry = \"a secret\"\r\n");
     write(&root, "bob/weight.os", "int kg = 80\r\n");
+    write(&root, "ap31/log.os", LOG);
+    write(&root, "ap31/log.parts/History/a.os", PART_A);
+    write(&root, "ap31/log.parts/History/b.os", PART_B);
+    write(&root, "ap31/private.parts/History/b.os", PART_B);
     let mut child = Command::new(env!("CARGO_BIN_EXE_overseer-server"))
         .args([
             "--root",
@@ -282,4 +291,39 @@ fn a_version_held_does_not_get_past_a_refusal() {
     let path = format!("/v1/source?document=ap31/private.os&since={}", version);
     assert_eq!(ask(port, "GET", &path, &[key], None).status, 404);
     assert_eq!(ask(port, "GET", &path, &[], None).status, 401);
+}
+
+#[test]
+fn a_document_names_its_parts_and_whoever_reads_it_reads_them() {
+    let server = start(4875, "parts");
+    let port = server.port;
+    let key = bobs_key(&server);
+    let host = source(port, "ap31/log.os", &[key.clone()]);
+    assert_eq!(host.status, 200, "{}", host.body);
+    let read = host.json();
+    assert_eq!(
+        read["parts"],
+        serde_json::json!({"History": ["ap31/log.parts/History/a.os", "ap31/log.parts/History/b.os"]})
+    );
+    assert_eq!(source(port, "ap31/foods.os", &[key.clone()]).json()["parts"], serde_json::json!({}));
+    let part = source(port, "ap31/log.parts/History/a.os", &[key.clone()]);
+    assert_eq!(part.status, 200, "{}", part.body);
+    assert_eq!(part.json()["text"].as_str().unwrap(), PART_A);
+    // The part of a document not shared is not reached through it either.
+    assert_eq!(source(port, "ap31/private.parts/History/b.os", &[key.clone()]).status, 404);
+
+    // Unchanged, it is answered 304 under its ETag, and a new part is not hidden by that.
+    let tag = host
+        .headers
+        .lines()
+        .find_map(|line| line.to_ascii_lowercase().starts_with("etag:").then(|| line[5..].trim().to_string()))
+        .expect("an ETag");
+    assert_ne!(tag.trim_matches('"'), read["version"].as_str().unwrap(), "the tag covers the parts too");
+    assert_eq!(source(port, "ap31/log.os", &[key.clone(), format!("If-None-Match: {}", tag)]).status, 304);
+    let root = std::env::temp_dir().join(format!("overseer-source-parts-{}", std::process::id())).join("documents");
+    write(&root, "ap31/log.parts/History/c.os", PART_B.replace("\"b\"", "\"c\"").as_str());
+    let after = source(port, "ap31/log.os", &[key, format!("If-None-Match: {}", tag)]);
+    assert_eq!(after.status, 200, "{}", after.body);
+    assert_eq!(after.json()["version"], read["version"], "the document's own text is as it was");
+    assert_eq!(after.json()["parts"]["History"].as_array().unwrap().len(), 3);
 }

@@ -160,8 +160,12 @@ pub fn allows(root: &Path, asker: &Asker, relative: &Path, need: Need) -> bool {
     if document == SHARING {
         return false;
     }
+    // A part a list keeps its entries in is read by whoever may read its document - a reader of
+    // the text is sent its name with the document's. Only read: it is written through its document.
+    let host = part_of(&inside).filter(|_| need == Need::Read);
     shared_by(&root.join(&owner)).iter().any(|share| {
-        share.document == document
+        (share.document == document
+            || host.as_deref().is_some_and(|host| Path::new(&share.document).with_extension("") == Path::new(host)))
             && match asker {
                 Asker::Person(me) => share.with == *me || share.with == EVERYONE,
                 Asker::Stranger => share.with == EVERYONE,
@@ -170,6 +174,16 @@ pub fn allows(root: &Path, asker: &Asker, relative: &Path, need: Need) -> bool {
             }
             && (need == Need::Read || share.can == "edit")
     })
+}
+
+/// For a file in a document's parts folder, `<doc>.parts/<list>/<part>.os`: the document's name
+/// within its owner's folder, without its extension.
+fn part_of(inside: &[String]) -> Option<String> {
+    let [folder @ .., parts, _list, _part] = inside else {
+        return None;
+    };
+    let stem = parts.strip_suffix(".parts").filter(|s| !s.is_empty())?;
+    Some(folder.iter().map(String::as_str).chain([stem]).collect::<Vec<_>>().join("/"))
 }
 
 /// What a person's `sharing.os` says before they have shared anything.

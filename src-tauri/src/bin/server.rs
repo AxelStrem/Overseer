@@ -945,8 +945,8 @@ async fn read_source(
         .await
         .map_err(|e| respond(RequestError::Failed(format!("reading panicked: {}", e))))?
         .map_err(respond)?;
-    let tag = format!("\"{}\"", source.version);
-    let held = |version: &str| version.trim().trim_start_matches("W/").trim_matches('"') == source.version;
+    let tag = format!("\"{}\"", source.tag);
+    let held = |version: &str| version.trim().trim_start_matches("W/").trim_matches('"') == source.tag;
     let unchanged = which.since.as_deref().is_some_and(held)
         || headers
             .get(header::IF_NONE_MATCH)
