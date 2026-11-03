@@ -171,7 +171,8 @@ fn asking_for_more_reads_the_next_part() {
 #[test]
 fn a_formula_naming_the_list_reads_every_part() {
     serialised(|| {
-        let (_sandbox, documents) = sandbox("total", &host("    int total (mutable=false) = $(History.sum(|x| x/points))\n"));
+        // A reduce, which no summary of a part answers - see `a_list_with_parts_answers_totals_from_summaries`.
+        let (_sandbox, documents) = sandbox("total", &host("    int total (mutable=false) = $(History.reduce(0, |a, x| a + x/points))\n"));
         let nodes = documents.open("log.os").expect("open");
         assert_eq!(value(&nodes, "log/total"), Some(OverseerValue::Integer(12)));
         assert_eq!(held(&nodes, "log/History"), vec!["a", "c", "b"], "in the order of the parts");
