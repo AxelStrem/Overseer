@@ -2029,6 +2029,16 @@ tags labels (vocabulary="/project/Labels", shape="box") = "perf"
 tags milestones (vocabulary="/project/Milestones", shape="slant") = "beta"
 ```
 
+`chip="icon"` draws each chip as its entry's icon alone - or the first letter of its name, for an
+entry without one - keeping its shape and colour, so a column of people can be as narrow as a
+chip. The whole chip shows when the mouse rests on it, above whatever the field's `hover-text`
+says. Only the field's own chips are drawn so: what its picker offers, and a filter over the
+list, keep their names, and a value the vocabulary does not hold keeps its full, marked chip.
+
+```overseer
+enum owner (label="by", vocabulary="/project/people/People", chip="icon", width=32px) = "ap31"
+```
+
 Handed to a formula, a `tags` field reads as a list, so a document can ask what it holds:
 
 ```overseer
@@ -2635,8 +2645,8 @@ div Tasks {
 - **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`
 - **Filters**: `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
-- **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`
-- **Tags**: `vocabulary`, `shape` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
+- **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`, `chip`
+- **Tags**: `vocabulary`, `shape`, `chip` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`
 - **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context, and `base=none` or `base=<node>` on an element of an override)

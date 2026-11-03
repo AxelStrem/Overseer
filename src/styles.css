@@ -3452,6 +3452,28 @@ body.ov-backdrop-moving {
     color: inherit;
 }
 
+/* `chip="icon"`: the entry's icon, or its initial, alone on the chip's colour - as narrow as a
+ * chip can be, the full one shown in the hover popup. */
+.tag-chip.chip-icon-only {
+    justify-content: center;
+    padding: var(--ov-chip-padding-icon, 1px 4px);
+    min-width: 22px;
+    box-sizing: border-box;
+}
+/* A line of text with nothing in it, so the chip stands as tall as one with a name beside it. */
+.tag-chip.chip-icon-only::after {
+    content: '\200b';
+}
+.tag-chip.chip-icon-only > .chip-initial {
+    font-weight: 600;
+}
+.overseer-hover-text > .tag-chip {
+    white-space: nowrap;
+}
+.overseer-hover-text > .hover-text-under-chip {
+    margin-top: 4px;
+}
+
 /* A chip that shows the entry it stands for when pressed. */
 .tag-chip.chip-reveals {
     cursor: pointer;

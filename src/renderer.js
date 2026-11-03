@@ -6218,7 +6218,7 @@ export class OverseerRenderer {
                 const removing = editable()
                     ? () => { write(held().filter(t => t !== tag)); paint() }
                     : null
-                const chip = this.tagChip(tag, vocabulary.get(tag), removing)
+                const chip = this.fieldChip(node, tag, vocabulary.get(tag), removing)
                 this.letChipReveal(chip, vocabulary.get(tag))
                 chips.appendChild(chip)
             }
@@ -6307,7 +6307,7 @@ export class OverseerRenderer {
                 chip.className = 'tag-chip enum-shown'
                 this.setTextWithIcons(chip, shown, node)
             } else if (value) {
-                chip = this.tagChip(value, vocabulary.get(value), null)
+                chip = this.fieldChip(node, value, vocabulary.get(value), null)
                 if (!vocabulary.has(value)) chip.title = 'not one of the values this field lists'
             } else {
                 // A placeholder stated empty is a place to press with nothing in it: a column
@@ -6331,7 +6331,7 @@ export class OverseerRenderer {
                 return
             }
             chip.classList.add('enum-choice')
-            chip.title = chip.title ? `${chip.title} - press to change` : 'press to change'
+            if (!chip.dataset.fullChip) chip.title = chip.title ? `${chip.title} - press to change` : 'press to change'
             chip.addEventListener('click', (event) => {
                 event.stopPropagation()
                 // Nor the entry this field is part of: an item is not its own parent.
@@ -6676,6 +6676,34 @@ export class OverseerRenderer {
             cross.addEventListener('click', (event) => { event.stopPropagation(); remove() })
             chip.appendChild(cross)
         }
+        return chip
+    }
+
+    /**
+     * One of a field's own chips, drawn as the field's `chip` asks. `chip="icon"` keeps the
+     * chip's shape and colour but draws only its entry's icon - or, for an entry with none, the
+     * first letter of its name - so a column of people or kinds can be narrow, and the full chip
+     * is shown in the hover popup instead (see `watchForHoverText`). A value the vocabulary does
+     * not hold keeps its full chip: it is a warning, and an icon alone could not say it.
+     */
+    fieldChip(node, tag, known, remove) {
+        const chip = this.tagChip(tag, known, remove)
+        const asked = String((node && this.getParameterValue(node, 'chip')) || '').trim().toLowerCase()
+        if (asked !== 'icon' || !known) return chip
+        const name = chip.querySelector(':scope > .chip-name')
+        if (name) name.remove()
+        if (!chip.querySelector(':scope > .chip-icon')) {
+            const initial = document.createElement('span')
+            initial.className = 'chip-initial'
+            initial.textContent = ([...nameAsText(known.name || tag)][0] || [...tag][0] || '').toUpperCase()
+            chip.prepend(initial)
+        }
+        chip.classList.add('chip-icon-only')
+        // The popup says it, with the chip itself; a native title would say it a second time.
+        chip.removeAttribute('title')
+        delete chip.dataset.text
+        chip.dataset.fullChip = tag
+        chip._fullChip = () => this.tagChip(tag, known, null)
         return chip
     }
 
@@ -8807,10 +8835,24 @@ export class OverseerRenderer {
         within.dataset.hoverTextWatched = '1'
 
         const show = (target) => {
-            const text = target.dataset.hoverText
-            if (!text) return
+            // A chip drawn as its icon alone shows the whole chip, and under it whatever the
+            // field it is in says on hover.
+            const full = typeof target._fullChip === 'function' ? target._fullChip : null
+            const text = target.closest('[data-hover-text]')?.dataset.hoverText
+            if (!text && !full) return
             const popup = this.theHoverPopup()
-            this.setTextWithIcons(popup, text)
+            if (full) {
+                popup.textContent = ''
+                popup.appendChild(full())
+                if (text) {
+                    const said = document.createElement('div')
+                    said.className = 'hover-text-under-chip'
+                    this.setTextWithIcons(said, text)
+                    popup.appendChild(said)
+                }
+            } else {
+                this.setTextWithIcons(popup, text)
+            }
             popup.style.display = 'block'
             // Placed against the field rather than the pointer, so it does not follow the mouse
             // around inside a wide cell. Above where there is room and below where there is not.
@@ -8833,7 +8875,7 @@ export class OverseerRenderer {
         }
 
         within.addEventListener('mouseover', (event) => {
-            const target = event.target?.closest?.('[data-hover-text]')
+            const target = event.target?.closest?.('[data-full-chip], [data-hover-text]')
             if (!target) return
             if (this._hoverTimer) clearTimeout(this._hoverTimer)
             // A moment's pause, so running the mouse across a table does not flash a popup for
@@ -8841,7 +8883,7 @@ export class OverseerRenderer {
             this._hoverTimer = setTimeout(() => show(target), 300)
         })
         within.addEventListener('mouseout', (event) => {
-            const target = event.target?.closest?.('[data-hover-text]')
+            const target = event.target?.closest?.('[data-full-chip], [data-hover-text]')
             if (!target) return
             hide()
         })

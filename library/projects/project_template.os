@@ -248,11 +248,11 @@ tab project (label="Project", mutable=true) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=14%) = ""
             mark (type="separator")
-            enum owner (label="by", vocabulary="/project/people/People", placeholder="", font-size=11px, width=6%,
+            enum owner (label="by", vocabulary="/project/people/People", chip="icon", placeholder="", font-size=11px, width=32px,
                         alignment="center",
                         hover-text="Whose item it is") = ""
             mark (type="separator")
-            string title (label="title", font-size=14px, width=31%,
+            string title (label="title", font-size=14px, width=37%,
                           hover-text="What is to be done; bold when it has parts",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
