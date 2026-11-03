@@ -176,7 +176,7 @@ pub fn mounts_written(nodes: &Vec<OverseerNode>, report: Option<&Changed>) -> Ve
             let address = ActionExecutor::build_disambiguated_path(document, &indices).join("/");
             let under = |reached: &str| reached == address || reached.starts_with(&format!("{}/", address));
             let changed = report.expect("a report, or every mount is looked at");
-            if !changed.fields.iter().any(|f| under(f)) && !changed.shapes.iter().any(|s| under(s.list())) {
+            if !changed.fields.iter().any(|f| under(f)) && !changed.every_shape().any(|s| under(s.list())) {
                 continue;
             }
         }
@@ -271,6 +271,12 @@ pub struct Changed {
     /// list or taken out of one. The graph can be carried through those - see
     /// `app_api::follow_the_shape` - rather than the whole document worked out again.
     pub shapes: Vec<Shape>,
+    /// The changes of shape already followed between two actions of the press - see
+    /// `app_api::settle_so_far` - and so no longer in `shapes`, which is what is still to follow.
+    /// They are changes all the same: a list with parts or in a mount that one reached is written
+    /// to its files, and finishing a project's item, whose append to History was followed before
+    /// the item was taken out of Items, wrote the record into the document rather than its part.
+    pub followed: Vec<Shape>,
     /// Whether the shape moved in a way `shapes` does not say - a list cleared, reordered or
     /// copied into, a mount brought in. Then nothing short of working the document out whole will
     /// do, which is what every change of shape did before `shapecost`.
@@ -302,6 +308,11 @@ pub struct Changed {
 }
 
 impl Changed {
+    /// Every change of shape the press made, followed already or not, in the order it made them.
+    pub fn every_shape(&self) -> impl Iterator<Item = &Shape> {
+        self.followed.iter().chain(self.shapes.iter())
+    }
+
     /// Every address whose value moved in the document the press worked on: the document's, and
     /// the viewer's as well. A viewer's value is not written down, but it was written into the
     /// tree the caller is about to show, and what reads it has to be worked out again just the
@@ -545,7 +556,8 @@ pub(crate) fn viewers_so_far() -> Vec<String> {
 pub(crate) fn shapes_seen_to(seen: usize) {
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
-            changed.shapes.drain(..seen.min(changed.shapes.len()));
+            let seen: Vec<Shape> = changed.shapes.drain(..seen.min(changed.shapes.len())).collect();
+            changed.followed.extend(seen);
         }
     });
 }

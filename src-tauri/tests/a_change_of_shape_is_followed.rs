@@ -89,6 +89,15 @@ const DOCUMENT: &str = r#"tab t (label="T", mutable=true) {
     }
     float recent_total = $(recent.map(|x| x/grams).sum())
 
+    list older (entry=<Meal>, window=1) {
+        - {
+            - grams = 6
+        }
+        - {
+            - grams = 8
+        }
+    }
+
     button first (label="first") {
         on click {
             prepend (list="/t/intake") {
@@ -261,16 +270,36 @@ fn a_press_that_adds_one_entry_and_takes_out_another_is_followed_both_times() {
 }
 
 #[test]
-fn a_list_showing_part_of_itself_is_worked_out_whole() {
-    // Which entries are in view is decided by working the document out, so a change to such a
-    // list is not followed - and still comes out right.
+fn a_list_showing_part_of_itself_is_followed() {
+    // Which entries are in view is decided again for the one list, as working the document out
+    // would decide it. A project tracker's History shows its newest twenty, and finishing an item
+    // worked the tracker out whole three times while it was not.
     serialised(|| {
         let (path, mut page) = opened("window");
         let whole = times_worked_out_whole();
         let fields = [("grams".to_string(), OverseerValue::Float(4.0))].into_iter().collect();
         take(&mut page, app_api::append_entry_at(&path, "d.os", vec!["t".into(), "recent".into()], fields, "s").unwrap());
-        assert!(times_worked_out_whole() > whole, "a windowed list was followed");
+        assert_eq!(times_worked_out_whole(), whole, "worked out whole");
         assert_eq!(number(&page, "t/recent_total"), Some(10.0));
+        agrees_with_a_fresh_open(&path, &page);
+    });
+}
+
+#[test]
+fn an_entry_brought_into_view_by_a_removal_is_made_and_worked_out() {
+    // Nothing reads the second of the older meals, and it is out of view, so an open never made
+    // it from its template. Taking out the first brings it in, made and worked out as an open would.
+    serialised(|| {
+        let (path, mut page) = opened("window_in");
+        assert_eq!(number(&page, "t/older/Meal__2/calories"), None, "worked out while out of view");
+        let whole = times_worked_out_whole();
+        let first = name_path(&page, "t/older/Meal__1");
+        take(&mut page, app_api::remove_entry_at(&path, "d.os", first, "s").unwrap());
+        assert_eq!(times_worked_out_whole(), whole, "worked out whole");
+        assert_eq!(number(&page, "t/older/Meal__1/calories"), Some(12.0));
+        write(&path, &mut page, "t/older/Meal__1/grams", OverseerValue::Float(10.0));
+        assert_eq!(number(&page, "t/older/Meal__1/calories"), Some(15.0));
+        assert_eq!(times_worked_out_whole(), whole, "worked out whole");
         agrees_with_a_fresh_open(&path, &page);
     });
 }

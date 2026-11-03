@@ -512,7 +512,8 @@ pub fn paths_within(node: &OverseerNode, path: &str) -> std::collections::HashSe
 ///
 /// The rest of what a whole resolve does is left out because it has nothing to do: an entry is
 /// made from a template that was instantiated with the document, so there are no templates left to
-/// copy, and a list that shows only some of its entries is never followed here, so no window moves.
+/// copy, and a list that shows only some of its entries has had its window decided again already -
+/// see `window_again`.
 /// Layout is what an entry just made still lacks from its place in the document, and it is cheap
 /// enough to run over all of it.
 pub fn resolve_after_a_change_of_shape(
@@ -606,7 +607,10 @@ fn narrow(
                 path,
                 root,
             );
-            FormulaEvaluator::evaluate_lambda_on_item(&sort_source, &context, child).ok()
+            // The window's own reading of every entry, not a reach past it - see `note_reached`.
+            // Run inside a press - a working out between its actions, or `window_again` - it
+            // counted as one, and the press was run again with every entry its sort read held.
+            not_reaching(|| FormulaEvaluator::evaluate_lambda_on_item(&sort_source, &context, child).ok())
         };
         order.push((*at, key));
     }
@@ -672,6 +676,112 @@ fn narrow(
         LEFT_OUT.to_string(),
         OverseerValue::Integer(left_out as i64),
     );
+}
+
+/// Decide again what a windowed list shows, after entries were made in it or taken out of it and
+/// the change is being followed rather than worked out whole - see `app_api::follow_the_shape`.
+///
+/// Which entries are in view is the same question `narrow` answers when the document is worked
+/// out, asked of this one list: the order its sort gives, the window, and what this reader asked
+/// to see more of. What it does with the answer is narrower than a working out would, and agrees
+/// with one in everything that is drawn or read. An entry that leaves view keeps what was worked
+/// out for it, as an entry something reaches past a window does, so nothing that read it reads
+/// anything different. One that stays out of view without having been worked out stays as it was
+/// written. And one that comes into view without having been worked out - the one after an entry
+/// taken out - is made from the list's template here, as the working out would have made it.
+///
+/// Gives the names of the entries it made, for the caller to work out every node of, as it does
+/// for an entry just made. `None` when the list is not where the address says or shows nothing
+/// of itself, and the document is worked out whole.
+pub fn window_again(nodes: &mut Vec<OverseerNode>, list: &str) -> Option<Vec<String>> {
+    let at = crate::addressing::indices_at_path(nodes, list)?;
+    // Its entries taken out of the document while it is narrowed, so the sort is worked out against
+    // the rest of it without a copy of the whole.
+    let mut node = {
+        let slot = node_at_indices_mut(nodes, &at)?;
+        let entries = std::mem::take(&mut slot.children);
+        let mut node = slot.clone();
+        node.children = entries;
+        node
+    };
+    let restore = |nodes: &mut Vec<OverseerNode>, node: OverseerNode| {
+        if let Some(slot) = node_at_indices_mut(nodes, &at) {
+            *slot = node;
+        }
+    };
+    let Some(window) = window_of(&node) else {
+        restore(nodes, node);
+        return None;
+    };
+    let wanted = window.saturating_mul(1 + asked_for_more(list));
+    let unworked: Vec<bool> = node.children.iter().map(not_worked_out).collect();
+    let mut trail: Vec<String> = list.split('/').map(str::to_string).collect();
+    // Narrowed as though every entry were worked out, and those nothing had worked out marked so
+    // again where they are still out of view: `narrow` itself would mark an entry that leaves view
+    // as never worked out, which is only true of one nothing has worked out yet.
+    narrow(&mut node, wanted, nodes, &mut trail, true);
+    let mut came_into_view = Vec::new();
+    for (entry, was_unworked) in node.children.iter_mut().zip(unworked) {
+        if !was_unworked {
+            continue;
+        }
+        if out_of_view(entry) && !is_held(list, &entry.name) {
+            entry.parameters.insert(NOT_WORKED_OUT.to_string(), OverseerValue::String(list.to_string()));
+        } else {
+            came_into_view.push(entry.name.clone());
+        }
+    }
+    if !came_into_view.is_empty() && !make_entries(&mut node, &came_into_view, nodes, list) {
+        restore(nodes, node);
+        return None;
+    }
+    restore(nodes, node);
+    Some(came_into_view)
+}
+
+/// Make these entries of a list from its template, as written, as a working out would have - see
+/// `window_again`. False when one of them could not be made.
+fn make_entries(node: &mut OverseerNode, names: &[String], root: &[OverseerNode], list: &str) -> bool {
+    // A list of only these entries, made the way the whole list is - without its window, which is
+    // decided, and without its parts, which are read.
+    let entries = std::mem::take(&mut node.children);
+    let mut alone = node.clone();
+    alone.children = entries.iter().filter(|e| names.contains(&e.name)).cloned().collect();
+    node.children = entries;
+    alone.parameters.remove("window");
+    alone.parameters.remove("parts");
+    let walked = WALKED.with(|w| {
+        let segments: Vec<String> = list.split('/').map(str::to_string).collect();
+        std::mem::replace(&mut *w.borrow_mut(), (segments, vec![crate::addressing::Level::default()]))
+    });
+    // As many passes as a template made of others needs, as the whole document is given.
+    for _ in 0..10 {
+        let mut missed = Vec::new();
+        if !resolve_node_templates(&mut alone, root, &mut missed) {
+            break;
+        }
+    }
+    WALKED.with(|w| *w.borrow_mut() = walked);
+    hold_numbers_as_declared(&mut alone.children);
+    for made in alone.children {
+        let Some(slot) = node.children.iter_mut().find(|e| e.name == made.name) else {
+            return false;
+        };
+        if made.node_type == "list_item" || made.node_type == "-" {
+            return false;
+        }
+        *slot = made;
+    }
+    true
+}
+
+fn node_at_indices_mut<'a>(nodes: &'a mut [OverseerNode], at: &[usize]) -> Option<&'a mut OverseerNode> {
+    let (first, rest) = at.split_first()?;
+    let mut node = nodes.get_mut(*first)?;
+    for i in rest {
+        node = node.children.get_mut(*i)?;
+    }
+    Some(node)
 }
 
 /// For a list drawn as a tree by a field naming each entry's parent (`tree="parent"`), the place
@@ -899,6 +1009,14 @@ pub fn note_reached(node: &OverseerNode) {
 /// Note what this work reaches past a window - see `note_reached`.
 pub fn reads_reach<T>(work: impl FnOnce() -> T) -> T {
     let was = REACHING.with(|on| on.replace(true));
+    let out = work();
+    REACHING.with(|on| on.set(was));
+    out
+}
+
+/// Run what is the resolver's own reading of entries, which reaches nothing - see `note_reached`.
+fn not_reaching<T>(work: impl FnOnce() -> T) -> T {
+    let was = REACHING.with(|on| on.replace(false));
     let out = work();
     REACHING.with(|on| on.set(was));
     out

@@ -1601,10 +1601,13 @@ pub(crate) fn settle_so_far(nodes: &mut Vec<OverseerNode>) -> bool {
 /// formulas on; marking a task done reached 90 on its way into the history and 65 on its way out
 /// of the open list, of 3,514.
 ///
-/// Not followed, and worked out whole: a list showing only some of its entries, since which ones
-/// is decided by working the document out; a list holding two entries of one name, where a name
-/// says nothing about which; and a list inside another that also changed, whose names would have
-/// to be carried through each other's.
+/// A list showing only some of its entries decides again which ones, the way working the document
+/// out would - see `resolver::window_again`. Finishing an item of a project tracker, whose History
+/// shows its newest twenty, worked the document out whole three times before it did.
+///
+/// Not followed, and worked out whole: a list holding two entries of one name, where a name says
+/// nothing about which; and a list inside another that also changed, whose names would have to be
+/// carried through each other's.
 fn follow_the_shape(
     nodes: &mut Vec<OverseerNode>,
     graph: &mut crate::dependencies::Graph,
@@ -1617,6 +1620,29 @@ fn follow_the_shape(
         return Some(());
     }
     let started = std::time::Instant::now();
+    // Why it was not, for whoever is measuring: worked out whole instead, it is the slow way.
+    let not_followed = |why: String| {
+        if resolver::profile_enabled() {
+            eprintln!("[PHASE]   not followed: {}", why);
+        }
+    };
+
+    // What changed inside an entry the same change made is part of making it: every node of that
+    // entry is worked out below. A finished item copied into History brings its conversation, each
+    // comment appended to the record's own list, and was not followed for it.
+    let made: Vec<String> = shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            Shape::Added { list, entry } => Some(format!("{}/{}/", list, entry)),
+            Shape::Removed { .. } => None,
+        })
+        .collect();
+    let shapes: Vec<Shape> = shapes
+        .iter()
+        .filter(|shape| !made.iter().any(|entry| shape.list().starts_with(entry.as_str())))
+        .cloned()
+        .collect();
+    let shapes = shapes.as_slice();
 
     let mut lists: Vec<&str> = Vec::new();
     for shape in shapes {
@@ -1625,17 +1651,23 @@ fn follow_the_shape(
         }
     }
     for list in &lists {
-        let node = crate::addressing::node_at_path(nodes, list)?;
-        if node.node_type != "list" || resolver::is_windowed(node) || resolver::not_worked_out(node) {
+        let Some(node) = crate::addressing::node_at_path(nodes, list) else {
+            not_followed(format!("no list at {}", list));
+            return None;
+        };
+        if node.node_type != "list" || resolver::not_worked_out(node) {
+            not_followed(format!("{} is no list worked out", list));
             return None;
         }
         let mut names = HashSet::new();
-        if !node.children.iter().all(|entry| names.insert(entry.name.as_str())) {
+        if let Some(twice) = node.children.iter().find(|entry| !names.insert(entry.name.as_str())) {
+            not_followed(format!("{} holds two entries named {}", list, twice.name));
             return None;
         }
     }
     let nested = |a: &str, b: &str| b.len() > a.len() && b.starts_with(a) && b[a.len()..].starts_with('/');
     if lists.iter().any(|a| lists.iter().any(|b| nested(a, b))) {
+        not_followed("a list inside another that changed too".to_string());
         return None;
     }
 
@@ -1659,7 +1691,10 @@ fn follow_the_shape(
     // which names it was recorded.
     let mut renames: HashMap<&str, HashMap<String, String>> = HashMap::new();
     for (list, was, now) in resolver::name_entries_as_parsed(nodes) {
-        let list: &str = lists.iter().find(|l| **l == list)?;
+        let Some(list) = lists.iter().find(|l| **l == list).copied() else {
+            not_followed(format!("the entries of {} were renamed, which this change did not do", list));
+            return None;
+        };
         renames.entry(list).or_default().insert(was, now);
     }
     let (nothing_gone, no_renames) = (HashSet::new(), HashMap::new());
@@ -1688,6 +1723,25 @@ fn follow_the_shape(
     };
     let mut targets: HashSet<String> = reached.iter().filter_map(|path| now_called(path)).collect();
     let from_the_graph = targets.len();
+    // What a list showing part of itself shows now, decided again - see `resolver::window_again`.
+    // An entry it brought into view without anything having worked it out is worked out whole,
+    // as one just made is below.
+    for list in &lists {
+        let windowed = crate::addressing::node_at_path(nodes, list).is_some_and(resolver::is_windowed);
+        if !windowed {
+            continue;
+        }
+        let Some(came_into_view) = resolver::window_again(nodes, list) else {
+            not_followed(format!("what {} shows could not be decided again", list));
+            return None;
+        };
+        for entry in came_into_view {
+            let path = format!("{}/{}", list, entry);
+            let at = crate::addressing::indices_at_path(nodes, &path)?;
+            crate::contexts::resolve_contexts_within(nodes, &at);
+            targets.extend(resolver::paths_within(crate::addressing::node_at_path(nodes, &path)?, &path));
+        }
+    }
     // Every node of an entry just made: nothing has worked it out, and the graph has never seen
     // it. One made from a template is copied from the template as the document already has it,
     // so there is nothing left to instantiate - and one that is not is not followed.

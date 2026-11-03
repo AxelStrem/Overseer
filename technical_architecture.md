@@ -129,7 +129,10 @@ knowing about because each has a cost:
   graph like any other change.
 - **Windowed lists.** `window=3` on a list resolves three entries instead of forty-three, and
   the window is applied before templates are instantiated rather than after, so the work is
-  never done.
+  never done. An entry made in such a list or taken out of it is followed through the graph like
+  any other change of shape: the window is decided again for that list alone, an entry that
+  leaves view keeps what was worked out for it, and one that comes into view is made from the
+  template then.
 - **An equality index** for `filter`, built per pass and keyed by the field compared. Strings
   only: `compare_values` falls back to text, so `5 == "5"` while `5.0 != "5.0"`, and an index
   over a comparison that is not transitive would answer differently from the scan it replaces.

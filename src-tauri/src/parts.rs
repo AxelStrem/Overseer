@@ -451,7 +451,7 @@ pub fn written(nodes: &mut Vec<OverseerNode>, report: Option<&crate::actions::Ch
         if !every_one {
             let under = |reached: &str| reached == address || reached.starts_with(&format!("{}/", address));
             let changed = report.expect("a report, or every list is looked at");
-            if !changed.fields.iter().any(|f| under(f)) && !changed.shapes.iter().any(|s| under(s.list())) {
+            if !changed.fields.iter().any(|f| under(f)) && !changed.every_shape().any(|s| under(s.list())) {
                 continue;
             }
         }
