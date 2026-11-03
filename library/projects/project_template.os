@@ -244,6 +244,10 @@ tab project (label="Project", mutable=true) {
                     }
                 }
             }
+            on click {
+                narrow (path="/project/Narrow/branch") = $(./handle)
+            }
+
             mark (type="grip")
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
             string handle (label="id", font-size=11px, width=14%) = ""
@@ -478,6 +482,8 @@ tab project (label="Project", mutable=true) {
             textbox milestones (placeholder="milestones", vocabulary="/project/Milestones", narrows="/project/Items",
                                 by="milestones", shape="slant") = ""
             textbox flags (placeholder="flags", vocabulary="/project/Flags", narrows="/project/Items", by="flags") = ""
+            textbox branch (placeholder="branch", vocabulary="/project/Items", narrows="/project/Items", by="handle",
+                            branch=true) = ""
         }
 
         div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none) {

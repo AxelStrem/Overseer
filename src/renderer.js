@@ -1484,7 +1484,7 @@ export class OverseerRenderer {
         // Action nodes are not visual; keep this list in sync with backend
         const actionNames = [
             'set','inc','dec','toggle','clear','clear_list','ensure_in_list','ensure','remove','append','move','sort','set_now','set_now_ts','activate','deactivate',
-            'start_editing','fold','unfold','toggle_fold'
+            'start_editing','fold','unfold','toggle_fold','narrow'
         ]
         return actionNames.includes(n)
     }
@@ -6057,9 +6057,11 @@ export class OverseerRenderer {
             const wanted = state ? String(state.text || '').trim().toLowerCase() : ''
             // Only the boxes holding something: an empty one lets everything through.
             const asking = boxes.filter((box) => String(box.text || '').trim() !== '')
+            // Every field but a tags field holds one value, so an entry can only hold one of the
+            // values picked: two handles picked ask for either, not for an entry that is both.
             const kinds = asking.map((box) => {
                 const field = box.picks ? this.fieldIn(list, box.by[0]) : null
-                return !!field && String(field.node_type || field.type || '').toLowerCase() === 'enum'
+                return !!field && String(field.node_type || field.type || '').toLowerCase() !== 'tags'
             })
             const matchOf = (entry, within = null) =>
                 (!state || this.entryMatchesFilter(entry, wanted, state, within))
@@ -6073,6 +6075,21 @@ export class OverseerRenderer {
             if (tree) {
                 const rows = this.treeRows(list, target)
                 const matches = rows.map((row) => matchOf(row.entry, tree))
+                // A box that says `branch` brings everything under a match along with it. Rows
+                // come parents first, so one pass down reaches every depth.
+                const branching = asking.filter((box) => box.branch)
+                if (branching.length > 0) {
+                    const others = asking.map((box, i) => [box, i]).filter(([box]) => !box.branch)
+                    const ownMatch = (entry) => (!state || this.entryMatchesFilter(entry, wanted, state, tree))
+                        && others.every(([box, i]) => this.entryMatchesNarrowing(entry, box, kinds[i], tree))
+                    const inBranch = rows.map(() => false)
+                    rows.forEach((row, i) => {
+                        const below = row.parent >= 0 && inBranch[row.parent]
+                        inBranch[i] = below || branching.every((box) =>
+                            this.entryMatchesNarrowing(row.entry, box, kinds[asking.indexOf(box)], tree))
+                    })
+                    rows.forEach((row, i) => { matches[i] = inBranch[i] && ownMatch(row.entry) })
+                }
                 const leadsToOne = rows.map(() => false)
                 for (let i = rows.length - 1; i >= 0; i--) {
                     const parent = rows[i].parent
@@ -7138,7 +7155,12 @@ export class OverseerRenderer {
             this._narrowings.set(key, narrowing)
         }
         // The document may have been reloaded with the box saying something else.
-        Object.assign(narrowing, { target, by, picks: !!this.getParameterValue(node, 'vocabulary') })
+        Object.assign(narrowing, {
+            target,
+            by,
+            picks: !!this.getParameterValue(node, 'vocabulary'),
+            branch: [true, 'true'].includes(this.getParameterValue(node, 'branch')),
+        })
         // Applied after this returns, when the list it narrows is on the page too.
         setTimeout(() => this.applyFilters(), 0)
 
@@ -7828,10 +7850,11 @@ export class OverseerRenderer {
         return at.length > 0 ? at : null
     }
 
-    /// The folds a press makes when folding is all it does: every action of its `on <event>` a
-    /// `fold`, `unfold` or `toggle_fold` with a written-out `path` to a foldable div that is
-    /// drawn. Null for any other press - one that sets something too, decides with an `if`, or
-    /// names its div by a formula - which the server has to work out.
+    /// The folds and narrowings a press makes when they are all it does: every action of its
+    /// `on <event>` a `fold`, `unfold` or `toggle_fold` with a written-out `path` to a foldable
+    /// div that is drawn, or a `narrow` of a box that is drawn to a value the page can read - see
+    /// `localNarrowingOf`. Null for any other press - one that sets something too, decides with an
+    /// `if`, or names its div by a formula - which the server has to work out.
     localFoldsOf(node, eventName, own) {
         const kids = node && Array.isArray(node.children) ? node.children : []
         const handler = kids.find((c) => c && (c.node_type || c.type) === 'on' && c.name === eventName)
@@ -7842,6 +7865,12 @@ export class OverseerRenderer {
         const folds = []
         for (const action of actions) {
             const how = String(action?.node_type || action?.type || '').toLowerCase()
+            if (how === 'narrow') {
+                const narrowing = this.localNarrowingOf(node, action, own)
+                if (!narrowing) return null
+                folds.push(narrowing)
+                continue
+            }
             if (how !== 'fold' && how !== 'unfold' && how !== 'toggle_fold') return null
             const said = action.parameters && action.parameters.path
             const literal = typeof said === 'string' ? said
@@ -7853,6 +7882,71 @@ export class OverseerRenderer {
             folds.push({ div, path, how })
         }
         return folds
+    }
+
+    /// A `narrow` the page can do without asking: its `path` written out to a box that narrows a
+    /// list, and its value written out too, or a field of the node pressed - `$(./handle)` on an
+    /// entry, which is how a row picks itself. Null for anything else, which the server works out.
+    localNarrowingOf(node, action, own) {
+        const literal = (said) => typeof said === 'string' ? said
+            : said && typeof said === 'object' && typeof said.String === 'string' ? said.String
+            : null
+        const at = this.foldPathFrom(own, literal(action.parameters && action.parameters.path))
+        const doc = window.app && window.app.currentDocument
+        const box = at && doc ? this.findNodeByPath(doc, at) : null
+        if (!box || String(box.node_type || box.type || '').toLowerCase() !== 'textbox') return null
+        if (!this.getParameterValue(box, 'narrows')) return null
+        const said = action.parameters && action.parameters.value
+        let value = literal(said)
+        if (value === null && said && typeof said === 'object' && typeof said.Formula === 'string') {
+            const name = /^\s*(?:\$\(\s*)?(?:\.\/)?([A-Za-z_][\w]*)\s*\)?\s*$/.exec(said.Formula)
+            const field = name ? this.entryField(node, name[1]) : null
+            const held = field ? this.getNodeValue(field) : undefined
+            if (held === undefined) return null
+            value = held === null ? '' : String(held)
+        }
+        if (value === null) return null
+        return { narrow: JSON.stringify(Array.isArray(box.__overseer_path) ? box.__overseer_path : at), value }
+    }
+
+    /// Put a value in a box that narrows a list, by the key it is kept under, and narrow the list
+    /// by it. A box given what it holds already lets go of it instead, so a second tap on the row
+    /// that picked it shows the whole list again.
+    narrowTo(key, value) {
+        const wanted = String(value ?? '').trim()
+        let narrowing = this._narrowings.get(key)
+        if (!narrowing) {
+            narrowing = { text: '', target: [], by: [] }
+            this._narrowings.set(key, narrowing)
+        }
+        narrowing.text = String(narrowing.text || '').trim() === wanted ? '' : wanted
+        try {
+            const path = JSON.parse(key)
+            if (Array.isArray(path) && path.length > 0) this.rerenderSubtree(window.app.currentDocument, path)
+        } catch (_) { /* drawn again with the rest */ }
+        this.applyFilters()
+    }
+
+    /// The narrowings a press asked for - `narrow` - found by the child indices the answer names,
+    /// as its folds are.
+    applyNarrowings(narrowings) {
+        if (!Array.isArray(narrowings) || narrowings.length === 0) return
+        const doc = window.app && window.app.currentDocument
+        if (!Array.isArray(doc)) return
+        for (const one of narrowings) {
+            if (!one || !Array.isArray(one.path) || one.path.length === 0) continue
+            let level = doc
+            let node = null
+            for (const index of one.path) {
+                node = level && level[index]
+                if (!node) break
+                level = Array.isArray(node.children) ? node.children : []
+            }
+            const path = node && Array.isArray(node.__overseer_path)
+                ? node.__overseer_path
+                : String(one.address || '').split('/').filter(Boolean)
+            if (path.length > 0) this.narrowTo(JSON.stringify(path), one.value)
+        }
     }
 
     /// A button that opens a div is drawn pressed while the div is open, so the row says which
@@ -12104,7 +12198,11 @@ export class OverseerRenderer {
             ? this.localFoldsOf(node, eventName, path)
             : null
         if (folds) {
-            for (const { div, path: at, how } of folds) {
+            for (const { div, path: at, how, narrow, value } of folds) {
+                if (narrow) {
+                    this.narrowTo(narrow, value)
+                    continue
+                }
                 const now = this.isFolded(div, at)
                 const wanted = how === 'fold' ? true : how === 'unfold' ? false : !now
                 if (wanted !== now) this.setFolded(div, at, wanted)
@@ -12168,6 +12266,7 @@ export class OverseerRenderer {
                 this.emptyTextboxes(Array.isArray(made.answer?.emptied) ? made.answer.emptied : [])
                 this.openFieldForEditing(made.answer?.start_editing)
                 this.applyFolds(made.answer?.folds)
+                this.applyNarrowings(made.answer?.narrowings)
                 return
             }
         }
@@ -12205,6 +12304,8 @@ export class OverseerRenderer {
         // What it asked to fold, when the answer is the whole document: by index into that, which
         // is what the page holds once it is drawn.
         let toFold = []
+        // And the boxes it asked to narrow their lists, found the same way.
+        let toNarrow = []
         let updated = null
         try {
             // Send the document's text rather than the document, which is never sent.
@@ -12281,6 +12382,7 @@ export class OverseerRenderer {
                 }
                 if (update && Array.isArray(update.changes)) {
                     toFold = Array.isArray(update.folds) ? update.folds : []
+                    toNarrow = Array.isArray(update.narrowings) ? update.narrowings : []
                     window.app.tookTheText(update)
                     const touched = window.app.applyDocumentChanges(window.app.currentDocument, update.changes)
                     try {
@@ -12301,12 +12403,14 @@ export class OverseerRenderer {
                     this.emptyTextboxes(emptied)
                     this.openFieldForEditing(toOpen)
                     this.applyFolds(toFold)
+                    this.applyNarrowings(toNarrow)
                     return
                 }
                 if (update && Array.isArray(update.nodes)) {
                     updated = update.nodes
                     nextText = typeof update.text === 'string' ? update.text : null
                     toFold = Array.isArray(update.folds) ? update.folds : []
+                    toNarrow = Array.isArray(update.narrowings) ? update.narrowings : []
                 }
             }
             // The long way, from the text: fetched now if the last answer only named it, since a
@@ -12382,6 +12486,7 @@ export class OverseerRenderer {
             this.openFieldForEditing(toOpen)
             // Dropped here before, so Talk did nothing whenever its answer came whole.
             this.applyFolds(toFold)
+            this.applyNarrowings(toNarrow)
         } else {
             // Backend returned a status/boolean or unexpected shape; keep current document
             if (DEBUG_MODE) console.warn('[Overseer] emitEvent returned non-document value; preserving current document:', updated)

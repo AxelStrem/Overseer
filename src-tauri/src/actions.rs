@@ -305,6 +305,9 @@ pub struct Changed {
     /// Divs the press asked to have folded, unfolded or toggled, by address and in order - see
     /// `fold`. A fold is a view, never a fact, so like opening a field it is the page's to do.
     pub folds: Vec<(String, FoldHow)>,
+    /// Boxes that narrow a list, by address, and what the press asked each to hold - see
+    /// `narrow`. What such a box holds is a view, as a fold is, so it too is the page's to do.
+    pub narrowings: Vec<(String, String)>,
 }
 
 impl Changed {
@@ -884,6 +887,15 @@ fn note_fold(address: String, how: FoldHow) {
     });
 }
 
+/// A box that narrows a list, and what to put in it once the press is answered.
+fn note_narrow(address: String, value: String) {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.narrowings.push((address, value));
+        }
+    });
+}
+
 /// The document's shape moved, so no address can be trusted to still mean what it did.
 fn note_structural() {
     shape_moved();
@@ -1433,6 +1445,7 @@ impl ActionExecutor {
         if !matches!(
             action.node_type.as_str(),
             "if" | "each" | "press" | "refuse" | "start_editing" | "fold" | "unfold" | "toggle_fold"
+                | "narrow"
         ) {
             note_acted();
         }
@@ -1631,6 +1644,35 @@ impl ActionExecutor {
                     _ => FoldHow::Toggle,
                 };
                 note_fold(address, how);
+                Ok(())
+            }
+            // Puts a value in a textbox that narrows a list - see "Narrowing a list". What such a
+            // box holds is a view, so like a fold this writes nothing and is the page's to do; the
+            // page empties the box instead when it holds that value already, which only it knows.
+            // Anything but such a box is refused, so a mistyped path says so.
+            "narrow" => {
+                let target = Self::require_string(&action.parameters, "path")?;
+                let (segments, _param, anchored) = Self::split_path_and_param(&target);
+                let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
+                    .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+                let narrows = Self::node_by_indices(nodes, &indices).is_some_and(|node| {
+                    node.node_type == "textbox" && node.parameters.contains_key("narrows")
+                });
+                if !narrows {
+                    return Err(OverseerError::ValidationError(format!("{} is not a box that narrows a list", target)));
+                }
+                let address = crate::delta::address_at(nodes, &indices).ok_or_else(|| {
+                    OverseerError::ValidationError(format!("{} names nothing that can be shown", target))
+                })?;
+                let value = match action.parameters.get("value") {
+                    Some(OverseerValue::Formula(expr)) => {
+                        let ctx = Self::action_context(owner_path, nodes);
+                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                    }
+                    Some(value) => value.clone(),
+                    None => OverseerValue::String(String::new()),
+                };
+                note_narrow(address, as_text(&value).unwrap_or_default());
                 Ok(())
             }
             // Says no to the press, with a sentence for whoever pressed: `refuse = "this id is

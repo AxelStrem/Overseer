@@ -1596,11 +1596,13 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* The tint is a layer of its own over the row rather than its background, so it can fade in and
    out - a background image cannot - and so it leaves a row's own colour and backdrop in place. It
    lies over the cells, which a tint this faint does not hide, and lets the pointer through. A row
-   that is pressed has its own veil in the same place (`.overseer-pressable`), and keeps it. */
+   that can be pressed keeps it too, over everything in the row, buttons and fields included, so
+   which cells are one row shows wherever the pointer is: its veil (`.overseer-pressable`) is the
+   other layer, and says where a tap would press it. */
 .overseer-list.view-table > .table-row {
     position: relative;
 }
-.overseer-list.view-table > .table-row:not(.overseer-pressable)::after {
+.overseer-list.view-table > .table-row::before {
     content: '';
     position: absolute;
     inset: 0;
@@ -1610,14 +1612,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     pointer-events: none;
     transition: opacity 160ms ease-in-out;
 }
-.overseer-list.view-table > .table-row:not(.overseer-pressable):hover::after {
+.overseer-list.view-table > .table-row:hover::before {
     opacity: 1;
 }
 @container style(--ov-motion: none) {
-    .overseer-list.view-table > .table-row:not(.overseer-pressable)::after { transition: none; }
+    .overseer-list.view-table > .table-row::before { transition: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-    .overseer-list.view-table > .table-row:not(.overseer-pressable)::after { transition: none; }
+    .overseer-list.view-table > .table-row::before { transition: none; }
 }
 
 /* A grid item will not shrink below its content unless told it may, and these are columns of a

@@ -648,6 +648,9 @@ pub struct ResolvedUpdate {
     /// The divs a press asked to have folded, unfolded or toggled, in order - see `actions::fold`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub folds: Vec<FoldToDo>,
+    /// The boxes a press asked to have narrow their lists, in order - see `actions::narrow`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub narrowings: Vec<NarrowingToDo>,
     /// The files the document's mounts were read from, and how each stood then, named in a few
     /// bytes - see `reads_version`. A page shows a document worked out from these as well as from
     /// its own text, and says which when it asks to catch up, as it says which text - see `watch`.
@@ -662,6 +665,14 @@ pub struct FoldToDo {
     pub address: String,
     pub path: Vec<usize>,
     pub how: crate::actions::FoldHow,
+}
+
+/// A box that narrows a list and what to put in it, named the way a fold is - see `FoldToDo`.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub struct NarrowingToDo {
+    pub address: String,
+    pub path: Vec<usize>,
+    pub value: String,
 }
 
 /// A field to open for editing, named twice.
@@ -749,6 +760,7 @@ fn finish_update_with(
                 emptied: Vec::new(),
                 start_editing: None,
                 folds: Vec::new(),
+                narrowings: Vec::new(),
                 read_from: String::new(),
             })
         }
@@ -767,6 +779,7 @@ fn finish_update_with(
                 emptied: Vec::new(),
                 start_editing: None,
                 folds: Vec::new(),
+                narrowings: Vec::new(),
                 read_from: String::new(),
             })
         }
@@ -839,6 +852,7 @@ pub fn execute_event_update(
         .unwrap_or_default();
 
     let folds_asked = report.as_ref().map(|changed| changed.folds.clone()).unwrap_or_default();
+    let narrowings_asked = report.as_ref().map(|changed| changed.narrowings.clone()).unwrap_or_default();
     let quick = report
         .filter(|changed| !changed.structural && !changed.moved().is_empty())
         .and_then(|changed| {
@@ -894,10 +908,9 @@ pub fn execute_event_update(
             (text, nodes, Some(fresh))
         }
     };
-    let to_fold = folds_to_do(
-        Some(&crate::actions::Changed { folds: folds_asked, ..Default::default() }),
-        &nodes,
-    );
+    let asked = crate::actions::Changed { folds: folds_asked, narrowings: narrowings_asked, ..Default::default() };
+    let to_fold = folds_to_do(Some(&asked), &nodes);
+    let to_narrow = narrowings_to_do(Some(&asked), &nodes);
     let phase = std::time::Instant::now();
     let done = finish_update_with(&was, text, nodes, baseline, None, false).map(|mut update| {
         if let Some(fresh) = worked_out_whole {
@@ -905,6 +918,7 @@ pub fn execute_event_update(
         }
         update.view_state = viewers;
         update.folds = to_fold;
+        update.narrowings = to_narrow;
         update
     });
     if resolver::profile_enabled() {
@@ -1314,6 +1328,7 @@ fn change_or_look(
             read_from: reads_version(&reads),
             start_editing: field_to_edit(report.as_ref(), &nodes),
             folds: folds_to_do(report.as_ref(), &nodes),
+            narrowings: narrowings_to_do(report.as_ref(), &nodes),
             text: as_it_stood,
             version: String::new(),
             file_version: None,
@@ -1374,6 +1389,7 @@ fn change_or_look(
     // against and has no other way to learn that this write moved the file.
     let to_edit = field_to_edit(report.as_ref(), &nodes);
     let to_fold = folds_to_do(report.as_ref(), &nodes);
+    let to_narrow = narrowings_to_do(report.as_ref(), &nodes);
     // Held now, and current: brought up to the minute before the change, or opened in it. Not for
     // a document worked out as one viewer sees it the long way, which was never brought up to the
     // minute through the graph; one taken from where that viewer's is held was.
@@ -1402,6 +1418,7 @@ fn change_or_look(
     update.wrote = wrote;
     update.start_editing = to_edit;
     update.folds = to_fold;
+    update.narrowings = to_narrow;
     if wrote && settled.text != update.text {
         update.file_text = Some(settled.text);
     }
@@ -1451,6 +1468,19 @@ fn folds_to_do(report: Option<&crate::actions::Changed>, nodes: &[OverseerNode])
         .filter_map(|(address, how)| {
             crate::delta::indices_of(nodes, address)
                 .map(|path| FoldToDo { address: address.clone(), path, how: *how })
+        })
+        .collect()
+}
+
+/// The boxes a press asked to narrow their lists, found the way its folds are.
+fn narrowings_to_do(report: Option<&crate::actions::Changed>, nodes: &[OverseerNode]) -> Vec<NarrowingToDo> {
+    let Some(report) = report else { return Vec::new() };
+    report
+        .narrowings
+        .iter()
+        .filter_map(|(address, value)| {
+            crate::delta::indices_of(nodes, address)
+                .map(|path| NarrowingToDo { address: address.clone(), path, value: value.clone() })
         })
         .collect()
 }
@@ -1892,6 +1922,7 @@ pub fn show_more_at(
         emptied: Vec::new(),
         start_editing: None,
         folds: Vec::new(),
+        narrowings: Vec::new(),
     })
 }
 

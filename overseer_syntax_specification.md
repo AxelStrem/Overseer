@@ -1062,7 +1062,9 @@ context mode = "system"
     which draws the rows as lines of the table rather than as cards, with a line of that thickness
     in `line` under each (`none` for none), and `pointed`, `none` or `tint`, shading the row under
     the pointer or, on a touch screen, the one last tapped - the shade fades in and out, over the
-    row's own colour and backdrop, and comes at once where `motion = none`; `cell-padding`, the space after each
+    row's own colour and backdrop, and comes at once where `motion = none`; the whole row is shaded
+    wherever in it the pointer is, over a button or a field as well, and a row that is pressed
+    (see "A whole entry as the thing you press") is shaded too; `cell-padding`, the space after each
     cell's content, where by default there is `6px` on either side; `detail`, how a `span="row"`
     line is drawn - `frame` as anything else, `bar` (a bar in `accent` down its side, on
     `surface`) or `plain`; and `detail-padding`, the space around that line's content.
@@ -1355,6 +1357,7 @@ can be a formula.
 | `refuse = "why"` | stops the press and writes nothing (see "Saying no to a press") |
 | `start_editing (path)` | opens a field for typing (see "Opening a field for editing") |
 | `fold (path)`, `unfold (path)`, `toggle_fold (path)` | folds a div away or brings it back (see "Folding a div away") |
+| `narrow (path) = value` | puts a value in a box that narrows a list, or empties it when it holds that already (see "Narrowing a list") |
 | `load_mount (path)`, `unload_mount (path)` | brings in, or lets go of, what a mount names |
 
 A press is one change: every action in it is written together, and one undo takes back all of
@@ -1579,8 +1582,13 @@ into, and `by` names the fields it is matched against. Typed text is found in an
 fields, not what is on screen, which is formatted and sometimes hidden - and a name that is a list
 or a div searches every field under it, so naming a list of comments finds an entry by anything
 said in them. Given a `vocabulary`, the box picks values instead: an entry must hold every one
-picked when the field holds tags, and any of them when it is an `enum`, which holds one. A list
-narrowed by several boxes shows the entries every one of them lets through.
+picked when the field holds tags, and any of them when it holds one value - an `enum`, or a
+`string` such as a key. A list narrowed by several boxes shows the entries every one of them lets
+through.
+
+On a list drawn as a tree, a box that says `branch=true` brings everything under an entry it
+matches along with it, at every depth: given an entry's key, it shows that one branch of the tree.
+The other boxes then narrow within it.
 
 ```overseer
 div Narrow (layout="horizontal", spacing=10) {
@@ -1594,6 +1602,26 @@ What such a box holds is a view, as a fold is: it is never written, never sent w
 never emptied by one, it can be typed into where nothing else in the document can be changed, and
 it keeps what it holds while the page is open. A tree keeps a match's ancestors in sight, dimmed,
 and a board's columns count what they show.
+
+`narrow (path) = value` puts a value in such a box from a press, and like `fold` writes nothing. A
+box that holds that value already lets go of it instead, so the entry of a tree that picks itself
+when it is pressed is pressed again to show the whole list:
+
+```overseer
+div Narrow (layout="horizontal") {
+    textbox branch (vocabulary="/project/Items", narrows="/project/Items", by="handle", branch=true) = ""
+}
+
+div Item (layout="horizontal") {
+    on click {
+        narrow (path="/project/Narrow/branch") = $(./handle)
+    }
+    string handle = ""
+    string parent (hidden=true) = ""
+}
+```
+
+Anything but a box that narrows a list is refused as its target.
 
 #### A whole entry as the thing you press
 
@@ -2660,7 +2688,7 @@ div Tasks {
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `ease`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
-- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `narrows` and `by` (on a `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
+- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
