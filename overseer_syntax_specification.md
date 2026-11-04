@@ -2038,7 +2038,8 @@ tags labels (vocabulary="/project/Labels", width=24%) = "perf, correctness"
 
 An entry of the vocabulary is known by its list's `key` - `tag` when the list names none - so a
 list of tasks keyed by `handle` serves as well as a tag list. Its `title`, where it has one, is
-what its chip says on hover, and its `icon`, where it names one of the library's icons (see
+what its chip says on hover - over whatever its field's `hover-text` says (see "Saying More
+When Asked") - and its `icon`, where it names one of the library's icons (see
 "Icons"), is drawn before its name - a person's chosen icon, a stage's or a label's alike. Its
 `shape`, where it names one of the shapes below, is the shape of its chip wherever it is drawn,
 over the shape the field asks for - so a person's chip looks the same in a column of owners, in a
@@ -2439,6 +2440,19 @@ say which column it is in without showing the name on every row.
 
 The same is true of a hidden label anywhere: `hide-labels` takes the naming off the screen, and
 this is where the naming can go.
+
+Like any parameter it can be a formula, worked out for each entry, so a column can say something of
+the row it is in. A `<#key>` in it is drawn as a chip (see "Chips in text"), from the field's own
+`vocabulary`:
+
+```overseer
+enum stage (vocabulary="/project/Stages", hover-text=$("At the <#" + ../stage + "> stage")) = "filed"
+```
+
+A chip says its entry's `title`, where it has one, in place of what its field says, so a column of
+tags can explain itself as a whole and each tag in it on its own. A field whose text names the very
+chip the mouse is on - the stage above - is talking about it already, and says both: its own text,
+and the chip's title under it.
 
 #### Markdown Text Formatting:
 ```overseer

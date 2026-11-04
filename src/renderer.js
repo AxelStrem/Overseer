@@ -6463,7 +6463,13 @@ export class OverseerRenderer {
             chip.style.setProperty('--chip-readable', chip.style.color)
             chip.classList.add('chip-coloured')
         }
-        if (known && known.hover) chip.title = String(known.hover)
+        if (known && known.hover) {
+            chip.title = String(known.hover)
+            // Kept apart from the title, which other things add to and an icon chip gives up:
+            // it is what marks a chip as having something of its own to say on hover, over
+            // whatever its field says (see `watchForHoverText`).
+            chip.dataset.ownHover = String(known.hover)
+        }
         // A chip that is only an icon still says what it is, when asked.
         else if (nameAsText(name) === '') chip.title = tag
         // A name cut short is still there to read, on the pointer.
@@ -7301,6 +7307,7 @@ export class OverseerRenderer {
         const saying = this.hoverTextFor(node, container.querySelector(':scope > label'))
         if (saying) container.dataset.hoverText = saying
         else delete container.dataset.hoverText
+        container._hoverNode = node
     }
 
     createDateElement(node) {
@@ -8862,23 +8869,38 @@ export class OverseerRenderer {
         within.dataset.hoverTextWatched = '1'
 
         const show = (target) => {
-            // A chip drawn as its icon alone shows the whole chip, and under it whatever the
-            // field it is in says on hover.
-            const full = typeof target._fullChip === 'function' ? target._fullChip : null
-            const text = target.closest('[data-hover-text]')?.dataset.hoverText
-            if (!text && !full) return
+            const chip = target.classList.contains('tag-chip') ? target : null
+            const field = target.closest('[data-hover-text]')
+            const text = field?.dataset.hoverText
+            const node = field?._hoverNode || null
+            // A chip drawn as its icon alone shows the whole chip, and under it what is said of it.
+            const full = chip && typeof chip._fullChip === 'function' ? chip._fullChip : null
+            // A chip whose entry has a title says that, in place of its field's text - all of its
+            // title, with whatever has been added to it. Unless the field's text names this very
+            // chip: then that text is about it, and the chip's own comes under it.
+            const own = chip && chip.dataset.ownHover !== undefined
+                ? (chip.getAttribute('title') || chip.dataset.ownHover) : ''
+            const named = Boolean(chip && text && text.includes(`<#${chip.dataset.tag}>`))
+            const lines = own && !named ? [own] : [text, own].filter(Boolean)
+            if (lines.length === 0 && !full) return
             const popup = this.theHoverPopup()
-            if (full) {
-                popup.textContent = ''
-                popup.appendChild(full())
-                if (text) {
+            popup.textContent = ''
+            if (full && !named) popup.appendChild(full())
+            if (!popup.firstChild && lines.length === 1) {
+                this.setTextWithIcons(popup, lines[0], node)
+            } else {
+                for (const line of lines) {
                     const said = document.createElement('div')
-                    said.className = 'hover-text-under-chip'
-                    this.setTextWithIcons(said, text)
+                    if (popup.firstChild) said.className = 'hover-text-under-chip'
+                    this.setTextWithIcons(said, line, node)
                     popup.appendChild(said)
                 }
-            } else {
-                this.setTextWithIcons(popup, text)
+            }
+            if (own) {
+                // The popup says it now, so the browser's own tooltip is put away until the mouse
+                // leaves, rather than saying it a second time on top.
+                this._hoverTitled = { chip, title: chip.getAttribute('title') }
+                chip.removeAttribute('title')
             }
             popup.style.display = 'block'
             // Placed against the field rather than the pointer, so it does not follow the mouse
@@ -8899,10 +8921,15 @@ export class OverseerRenderer {
                 clearTimeout(this._hoverTimer)
                 this._hoverTimer = null
             }
+            if (this._hoverTitled) {
+                const { chip, title } = this._hoverTitled
+                if (title && !chip.hasAttribute('title')) chip.title = title
+                this._hoverTitled = null
+            }
         }
 
         within.addEventListener('mouseover', (event) => {
-            const target = event.target?.closest?.('[data-full-chip], [data-hover-text]')
+            const target = event.target?.closest?.('[data-full-chip], [data-own-hover], [data-hover-text]')
             if (!target) return
             if (this._hoverTimer) clearTimeout(this._hoverTimer)
             // A moment's pause, so running the mouse across a table does not flash a popup for
@@ -8910,7 +8937,7 @@ export class OverseerRenderer {
             this._hoverTimer = setTimeout(() => show(target), 300)
         })
         within.addEventListener('mouseout', (event) => {
-            const target = event.target?.closest?.('[data-full-chip], [data-hover-text]')
+            const target = event.target?.closest?.('[data-full-chip], [data-own-hover], [data-hover-text]')
             if (!target) return
             hide()
         })
@@ -8944,6 +8971,8 @@ export class OverseerRenderer {
             // nothing, and that is the very case this is for.
             const saying = this.hoverTextFor(node, label)
             if (saying) container.dataset.hoverText = saying
+            // The field the text belongs to, whose vocabulary draws a `<#key>` in it.
+            container._hoverNode = node
 
             if (label && this.labelsAreHidden(node)) {
                 // Hidden, not left out. The text is still the only place this field says what

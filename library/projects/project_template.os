@@ -11,7 +11,7 @@ tab project (label="Project", mutable=true) {
                 string tag (label="", font-size=11px, font-color="#9ca3af", padding=0, width=24%) = ""
                 string colour (label="", kind="color", font-size=11px, font-color="#9ca3af", padding=0, width=28%) = "#6b7280"
                 string glow (hidden=true) = ""
-                button about (icon="note", margin=0, padding=0, width=10%, hover-text="What this tag is about",
+                button about (icon="note", margin=0, padding=0, width=10%, hover-text="What it is about",
                               background-color="transparent", hover-color=#8882,
                               font-color=$(../About/about == "" ? "#6b7280" : "inherit")) {
                     on click {
@@ -19,6 +19,7 @@ tab project (label="Project", mutable=true) {
                     }
                 }
             }
+            string title (label="hover", font-size=12px, padding=0) = ""
             div About (foldable=true, folded=true, margin=0) {
                 text about (label="", markdown=true, font-size=12px, padding=4) = ""
             }
@@ -28,48 +29,56 @@ tab project (label="Project", mutable=true) {
             - {
                 - tag = "filed"
                 - name = "filed"
+                - title = "Nothing done yet"
                 - colour = "#6b7280"
                 - glow = "#9ca3af"
             }
             - {
                 - tag = "planning"
                 - name = "planning"
+                - title = "Its plan is being worked out"
                 - colour = "#0f766e"
                 - glow = "#2dd4bf"
             }
             - {
                 - tag = "ready"
                 - name = "ready"
+                - title = "Nothing left to decide"
                 - colour = "#1d4ed8"
                 - glow = "#60a5fa"
             }
             - {
                 - tag = "testing"
                 - name = "testing"
+                - title = "Done; waits to be confirmed"
                 - colour = "#7c3aed"
                 - glow = "#a78bfa"
             }
             - {
                 - tag = "parts"
                 - name = "parts"
+                - title = "Waits only on its parts"
                 - colour = "#c2410c"
                 - glow = "#fb923c"
             }
             - {
                 - tag = "later"
                 - name = "later"
+                - title = "Decided against for now"
                 - colour = "#eab308"
                 - glow = "#facc15"
             }
             - {
                 - tag = "finished"
                 - name = "finished"
+                - title = "Done and confirmed"
                 - colour = "#15803d"
                 - glow = "#4ade80"
             }
             - {
                 - tag = "cancelled"
                 - name = "cancelled"
+                - title = "Dropped"
                 - colour = "#9f1239"
                 - glow = "#fb7185"
             }
@@ -79,26 +88,31 @@ tab project (label="Project", mutable=true) {
             - {
                 - tag = "unassigned"
                 - name = "unassigned"
+                - title = "Not rated yet"
                 - colour = "#6b7280"
             }
             - {
                 - tag = "trivial"
                 - name = "trivial"
+                - title = "Straightforward, however much of it"
                 - colour = "#15803d"
             }
             - {
                 - tag = "low"
                 - name = "low"
+                - title = "One part, a little care"
                 - colour = "#0f766e"
             }
             - {
                 - tag = "medium"
                 - name = "medium"
+                - title = "A few parts, or real thought"
                 - colour = "#b45309"
             }
             - {
                 - tag = "high"
                 - name = "high"
+                - title = "Several parts, real analysis"
                 - colour = "#b91c1c"
             }
         }
@@ -120,26 +134,31 @@ tab project (label="Project", mutable=true) {
             - {
                 - tag = "manual"
                 - name = "manual"
+                - title = "For a person to work"
                 - colour = "#78716c"
             }
             - {
                 - tag = "auto"
                 - name = "auto"
+                - title = "Filed by an agent"
                 - colour = "#6b7280"
             }
             - {
                 - tag = "discuss"
                 - name = "discuss"
+                - title = "Only an opinion is wanted"
                 - colour = "#0369a1"
             }
             - {
                 - tag = "first"
                 - name = "first"
+                - title = "Goes before everything else"
                 - colour = "#e11d48"
             }
             - {
                 - tag = "asked"
                 - name = "asked"
+                - title = "A question waits on a person"
                 - colour = "#b45309"
             }
         }
@@ -254,15 +273,15 @@ tab project (label="Project", mutable=true) {
             mark (type="separator")
             enum owner (label="by", vocabulary="/project/people/People", chip="icon", placeholder="", font-size=11px, width=32px,
                         alignment="center",
-                        hover-text="Whose item it is") = ""
+                        hover-text=$(../owner == "" ? "Nobody owns this item" : "This item is owned by <#" + ../owner + ">")) = ""
             mark (type="separator")
             string title (label="title", font-size=14px, width=37%,
-                          hover-text="What is to be done; bold when it has parts",
+                          hover-text="Item title or short description",
                           font-weight=$(../kids > 0 ? "bold" : "normal")) = ""
 
             mark (type="separator")
             enum stage (label="stage", vocabulary="/project/Stages", width=5%, alignment="center",
-                        hover-text="Where it is: filed, planning, ready, testing, parts or later",
+                        hover-text=$("This item is at the <#" + ../stage + "> stage"),
                         withhold=$(open_kids > 0 ? "finished, cancelled" : "parts")) = "filed" {
                 on change {
                     set (path="../touched_at", mode="value") = $(now())
@@ -283,29 +302,29 @@ tab project (label="Project", mutable=true) {
             enum parent (hidden=true) = ""
             mark (type="separator")
             tags after (label="after", width=8%,
-                        hover-text="The items this waits on; grey while any is still open") = ""
+                        hover-text="The list of items this waits on") = ""
             mark (type="separator")
             tags labels (label="tags", vocabulary="/project/Labels", width=8%,
-                         hover-text="The parts of the project it is in") = ""
+                         hover-text="Project tags") = ""
             mark (type="separator")
             tags milestones (label="milestones", vocabulary="/project/Milestones", shape="slant", width=8%,
-                             hover-text="The milestones it counts towards") = ""
+                             hover-text="Milestones") = ""
             mark (type="separator")
             tags flags (label="flags", vocabulary="/project/Flags", width=6%,
-                        hover-text="How it is to be worked") = ""
+                        hover-text="Workflow flags") = ""
             mark (type="separator")
             int points (label="pts", format="trim", width=3%, alignment="center",
-                        hover-text="How much work: 1 the smallest thing, 8 most of a day") = 1
+                        hover-text="Estimated points") = 1
             mark (type="separator")
             enum complexity (label="think", vocabulary="/project/Complexities", width=6%, alignment="center",
-                             hover-text="How much thinking building it takes") = "unassigned"
+                             hover-text="Estimated cognitive effort: the model is selected based on it") = "unassigned"
             bool pinned (hidden=true) = false
             bool working (hidden=true) = false
 
             timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
             mark (type="separator")
             timestamp moved_at (label="moved", mode="elapsed", font-size=11px, width=5%,
-                               hover-text="Since its stage or its conversation last changed, or a part of it closed") =
+                               hover-text="Time since last change") =
                 $(../said_at > ../touched_at ? ../said_at : ../touched_at)
 
             mark (type="separator")
@@ -320,7 +339,7 @@ tab project (label="Project", mutable=true) {
                     toggle_fold (path="../Agents")
                 }
             }
-            button pin (icon="pin", margin=0, width=36px, hover-text="Keep it on top of the list, or let it go",
+            button pin (icon="pin", margin=0, width=36px, hover-text="Keep it on top of the list",
                         background-color=$(../pinned == true ? "#f59e0b" : "transparent"),
                         font-color=$(../pinned == true ? "#1a1a1a" : "#6b7280")) {
                 on click {
