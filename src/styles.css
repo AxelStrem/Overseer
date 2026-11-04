@@ -3643,6 +3643,54 @@ body.ov-backdrop-moving {
     border-color: var(--ov-accent);
 }
 
+/* An enum drawn as `view="segments"`: its values as one row of buttons, the held one pressed -
+   the look of the drawer's light and dark switch. */
+.enum-segments {
+    display: inline-flex;
+    max-width: 100%;
+    border: 1px solid var(--ov-line);
+    border-radius: var(--ov-radius);
+    overflow: hidden;
+}
+
+.enum-segment {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex: 1 1 auto;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: var(--ov-muted);
+    padding: 4px 10px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.enum-segment + .enum-segment {
+    border-left: 1px solid var(--ov-line);
+}
+
+.enum-segment:not(:disabled):not(.chosen):hover {
+    color: var(--ov-text);
+}
+
+.enum-segment.chosen {
+    background: var(--ov-accent);
+    color: white;
+}
+
+.enum-segment:disabled {
+    cursor: default;
+}
+
+.enum-segment.enum-segment-held {
+    opacity: 0.45;
+}
+
 /* An enum with nothing chosen yet: a place to press, not a value. */
 .tag-chip.tag-placeholder {
     background-color: transparent;

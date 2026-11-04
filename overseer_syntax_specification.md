@@ -2173,6 +2173,15 @@ it may change, the box has no caret.
 enum look (label="Theme", vocabulary="/settings/Themes", view="select") = "default"
 ```
 
+`view="segments"` draws every value as a button of one row, the chosen one pressed and filled with
+its colour - the theme's `accent` when it has none. Pressing another chooses it, as a pick does.
+What `withhold` names is greyed out and cannot be pressed, a value the list does not hold presses
+none, and with nothing it may change the row is drawn but presses do nothing.
+
+```overseer
+enum mode (vocabulary="/settings/Modes", view="segments") = "system"
+```
+
 #### Charts
 
 A `chart` draws its `plot`s, one series or one figure each. `kind` says how: `line`, unless it says
@@ -2709,7 +2718,7 @@ div Tasks {
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
 - **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `limit` (on a `textbox` that picks), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
-- **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`; `select`, on an `enum`), `limit`, `color`
+- **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`; `select` and `segments`, on an `enum`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
 - **Lists**: `entry`, `key`, `window`, `parts`, `sort_by`, `view` (`table`, `board`), `by`, `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)

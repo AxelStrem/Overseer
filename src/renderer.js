@@ -6091,8 +6091,12 @@ export class OverseerRenderer {
         const editable = () => this.getEffectiveMutableMode(node, container) !== 'false'
         // `view="select"` draws the value as a drop-down's box rather than a chip: the same
         // value, picker and write, only drawn as a form's control.
-        const asSelect = String(this.getParameterValue(node, 'view') || '').toLowerCase() === 'select'
+        // `view="segments"` draws every value as a button of one row, the held one pressed.
+        const view = String(this.getParameterValue(node, 'view') || '').toLowerCase()
+        const asSelect = view === 'select'
+        const asSegments = view === 'segments'
         if (asSelect) container.classList.add('enum-select-field')
+        if (asSegments) container.classList.add('enum-segments-field')
 
         const choose = async (after) => {
             const before = held()
@@ -6106,6 +6110,10 @@ export class OverseerRenderer {
             chips.textContent = ''
             const vocabulary = this.tagVocabulary(node)
             const value = held()
+            if (asSegments) {
+                chips.appendChild(this.enumSegments(node, container, vocabulary, value, editable(), choose))
+                return
+            }
             let chip
             const shown = this.shownText(node)
             if (shown !== null) {
@@ -6156,6 +6164,56 @@ export class OverseerRenderer {
         this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
+    }
+
+    /**
+     * The row an enum drawn as `view="segments"` shows in place of its chip: a button for each
+     * value the picker would offer, in the list's order, the held one pressed and filled with its
+     * own colour or the accent. What `withhold` names is drawn but cannot be pressed, and nothing
+     * can when the field may not be changed; a held value the list does not have presses none.
+     */
+    enumSegments(node, container, vocabulary, value, editable, choose) {
+        const row = document.createElement('span')
+        row.className = 'enum-segments'
+        row.setAttribute('role', 'group')
+        const withheld = new Set(String(this.getParameterValue(node, 'withhold') ?? '')
+            .split(',').map(s => s.trim()).filter(Boolean))
+        const itself = this.entryHolding(container, vocabulary)
+        for (const [tag, known] of vocabulary) {
+            if (tag !== value && (known.offered === false || itself(tag))) continue
+            const segment = document.createElement('button')
+            segment.type = 'button'
+            segment.className = 'enum-segment'
+            segment.dataset.tag = tag
+            if (typeof known.icon === 'string' && LIBRARY_ICON.test(known.icon.trim())) {
+                const icon = this.createIconElement(known.icon.trim())
+                icon.classList.add('chip-icon')
+                segment.appendChild(icon)
+            }
+            const name = document.createElement('span')
+            name.className = 'chip-name'
+            this.setTextWithIcons(name, known.name || tag)
+            segment.appendChild(name)
+            if (known.hover) segment.title = String(known.hover)
+            const chosen = tag === value
+            segment.setAttribute('aria-pressed', chosen ? 'true' : 'false')
+            if (chosen) {
+                segment.classList.add('chosen')
+                if (known.colour) {
+                    segment.style.backgroundColor = known.colour
+                    segment.style.color = this.readableOn(known.colour)
+                }
+            }
+            if (!chosen && withheld.has(tag)) segment.classList.add('enum-segment-held')
+            if (!editable || (!chosen && withheld.has(tag))) segment.disabled = true
+            segment.addEventListener('click', (event) => {
+                event.stopPropagation()
+                if (segment.disabled || chosen) return
+                choose(tag)
+            })
+            row.appendChild(segment)
+        }
+        return row
     }
 
     /**
