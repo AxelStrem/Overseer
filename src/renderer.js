@@ -66,6 +66,8 @@ const ICON_IN_TEXT = /<icon=([^<>]*)>/g
 /// that key. In markdown it reaches the HTML escaped, as any `<` that opens no tag does.
 const CHIP_IN_TEXT = /<#([^<>\s]+)>/g
 const CHIP_IN_HTML = /&lt;#([^<>&\s]+)&gt;/g
+/// How many chips a picker offers before it opens with a box to find one in.
+const PICKER_FINDS_FROM = 12
 /// The opening of an inline span mark of markdown, `<color=red | ...>` or `<motion=wave | ...>`.
 const SPAN_MARK_IN_TEXT = /<(?:color|motion)=/
 /// The ways a button can answer hover, the theme's `button/hover`; each is a class in the stylesheet.
@@ -6273,6 +6275,15 @@ export class OverseerRenderer {
         // A box that narrows a list is a view, picked from wherever the document may not be changed.
         const editable = () => (own && own.view) || this.getEffectiveMutableMode(node, container) !== 'false'
 
+        // A box can say how many keys it holds: `limit=1` picks one, the food a record names.
+        const stated = own ? Number(this.getParameterValue(node, 'limit')) : NaN
+        const limit = Number.isInteger(stated) && stated > 0 ? stated : Infinity
+        // And which fields of the vocabulary's entries its picker finds in - unless it narrows a
+        // list, where `by` names that list's fields instead.
+        const searchBy = own && !own.view
+            ? String(this.getParameterValue(node, 'by') || '').split(',').map(s => s.trim()).filter(Boolean)
+            : []
+
         const paint = () => {
             chips.textContent = ''
             const vocabulary = this.tagVocabulary(node)
@@ -6283,15 +6294,32 @@ export class OverseerRenderer {
                 hint.textContent = String(placeholder)
                 chips.appendChild(hint)
             }
+            // Not yet held, and offered - nor the entry this field is part of: a task does not
+            // wait on itself.
+            const spare = () => {
+                const itself = this.entryHolding(container, vocabulary)
+                return [...vocabulary.keys()]
+                    .filter(tag => !held().includes(tag) && vocabulary.get(tag).offered !== false && !itself(tag))
+            }
             for (const tag of held()) {
                 const removing = editable()
                     ? () => { write(held().filter(t => t !== tag)); paint() }
                     : null
                 const chip = this.fieldChip(node, tag, vocabulary.get(tag), removing)
-                this.letChipReveal(chip, vocabulary.get(tag))
+                if (limit === 1 && editable() && spare().length > 0) {
+                    // A box holding one key is changed the way an enum is: its chip is pressed,
+                    // and the one picked takes its place.
+                    chip.classList.add('enum-choice')
+                    chip.addEventListener('click', (event) => {
+                        event.stopPropagation()
+                        this.offerTags(chip, spare(), vocabulary, (picked) => { write([picked]); paint() }, searchBy)
+                    })
+                } else {
+                    this.letChipReveal(chip, vocabulary.get(tag))
+                }
                 chips.appendChild(chip)
             }
-            if (!editable()) return
+            if (!editable() || held().length >= limit) return
             // Offered rather than always shown: a hundred tasks each with a picker open is
             // unreadable, and the tags themselves are what you came to look at.
             const add = document.createElement('button')
@@ -6300,11 +6328,7 @@ export class OverseerRenderer {
             add.title = 'add a tag'
             add.addEventListener('click', (event) => {
                 event.stopPropagation()
-                // Nor the entry this field is part of: a task does not wait on itself.
-                const itself = this.entryHolding(container, vocabulary)
-                const spare = [...vocabulary.keys()]
-                    .filter(tag => !held().includes(tag) && vocabulary.get(tag).offered !== false && !itself(tag))
-                this.offerTags(add, spare, vocabulary, (tag) => { write([...held(), tag]); paint() })
+                this.offerTags(add, spare(), vocabulary, (tag) => { write([...held(), tag]); paint() }, searchBy)
             })
             chips.appendChild(add)
         }
@@ -6635,6 +6659,8 @@ export class OverseerRenderer {
                         hover: field('title') || null,
                         offered: at === 0,
                         at: [...segments, entry.name],
+                        // Kept for a picker's find box, which can be told to look in any of its fields.
+                        entry,
                     })
                 }
                 // A list with parts not read holds only its newest entries; the server says what
@@ -6910,25 +6936,105 @@ export class OverseerRenderer {
         else chip.removeAttribute('title')
     }
 
-    /** The tags not yet on this field, to pick from. Closes on the next click anywhere. */
-    offerTags(beside, available, vocabulary, chosen) {
+    /**
+     * The tags not yet on this field, to pick from. Closes on the next click anywhere.
+     *
+     * More of them than can be looked over at a glance - a catalogue of foods - and the picker
+     * opens with a box to find one in: what is typed narrows the chips, every word of it found in
+     * the entry's key, name or title, or in the fields `by` names when it names any. The arrows
+     * move between what is left, Enter picks, Escape closes. The box takes focus, so a phone's
+     * keyboard comes up with it, and the chips are still pressed as ever.
+     */
+    offerTags(beside, available, vocabulary, chosen, by = []) {
         document.querySelectorAll('.tag-picker').forEach(picker => picker.remove())
         if (available.length === 0) return
         const picker = document.createElement('span')
         picker.className = 'tag-picker'
-        for (const tag of available) {
+        const dismiss = () => { picker.remove(); document.removeEventListener('click', dismiss) }
+        const pick = (tag) => { dismiss(); chosen(tag) }
+        const options = available.map((tag) => {
             const option = this.tagChip(tag, vocabulary.get(tag), null)
             option.classList.add('tag-option')
             option.addEventListener('click', (event) => {
                 event.stopPropagation()
-                picker.remove()
-                chosen(tag)
+                pick(tag)
             })
             picker.appendChild(option)
-        }
+            return { tag, option }
+        })
         beside.parentElement.appendChild(picker)
-        const dismiss = () => { picker.remove(); document.removeEventListener('click', dismiss) }
+        if (available.length > PICKER_FINDS_FROM) {
+            this.letPickerFind(picker, options, (tag) => this.pickerHaystack(tag, vocabulary.get(tag), by), pick, () => {
+                dismiss()
+                if (beside.focus) beside.focus()
+            })
+        }
         setTimeout(() => document.addEventListener('click', dismiss), 0)
+    }
+
+    /// The find box at the top of a long picker: `haystack(tag)` is the text a tag is found by.
+    letPickerFind(picker, options, haystack, pick, close) {
+        picker.classList.add('tag-picker-finds')
+        const find = document.createElement('input')
+        find.type = 'search'
+        find.className = 'tag-picker-find'
+        find.placeholder = 'find'
+        find.setAttribute('aria-label', 'find')
+        find.addEventListener('click', (event) => event.stopPropagation())
+        picker.prepend(find)
+
+        const haystacks = options.map(({ tag }) => haystack(tag))
+        let shown = options
+        let lit = -1
+        const light = (at) => {
+            if (shown[lit]) shown[lit].option.classList.remove('tag-option-lit')
+            lit = at
+            const now = shown[lit]
+            if (!now) return
+            now.option.classList.add('tag-option-lit')
+            if (now.option.scrollIntoView) now.option.scrollIntoView({ block: 'nearest' })
+        }
+        find.addEventListener('input', () => {
+            const words = find.value.toLowerCase().split(/\s+/).filter(Boolean)
+            light(-1)
+            shown = []
+            options.forEach((one, i) => {
+                const fits = words.every((word) => haystacks[i].includes(word))
+                one.option.style.display = fits ? '' : 'none'
+                if (fits) shown.push(one)
+            })
+            // Something typed lights the first that fits, so Enter takes it.
+            if (words.length > 0 && shown.length > 0) light(0)
+        })
+        find.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault()
+                if (shown.length === 0) return
+                const step = event.key === 'ArrowDown' ? 1 : -1
+                light(lit < 0 ? (step > 0 ? 0 : shown.length - 1) : (lit + step + shown.length) % shown.length)
+            } else if (event.key === 'Enter') {
+                event.preventDefault()
+                if (shown[lit]) pick(shown[lit].tag)
+            } else if (event.key === 'Escape') {
+                event.preventDefault()
+                event.stopPropagation()
+                close()
+            }
+        })
+        find.focus()
+    }
+
+    /// The text a picker finds an entry of a vocabulary by, in lower case: the fields `by` names,
+    /// or else its key, name and title. An entry of a part not read has only the latter.
+    pickerHaystack(tag, known, by) {
+        const entry = known && known.entry
+        if (by.length > 0 && entry) {
+            return by.map((name) => {
+                const field = this.entryField(entry, name)
+                return field ? textWithoutIcons(this.valuesWithin(field).join(' ')) : ''
+            }).join(' ').toLowerCase()
+        }
+        return [tag, known ? nameAsText(known.name || '') : '', (known && known.hover) || ''].join(' ').toLowerCase()
     }
 
     /**

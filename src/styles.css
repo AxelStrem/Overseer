@@ -3398,6 +3398,32 @@ body.ov-backdrop-moving {
     opacity: 1;
 }
 
+/* A long picker - a catalogue - scrolls under its find box rather than covering the page. */
+.tag-picker.tag-picker-finds {
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.tag-picker-find {
+    position: sticky;
+    top: 0;
+    flex: 1 0 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    padding: 4px 6px;
+    border: 1px solid var(--ov-line);
+    border-radius: 4px;
+    background-color: var(--ov-surface);
+    color: inherit;
+    font: inherit;
+}
+
+.tag-picker .tag-option.tag-option-lit {
+    opacity: 1;
+    outline: 2px solid var(--ov-accent, currentColor);
+    outline-offset: 1px;
+}
+
 /* An enum: one chip, pressed to pick another, from the same picker a tag is added from. */
 .tag-chip.enum-choice {
     cursor: pointer;

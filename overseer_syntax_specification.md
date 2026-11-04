@@ -1483,6 +1483,16 @@ string is edited with a double one, and `placeholder` says what goes in it while
 Given a `vocabulary`, it picks tags from that list instead of being typed into - the same chips
 and picker as a `tags` field - and what is picked is held the same way as anything typed.
 
+Any keyed list is a vocabulary, so a box picks a handle out of a catalogue the same way. `limit`
+says how many keys it holds: with `limit=1` it holds one, offers no `+` once that is picked, and
+its chip is pressed to pick another in its place, as an enum's is. `by` names the fields of the
+catalogue's entries its picker finds in (see "Tags"), where by default it looks in the key, the
+`name` and the `title`. The box shows the food's name and holds its handle:
+
+```overseer
+textbox food (placeholder="food", vocabulary="/tracker_v2/FOODS/Catalog", limit=1, by="handle, name, sub_name") = ""
+```
+
 A string or a textbox saying `kind="color"` holds a colour, written `#rrggbb` - the `colour` of
 every tag list's entries. The string is drawn with a square of its colour before the code, and a
 tap on the square opens the browser's own colour picker; what is picked is written exactly as a
@@ -2054,6 +2064,10 @@ already held. A task naming the tasks it waits on, open or finished, each in its
 ```overseer
 tags after (vocabulary="/project/Items, /project/History") = "parser, escape"
 ```
+
+A picker offering more than a dozen chips opens with a box to find one in. Every word typed into
+it must be found in a chip's key, `name` or `title` for the chip to stay; the arrow keys move
+between those left, Enter picks the one lit, and Escape closes the picker.
 
 A `context vocabulary` (see "Contexts") is the vocabulary of every field inside its container that
 names none of its own, and of the chips in their text (see "Chips in text"). A field that names its
@@ -2688,7 +2702,7 @@ div Tasks {
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `ease`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
-- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
+- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `limit` (on a `textbox` that picks), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
