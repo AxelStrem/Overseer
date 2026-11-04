@@ -97,7 +97,6 @@ const open = (doc) => {
   app = new OverseerApp()
   app.currentDocument = doc
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
 }
 
@@ -156,14 +155,4 @@ describe('a textbox that narrows a list', () => {
     expect(visible()).toEqual(['Tighten the rows', 'Themes'])
   })
 
-  it('narrows beside the older filter node, both at once', () => {
-    const doc = docOf()
-    doc[0].children.push(base('old', 'filter', said({ target: '/project/Items', text: 'title' })))
-    open(doc)
-    pick('stages', 'ready')
-    const old = document.querySelector('.filter-text')
-    old.value = 'rows'
-    old.dispatchEvent(new Event('input', { bubbles: true }))
-    expect(visible()).toEqual(['Tighten the rows'])
-  })
 })

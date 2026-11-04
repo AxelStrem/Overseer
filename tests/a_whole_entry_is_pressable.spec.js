@@ -67,7 +67,6 @@ const render = () => {
   app = new OverseerApp()
   app.currentDocument = theDocument()
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   pressed = []
   // A press that runs something. The real one makes no trip for a node without the handler, so
   // a button with nothing to do calling it is not a press of anything.

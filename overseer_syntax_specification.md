@@ -205,7 +205,6 @@ list Priorities (entry=int) {
 - `chart`: A line, pie or bar chart of what its `plot`s say (see "Charts")
 - `image`: A picture kept beside the document (see "Images")
 - `mark`: Something drawn with no value of its own, such as a grip (see "Marks")
-- `filter`: The older spelling of a textbox that narrows a list (see "Narrowing a list" and "Filter")
 
 #### Other nodes:
 - `on <event>`: What happens when the node it is written in is pressed or changed: a block of
@@ -1072,7 +1071,7 @@ context mode = "system"
     vocabulary, where by default it is light or dark, whichever reads on the colour - and
     `remove` and `add`, the × that takes a tag off and the + of a `tags` field: `always`,
     `pointed` (only on the field, or the table row, under the pointer or last tapped) or `never`.
-    The chips of a filter are chips like any.
+    The chips of a box that narrows a list are chips like any.
   - `button`: `height` (as tall as its padding makes it), `padding` (`8px 16px`), `spacing` (the
     space above and below, `8px`), `size` and `weight` of the label (`14px`, `500`), `style` -
     `solid`, filled with its colour; `outline`, a border in `line` and the label in `muted`, both
@@ -1081,15 +1080,14 @@ context mode = "system"
     dark reads on the button. A button the document colours itself keeps its colours whatever
     the `style`.
   - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
-  - `filter`: `width`, `size` (`12px`) and `padding` (`3px 8px`) of the box the older `filter` node is typed in; a textbox that narrows a list looks as a `field` does.
   - `tree`: `indent` (`18px`), `color`, `thickness`, `style` (`none`: no lines), `elbow` and `stand` (`row` or `column`) of a list drawn as a tree
     (see "Drawing a list as a tree").
   - `hold`: `style`, how a press held on a node with `on hold` is shown while it lasts - `fill`,
     `ring` or `none`; `color`, what it is drawn in; and `particles`, `dots` or `none` (see "on
     hold").
 
-  Sizes are written as text, `"14px"`; weights and factors as numbers. A `table`, a `tab` bar and
-  a `filter` can also say how the kinds inside them look: `- table { - button { - height =
+  Sizes are written as text, `"14px"`; weights and factors as numbers. A `table` and a `tab` bar
+  can also say how the kinds inside them look: `- table { - button { - height =
   "22px" } }` gives the buttons in a table their own size and leaves every other button as it
   was, and `- table { - field { - spacing = "0px" } }` packs its rows. A container inside the
   table that says how buttons look is nearer to them still, and wins.
@@ -1102,7 +1100,7 @@ context mode = "system"
   container's theme: a `table` key changes the table's heading and rows, not the fields in it -
   unless it holds that kind's keys, as above. The kinds are `button`, `checkbox`, `chip` (tags and
   enums), `tab` (a tab bar and its tabs), `table` (a list drawn as a table), `field`, `chart`,
-  `separator`, `filter` and `tree`. Each of them changes what its look takes from the theme, and nothing
+  `separator` and `tree`. Each of them changes what its look takes from the theme, and nothing
   it draws in a fixed way: a solid button's label is light or dark to read on its colour whatever
   its `text`, and `button/label` says otherwise.
 - **`backdrop` is what is painted over `background`**: layers, each a key of its own, drawn in the
@@ -1847,8 +1845,8 @@ string note (shown=$(note == "" ? "?" : note)) = ""
 What `shown` gives is the whole text: no `precision`, `format`, `prefix` or `suffix` is added to
 it. A number it gives back is drawn as the formula gives it, so a formula that wants a precision
 writes it itself. An enum is drawn as the text instead of its chip, and is still pressed to pick.
-`shown` is only how the field looks. The value stays what it is in the file, in formulas, in the
-filter, when a list is sorted by it and when an entry is copied (`append` with `from=`), and
+`shown` is only how the field looks. The value stays what it is in the file, in formulas, in a
+box that narrows a list, when a list is sorted by it and when an entry is copied (`append` with `from=`), and
 editing the field opens on the value, not on the text.
 
 `freeze=true` keeps what a formula gave at the moment its entry was made: in a new entry the field
@@ -1928,12 +1926,12 @@ tab project (label="Project") {
 ```
 
 A key no vocabulary holds is drawn as a plain chip of the word. As with icons, the text is kept as
-written - in the file, in formulas, in the editor - and a filter matches the key inside it. Inside
+written - in the file, in formulas, in the editor - and a box that narrows a list matches the key inside it. Inside
 markdown code, `` `<#key>` `` stays text, and so does `` `<icon=name>` ``.
 
 Pressing a chip that stands for an entry - in text, in a `tags` field, or an `enum` with nothing to
 pick - shows the entry: the folds and tabs around it open, it is scrolled into view and marked for
-a moment. An entry the filter hides, or one in a list the page does not draw, is not shown, and
+a moment. An entry a narrowing box hides, or one in a list the page does not draw, is not shown, and
 the chip says why on hover.
 
 #### Images
@@ -2043,7 +2041,7 @@ list of tasks keyed by `handle` serves as well as a tag list. Its `title`, where
 what its chip says on hover, and its `icon`, where it names one of the library's icons (see
 "Icons"), is drawn before its name - a person's chosen icon, a stage's or a label's alike.
 
-Its `name` is inline markdown, drawn the same in every chip of it - in a field, a picker, a filter
+Its `name` is inline markdown, drawn the same in every chip of it - in a field, a picker, a narrowing box
 and a `<#key>` in text: bold, italic, strikethrough, code, `<color=... | ...>` and `<icon=...>`,
 so a name can carry an icon or a colour on each letter. Paragraphs, links and images are not
 drawn - a link is its words, since pressing a chip is the chip's - and raw HTML is text, as it is
@@ -2085,8 +2083,8 @@ tab project (label="Project") {
 `shape` says how its chips are drawn: `pill`, rounded at the ends, which tags are unless told
 otherwise; `box`, a rectangle with softened corners, which an `enum` is; or `slant`, a box leaning
 right, its top edge ahead of its bottom one, for a third kind of label beside those two - a
-project's milestones beside its tags and stages. A filter's row of chips takes the shape of the
-field it narrows by.
+project's milestones beside its tags and stages. A textbox that picks chips to narrow a list by
+takes `shape` too.
 
 ```overseer
 tags labels (vocabulary="/project/Labels", shape="box") = "perf"
@@ -2096,8 +2094,8 @@ tags milestones (vocabulary="/project/Milestones", shape="slant") = "beta"
 `chip="icon"` draws each chip as its entry's icon alone - or the first letter of its name, for an
 entry without one - keeping its shape and colour, so a column of people can be as narrow as a
 chip. The whole chip shows when the mouse rests on it, above whatever the field's `hover-text`
-says. Only the field's own chips are drawn so: what its picker offers, and a filter over the
-list, keep their names, and a value the vocabulary does not hold keeps its full, marked chip.
+says. Only the field's own chips are drawn so: what its picker offers, and a box that narrows the
+list by it, keep their names, and a value the vocabulary does not hold keeps its full, marked chip.
 
 ```overseer
 enum owner (label="by", vocabulary="/project/people/People", chip="icon", width=32px) = "ap31"
@@ -2156,29 +2154,6 @@ enum stage (vocabulary="/project/Stages") = "filed" {
 `withhold=$(open_kids > 0 ? "finished" : "")`, which keeps a task with work still open under it
 from being finished. It changes only what the picker offers: a value held back can still be
 written some other way, so a handler that must not act on it says so in its own `if`.
-
-#### Filter
-
-The older spelling of "Narrowing a list", kept so that documents written with it go on working: a
-new document narrows a list with textboxes instead. A view over a list, and nothing more: it writes
-nothing and the document never changes. What is typed is matched against the fields named in
-`text` — the fields, not what is on screen, because what is on screen is formatted and sometimes
-hidden.
-
-```overseer
-filter (target="/project/Items", text="title, handle, Comments", enum="stage", tags="labels, flags",
-        status="done", vocabulary="/project/Labels", label="find") { }
-```
-
-| parameter | |
-| --- | --- |
-| `target` | the list it narrows |
-| `text` | which fields the typed text is matched against; a name that is a list or a div searches every field under it, so naming a list of comments finds an entry by anything said in them |
-| `tags` | the fields holding labels, comma-separated: each gets a row of chips to narrow by, and picking two - in one row or across them - finds the entries holding both |
-| `vocabulary` | where the first field's labels are listed; the others are drawn from their own fields' vocabularies |
-| `status` | a field to offer as a third narrowing, by value |
-| `enum` | an `enum` field, its values offered as chips from its own vocabulary; picking two finds either |
-| `hide` | a field to offer one box for, which leaves out the entries where it is above nought |
 
 #### Charts
 
@@ -2710,11 +2685,10 @@ div Tasks {
 - **Grids**: `entry`, `columns`, `rows`, `header`
 - **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`
-- **Filters** (the older spelling of `narrows`): `target`, `text`, `tags`, `vocabulary`, `status`, `enum`, `hide`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`, `chip`
 - **Tags**: `vocabulary`, `shape`, `chip` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`
-- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `filter`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
+- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context, and `base=none` or `base=<node>` on an element of an override)
 
 ---

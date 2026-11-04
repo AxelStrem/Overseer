@@ -117,7 +117,6 @@ const openIt = (doc, { file = '/documents/tracker.os' } = {}) => {
   app._currentText = 'TEXT'
   app._originalText = 'TEXT'
   app.currentDocument = clone(doc)
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

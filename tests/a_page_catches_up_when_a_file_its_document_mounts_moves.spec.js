@@ -45,7 +45,6 @@ const anApp = () => {
   app._currentText = TEXT
   app._originalText = TEXT
   app.currentDocument = theDocument()
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

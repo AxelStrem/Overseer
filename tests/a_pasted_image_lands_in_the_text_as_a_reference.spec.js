@@ -43,7 +43,6 @@ const openEditor = (parameters = {}) => {
   app.currentDocument = [base('t', 'tab', {}, [
     base('body', 'text', { value: { String: 'See: here' }, mutable: { Boolean: true }, ...parameters }),
   ])]
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   const shown = document.querySelector('.text-content')
   shown.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }))

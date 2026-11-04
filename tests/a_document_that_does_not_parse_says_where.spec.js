@@ -45,7 +45,6 @@ function open(doc) {
   app.currentDocument = doc
   app.currentFile = 'page.os'
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   app.updateTitle()
   return app

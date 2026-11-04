@@ -124,7 +124,6 @@ describe('a theme that says sizes, spacing and type', () => {
         group('table', group('button', key('style', 'outline'), key('height', '22px'))),
       ),
     ]
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
     await settled()
 
@@ -161,7 +160,6 @@ describe('a theme that says sizes, spacing and type', () => {
       { name: 't', node_type: 'tab', parameters: {}, is_hierarchy_transparent: true, children: [aTable()] },
       theme(key('accent', '#2563eb')),
     ]
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
     await settled()
 
@@ -186,7 +184,6 @@ describe('a theme that says sizes, spacing and type', () => {
       ['--ov-button-height', 'auto'], ['--ov-button-padding', '8px 16px'], ['--ov-button-size', '14px'],
       ['--ov-button-weight', '500'], ['--ov-button-spacing', '8px'],
       ['--ov-tab-size', '14px'], ['--ov-tab-weight', 'normal'], ['--ov-tab-padding', '8px 16px'],
-      ['--ov-filter-width', 'auto'], ['--ov-filter-size', '12px'], ['--ov-filter-padding', '3px 8px'],
     ]
     for (const [name, today] of read) {
       const at = styles.indexOf(`var(${name}${today ? `, ${today}` : ''}`)

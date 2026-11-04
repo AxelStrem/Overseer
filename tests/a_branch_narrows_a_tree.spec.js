@@ -97,7 +97,6 @@ const open = (doc) => {
   app = new OverseerApp()
   app.currentDocument = doc
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   app.renderer.applyFilters()
 }

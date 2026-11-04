@@ -61,7 +61,6 @@ describe('a header edit', () => {
     app.currentFile = 'doc.os'
     app._currentText = 'TEXT-AS-OPENED'
     app._originalText = 'TEXT-AS-OPENED'
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
   })
 

@@ -76,7 +76,6 @@ const render = (children, listParams) => {
   const app = new OverseerApp()
   app.currentDocument = docOf(children, listParams)
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

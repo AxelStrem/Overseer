@@ -2974,21 +2974,6 @@ body.ov-backdrop-moving {
     --ov-radius: var(--ov-separator-radius, var(--ov-theme-radius)) !important;
 }
 
-.overseer-filter {
-    --ov-background: var(--ov-filter-background, var(--ov-theme-background)) !important;
-    --ov-surface: var(--ov-filter-surface, var(--ov-theme-surface)) !important;
-    --ov-text: var(--ov-filter-text, var(--ov-theme-text)) !important;
-    --ov-muted: var(--ov-filter-muted, var(--ov-theme-muted)) !important;
-    --ov-line: var(--ov-filter-line, var(--ov-theme-line)) !important;
-    --ov-accent: var(--ov-filter-accent, var(--ov-theme-accent)) !important;
-    --ov-success: var(--ov-filter-success, var(--ov-theme-success)) !important;
-    --ov-warning: var(--ov-filter-warning, var(--ov-theme-warning)) !important;
-    --ov-danger: var(--ov-filter-danger, var(--ov-theme-danger)) !important;
-    --ov-font: var(--ov-filter-font, var(--ov-theme-font)) !important;
-    --ov-mono: var(--ov-filter-mono, var(--ov-theme-mono)) !important;
-    --ov-radius: var(--ov-filter-radius, var(--ov-theme-radius)) !important;
-}
-
 /* A node given a font colour, size or weight of its own keeps it to itself: what is drawn inside it
    is in the theme, as though it had not been said. With no weight of its own, so any class that
    colours or sizes a part of the page still does. A container that wants what is inside it to
@@ -3685,77 +3670,12 @@ body.ov-backdrop-moving {
     .md-motion .md-letter { animation: none; }
 }
 
-/* A filter over a list: text to match and tags to narrow by.
- *
- * Entirely a view. Nothing here is written to the document, which is why it can afford to
- * respond on every keystroke - the alternative was a field in the document and a re-resolve
- * per character. */
-.overseer-filter {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 4px 0 6px 0;
-}
-
-.filter-text {
-    padding: var(--ov-filter-padding, 3px 8px);
-    border: 1px solid var(--ov-line);
-    border-radius: 4px;
-    font-size: var(--ov-filter-size, 12px);
-    width: var(--ov-filter-width, auto);
-    min-width: 160px;
-}
-
-.filter-tags {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex-wrap: wrap;
-}
-
-/* The stages, kept apart from the tags beside them: two different questions, asked differently -
- * any of the stages picked, all of the tags. The tag rows and the boxes are kept apart the same
- * way; the renderer marks every group that something else follows. */
-.filter-tags.filter-sep {
-    padding-right: 8px;
-    border-right: 1px solid var(--ov-line);
-}
-
-/* Faint until chosen, so the row reads as "what could I narrow by" rather than as a set of
- * tags already applied. */
-.filter-tag {
-    cursor: pointer;
-    opacity: 0.4;
-}
-
-.filter-tag:hover {
-    opacity: 0.75;
-}
-
-.filter-tag.filter-tag-on {
-    opacity: 1;
-    outline: 2px solid var(--ov-text);
-    outline-offset: 1px;
-}
-
-.filter-count {
-    font-size: 11px;
-    color: var(--ov-muted);
-    margin-left: auto;
-}
-
-.filter-broken {
-    font-size: 12px;
-    color: var(--ov-danger);
-}
-
-/* Hidden by the filter.
+/* Hidden by the boxes that narrow its list.
  *
  * The class is repeated to raise its specificity, which looks odd and is the whole point. The
  * layout rules above set `display: flex !important` on `.overseer-div.layout-horizontal` -
  * specificity (0,2,0) - so a plain `.filtered-out` at (0,1,0) lost to them even with
- * `!important` of its own, and every row stayed visible while the count said "4 of 10".
+ * `!important` of its own, and every row stayed visible, matching or not.
  *
  * Three classes puts this at (0,3,0), above every layout rule rather than merely tied with the
  * ones that exist today. */
@@ -3768,29 +3688,6 @@ body.ov-backdrop-moving {
  * it comes after. */
 .tree-folded-away.tree-folded-away {
     display: none !important;
-}
-
-/* The three status boxes. Derived from the percentage rather than stored, so "in progress" is
- * whatever sits between the two ends. */
-.filter-status {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.filter-status-option {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-size: 11px;
-    color: var(--ov-muted);
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.filter-status-option input {
-    margin: 0;
-    cursor: pointer;
 }
 
 /* How many of a windowed list's entries were left out of view.

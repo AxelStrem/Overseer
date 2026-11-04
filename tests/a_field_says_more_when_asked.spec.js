@@ -49,7 +49,6 @@ const render = (...fields) => {
   const app = new OverseerApp()
   app.currentDocument = [Object.assign(base('t', 'tab'), { children: fields })]
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }
@@ -126,7 +125,6 @@ describe('a cell of a table asked what column it is in', () => {
     const app = new OverseerApp()
     app.currentDocument = aTable()
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
 
     const cells = Array.from(document.querySelectorAll('.overseer-field'))
@@ -144,7 +142,6 @@ describe('a cell of a table asked what column it is in', () => {
     const app = new OverseerApp()
     app.currentDocument = aTable()
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
 
     const points = Array.from(document.querySelectorAll('.overseer-field'))

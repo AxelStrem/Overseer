@@ -3,8 +3,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // A list that says `tree=` is drawn as an outline: each entry under its parent, indented by its
 // depth, with lines joining them and a chevron that folds a branch away. The hierarchy is either
 // the entries' own lists of children (`tree="Parts"`) or a field naming each entry's parent
-// (`tree="parent"`), and both are drawn as one run of rows inside the list. The filter keeps a
-// match's ancestors in sight, dimmed, and hides the rest.
+// (`tree="parent"`), and both are drawn as one run of rows inside the list. A box that narrows it
+// keeps a match's ancestors in sight, dimmed, and hides the rest.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -36,7 +36,7 @@ const task = ([handle, parent], n) => base(`Task__${n + 1}`, 'div', {}, [
   text('handle', handle), text('title', `Title of ${handle}`), text('parent', parent),
 ])
 const flat = (tasks) => [base('t', 'tab', { mutable: { Boolean: true } }, [
-  base('find', 'filter', { target: { String: '/t/Tasks' }, text: { String: 'title' } }),
+  base('find', 'textbox', { value: { String: '' }, narrows: { String: '/t/Tasks' }, by: { String: 'title' } }),
   base('Tasks', 'list', { key: { String: 'handle' }, tree: { String: 'parent' } }, tasks.map(task)),
 ])]
 
@@ -58,7 +58,6 @@ const open = (doc) => {
   app.currentDocument = doc
   app.currentFile = 't.os'
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
 }
 
@@ -127,7 +126,7 @@ describe('a list drawn as a tree', () => {
 
   it('keeps a match in sight with its ancestors dimmed, and hides the rest', () => {
     open(flat([['site', ''], ['pages', 'site'], ['about', 'pages'], ['home', 'pages'], ['deploy', 'site']]))
-    const input = document.querySelector('.overseer-filter input')
+    const input = document.querySelector('.textbox-input')
     input.value = 'about'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     app.renderer.applyFilters()

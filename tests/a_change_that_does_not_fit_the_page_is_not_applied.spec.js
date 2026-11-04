@@ -66,7 +66,6 @@ const open = () => {
   app.currentDocument = theDocument()
   app.currentFile = 't.os'
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   app.rereadFromDisk = vi.fn(async () => {})
 }

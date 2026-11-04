@@ -95,7 +95,6 @@ const render = (listParams) => {
   app.currentFile = 'project.os'
   app.currentDocument = docOf(listParams)
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }
@@ -172,7 +171,6 @@ describe('a reader sorts a table by its columns', () => {
       entry.parameters._ui_sort_key = { Integer: entry.name === 'Item__d' ? 0 : 1 }
     }
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
     expect(order()).toEqual(['d', 'a', 'b', 'c', 'e'])
     click('pts')
@@ -194,7 +192,6 @@ describe('a reader sorts a table by its columns', () => {
       points.parameters._computed_shown = { String: n === 1 ? '' : String.fromCharCode(122 - n) }
     }
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
     click('pts')
     expect(order()).toEqual(['e', 'c', 'a', 'd', 'b'])

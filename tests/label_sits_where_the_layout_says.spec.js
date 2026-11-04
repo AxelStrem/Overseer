@@ -48,7 +48,6 @@ const render = (...fields) => {
   const app = new OverseerApp()
   app.currentDocument = [Object.assign(base('t', 'tab'), { children: fields })]
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

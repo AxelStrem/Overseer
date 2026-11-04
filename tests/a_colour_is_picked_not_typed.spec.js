@@ -49,7 +49,6 @@ const render = (options) => {
   app.currentDocument = theDocument(options)
   app.currentFile = 'p.os'
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.reevaluateDocumentSelective = vi.fn(async () => ({ success: true }))
   app.renderer.renderDocument(app.currentDocument)
 }

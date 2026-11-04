@@ -212,7 +212,6 @@ describe('a press after an answer that named the text', () => {
     app.currentFile = 'doc.os'
     app._currentText = null
     app._textVersion = 'V1'
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
   })
 

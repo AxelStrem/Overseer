@@ -58,7 +58,6 @@ const render = (options) => {
   app.currentDocument = theDocument(options)
   app.currentFile = 'd.os'
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   pressed = []
   vi.spyOn(app.renderer, 'emitEvent').mockImplementation(async (node, _el, eventName) => {
     if (eventName === 'click') pressed.push(node.name)

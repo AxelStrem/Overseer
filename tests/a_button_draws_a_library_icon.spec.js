@@ -31,7 +31,6 @@ const draw = (buttons) => {
   const app = new OverseerApp()
   app.currentDocument = [base('t', 'tab', {}, buttons)]
   app.currentFile = 't.os'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
 }
 

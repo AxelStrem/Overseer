@@ -62,7 +62,6 @@ describe('a motion', () => {
     document.documentElement.removeAttribute('style')
     app = new OverseerApp()
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
   })
 
   it('plays nothing on the first draw', async () => {
@@ -142,7 +141,6 @@ describe('a hold under way', () => {
     document.documentElement.removeAttribute('style')
     app = new OverseerApp()
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
     vi.spyOn(app.renderer, 'emitEvent').mockImplementation(async () => {})
   })
   afterEach(() => vi.useRealTimers())

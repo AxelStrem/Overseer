@@ -65,7 +65,6 @@ function withField(field) {
   const app = new OverseerApp()
   app.currentDocument = docOf(field)
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
 
   const asked = []
   app.reevaluateDocumentSelective = (paths = [], changes = []) => {

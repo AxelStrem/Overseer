@@ -32,7 +32,6 @@ const draw = (children, tabParams = {}) => {
   const app = new OverseerApp()
   app.currentDocument = [base('t', 'tab', tabParams, children)]
   app.currentFile = 't.os'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

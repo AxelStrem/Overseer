@@ -56,7 +56,6 @@ const anAppShowingADay = (file = '/documents/day.os') => {
   app._currentText = 'TEXT'
   app._originalText = 'TEXT'
   app._adoptDocumentPreserveRoot(aDay())
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

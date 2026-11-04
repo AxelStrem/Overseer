@@ -53,7 +53,6 @@ it('narrows 120 items, quickly and without touching the document', () => {
   const app = new OverseerApp()
   app.currentDocument = doc
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(doc)
 
   const items = find(doc, 'Items').children

@@ -47,7 +47,6 @@ const render = () => {
   app.currentDocument = theDocument()
   app.currentFile = 'p.os'
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
 }
 

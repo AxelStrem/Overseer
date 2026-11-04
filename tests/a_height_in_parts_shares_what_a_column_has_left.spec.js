@@ -33,7 +33,6 @@ const box = (name, parameters) => base(name, 'div', parameters, [line(name + '_a
 const render = (doc) => {
   const app = new OverseerApp()
   app.currentDocument = doc
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

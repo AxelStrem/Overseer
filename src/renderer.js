@@ -204,8 +204,8 @@ const BURST_DOTS = 8
 const BUTTON_STYLES = ['outline', 'plain']
 /// The kinds of element a theme says something about, and those of them that hold others - a
 /// table's `button` keys are how the buttons in a table look.
-const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'filter', 'tree']
-const KINDS_HOLDING = { table: '.overseer-list.view-table', tab: '.tab-bar', filter: '.overseer-filter' }
+const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'tree']
+const KINDS_HOLDING = { table: '.overseer-list.view-table', tab: '.tab-bar' }
 
 /// A theme key said in words, as the CSS values the stylesheet reads: each is written beside the
 /// key as `--ov-<key>--<part>`, and a word that means today's look writes `initial`, which leaves
@@ -2155,9 +2155,9 @@ export class OverseerRenderer {
 
     renderDocument(overseerDocument) {
         const rendered = profiled('  renderDocument', () => this._renderDocumentProfiled(overseerDocument))
-        // Straight away, rather than leaving it to the filter element's own timeout: a full
+        // Straight away, rather than leaving it to a narrowing box's own timeout: a full
         // render would otherwise show every entry for a frame before hiding most of them again.
-        try { this.applyFilters() } catch (_) { /* a filter must never break a render */ }
+        try { this.applyFilters() } catch (_) { /* narrowing must never break a render */ }
         try { this.reopenDraftIfDrawn() } catch (_) { /* the edit stays kept */ }
         try { this.arrangeGrips() } catch (_) { /* never break a render over a grip */ }
         return rendered
@@ -2961,8 +2961,6 @@ export class OverseerRenderer {
                 return this.createTagsElement(node)
             case 'enum':
                 return this.createEnumElement(node)
-            case 'filter':
-                return this.createFilterElement(node)
             case 'int':
             case 'float':
                 return this.createNumberElement(node)
@@ -4738,7 +4736,7 @@ export class OverseerRenderer {
      */
     makePressable(element, node) {
         const type = (node.node_type || node.type || '').toLowerCase()
-        const drawnAsAField = ['tab', 'list', 'string', 'textbox', 'text', 'tags', 'enum', 'filter', 'int', 'float',
+        const drawnAsAField = ['tab', 'list', 'string', 'textbox', 'text', 'tags', 'enum', 'int', 'float',
             'date', 'timestamp', 'bool', 'button', 'checkbox', 'chart', 'mount'].includes(type)
         if (drawnAsAField) return
         const taps = this.declaresEvent(node, 'click')
@@ -5746,200 +5744,6 @@ export class OverseerRenderer {
         } catch(_) { /* ignore */ }
     }
 
-    /**
-     * A set of tags, drawn as what it is rather than as the line it is stored on.
-     *
-     * The value is a comma-separated set - already a real collection to the evaluator, which
-     * can `filter` and `count` it - but it was rendered as a plain string, so a field holding
-     * six labels read as forty characters of prose. Here each one gets a chip.
-     *
-     * `vocabulary` names a keyed list of the tags that exist: its entries supply the label to
-     * show and the colour to show it in, so the palette is document data rather than something
-     * the renderer decides. Without one the chips take a default colour, which is what an
-     * existing document with a bare `tags` field gets.
-     *
-     * Editing goes through the same path as every other field: the set is written back as the
-     * line it came from and `reevaluateDocumentSelective` works out the rest. There is nothing
-     * here the server needs to know about.
-     */
-    /**
-     * A filter over a list: some text to match, and tags to narrow by.
-     *
-     * Client-side, and deliberately. The alternative was a field in the document and `hidden`
-     * formulas on the entries, which would have meant re-resolving the whole document on every
-     * keystroke - 289ms measured on a document smaller than the one this is for - and storing
-     * the filter, so it would be written to the file, committed by the backup and synced to
-     * whoever else is reading. A filter is a view, like which tab is open or where you have
-     * scrolled. `sort_by` is presentation-only for the same reason.
-     *
-     * Nothing here writes to the document, and the server never hears about it.
-     *
-     * What it needs from the document:
-     *   target     - the list to filter
-     *   text       - which of an entry's fields the typed text is matched against
-     *   tags       - which fields hold an entry's tags, comma-separated: a row of chips each
-     *   vocabulary - the tag list of the first of them, for drawing its chips; the others are
-     *                drawn from their own fields' vocabularies
-     *   status     - a nought-to-a-hundred field, offered as three boxes: not started, in
-     *                progress, finished. Derived rather than stored, because "in progress" is
-     *                not a state anything writes down - it is what a percentage between the
-     *                two ends means.
-     *   enum       - a field holding one of a list, a stage say, its values offered as chips;
-     *                any of those picked
-     *   hide       - a field to offer one box for: leave out the entries where it is above nought
-     */
-    createFilterElement(node) {
-        const container = document.createElement('div')
-        container.className = 'overseer-filter'
-        this.drawInKindLook(container)
-
-        const target = String(this.getParameterValue(node, 'target') || '')
-            .split('/').filter(Boolean)
-        const textFields = String(this.getParameterValue(node, 'text') || '')
-            .split(',').map(s => s.trim()).filter(Boolean)
-        const tagFields = String(this.getParameterValue(node, 'tags') || '')
-            .split(',').map(s => s.trim()).filter(Boolean)
-        const statusField = this.getParameterValue(node, 'status')
-        const enumField = this.getParameterValue(node, 'enum')
-        const hideField = this.getParameterValue(node, 'hide')
-        if (target.length === 0) {
-            // Nothing to filter is worth saying out loud rather than rendering an inert box.
-            container.textContent = 'filter: no target list named'
-            container.classList.add('filter-broken')
-            return container
-        }
-
-        // Kept on the renderer rather than in the element, so it survives the element being
-        // replaced - which happens on every repaint of the list it filters. A filter that
-        // silently cleared itself whenever something changed nearby would be worse than none.
-        const key = target.join('/')
-        const state = this.filterState(key, { target, textFields, tagFields, statusField, enumField, hideField })
-
-        if (textFields.length > 0) {
-            const box = document.createElement('input')
-            box.className = 'filter-text'
-            box.type = 'text'
-            box.placeholder = this.getParameterValue(node, 'label') || 'filter'
-            box.value = state.text
-            // On input, not on blur: the point of typing into it is watching the list shrink.
-            box.addEventListener('input', () => {
-                state.text = box.value
-                this.applyFilters()
-            })
-            container.appendChild(box)
-        }
-
-        if (enumField) {
-            // The values of a field holding one of a list - a stage - to narrow by. Picking two
-            // widens rather than narrows, unlike tags: an entry holds one value, so asking for
-            // the ones that are both would find nothing. Their list is the field's own, read
-            // from the entries, so the filter does not have to be told it a second time.
-            const list = this.findNodeByPath(window.app.currentDocument, target)
-            const vocabulary = this.fieldVocabularyIn(list, String(enumField))
-            const chips = document.createElement('span')
-            chips.className = `filter-tags filter-enum chip-${this.chipShape(this.fieldIn(list, String(enumField)), 'enum')}`
-            for (const [value, known] of vocabulary) {
-                const chip = this.tagChip(value, known, null)
-                chip.classList.add('filter-tag')
-                if (state.enums.has(value)) chip.classList.add('filter-tag-on')
-                chip.addEventListener('click', () => {
-                    if (state.enums.has(value)) state.enums.delete(value)
-                    else state.enums.add(value)
-                    chip.classList.toggle('filter-tag-on', state.enums.has(value))
-                    this.applyFilters()
-                })
-                chips.appendChild(chip)
-            }
-            container.appendChild(chips)
-        }
-
-        // A row of chips for each field holding tags. The first takes its chips from the filter's
-        // own vocabulary when it names one, as a single field always has; the others from their
-        // fields' own - a project's workflow flags are a list of their own beside its tags, and a
-        // flag picked here asks about the flags field, never about a tag that happens to share
-        // its name.
-        const list = tagFields.length > 0 ? this.findNodeByPath(window.app.currentDocument, target) : null
-        tagFields.forEach((field, i) => {
-            const vocabulary = i === 0 && this.getParameterValue(node, 'vocabulary')
-                ? this.tagVocabulary(node)
-                : this.fieldVocabularyIn(list, field)
-            if (!state.tags.has(field)) state.tags.set(field, new Set())
-            const picked = state.tags.get(field)
-            const chips = document.createElement('span')
-            chips.className = `filter-tags chip-${this.chipShape(this.fieldIn(list, field), 'tags')}`
-            chips.dataset.filterField = field
-            for (const [tag, known] of vocabulary) {
-                const chip = this.tagChip(tag, known, null)
-                chip.classList.add('filter-tag')
-                if (picked.has(tag)) chip.classList.add('filter-tag-on')
-                chip.addEventListener('click', () => {
-                    if (picked.has(tag)) picked.delete(tag)
-                    else picked.add(tag)
-                    chip.classList.toggle('filter-tag-on', picked.has(tag))
-                    this.applyFilters()
-                })
-                chips.appendChild(chip)
-            }
-            container.appendChild(chips)
-        })
-
-        if (statusField) {
-            const boxes = document.createElement('span')
-            boxes.className = 'filter-status'
-            for (const [which, label] of [['none', 'not started'],
-                                          ['some', 'in progress'],
-                                          ['done', 'finished']]) {
-                const holder = document.createElement('label')
-                holder.className = 'filter-status-option'
-                const box = document.createElement('input')
-                box.type = 'checkbox'
-                box.checked = state.status.has(which)
-                box.addEventListener('change', () => {
-                    if (box.checked) state.status.add(which)
-                    else state.status.delete(which)
-                    this.applyFilters()
-                })
-                holder.appendChild(box)
-                holder.appendChild(document.createTextNode(label))
-                boxes.appendChild(holder)
-            }
-            container.appendChild(boxes)
-        }
-
-        if (hideField) {
-            // One box: leave out the entries for which this field is above nought - the tasks
-            // still waiting on another, say. Named after the field, which says what it hides.
-            const holder = document.createElement('label')
-            holder.className = 'filter-status-option filter-hide'
-            const box = document.createElement('input')
-            box.type = 'checkbox'
-            box.checked = state.hiding
-            box.addEventListener('change', () => {
-                state.hiding = box.checked
-                this.applyFilters()
-            })
-            holder.appendChild(box)
-            holder.appendChild(document.createTextNode(`hide ${hideField}`))
-            container.appendChild(holder)
-        }
-
-        // A rule after every row of chips that something else follows: stages, project tags,
-        // workflow tags and the boxes are different questions. The count is not one of them.
-        for (const group of container.querySelectorAll(':scope > .filter-tags')) {
-            if (group.nextElementSibling) group.classList.add('filter-sep')
-        }
-
-        const count = document.createElement('span')
-        count.className = 'filter-count'
-        count.dataset.filterCount = key
-        container.appendChild(count)
-
-        this.applyNodeStyles(container, node)
-        // Applied after this returns, when the list it filters is on the page too.
-        setTimeout(() => this.applyFilters(), 0)
-        return container
-    }
-
     /** A field the entries of a list hold, from the first entry that has it. */
     fieldIn(list, name) {
         for (const entry of (list && list.children) || []) {
@@ -5947,15 +5751,6 @@ export class OverseerRenderer {
             if (field) return field
         }
         return null
-    }
-
-    /** The vocabulary of a field the entries of a list hold, from the first entry that has it. */
-    fieldVocabularyIn(list, name) {
-        for (const entry of (list && list.children) || []) {
-            const field = this.entryField(entry, name)
-            if (field && this.vocabularyFor(field)) return this.tagVocabulary(field)
-        }
-        return new Map()
     }
 
     /**
@@ -5997,48 +5792,27 @@ export class OverseerRenderer {
         return found
     }
 
-    /** What a filter is currently set to, remembered across repaints. */
-    filterState(key, about) {
-        if (!this._filters) this._filters = new Map()
-        const held = this._filters.get(key)
-        if (held) {
-            // The document may have been reloaded with the fields named differently.
-            Object.assign(held, about)
-            return held
-        }
-        // tags: what is picked in each field that holds tags, by the field's name.
-        const fresh = Object.assign({ text: '', tags: new Map(), status: new Set(), enums: new Set(), hiding: false }, about)
-        this._filters.set(key, fresh)
-        return fresh
-    }
-
     /**
-     * Hide the entries of every filtered list that do not match, and say how many are left.
+     * Hide the entries of every narrowed list that the boxes narrowing it do not let through.
      *
      * Called after any render as well as on every keystroke, because a repaint replaces the
-     * entries with fresh elements that know nothing about the filter. Reading the fields from
+     * entries with fresh elements that know nothing about the boxes. Reading the fields from
      * the document rather than from the page: what is on screen is abbreviated, formatted and
      * sometimes hidden, and none of that is what you meant to search.
      */
     applyFilters() {
         const narrowings = this._narrowings ? [...this._narrowings.values()] : []
-        if ((!this._filters || this._filters.size === 0) && narrowings.length === 0) return
+        if (narrowings.length === 0) return
         const doc = window.app && window.app.currentDocument
         if (!doc) return
 
-        // What narrows each list: a `filter` node, which is the older spelling of the same
-        // thing, and every box that names it. An entry shows when all of them let it through.
+        // The boxes that narrow each list. An entry shows when all of them let it through.
         const narrowed = new Map()
-        const conditionsOn = (target) => {
-            const key = target.join('/')
-            if (!narrowed.has(key)) narrowed.set(key, { target, state: null, key, boxes: [] })
-            return narrowed.get(key)
-        }
-        for (const state of (this._filters || new Map()).values()) {
-            if (Array.isArray(state.target)) conditionsOn(state.target).state = state
-        }
         for (const narrowing of narrowings) {
-            if (narrowing.target.length > 0) conditionsOn(narrowing.target).boxes.push(narrowing)
+            if (narrowing.target.length === 0) continue
+            const key = narrowing.target.join('/')
+            if (!narrowed.has(key)) narrowed.set(key, { target: narrowing.target, boxes: [] })
+            narrowed.get(key).boxes.push(narrowing)
         }
 
         // Every element that carries a path, gathered once. Asking the document for each entry
@@ -6053,10 +5827,9 @@ export class OverseerRenderer {
             else byPath.set(element.dataset.path, [element])
         }
 
-        for (const { target, state, key, boxes } of narrowed.values()) {
+        for (const { target, boxes } of narrowed.values()) {
             const list = this.findNodeByPath(doc, target)
             if (!list || !Array.isArray(list.children)) continue
-            const wanted = state ? String(state.text || '').trim().toLowerCase() : ''
             // Only the boxes holding something: an empty one lets everything through.
             const asking = boxes.filter((box) => String(box.text || '').trim() !== '')
             // Every field but a tags field holds one value, so an entry can only hold one of the
@@ -6066,10 +5839,7 @@ export class OverseerRenderer {
                 return !!field && String(field.node_type || field.type || '').toLowerCase() !== 'tags'
             })
             const matchOf = (entry, within = null) =>
-                (!state || this.entryMatchesFilter(entry, wanted, state, within))
-                && asking.every((box, i) => this.entryMatchesNarrowing(entry, box, kinds[i], within))
-            let showing = 0
-            let total = list.children.length
+                asking.every((box, i) => this.entryMatchesNarrowing(entry, box, kinds[i], within))
 
             // A tree is filtered at every depth, and a match keeps its ancestors in sight - dimmed
             // where they do not match themselves - while the rest of the tree goes.
@@ -6082,8 +5852,8 @@ export class OverseerRenderer {
                 const branching = asking.filter((box) => box.branch)
                 if (branching.length > 0) {
                     const others = asking.map((box, i) => [box, i]).filter(([box]) => !box.branch)
-                    const ownMatch = (entry) => (!state || this.entryMatchesFilter(entry, wanted, state, tree))
-                        && others.every(([box, i]) => this.entryMatchesNarrowing(entry, box, kinds[i], tree))
+                    const ownMatch = (entry) =>
+                        others.every(([box, i]) => this.entryMatchesNarrowing(entry, box, kinds[i], tree))
                     const inBranch = rows.map(() => false)
                     rows.forEach((row, i) => {
                         const below = row.parent >= 0 && inBranch[row.parent]
@@ -6098,97 +5868,25 @@ export class OverseerRenderer {
                     if (parent >= 0 && (matches[i] || leadsToOne[i])) leadsToOne[parent] = true
                 }
                 rows.forEach((row, i) => {
-                    if (matches[i]) showing += 1
                     for (const element of byPath.get(JSON.stringify(row.path)) || []) {
                         element.classList.toggle('filtered-out', !matches[i] && !leadsToOne[i])
                         element.classList.toggle('tree-ancestor', !matches[i] && leadsToOne[i])
                     }
                 })
-                total = rows.length
             }
 
             for (const entry of tree ? [] : list.children) {
                 const matches = matchOf(entry)
-                if (matches) showing += 1
                 const path = JSON.stringify([...target, entry.name])
                 for (const element of byPath.get(path) || []) {
                     element.classList.toggle('filtered-out', !matches)
                 }
             }
-
-            for (const label of state ? document.querySelectorAll(`[data-filter-count='${key}']`) : []) {
-                const narrowed = wanted !== '' || this.tagsPicked(state) || state.status.size > 0
-                    || state.enums.size > 0 || state.hiding
-                label.textContent = narrowed ? `${showing} of ${total}` : `${total}`
-            }
         }
-        // A board's columns say how many they show, and the filter has just changed that.
+        // A board's columns say how many they show, and the boxes have just changed that.
         for (const board of document.querySelectorAll('.overseer-board')) this.countBoardColumns(board)
         // A tree's lines run on only to what shows.
         for (const tree of document.querySelectorAll('.overseer-list.view-tree')) this.drawTreeLines(tree)
-    }
-
-    /** Whether one entry survives the filter. Empty filter, everything survives. */
-    entryMatchesFilter(entry, wanted, state, within = null) {
-        // Searched all the way down, not just among the entry's own children. An entry's fields
-        // sit inside the layout divs that arrange them - `title` is a grandchild of the row in
-        // every document written so far - so looking only at direct children found nothing and
-        // quietly filtered everything away.
-        const fieldText = (name) => {
-            const child = this.entryField(entry, name, within)
-            if (!child) return ''
-            const value = this.getParameterValue(child, 'value')
-            return value === null || value === undefined ? '' : String(value)
-        }
-
-        // A name that is a list or a group rather than a field searches every field under it: a
-        // list has no value of its own, and the conversation on a project item is a list of
-        // comments that `find` should read all of.
-        const searchText = (name) => {
-            const child = this.entryField(entry, name, within)
-            return child ? textWithoutIcons(this.valuesWithin(child).join(' ')) : ''
-        }
-
-        if (wanted !== '') {
-            const haystack = state.textFields.map(searchText).join(' ').toLowerCase()
-            if (!haystack.includes(wanted)) return false
-        }
-
-        if (state.status.size > 0) {
-            if (!state.statusField) return false
-            const figure = Number(fieldText(state.statusField))
-            // Anything that is not a number counts as not started: a task with nothing in the
-            // field has not been begun, which is the honest reading of an empty percentage.
-            const which = !Number.isFinite(figure) || figure <= 0 ? 'none'
-                : figure >= 100 ? 'done'
-                : 'some'
-            if (!state.status.has(which)) return false
-        }
-
-        if (state.hiding && state.hideField) {
-            const held = fieldText(state.hideField).trim()
-            if (held === 'true' || Number(held) > 0) return false
-        }
-
-        if (state.enums.size > 0) {
-            if (!state.enumField) return false
-            if (!state.enums.has(fieldText(state.enumField).trim())) return false
-        }
-
-        // Narrowing, not widening: picking a second tag asks for the things that are both, which
-        // is what adding a condition to a filter is usually taken to mean - within a field and
-        // across them. Only the fields the filter names now are asked: one it named before the
-        // document was reloaded may be gone, and asking it would hide everything.
-        for (const field of state.tagFields || []) {
-            const picked = state.tags.get(field)
-            if (!picked || picked.size === 0) continue
-            const held = new Set(fieldText(field).split(',').map(s => s.trim()))
-            for (const tag of picked) {
-                if (!held.has(tag)) return false
-            }
-        }
-
-        return true
     }
 
     /**
@@ -6215,15 +5913,22 @@ export class OverseerRenderer {
         return haystack.includes(wanted)
     }
 
-    /** Whether any tag is picked, in any of a filter's fields. */
-    tagsPicked(state) {
-        for (const field of state.tagFields || []) {
-            const picked = state.tags.get(field)
-            if (picked && picked.size > 0) return true
-        }
-        return false
-    }
-
+    /**
+     * A set of tags, drawn as what it is rather than as the line it is stored on.
+     *
+     * The value is a comma-separated set - already a real collection to the evaluator, which
+     * can `filter` and `count` it - but it was rendered as a plain string, so a field holding
+     * six labels read as forty characters of prose. Here each one gets a chip.
+     *
+     * `vocabulary` names a keyed list of the tags that exist: its entries supply the label to
+     * show and the colour to show it in, so the palette is document data rather than something
+     * the renderer decides. Without one the chips take a default colour, which is what an
+     * existing document with a bare `tags` field gets.
+     *
+     * Editing goes through the same path as every other field: the set is written back as the
+     * line it came from and `reevaluateDocumentSelective` works out the rest. There is nothing
+     * here the server needs to know about.
+     */
     /// `own`, when given, is where the value lives instead of the document: `read()` answers the
     /// set as its text and `write(text)` keeps a new one. A textbox with a vocabulary passes the
     /// page's own store, so it picks tags exactly as a tags field does while what is picked stays
@@ -6703,13 +6408,12 @@ export class OverseerRenderer {
      * its corners only softened, or `slant`, a box leaning right, for a third kind of label that
      * sits beside both - a project's milestones beside its tags and stage. Asked for with `shape`; without it an enum is a box and tags
      * are pills, so a field holding one of a list and a field holding a set of labels can be
-     * told apart at a glance wherever they sit side by side. `kind` stands in for the field's
-     * type when there is no field to read it from - a filter over a list with no entries yet.
+     * told apart at a glance wherever they sit side by side.
      */
-    chipShape(node, kind = null) {
+    chipShape(node) {
         const asked = String((node && this.getParameterValue(node, 'shape')) || '').trim().toLowerCase()
         if (asked === 'pill' || asked === 'box' || asked === 'slant') return asked
-        const type = String((node && (node.node_type || node.type)) || kind || '').toLowerCase()
+        const type = String((node && (node.node_type || node.type)) || '').toLowerCase()
         return type === 'enum' ? 'box' : 'pill'
     }
 
@@ -6831,7 +6535,7 @@ export class OverseerRenderer {
     }
 
     /// Lets a chip show the entry it stands for when pressed - see `revealEntry`. Only chips with
-    /// nothing else to do on a press are given it: a filter's chip or a picker's has.
+    /// nothing else to do on a press are given it: a narrowing box's chip or a picker's has.
     letChipReveal(chip, known) {
         if (!known || !Array.isArray(known.at)) return
         chip.dataset.at = JSON.stringify(known.at)
@@ -9831,7 +9535,7 @@ export class OverseerRenderer {
     }
 
     /**
-     * What a theme says of the kinds inside a table, a tab bar or a filter, handed to what is
+     * What a theme says of the kinds inside a table or a tab bar, handed to what is
      * inside this one: `--ov-table-button-height` from the nearest theme above that says it,
      * written on the table as `--ov-button-height`, which the buttons in it read as they read any.
      * A container inside the table that says how buttons look is nearer still, and wins.

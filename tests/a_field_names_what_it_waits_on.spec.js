@@ -65,9 +65,6 @@ const finished = (n, handle, title) => Object.assign(base(`Finished__${n}`, 'div
 const docOf = () => ([Object.assign(base('project', 'tab'), {
   parameters: { mutable: { Boolean: true } },
   children: [
-    Object.assign(base('filter', 'filter'), {
-      parameters: { target: { String: '/project/Items' }, text: { String: 'title' }, hide: { String: 'waiting' } },
-    }),
     Object.assign(base('Items', 'list'), {
       parameters: { key: { String: 'handle' } },
       children: [
@@ -91,14 +88,6 @@ const afterOf = (handle) => Array.from(document.querySelectorAll('.tags-field'))
 })
 const chipsOf = (handle) => Array.from(afterOf(handle).querySelectorAll('.tag-chip:not(.tag-option)'))
 
-const visible = () => Array.from(document.querySelectorAll('[data-path]'))
-  .filter((element) => {
-    let path
-    try { path = JSON.parse(element.dataset.path) } catch { return false }
-    return path.length === 3 && path[1] === 'Items' && !element.classList.contains('filtered-out')
-  })
-  .map((element) => document.querySelector(`[data-path='${JSON.stringify([...JSON.parse(element.dataset.path), 'handle'])}']`).textContent.trim())
-
 describe('a field naming the tasks it waits on', () => {
   let app
 
@@ -107,7 +96,6 @@ describe('a field naming the tasks it waits on', () => {
     app = new OverseerApp()
     app.currentDocument = docOf()
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
   })
 
@@ -137,13 +125,4 @@ describe('a field naming the tasks it waits on', () => {
     expect(more).toEqual(['docs'])
   })
 
-  it('lets the filter leave out what is waiting', () => {
-    expect(visible()).toEqual(['rows', 'favicon', 'docs'])
-    const box = document.querySelector('.filter-hide input')
-    expect(document.querySelector('.filter-hide').textContent).toBe('hide waiting')
-    box.checked = true
-    box.dispatchEvent(new Event('change', { bubbles: true }))
-    expect(visible()).toEqual(['rows', 'docs'])
-    expect(document.querySelector('.filter-count').textContent).toBe('2 of 3')
-  })
 })

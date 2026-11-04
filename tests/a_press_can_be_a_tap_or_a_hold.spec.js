@@ -46,7 +46,6 @@ const render = () => {
   app = new OverseerApp()
   app.currentDocument = theDocument()
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   ran = []
   vi.spyOn(app.renderer, 'emitEvent').mockImplementation(async (node, _el, eventName) => {
     if (app.renderer.declaresEvent(node, eventName)) ran.push(`${node.name} ${eventName}`)

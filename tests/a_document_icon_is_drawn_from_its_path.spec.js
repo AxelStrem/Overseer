@@ -45,7 +45,6 @@ const draw = (children, file = 'kitchen/t.os') => {
   window.app = app
   app.currentDocument = [base('t', 'tab', {}, children)]
   app.currentFile = file
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

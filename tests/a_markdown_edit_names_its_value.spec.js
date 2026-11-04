@@ -46,7 +46,6 @@ const anAppShowingANote = () => {
   app._currentText = 'TEXT'
   app._originalText = 'TEXT'
   app._adoptDocumentPreserveRoot(aNote('as it was'))
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }
@@ -126,7 +125,6 @@ describe('editing a note', () => {
       children: [{ name: 'set', node_type: 'set', parameters: {}, children: [], is_hierarchy_transparent: false }],
     }]
     app._adoptDocumentPreserveRoot(doc)
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
     rewriteTheNote('as it is now')
     await settle()

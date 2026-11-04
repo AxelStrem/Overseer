@@ -69,7 +69,6 @@ const render = (plots, curve) => {
     ],
   })]
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return drawn[drawn.length - 1].data.datasets
 }

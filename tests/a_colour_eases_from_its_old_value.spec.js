@@ -57,7 +57,6 @@ describe('an easing', () => {
     document.documentElement.removeAttribute('style')
     app = new OverseerApp()
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
     animate = vi.fn(() => ({ playState: 'running', cancel() {} }))
     HTMLElement.prototype.animate = animate
   })

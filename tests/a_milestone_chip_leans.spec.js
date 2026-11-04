@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 
 // A project's milestones sit beside its tags (pills) and its stage (a box), so they take a third
 // shape: `slant`, a box leaning right. These pin that the shape is asked for and reaches the
-// field's chips and the filter's row for it, and that the stylesheet leans the chip and keeps
+// field's chips and the box that narrows by it, and that the stylesheet leans the chip and keeps
 // what it holds upright.
 
 function setupDOM() {
@@ -67,12 +67,21 @@ const docOf = () => ([Object.assign(base('project', 'tab'), {
       parameters: { key: { String: 'tag' }, hidden: { Boolean: true } },
       children: [milestone('alpha', '#0e8a16'), milestone('beta', '#1d76db')],
     }),
-    Object.assign(base('filter', 'filter'), {
+    Object.assign(base('labels', 'textbox'), {
       parameters: {
-        target: { String: '/project/Items' },
-        text: { String: 'title' },
-        tags: { String: 'labels, milestones' },
+        value: { String: '' },
+        narrows: { String: '/project/Items' },
+        by: { String: 'labels' },
         vocabulary: { String: '/project/Labels' },
+      },
+    }),
+    Object.assign(base('milestones', 'textbox'), {
+      parameters: {
+        value: { String: '' },
+        narrows: { String: '/project/Items' },
+        by: { String: 'milestones' },
+        vocabulary: { String: '/project/Milestones' },
+        shape: { String: 'slant' },
       },
     }),
     Object.assign(base('Items', 'list'), {
@@ -87,24 +96,24 @@ describe('a milestone chip', () => {
     const app = new OverseerApp()
     app.currentDocument = docOf()
     app._currentText = 'TEXT'
-    app.renderer._filters = new Map()
     app.renderer.renderDocument(app.currentDocument)
   })
 
   it('leans when its field asks for it, beside tags that stay pills', () => {
-    const rows = Array.from(document.querySelectorAll('.tags-field .tag-chips'))
+    const rows = Array.from(document.querySelectorAll('.tags-field:not(.textbox-field) .tag-chips'))
     expect(rows.filter((r) => r.classList.contains('chip-slant'))).toHaveLength(2)
     expect(rows.filter((r) => r.classList.contains('chip-pill'))).toHaveLength(2)
     const leaning = rows.find((r) => r.classList.contains('chip-slant'))
     expect(leaning.querySelector('.tag-chip').dataset.tag).toBe('alpha')
   })
 
-  it('leans in the filter too, in the row for its field', () => {
-    const row = document.querySelector('.filter-tags[data-filter-field="milestones"]')
+  it('leans in the box that narrows by it too, and in what that box offers', () => {
+    const boxOf = (name) => document.querySelector(`[data-path='${JSON.stringify(['project', name])}']`)
+    const row = boxOf('milestones').querySelector('.tag-chips')
     expect(row.classList.contains('chip-slant')).toBe(true)
-    expect(Array.from(row.querySelectorAll('.filter-tag')).map((c) => c.dataset.tag)).toEqual(['alpha', 'beta'])
-    expect(document.querySelector('.filter-tags[data-filter-field="labels"]').classList.contains('chip-pill'))
-      .toBe(true)
+    expect(boxOf('labels').querySelector('.tag-chips').classList.contains('chip-pill')).toBe(true)
+    boxOf('milestones').querySelector('.tag-add').click()
+    expect(Array.from(document.querySelectorAll('.tag-option')).map((c) => c.dataset.tag)).toEqual(['alpha', 'beta'])
   })
 })
 

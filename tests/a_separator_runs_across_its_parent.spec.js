@@ -40,7 +40,6 @@ const render = (children) => {
   const app = new OverseerApp()
   app.currentDocument = [base('t', 'tab', {}, children)]
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   return app
 }

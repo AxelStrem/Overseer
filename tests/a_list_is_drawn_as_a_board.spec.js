@@ -62,7 +62,6 @@ const render = (options) => {
   app.currentDocument = theDocument(options)
   app.currentFile = 'd.os'
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   layOut()
 }
@@ -229,10 +228,10 @@ describe('a list drawn as a board', () => {
     expect(titlesIn('ready')).toEqual(['one', 'three'])
   })
 
-  it('counts only what the filter leaves in a column', () => {
+  it('counts only what the boxes narrowing it leave in a column', () => {
     render()
     entryAt('one').classList.add('filtered-out')
-    app.renderer._filters = new Map([['f', { target: ['s', 'Nothing'] }]])
+    app.renderer._narrowings.set('f', { target: ['s', 'Nothing'], by: [], text: '' })
     app.renderer.applyFilters()
     expect(columnOf('ready').querySelector('.board-column-count').textContent).toBe('1')
   })

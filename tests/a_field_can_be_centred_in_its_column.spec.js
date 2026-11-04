@@ -60,7 +60,6 @@ const render = () => {
   const app = new OverseerApp()
   app.currentDocument = doc
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(doc)
 }
 

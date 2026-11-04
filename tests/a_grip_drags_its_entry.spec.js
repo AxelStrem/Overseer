@@ -63,7 +63,6 @@ const render = (made = theDocument()) => {
   app.currentDocument = made
   app.currentFile = 'd.os'
   app._currentText = 'TEXT'
-  app.renderer._filters = new Map()
   app.renderer.renderDocument(app.currentDocument)
   layOut()
 }
