@@ -3596,6 +3596,53 @@ body.ov-backdrop-moving {
     cursor: pointer;
 }
 
+/* An enum drawn as `view="select"`: a drop-down's box holding the name, with a caret while there
+   is something to pick. */
+.enum-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 6em;
+    min-height: 1.6em;
+    padding: 4px 8px;
+    border: 1px solid var(--ov-line);
+    border-radius: var(--ov-radius);
+    background: var(--ov-surface);
+    color: var(--ov-text);
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+.enum-select > .chip-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.enum-select.enum-select-empty,
+.enum-select.tag-unknown {
+    color: var(--ov-muted);
+}
+
+.enum-select.enum-choice {
+    cursor: pointer;
+}
+
+.enum-select.enum-choice::after {
+    content: '';
+    margin-left: auto;
+    flex: 0 0 auto;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--ov-muted);
+}
+
+.enum-select.enum-choice:hover {
+    border-color: var(--ov-accent);
+}
+
 /* An enum with nothing chosen yet: a place to press, not a value. */
 .tag-chip.tag-placeholder {
     background-color: transparent;

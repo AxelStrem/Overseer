@@ -2164,6 +2164,15 @@ enum stage (vocabulary="/project/Stages") = "filed" {
 from being finished. It changes only what the picker offers: a value held back can still be
 written some other way, so a handler that must not act on it says so in its own `if`.
 
+`view="select"` draws the value as a drop-down rather than a chip: a box holding the chosen
+value's name, with a caret. Pressing it opens the same picker, and everything else - `withhold`,
+`placeholder`, `on change`, `mutable` - is as it is for the chip. With nothing to pick, or nothing
+it may change, the box has no caret.
+
+```overseer
+enum look (label="Theme", vocabulary="/settings/Themes", view="select") = "default"
+```
+
 #### Charts
 
 A `chart` draws its `plot`s, one series or one figure each. `kind` says how: `line`, unless it says
@@ -2700,7 +2709,7 @@ div Tasks {
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
 - **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `limit` (on a `textbox` that picks), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
-- **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`), `limit`, `color`
+- **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`; `select`, on an `enum`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
 - **Lists**: `entry`, `key`, `window`, `parts`, `sort_by`, `view` (`table`, `board`), `by`, `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)

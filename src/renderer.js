@@ -6089,6 +6089,10 @@ export class OverseerRenderer {
 
         const held = () => String(this.getNodeValue(node) ?? '').trim()
         const editable = () => this.getEffectiveMutableMode(node, container) !== 'false'
+        // `view="select"` draws the value as a drop-down's box rather than a chip: the same
+        // value, picker and write, only drawn as a form's control.
+        const asSelect = String(this.getParameterValue(node, 'view') || '').toLowerCase() === 'select'
+        if (asSelect) container.classList.add('enum-select-field')
 
         const choose = async (after) => {
             const before = held()
@@ -6110,7 +6114,10 @@ export class OverseerRenderer {
                 chip.className = 'tag-chip enum-shown'
                 this.setTextWithIcons(chip, shown, node)
             } else if (value) {
-                chip = this.fieldChip(node, value, vocabulary.get(value), null)
+                // A box says the name in full, whatever `chip="icon"` asks of a chip.
+                chip = asSelect
+                    ? this.tagChip(value, vocabulary.get(value), null)
+                    : this.fieldChip(node, value, vocabulary.get(value), null)
                 if (!vocabulary.has(value)) chip.title = 'not one of the values this field lists'
             } else {
                 // A placeholder stated empty is a place to press with nothing in it: a column
@@ -6121,6 +6128,7 @@ export class OverseerRenderer {
                 chip.className = 'tag-chip tag-placeholder'
                 this.setTextWithIcons(chip, said === null || said === undefined ? '—' : String(said))
             }
+            if (asSelect) chip = this.selectBox(chip)
             chips.appendChild(chip)
             // Values not to offer just now, usually worked out: a task cannot be finished while
             // anything under it is still open, and the picker is where that is said.
@@ -6148,6 +6156,23 @@ export class OverseerRenderer {
         this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
+    }
+
+    /**
+     * The box an enum drawn as `view="select"` shows in place of its chip: what the chip says -
+     * the entry's icon and name, a placeholder, an unlisted value - in the field's own colours,
+     * so the choice reads as a form's control rather than a label. The caret is the stylesheet's,
+     * drawn only while there is something to pick.
+     */
+    selectBox(chip) {
+        const box = document.createElement('span')
+        box.className = 'enum-select'
+        if (chip.dataset.tag !== undefined) box.dataset.tag = chip.dataset.tag
+        if (chip.classList.contains('tag-placeholder')) box.classList.add('enum-select-empty')
+        if (chip.classList.contains('tag-unknown')) box.classList.add('tag-unknown')
+        if (chip.title) box.title = chip.title
+        while (chip.firstChild) box.appendChild(chip.firstChild)
+        return box
     }
 
     /**
