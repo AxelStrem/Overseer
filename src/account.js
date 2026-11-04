@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { CHIP_SHAPES } from './renderer.js'
 
 /**
  * Who is looking, on a server that keeps accounts: what the page shows them and lets them do.
@@ -6,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core'
  * The server answers `access` with who is asking - a person, a stranger, or the token (`anyone`) -
  * and whether the open document is theirs to change. From that the page draws a document shared
  * only to be read as read-only, keeps from a stranger what the server would refuse them, and gives
- * a person their profile: their name, their chip's colour and icon, and their password, their sharing document, the keys programs act
+ * a person their profile: their name, their chip's colour, icon and shape, and their password, their sharing document, the keys programs act
  * as them with, signing out, and for an admin the links that invite someone or set a new password.
  *
  * With no document open it lists what the person may open: their own, what others share with them,
@@ -90,6 +91,7 @@ export class Account {
         on('account-save-name', () => this.saveName())
         on('account-colour-default', () => { this.colour = null; this.preview() })
         on('account-icon-none', () => { this.icon = null; this.preview() })
+        on('account-shape-default', () => { this.shape = null; this.preview() })
         const typed = (id, what) => {
             const el = document.getElementById(id)
             if (el) el.addEventListener('input', what)
@@ -118,11 +120,12 @@ export class Account {
         const section = document.getElementById('drawer-account')
         if (section) section.hidden = !this.person
         const who = document.getElementById('account-who')
-        if (who) this.drawChip(who, this.person && this.person.name, this.person && this.person.colour, this.person && this.person.icon)
+        if (who) this.drawChip(who, this.person && this.person.name, this.person && this.person.colour, this.person && this.person.icon, this.person && this.person.shape)
         const name = document.getElementById('account-name')
         if (name && this.person) name.value = this.person.name || ''
         this.colour = (this.person && this.person.colour) || null
         this.icon = (this.person && this.person.icon) || null
+        this.shape = (this.person && this.person.shape) || null
         this.preview()
         const admin = document.getElementById('account-admin')
         if (admin) admin.hidden = !(this.person && this.person.admin)
@@ -133,14 +136,15 @@ export class Account {
     }
 
     /// The person's chip as documents draw it: their icon and their name, styled as written, on
-    /// their colour or on the directory's grey (`people.rs`) when they chose none.
-    drawChip(el, name, colour, icon) {
+    /// their colour or on the directory's grey (`people.rs`) when they chose none, in their shape
+    /// or a pill.
+    drawChip(el, name, colour, icon, shape) {
         el.textContent = ''
         if (!this.person) return
         const renderer = this.app && this.app.renderer
         const said = name || this.person.username
         if (!renderer) { el.textContent = said; return }
-        el.appendChild(renderer.tagChip(this.person.username, { name: said, named: true, colour: colour || DEFAULT_COLOUR, icon: icon || null }, null))
+        el.appendChild(renderer.tagChip(this.person.username, { name: said, named: true, colour: colour || DEFAULT_COLOUR, icon: icon || null, shape: shape || null }, null))
     }
 
     /// The chip as the profile's fields would make it, before it is saved.
@@ -148,8 +152,27 @@ export class Account {
         const colour = document.getElementById('account-colour')
         if (colour) colour.value = this.colour || DEFAULT_COLOUR
         const shown = document.getElementById('account-preview')
-        if (shown) this.drawChip(shown, this.valueOf('account-name'), this.colour, this.icon)
+        if (shown) this.drawChip(shown, this.valueOf('account-name'), this.colour, this.icon, this.shape)
         this.offerIcons()
+        this.offerShapes()
+    }
+
+    /// Every shape a chip can take, each drawn as the person's own chip in it, the chosen one marked.
+    offerShapes() {
+        const offered = document.getElementById('account-shape-choices')
+        if (!offered || !this.person) return
+        offered.textContent = ''
+        for (const shape of CHIP_SHAPES) {
+            const choice = document.createElement('button')
+            choice.type = 'button'
+            choice.className = 'account-shape-choice'
+            choice.title = shape
+            choice.dataset.shape = shape
+            choice.setAttribute('aria-pressed', String(shape === this.shape))
+            this.drawChip(choice, this.valueOf('account-name'), this.colour, this.icon, shape)
+            choice.addEventListener('click', () => { this.shape = shape; this.preview() })
+            offered.appendChild(choice)
+        }
     }
 
     /// The library's icon names, fetched once, the first time they are searched.
@@ -229,7 +252,7 @@ export class Account {
         const name = this.valueOf('account-name')
         if (!name) return this.say('account-name-said', 'A name cannot be empty.', true)
         try {
-            this.person = await this.post('/account/me', { name, colour: this.colour || '', icon: this.icon || '' })
+            this.person = await this.post('/account/me', { name, colour: this.colour || '', icon: this.icon || '', shape: this.shape || '' })
             this.paint()
             this.say('account-name-said', 'Saved.')
         } catch (e) {

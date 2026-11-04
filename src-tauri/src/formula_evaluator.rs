@@ -5803,7 +5803,7 @@ impl FormulaEvaluator {
     }
 
     /// The fields of an entry a vocabulary draws its chip from - see `readVocabulary` in the page.
-    pub const VOCABULARY_FIELDS: [&'static str; 5] = ["name", "title", "colour", "color", "icon"];
+    pub const VOCABULARY_FIELDS: [&'static str; 6] = ["name", "title", "colour", "color", "icon", "shape"];
 
     /// How the field `field` of an entry made from `template` can be had for an entry in a part
     /// not read, for a vocabulary: `None` when the template has no such field, `Some(None)` when

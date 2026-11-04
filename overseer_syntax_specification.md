@@ -462,7 +462,7 @@ everything (the preview lists that among its problems, and `OVERSEER_PROFILE` pr
 the entry that a formula works out, read by the chain, has every part read too.
 
 A `vocabulary` naming the list, its own or a `context vocabulary`, does not have its parts read
-either. What a chip is drawn from - each entry's key, `name`, `title`, `colour` and `icon` - is
+either. What a chip is drawn from - each entry's key, `name`, `title`, `colour`, `icon` and `shape` - is
 summarised the same way for the parts not read, so a `<#key>` naming an old entry draws as it would
 with every part read. That entry is not in the page, so its chip shows nothing when pressed. A
 field the template works out by a formula is worked out again for each of those entries when the
@@ -1226,9 +1226,9 @@ out on its own reads it as empty and does not fail on it; a mounted document see
 place it is mounted at.
 
 A document names people by username and shows them by name through the server's directory,
-`people.os` at its root: a list `People` keyed by `tag`, one entry per account with its `name` - and its `colour` and `icon`, where the person chose them. The
+`people.os` at its root: a list `People` keyed by `tag`, one entry per account with its `name` - and its `colour`, `icon` and `shape`, where the person chose them. The
 server writes it from its accounts, everyone may read it, and nobody changes it through a document
-- a person changes their own name, chip colour and chip icon in their profile. The name is markdown, as any
+- a person changes their own name, chip colour, chip icon and chip shape in their profile. The name is markdown, as any
 vocabulary entry's is (see "Tags"), and `me/name` is it as plain text. Mounted, it is a vocabulary like any other, so
 a field holding `ap31` and a `<#ap31>` in any text draw that person's chip with the name they have
 now; renamed, they are shown by the new name everywhere, and no document is written for it:
@@ -2039,7 +2039,10 @@ tags labels (vocabulary="/project/Labels", width=24%) = "perf, correctness"
 An entry of the vocabulary is known by its list's `key` - `tag` when the list names none - so a
 list of tasks keyed by `handle` serves as well as a tag list. Its `title`, where it has one, is
 what its chip says on hover, and its `icon`, where it names one of the library's icons (see
-"Icons"), is drawn before its name - a person's chosen icon, a stage's or a label's alike.
+"Icons"), is drawn before its name - a person's chosen icon, a stage's or a label's alike. Its
+`shape`, where it names one of the shapes below, is the shape of its chip wherever it is drawn,
+over the shape the field asks for - so a person's chip looks the same in a column of owners, in a
+mention in a comment and in the drawer.
 
 Its `name` is inline markdown, drawn the same in every chip of it - in a field, a picker, a narrowing box
 and a `<#key>` in text: bold, italic, strikethrough, code, `<color=... | ...>` and `<icon=...>`,
@@ -2084,7 +2087,12 @@ tab project (label="Project") {
 otherwise; `box`, a rectangle with softened corners, which an `enum` is; or `slant`, a box leaning
 right, its top edge ahead of its bottom one, for a third kind of label beside those two - a
 project's milestones beside its tags and stages. A textbox that picks chips to narrow a list by
-takes `shape` too.
+takes `shape` too. The other shapes are `round`, a circle around an icon alone and an ellipse
+around a name; `tag`, pointed at the right; `notch`, a box with its corners cut off; `hex`,
+pointed at both ends; `ticket`, with a half circle bitten out of each end; `bubbles`, a row of
+circles along each edge; `steps`, corners that go down in steps; `chainsaw`, a pill with teeth
+along its top and bottom; and `wave`, with waves along its top and bottom. A vocabulary entry with
+a `shape` of its own is drawn in that one instead.
 
 ```overseer
 tags labels (vocabulary="/project/Labels", shape="box") = "perf"

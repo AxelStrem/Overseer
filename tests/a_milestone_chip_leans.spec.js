@@ -121,11 +121,15 @@ describe('the slant in the stylesheet', () => {
   const css = readFileSync('src/styles.css', 'utf8')
 
   it('skews the chip one way and what it holds back the other', () => {
-    const chip = css.match(/\.chip-slant \.tag-chip,\s*\.chip-slant \.tag-add \{[^}]*skewX\((-?\d+)deg\)/)
-    const held = css.match(/\.chip-slant \.tag-chip > \* \{[^}]*skewX\((-?\d+)deg\)/)
+    const slant = css.match(/\.chip-slant,\s*\.tag-chip\.chip-shape-slant \{([^}]*)\}/)
+    expect(slant).not.toBeNull()
+    const chip = slant[1].match(/--chip-transform: skewX\((-?\d+)deg\)/)
+    const held = slant[1].match(/--chip-transform-back: skewX\((-?\d+)deg\)/)
     expect(chip).not.toBeNull()
     expect(held).not.toBeNull()
     expect(Number(chip[1])).toBeLessThan(0)
     expect(Number(held[1])).toBe(-Number(chip[1]))
+    expect(css).toMatch(/\.tag-chip,\s*\.tag-add \{[^}]*transform: var\(--chip-transform, none\)/)
+    expect(css).toMatch(/\.tag-chip > \* \{[^}]*transform: var\(--chip-transform-back, none\)/)
   })
 })

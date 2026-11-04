@@ -49,6 +49,8 @@ pub struct User {
     pub colour: Option<String>,
     /// The library icon their chip shows before the name, where they chose one.
     pub icon: Option<String>,
+    /// The shape of their chip, one of `CHIP_SHAPES`, where they chose one.
+    pub shape: Option<String>,
 }
 
 /// What an invite will do when it is used.
@@ -105,6 +107,8 @@ struct Account {
     colour: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shape: Option<String>,
     #[serde(default)]
     sessions: Vec<Secret>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -242,6 +246,23 @@ pub fn valid_icon(icon: &str) -> Result<Option<String>, AccountError> {
     }
 }
 
+/// The shapes a chip can be drawn in, as the page's `CHIP_SHAPES` names them.
+pub const CHIP_SHAPES: [&str; 12] =
+    ["pill", "box", "slant", "round", "tag", "notch", "hex", "ticket", "bubbles", "steps", "chainsaw", "wave"];
+
+/// A chip shape as it is kept: one of `CHIP_SHAPES`, in lower case, or none for the default.
+pub fn valid_shape(shape: &str) -> Result<Option<String>, AccountError> {
+    let shape = shape.trim().to_ascii_lowercase();
+    if shape.is_empty() {
+        return Ok(None);
+    }
+    if CHIP_SHAPES.contains(&shape.as_str()) {
+        Ok(Some(shape))
+    } else {
+        Err(AccountError::Refused(format!("a chip's shape is one of {}, or empty for the default", CHIP_SHAPES.join(", "))))
+    }
+}
+
 fn valid_password(password: &str) -> Result<(), AccountError> {
     if password.chars().count() < SHORTEST_PASSWORD {
         return Err(AccountError::Refused(format!(
@@ -270,6 +291,7 @@ fn as_user(account: &Account) -> User {
         admin: account.admin,
         colour: account.colour.clone(),
         icon: account.icon.clone(),
+        shape: account.shape.clone(),
     }
 }
 
@@ -342,6 +364,7 @@ impl Accounts {
                     name: a.name.clone(),
                     colour: a.colour.clone(),
                     icon: a.icon.clone(),
+                    shape: a.shape.clone(),
                 })
                 .collect()
         })
@@ -492,6 +515,7 @@ impl Accounts {
                     admin: invite.admin,
                     colour: None,
                     icon: None,
+                    shape: None,
                     sessions: Vec::new(),
                     keys: Vec::new(),
                 }),
@@ -642,8 +666,8 @@ impl Accounts {
         Some(user)
     }
 
-    /// Change one's own display name, chip colour, chip icon or password, or any of them. An
-    /// empty colour goes back to the default, and an empty icon to none. A new password needs the current one: a session left open on
+    /// Change one's own display name, chip colour, chip icon, chip shape or password, or any of
+    /// them. An empty colour or shape goes back to the default, and an empty icon to none. A new password needs the current one: a session left open on
     /// someone else's phone must not be enough to take the account.
     pub fn change_own(
         &self,
@@ -651,12 +675,14 @@ impl Accounts {
         name: Option<&str>,
         colour: Option<&str>,
         icon: Option<&str>,
+        shape: Option<&str>,
         password: Option<(&str, &str)>,
         now: DateTime<Utc>,
     ) -> Result<User, AccountError> {
         let name = name.map(valid_name).transpose()?;
         let colour = colour.map(valid_colour).transpose()?;
         let icon = icon.map(valid_icon).transpose()?;
+        let shape = shape.map(valid_shape).transpose()?;
         let password_hash = match password {
             Some((current, new)) => {
                 let kept = self
@@ -683,6 +709,9 @@ impl Accounts {
             }
             if let Some(icon) = icon {
                 account.icon = icon;
+            }
+            if let Some(shape) = shape {
+                account.shape = shape;
             }
             if let Some(hash) = password_hash {
                 account.password = hash;

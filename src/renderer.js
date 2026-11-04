@@ -258,6 +258,11 @@ export const textWithoutIcons = (s) => {
     return t.replace(ICON_IN_TEXT, ' ').replace(/\s+/g, ' ').trim()
 }
 
+/// The shapes a chip can be drawn in, each a class in the stylesheet: a field's `shape` puts
+/// `chip-<shape>` on its row of chips, and a vocabulary entry's own `shape` puts
+/// `chip-shape-<shape>` on its chip. The server keeps the same list for a person's chip.
+export const CHIP_SHAPES = ['pill', 'box', 'slant', 'round', 'tag', 'notch', 'hex', 'ticket', 'bubbles', 'steps', 'chainsaw', 'wave']
+
 /// How the library names an icon: lower-case words joined by dashes.
 const LIBRARY_ICON = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
@@ -6361,6 +6366,7 @@ export class OverseerRenderer {
                         named: Boolean(name),
                         colour: field('colour') || field('color') || null,
                         icon: field('icon') || null,
+                        shape: field('shape') || null,
                         hover: field('title') || null,
                         offered: at === 0,
                         at: [...segments, entry.name],
@@ -6379,6 +6385,7 @@ export class OverseerRenderer {
                         named: Boolean(name),
                         colour: record.colour || record.color || null,
                         icon: record.icon || null,
+                        shape: record.shape || null,
                         hover: record.title || null,
                         offered: at === 0,
                         at: null,
@@ -6404,15 +6411,16 @@ export class OverseerRenderer {
     }
 
     /**
-     * How a field's chips are drawn:`pill`, rounded at the ends, `box`, a rectangle with
-     * its corners only softened, or `slant`, a box leaning right, for a third kind of label that
-     * sits beside both - a project's milestones beside its tags and stage. Asked for with `shape`; without it an enum is a box and tags
-     * are pills, so a field holding one of a list and a field holding a set of labels can be
-     * told apart at a glance wherever they sit side by side.
+     * How a field's chips are drawn: one of `CHIP_SHAPES` - `pill`, rounded at the ends, `box`, a
+     * rectangle with its corners only softened, `slant`, a box leaning right, for a third kind of
+     * label that sits beside both, and the rest. Asked for with `shape`; without it an enum is a
+     * box and tags are pills, so a field holding one of a list and a field holding a set of labels
+     * can be told apart at a glance wherever they sit side by side. An entry of the vocabulary
+     * with a `shape` of its own is drawn in that one instead - see `tagChip`.
      */
     chipShape(node) {
         const asked = String((node && this.getParameterValue(node, 'shape')) || '').trim().toLowerCase()
-        if (asked === 'pill' || asked === 'box' || asked === 'slant') return asked
+        if (CHIP_SHAPES.includes(asked)) return asked
         const type = String((node && (node.node_type || node.type)) || '').toLowerCase()
         return type === 'enum' ? 'box' : 'pill'
     }
@@ -6443,6 +6451,10 @@ export class OverseerRenderer {
             icon.classList.add('chip-icon')
             chip.prepend(icon)
         }
+        // An entry's own shape wins over its field's, so a person's chip looks the same wherever
+        // it is drawn.
+        const shape = known && typeof known.shape === 'string' ? known.shape.trim().toLowerCase() : ''
+        if (CHIP_SHAPES.includes(shape)) chip.classList.add(`chip-shape-${shape}`)
         if (known && known.colour) {
             chip.style.backgroundColor = known.colour
             chip.style.color = this.readableOn(known.colour)

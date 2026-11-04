@@ -35,12 +35,13 @@ The token stays what it was: whoever holds it may do anything.
 - **Signing in**: `/signin` asks for the username and password and sets the `overseer_session`
   cookie, good for 90 days. `/signout` ends it. A browser asking without one for a page that is
   not shared with everyone is sent to `/signin`, and back afterwards.
-- **`GET /account/me`** answers `{"username","name","admin","colour","icon"}` for whoever is signed in.
+- **`GET /account/me`** answers `{"username","name","admin","colour","icon","shape"}` for whoever is signed in.
   **`POST /account/me`** with `{"name": ...}`, `{"colour": "#rrggbb"}` (or `#rgb`; `""` for the
   default), `{"icon": "bot"}` (a name from the page's icon library, `/icons/index.json`; `""` for
-  none) or `{"password": ..., "current": ...}`, any of them together, changes their own display
-  name, chip colour, chip icon or password, and answers as `GET` does - `colour` and `icon` are
-  `null` for none. A display
+  none), `{"shape": "tag"}` (one of the chip shapes the specification's "Tags" lists; `""` for the
+  default) or `{"password": ..., "current": ...}`, any of them together, changes their own display
+  name, chip colour, chip icon, chip shape or password, and answers as `GET` does - `colour`,
+  `icon` and `shape` are `null` for none. A display
   name is inline markdown (see the specification's "Tags"): it shows at most 64 characters, and is
   at most 1000 as written, its markup included.
 - **`POST /account/invite`**, for an admin or the token, answers `{"link": "/join?invite=...",

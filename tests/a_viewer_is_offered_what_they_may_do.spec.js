@@ -148,7 +148,7 @@ describe('a viewer is offered what they may do', () => {
     document.getElementById('account-name').value = 'Robert'
     document.getElementById('account-save-name').click()
     await vi.waitFor(() => expect(document.getElementById('account-who').textContent).toBe('Robert'))
-    expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Robert', colour: '', icon: '' } })
+    expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Robert', colour: '', icon: '', shape: '' } })
   })
 
   it('previews their chip as they style it, and saves the colour they pick', async () => {
@@ -169,7 +169,7 @@ describe('a viewer is offered what they may do', () => {
     expect(preview.style.backgroundColor).toBe('rgb(15, 118, 110)')
 
     document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: '**Bo**b', colour: '#0f766e', icon: '' } }))
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: '**Bo**b', colour: '#0f766e', icon: '', shape: '' } }))
     await vi.waitFor(() => expect(document.querySelector('#account-who strong')?.textContent).toBe('Bo'))
   })
 
@@ -179,7 +179,7 @@ describe('a viewer is offered what they may do', () => {
     document.getElementById('account-colour-default').click()
     expect(document.querySelector('#account-preview .tag-chip').style.backgroundColor).toBe('rgb(107, 114, 128)')
     document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: '' } }))
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: '', shape: '' } }))
   })
 
   it('finds an icon by its name, shows it before the name, and saves it', async () => {
@@ -202,7 +202,7 @@ describe('a viewer is offered what they may do', () => {
     expect(document.querySelector('#account-preview .tag-chip').textContent).toBe('Bob')
 
     document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: 'robot' } }))
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: 'robot', shape: '' } }))
     expect(fetched.filter((f) => f.url === '/icons/index.json')).toHaveLength(1)
   })
 
@@ -213,7 +213,7 @@ describe('a viewer is offered what they may do', () => {
     expect(document.querySelector('#account-preview .chip-icon')).toBeNull()
     expect(document.querySelectorAll('#account-icon-choices .account-icon-choice')).toHaveLength(0)
     document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: '' } }))
+    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: '', shape: '' } }))
   })
 
   it('opens their sharing document, made when there is none', async () => {

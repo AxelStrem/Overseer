@@ -489,6 +489,34 @@ a.drawer-action {
     background: var(--ov-surface);
 }
 
+/* The shapes a person's chip can take, each drawn as their own chip, the chosen one marked. */
+.account-shape-choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 0 8px;
+}
+
+.account-shape-choice {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 4px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: none;
+    cursor: pointer;
+    max-width: 100%;
+}
+
+.account-shape-choice:hover {
+    border-color: var(--ov-line);
+}
+
+.account-shape-choice[aria-pressed="true"] {
+    border-color: var(--ov-accent);
+    background: var(--ov-surface);
+}
+
 .account-said {
     margin: 0 8px;
     font-size: 12px;
@@ -3262,7 +3290,6 @@ body.ov-backdrop-moving {
     align-items: center;
     gap: 3px;
     padding: var(--ov-chip-padding, 1px 7px);
-    border-radius: 9px;
     font-size: var(--ov-chip-size, 11px);
     line-height: 16px;
     white-space: nowrap;
@@ -3271,26 +3298,182 @@ body.ov-backdrop-moving {
     color: #f5f5f5;
 }
 
-/* A field's chips drawn as boxes rather than pills - an enum's, unless it says otherwise - so a
- * stage beside a row of tags reads as a different kind of thing. The picker opens inside the
- * row, so what it offers takes the same shape. */
-.chip-box .tag-chip,
-.chip-box .tag-add {
-    border-radius: 3px;
+/* A chip's shape. A field asks for one with `shape`, which puts `chip-<shape>` on its row of
+ * chips; a vocabulary entry asks for its own, which puts `chip-shape-<shape>` on its chip and wins
+ * over the field's. Both only set the properties below, so a chip with a shape of its own first
+ * puts every one of them back, then takes its own, and nothing of the row's shape is left on it.
+ * The picker opens inside the row, so what it offers is drawn the same way.
+ *
+ * The ends are transparent borders, which the chip's colour shows through: a shape cut by a clip
+ * or a mask needs room at its ends that the theme's padding knows nothing of. */
+.tag-chip,
+.tag-add {
+    border-radius: var(--chip-radius, 9px);
+    transform: var(--chip-transform, none);
+    margin-left: var(--chip-margin, 0px);
+    margin-right: var(--chip-margin, 0px);
+}
+.tag-chip {
+    border-style: solid;
+    border-color: transparent;
+    border-width: 0 var(--chip-end-right, 0px) 0 var(--chip-end-left, 0px);
+    clip-path: var(--chip-clip, none);
+    -webkit-mask: var(--chip-mask, none);
+    mask: var(--chip-mask, none);
+    -webkit-mask-composite: var(--chip-mask-composite-webkit, source-over);
+    mask-composite: var(--chip-mask-composite, add);
+}
+/* What the chip holds is turned back by whatever turned the chip, so it stays upright. */
+.tag-chip > * {
+    transform: var(--chip-transform-back, none);
 }
 
-/* A box leaning right, its top edge ahead of its bottom one: a third shape, for labels that sit
- * beside both tags and an enum. The chip is skewed and what it holds is skewed back, so the
- * name and its icon stay upright; the margin keeps the overhanging corners off the neighbours. */
-.chip-slant .tag-chip,
-.chip-slant .tag-add {
-    border-radius: 3px;
-    transform: skewX(-14deg);
-    margin-left: 2px;
-    margin-right: 2px;
+.tag-chip[class*="chip-shape-"] {
+    --chip-radius: 9px;
+    --chip-transform: none;
+    --chip-transform-back: none;
+    --chip-margin: 0px;
+    --chip-end-left: 0px;
+    --chip-end-right: 0px;
+    --chip-clip: none;
+    --chip-mask: none;
+    --chip-mask-composite: add;
+    --chip-mask-composite-webkit: source-over;
 }
-.chip-slant .tag-chip > * {
-    transform: skewX(14deg);
+
+/* A rectangle with its corners only softened: an enum's, unless it says otherwise, so a stage
+ * beside a row of tags reads as a different kind of thing. */
+.chip-box,
+.tag-chip.chip-shape-box {
+    --chip-radius: 3px;
+}
+
+/* A box leaning right, its top edge ahead of its bottom one, for labels that sit beside both tags
+ * and an enum. The margin keeps the overhanging corners off the neighbours. */
+.chip-slant,
+.tag-chip.chip-shape-slant {
+    --chip-radius: 3px;
+    --chip-transform: skewX(-14deg);
+    --chip-transform-back: skewX(14deg);
+    --chip-margin: 2px;
+}
+
+/* As round as the chip can be: a circle when it is only an icon, an ellipse around a name. */
+.chip-round,
+.tag-chip.chip-shape-round {
+    --chip-radius: 50%;
+    --chip-end-left: 2px;
+    --chip-end-right: 2px;
+}
+
+/* A luggage tag: square at the left, pointed at the right. */
+.chip-tag,
+.tag-chip.chip-shape-tag {
+    --chip-radius: 3px 0 0 3px;
+    --chip-end-right: 6px;
+    --chip-clip: polygon(0 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 0 100%);
+}
+
+/* A box with its corners cut off. */
+.chip-notch,
+.tag-chip.chip-shape-notch {
+    --chip-radius: 0;
+    --chip-end-left: 1px;
+    --chip-end-right: 1px;
+    --chip-clip: polygon(4px 0, calc(100% - 4px) 0, 100% 4px, 100% calc(100% - 4px),
+        calc(100% - 4px) 100%, 4px 100%, 0 calc(100% - 4px), 0 4px);
+}
+
+/* Pointed at both ends. */
+.chip-hex,
+.tag-chip.chip-shape-hex {
+    --chip-radius: 0;
+    --chip-end-left: 4px;
+    --chip-end-right: 4px;
+    --chip-clip: polygon(7px 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 7px 100%, 0 50%);
+}
+
+/* A ticket: a half circle bitten out of each end. */
+.chip-ticket,
+.tag-chip.chip-shape-ticket {
+    --chip-radius: 2px;
+    --chip-end-left: 3px;
+    --chip-end-right: 3px;
+    --chip-mask:
+        radial-gradient(circle at 0 50%, transparent 4px, #000 4.5px) left / 51% 100% no-repeat,
+        radial-gradient(circle at 100% 50%, transparent 4px, #000 4.5px) right / 51% 100% no-repeat;
+}
+
+/* Circles side by side along the top and bottom edges and one at each end, the middle filled.
+ * The rows are spaced to fit the chip whole (`round`), so no circle is cut at an end. */
+.chip-bubbles,
+.tag-chip.chip-shape-bubbles {
+    --chip-radius: 0;
+    --chip-end-left: 2px;
+    --chip-end-right: 2px;
+    --chip-mask:
+        radial-gradient(closest-side, #000 92%, transparent) left top / 8px 8px round no-repeat,
+        radial-gradient(closest-side, #000 92%, transparent) left bottom / 8px 8px round no-repeat,
+        radial-gradient(closest-side, #000 92%, transparent) left center / 8px 8px no-repeat,
+        radial-gradient(closest-side, #000 92%, transparent) right center / 8px 8px no-repeat,
+        linear-gradient(#000, #000) center / calc(100% - 8px) calc(100% - 8px) no-repeat;
+}
+
+/* Squares instead of circles: corners that go down in steps, a rounded box drawn in pixels. */
+.chip-steps,
+.tag-chip.chip-shape-steps {
+    --chip-radius: 0;
+    --chip-end-left: 1px;
+    --chip-end-right: 1px;
+    --chip-clip: polygon(
+        6px 0, calc(100% - 6px) 0, calc(100% - 6px) 3px, calc(100% - 3px) 3px,
+        calc(100% - 3px) 6px, 100% 6px, 100% calc(100% - 6px), calc(100% - 3px) calc(100% - 6px),
+        calc(100% - 3px) calc(100% - 3px), calc(100% - 6px) calc(100% - 3px), calc(100% - 6px) 100%,
+        6px 100%, 6px calc(100% - 3px), 3px calc(100% - 3px), 3px calc(100% - 6px), 0 calc(100% - 6px),
+        0 6px, 3px 6px, 3px 3px, 6px 3px);
+}
+
+/* The pill with sharp teeth along its top and bottom: a body short of each edge, and a row of
+ * triangles in the band left above it and below it. */
+.chip-chainsaw,
+.tag-chip.chip-shape-chainsaw {
+    --chip-radius: 9px;
+    --chip-end-left: 2px;
+    --chip-end-right: 2px;
+    --chip-mask:
+        linear-gradient(#000, #000) center / 100% calc(100% - 6px) no-repeat,
+        conic-gradient(from 135deg at 50% 0, #000 90deg, transparent 0) left top / 5px 3px round no-repeat,
+        conic-gradient(from -45deg at 50% 100%, #000 90deg, transparent 0) left bottom / 5px 3px round no-repeat;
+}
+
+/* Waves along the top and bottom: a bite every few pixels, those below halfway between those
+ * above. */
+.chip-wave,
+.tag-chip.chip-shape-wave {
+    --chip-radius: 4px;
+    --chip-end-left: 1px;
+    --chip-end-right: 1px;
+    --chip-mask:
+        radial-gradient(circle 3px at 50% 0, transparent 92%, #000) 0 0 / 8px 100% round,
+        radial-gradient(circle 3px at 50% 100%, transparent 92%, #000) 4px 0 / 8px 100% repeat-x;
+    --chip-mask-composite: intersect;
+    --chip-mask-composite-webkit: source-in;
+}
+
+/* A chip for something the list does not hold, or a place to pick one, keeps its dashed outline
+ * whole, and words drawn in a chip's place are words: no shape cuts them. */
+.tag-chip.tag-unknown,
+.tag-chip.tag-placeholder,
+.tag-chip.enum-shown,
+.board-rows .board-column-head .tag-chip {
+    clip-path: none;
+    -webkit-mask: none;
+    mask: none;
+}
+.tag-chip.enum-shown,
+.board-rows .board-column-head .tag-chip {
+    border-left-width: 0;
+    border-right-width: 0;
 }
 
 /* A tag the document's list does not mention. Not hidden - it is in the document, and drawing
@@ -3344,7 +3527,6 @@ body.ov-backdrop-moving {
     border: 1px dashed var(--ov-line);
     background: none;
     color: var(--ov-muted);
-    border-radius: 9px;
     padding: 0 6px;
     font-size: var(--ov-chip-size, 11px);
     line-height: 16px;

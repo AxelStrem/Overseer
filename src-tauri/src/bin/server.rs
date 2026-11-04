@@ -721,6 +721,9 @@ struct OwnChange {
     /// A library icon for the chip, such as `bot`; empty for none.
     #[serde(default)]
     icon: Option<String>,
+    /// The chip's shape, such as `tag`; empty for the default.
+    #[serde(default)]
+    shape: Option<String>,
     #[serde(default)]
     password: Option<String>,
     /// The password now, which a new one needs.
@@ -758,6 +761,7 @@ async fn change_me(
             body.name.as_deref(),
             body.colour.as_deref(),
             body.icon.as_deref(),
+            body.shape.as_deref(),
             password,
             chrono::Utc::now(),
         )
