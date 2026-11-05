@@ -1225,12 +1225,14 @@ tab Main {
     }
 
     async _reevaluateDocumentSelective(changedFieldPaths = [], fieldChanges = []) {
+        if (!this.currentDocument) return { domOnly: false }
+
+        // Taken outside the `try`, because the fallback in its `catch` drops a superseded
+        // answer by the same ticket.
+        this._reevaluationTicket = (this._reevaluationTicket || 0) + 1
+        const reevaluationTicket = this._reevaluationTicket
+
         try {
-            if (!this.currentDocument) return { domOnly: false }
-
-            this._reevaluationTicket = (this._reevaluationTicket || 0) + 1
-            const reevaluationTicket = this._reevaluationTicket
-
             if (DEBUG_MODE) console.log('🔄 Selective update triggered for fields:', changedFieldPaths)
             // TEMP DIAG: capture original paths array clone for comparison after augmentation
             const __origChangedPathsDiag = Array.isArray(changedFieldPaths) ? changedFieldPaths.slice() : []
