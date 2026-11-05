@@ -2533,6 +2533,7 @@ dependencies = [
  "nom",
  "notify",
  "parking_lot",
+ "percent-encoding",
  "regex",
  "serde",
  "serde_json",

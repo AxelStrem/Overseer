@@ -206,15 +206,16 @@ async fn save_overseer_file_from_text(
 }
 
 /// Work out what a command asks as the page that sent it sees: the drawer's pane names the
-/// document open beside it in an `Overseer-Open` header, which its document reads as `host/open`.
-/// The main document's own commands say nothing, and see nothing open beside them. Each command
+/// document open beside it in an `Overseer-Open` header, which its document reads as `host/open`,
+/// encoded because a header holds Latin-1 alone. The main document's own commands say nothing,
+/// and see nothing open beside them. Each command
 /// does its work without awaiting anything, so what `environment::beside` holds for this thread
 /// holds for the whole of it.
 fn beside<T>(request: &tauri::ipc::Request<'_>, f: impl FnOnce() -> T) -> T {
     let open = request
         .headers()
         .get("Overseer-Open")
-        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .map(|value| percent_encoding::percent_decode(value.as_bytes()).decode_utf8_lossy().into_owned())
         .filter(|path| !path.is_empty())
         .map(|path| app_api::open_beside(&path));
     overseer::environment::beside(open, f)

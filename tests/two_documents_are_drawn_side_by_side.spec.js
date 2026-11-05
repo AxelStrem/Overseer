@@ -173,6 +173,19 @@ describe('two documents drawn side by side', () => {
     expect(undone).toHaveBeenCalledTimes(1)
   })
 
+  it('names documents under any path in headers the desktop can send', async () => {
+    drawBoth()
+    main.currentFile = 'Заметки/дом.os'
+    pane.currentFile = 'Заметки/ящик.os'
+    answering('pressed in the drawer')
+    await press(pane, 'go')
+    const [, , options] = pressesSent()[0]
+    // What Tauri's IPC makes of them, which takes Latin-1 alone.
+    const headers = new Headers(options.headers)
+    expect(decodeURIComponent(headers.get('Overseer-Document'))).toBe('Заметки/ящик.os')
+    expect(decodeURIComponent(headers.get('Overseer-Open'))).toBe('Заметки/дом.os')
+  })
+
   it('opens a document into the drawer through its own channel, and follows the open one', async () => {
     main = new OverseerApp()
     main.currentFile = 'tasks.os'

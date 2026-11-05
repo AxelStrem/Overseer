@@ -31,11 +31,13 @@ export class DocumentPane extends OverseerApp {
         paneOpened()
     }
 
-    /// The command, about this pane's document, with the one open beside it.
+    /// The command, about this pane's document, with the one open beside it. The names are
+    /// encoded: the desktop's IPC sends them as real headers, which hold Latin-1 alone, and a
+    /// path under a Cyrillic folder would fail every command before it was sent.
     ask(cmd, args) {
-        const headers = { 'Overseer-Document': this._opening || this.currentFile || '' }
+        const headers = { 'Overseer-Document': encodeURIComponent(this._opening || this.currentFile || '') }
         const beside = this.host && this.host.currentFile
-        if (beside) headers['Overseer-Open'] = String(beside)
+        if (beside) headers['Overseer-Open'] = encodeURIComponent(String(beside))
         return invoke(cmd, args || {}, { headers })
     }
 

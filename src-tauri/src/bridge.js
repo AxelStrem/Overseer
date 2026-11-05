@@ -68,8 +68,9 @@
     const said = (options, name) => {
         const headers = options && options.headers
         if (!headers) return undefined
-        if (typeof headers.get === 'function') return headers.get(name) ?? undefined
-        return headers[name]
+        const value = typeof headers.get === 'function' ? headers.get(name) : headers[name]
+        // Encoded by the pane, for the desktop's sake - see `DocumentPane.ask`.
+        return value == null ? undefined : decodeURIComponent(value)
     }
 
     async function call(cmd, args, options) {

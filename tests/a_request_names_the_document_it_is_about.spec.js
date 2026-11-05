@@ -45,6 +45,13 @@ describe('a request through the bridge', () => {
     expect(sent().args).toEqual({ path: 'drawer.os' })
   })
 
+  it('reads names the pane encoded as they were', async () => {
+    await window.__TAURI_INTERNALS__.invoke('load_overseer_file', {},
+      { headers: { 'Overseer-Document': encodeURIComponent('Заметки/ящик.os'), 'Overseer-Open': encodeURIComponent('Заметки/дом.os') } })
+    expect(sent().document).toBe('Заметки/ящик.os')
+    expect(sent().open).toBe('Заметки/дом.os')
+  })
+
   it('reads the names from headers given as Headers too', async () => {
     await window.__TAURI_INTERNALS__.invoke('catch_up_overseer_document', {},
       { headers: new Headers({ 'Overseer-Document': 'drawer.os' }) })
