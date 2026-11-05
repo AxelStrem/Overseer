@@ -311,6 +311,12 @@ the document's own sentence, meant for whoever pressed, in `refused` as well as 
 422 {"error":"say an id","refused":"say an id"}
 ```
 
+A `call` in the block (see the specification's "Asking the host for an operation") is the page's
+to run, so a press made here runs none and the answer does not name them. The page's own press,
+`run_overseer_event` through the bridge, answers with them in `calls`: each `name`, `args` worked
+out, and `into` - the guarded field for what the operation answers - by `address` and by the
+child indices `path` the page finds it by.
+
 ## Undoing: `POST /v1/undo`
 
 ```bash

@@ -308,6 +308,26 @@ pub struct Changed {
     /// Boxes that narrow a list, by address, and what the press asked each to hold - see
     /// `narrow`. What such a box holds is a view, as a fold is, so it too is the page's to do.
     pub narrowings: Vec<(String, String)>,
+    /// Operations the press asked the host for, in order - see `call`. The host is whoever shows
+    /// the document, so like a fold they are the page's to do, after the press's writes.
+    pub calls: Vec<Call>,
+}
+
+/// The operations a `call` may ask for. The page has one of each, or says it has not - the
+/// desktop has no accounts, the browser opens no files from the disk.
+pub const OPERATIONS: &[&str] = &[
+    "open", "undo", "keep", "drop", "look", "save_profile", "change_password", "make_key",
+    "drop_key", "invite", "reset_password", "sign_out", "copy", "fold_drawer", "open_file",
+    "new_file",
+];
+
+/// One operation asked of the host: which, with what, and the guarded field, by address, that
+/// what it answers is written into.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Call {
+    pub name: String,
+    pub args: std::collections::BTreeMap<String, serde_json::Value>,
+    pub into: Option<String>,
 }
 
 impl Changed {
@@ -631,6 +651,19 @@ fn note_write(viewers: bool, address: String, value: OverseerValue) {
     }
 }
 
+/// A value as the page takes it: numbers and truth as themselves, everything else as its text.
+fn plain(value: &OverseerValue) -> serde_json::Value {
+    match value {
+        OverseerValue::Null => serde_json::Value::Null,
+        OverseerValue::Integer(i) => serde_json::Value::from(*i),
+        OverseerValue::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(crate::numbers::write_float(*f))),
+        OverseerValue::Boolean(b) => serde_json::Value::Bool(*b),
+        other => serde_json::Value::String(ActionExecutor::value_to_string(other)),
+    }
+}
+
 /// Whether the node at these indices, or anything above it, is `mutable="guarded"`.
 fn is_the_viewers(nodes: &[OverseerNode], indices: &[usize]) -> bool {
     crate::mutability::along(nodes, indices).is_guarded()
@@ -892,6 +925,15 @@ fn note_narrow(address: String, value: String) {
     REPORT.with(|r| {
         if let Some(changed) = r.borrow_mut().as_mut() {
             changed.narrowings.push((address, value));
+        }
+    });
+}
+
+/// An operation for the host to run once the press is answered, after any asked for before it.
+fn note_call(call: Call) {
+    REPORT.with(|r| {
+        if let Some(changed) = r.borrow_mut().as_mut() {
+            changed.calls.push(call);
         }
     });
 }
@@ -1445,7 +1487,7 @@ impl ActionExecutor {
         if !matches!(
             action.node_type.as_str(),
             "if" | "each" | "press" | "refuse" | "start_editing" | "fold" | "unfold" | "toggle_fold"
-                | "narrow"
+                | "narrow" | "call"
         ) {
             note_acted();
         }
@@ -1673,6 +1715,49 @@ impl ActionExecutor {
                     None => OverseerValue::String(String::new()),
                 };
                 note_narrow(address, as_text(&value).unwrap_or_default());
+                Ok(())
+            }
+            // Asks whoever shows the document for one operation: `call (name="open") { - path =
+            // "tasks.os" }`. Opening a document, signing out, changing a password are the host's
+            // to do, never the document's, so like a fold the action only names the operation
+            // and the page runs it once the press is answered - nothing is written and nothing
+            // joins the undo. The host checks each request as it would one made by hand, so a
+            // document can ask for nothing its viewer could not already do.
+            //
+            // The arguments are worked out here, where the press is, so a formula reads the
+            // document as the actions before it left it. `into=` names a guarded field for the
+            // answer - a sentence, a key, a link - which belongs to whoever asked, never to the
+            // document.
+            "call" => {
+                let name = Self::require_string(&action.parameters, "name")?;
+                if !OPERATIONS.contains(&name.as_str()) {
+                    return Err(OverseerError::ValidationError(format!("call: no operation \"{}\"", name)));
+                }
+                let mut args = std::collections::BTreeMap::new();
+                for arg in &action.children {
+                    let Some(value) = arg.parameters.get("value") else { continue };
+                    let value = Self::evaluate_in_context(value, owner_path, nodes)?;
+                    args.insert(arg.name.clone(), plain(&value));
+                }
+                let into = match action.parameters.get("into") {
+                    None => None,
+                    Some(_) => {
+                        let target = Self::require_string(&action.parameters, "into")?;
+                        let (segments, _param, anchored) = Self::split_path_and_param(&target);
+                        let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
+                            .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+                        if !is_the_viewers(nodes, &indices) {
+                            return Err(OverseerError::ValidationError(format!(
+                                "call: {} is not a guarded field, and what an operation answers is the viewer's",
+                                target
+                            )));
+                        }
+                        Some(crate::delta::address_at(nodes, &indices).ok_or_else(|| {
+                            OverseerError::ValidationError(format!("{} names nothing that can be shown", target))
+                        })?)
+                    }
+                };
+                note_call(Call { name, args, into });
                 Ok(())
             }
             // Says no to the press, with a sentence for whoever pressed: `refuse = "this id is

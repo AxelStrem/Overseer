@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { request } from './calls.js'
 import { CHIP_SHAPES } from './renderer.js'
 
 /**
@@ -237,15 +238,7 @@ export class Account {
     }
 
     async call(method, url, body) {
-        const options = { method, headers: {} }
-        if (body !== undefined) {
-            options.headers['Content-Type'] = 'application/json'
-            options.body = JSON.stringify(body)
-        }
-        const response = await fetch(url, options)
-        const answer = await response.json().catch(() => null)
-        if (!response.ok) throw new Error((answer && answer.error) || `failed (${response.status})`)
-        return answer
+        return request(method, url, body)
     }
 
     async saveName() {

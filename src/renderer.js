@@ -31,6 +31,7 @@ import typescriptLanguage from 'highlight.js/lib/languages/typescript'
 import xmlLanguage from 'highlight.js/lib/languages/xml'
 import yamlLanguage from 'highlight.js/lib/languages/yaml'
 import { invoke } from '@tauri-apps/api/core'
+import { runCall } from './calls.js'
 
 // The sentence a press the document refused gave - see `refuse` - or null for anything else that
 // went wrong. The desktop app hands the error over as serde writes it, `{ Refused: "..." }`, and
@@ -1491,7 +1492,7 @@ export class OverseerRenderer {
         // Action nodes are not visual; keep this list in sync with backend
         const actionNames = [
             'set','inc','dec','toggle','clear','clear_list','ensure_in_list','ensure','remove','append','move','sort','set_now','set_now_ts','activate','deactivate',
-            'start_editing','fold','unfold','toggle_fold','narrow'
+            'start_editing','fold','unfold','toggle_fold','narrow','call'
         ]
         return actionNames.includes(n)
     }
@@ -7839,6 +7840,55 @@ export class OverseerRenderer {
         this.applyFilters()
     }
 
+    /**
+     * The operations a press asked the host for - `call` - in order, once its answer is on screen.
+     *
+     * Not waited for: an operation may take a round trip of its own, or go to another page, and
+     * the press it came from is over. Each one's answer, or its failure, goes into its `into`
+     * field as though typed there - a guarded field, so the viewer's and never written - and a
+     * failure with no field is said on the status line.
+     */
+    runCalls(calls) {
+        if (!Array.isArray(calls) || calls.length === 0 || !window.app) return Promise.resolve()
+        const app = window.app
+        return (async () => {
+            for (const call of calls) {
+                const { answer, failed } = await runCall(call, app)
+                if (call.into && answer !== null && this.writeCallAnswer(call.into, answer)) continue
+                if (failed) {
+                    try { app.setStatus && app.setStatus(answer, '', 'error') } catch (_) { /* said in the console */ }
+                }
+            }
+        })()
+    }
+
+    /// What an operation answered, into the field its call named, found by the child indices
+    /// the answer to the press gave. False when the document no longer has that field.
+    writeCallAnswer(into, value) {
+        const doc = window.app && window.app.currentDocument
+        if (!Array.isArray(doc) || !Array.isArray(into.path) || into.path.length === 0) return false
+        let node = null
+        let level = doc
+        for (const index of into.path) {
+            node = level && level[index]
+            if (!node) return false
+            level = Array.isArray(node.children) ? node.children : []
+        }
+        const at = node.__overseer_path
+        if (!Array.isArray(at) || at.length === 0) return false
+        const before = this.getNodeValue(node)
+        this.updateNodeValue(node, value)
+        // Drawn now, as typing draws what was typed: the answer to the write says what the page
+        // already holds, so nothing in it would draw the field again.
+        try { this.rerenderSubtree(doc, at) } catch (_) { /* drawn with the next change */ }
+        const joined = at.join('/')
+        try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
+        Promise.resolve(window.app.reevaluateDocumentSelective(
+            [joined], [{ path: joined, oldValue: before, newValue: value }]
+        )).catch(() => {})
+        return true
+    }
+
     /// The narrowings a press asked for - `narrow` - found by the child indices the answer names,
     /// as its folds are.
     applyNarrowings(narrowings) {
@@ -12201,6 +12251,7 @@ export class OverseerRenderer {
                 this.openFieldForEditing(made.answer?.start_editing)
                 this.applyFolds(made.answer?.folds)
                 this.applyNarrowings(made.answer?.narrowings)
+                this.runCalls(made.answer?.calls)
                 return
             }
         }
@@ -12240,6 +12291,8 @@ export class OverseerRenderer {
         let toFold = []
         // And the boxes it asked to narrow their lists, found the same way.
         let toNarrow = []
+        // And the operations it asked the host for, run once the answer is on screen.
+        let toCall = []
         let updated = null
         try {
             // Send the document's text rather than the document, which is never sent.
@@ -12317,6 +12370,7 @@ export class OverseerRenderer {
                 if (update && Array.isArray(update.changes)) {
                     toFold = Array.isArray(update.folds) ? update.folds : []
                     toNarrow = Array.isArray(update.narrowings) ? update.narrowings : []
+                    toCall = Array.isArray(update.calls) ? update.calls : []
                     window.app.tookTheText(update)
                     const touched = window.app.applyDocumentChanges(window.app.currentDocument, update.changes)
                     try {
@@ -12338,6 +12392,7 @@ export class OverseerRenderer {
                     this.openFieldForEditing(toOpen)
                     this.applyFolds(toFold)
                     this.applyNarrowings(toNarrow)
+                    this.runCalls(toCall)
                     return
                 }
                 if (update && Array.isArray(update.nodes)) {
@@ -12345,6 +12400,7 @@ export class OverseerRenderer {
                     nextText = typeof update.text === 'string' ? update.text : null
                     toFold = Array.isArray(update.folds) ? update.folds : []
                     toNarrow = Array.isArray(update.narrowings) ? update.narrowings : []
+                    toCall = Array.isArray(update.calls) ? update.calls : []
                 }
             }
             // The long way, from the text: fetched now if the last answer only named it, since a
@@ -12370,6 +12426,7 @@ export class OverseerRenderer {
                 if (answer && Array.isArray(answer.nodes)) {
                     updated = answer.nodes
                     nextText = typeof answer.text === 'string' ? answer.text : null
+                    toCall = Array.isArray(answer.calls) ? answer.calls : []
                 }
             }
             // The document itself is never sent to have the press worked out on it: it no longer
@@ -12421,6 +12478,7 @@ export class OverseerRenderer {
             // Dropped here before, so Talk did nothing whenever its answer came whole.
             this.applyFolds(toFold)
             this.applyNarrowings(toNarrow)
+            this.runCalls(toCall)
         } else {
             // Backend returned a status/boolean or unexpected shape; keep current document
             if (DEBUG_MODE) console.warn('[Overseer] emitEvent returned non-document value; preserving current document:', updated)

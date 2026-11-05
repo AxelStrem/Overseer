@@ -1356,6 +1356,7 @@ can be a formula.
 | `start_editing (path)` | opens a field for typing (see "Opening a field for editing") |
 | `fold (path)`, `unfold (path)`, `toggle_fold (path)` | folds a div away or brings it back (see "Folding a div away") |
 | `narrow (path) = value` | puts a value in a box that narrows a list, or empties it when it holds that already (see "Narrowing a list") |
+| `call (name, into) { ... }` | asks whoever shows the document for an operation - open a document, sign out, copy (see "Asking the host for an operation") |
 | `load_mount (path)`, `unload_mount (path)` | brings in, or lets go of, what a mount names |
 
 A press is one change: every action in it is written together, and one undo takes back all of
@@ -1808,6 +1809,72 @@ div Notes (foldable=true, folded=$(/project/fold_all), label="Notes") { ... }
 ```
 
 `hidden=true` wins over any fold.
+
+#### Asking the host for an operation
+
+`call` asks whoever shows the document - the page in a browser, or the desktop app - for one
+operation out of a fixed set: going to another document, signing out, changing a password,
+copying a line. Its arguments are written in its block as an append's fields are, `- name =
+value`, and can be formulas; `into=` names a guarded field for what the operation answers.
+
+```overseer
+div (mutable="guarded") {
+    string key_name (label="Name") = ""
+    string said = ""
+}
+
+button make (label="Make a key") {
+    on click {
+        call (name="make_key", into="../said") {
+            - name = $(../key_name)
+        }
+    }
+}
+
+button tasks (label="My tasks") {
+    on click {
+        call (name="open") {
+            - path = "tasks/tasks.os"
+        }
+    }
+}
+```
+
+The press only names the operation; the host runs it once the press is answered, after
+everything else the press did, and calls in one press run in the order they are written. Nothing
+is written to the document by the call itself and nothing joins its undo. The arguments are
+worked out where the call is, so a formula reads what the actions before it left.
+
+What an operation answers - a sentence, a key, a link - is written into the `into` field as though
+typed there, and so is the sentence a refused operation answers with. The field has to be
+guarded, here or above (see "Who may change what"): what an operation answers belongs to whoever asked,
+never to the document, and a call into any other field refuses the press. A refused operation with
+no `into` is said on the status line. A refused operation never stops the calls after it.
+
+The host checks each request as it would one made by hand - the current password, whether the
+person is an admin - so a document can ask for nothing its viewer could not already do. A name
+that is not in the table refuses the press; an operation the host does not have - an account on
+the desktop, a file from the disk in a browser - answers that it is not available here.
+
+| operation | arguments | answers | host |
+| --- | --- | --- | --- |
+| `open` | `path`, the document as the list of documents names it | | both |
+| `undo` | | | both |
+| `keep` | `path`, the open document if left out: added to the list of documents | | both |
+| `drop` | `path`: taken off the list of documents | | both |
+| `look` | `theme`, `mode` (`light`, `dark`, `system`), either or both | | both |
+| `save_profile` | `name`, `colour`, `icon`, `shape` | `Saved.` | browser |
+| `change_password` | `current`, `password` | `Changed.` | browser |
+| `make_key` | `name` | the key, shown only this once | browser |
+| `drop_key` | `name` | `Revoked "name".` | browser |
+| `invite` | | a link to join, good for one person | browser |
+| `reset_password` | `person`, a username | a link that sets their new password | browser |
+| `sign_out` | | | browser |
+| `copy` | `text`: put on the clipboard | `Copied.` | both |
+| `fold_drawer` | `folded`, turned over if left out | | both |
+| `open_file`, `new_file` | | | desktop |
+
+A press made over the server's API (`/v1/event`) runs no calls: there is no page to run them.
 
 ### 4. Fields and Marks
 
