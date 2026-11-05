@@ -1521,13 +1521,26 @@ fn calls_to_do(report: Option<&crate::actions::Changed>, nodes: &[OverseerNode])
         .iter()
         .map(|call| CallToDo {
             name: call.name.clone(),
-            args: call.args.clone(),
+            args: call
+                .args
+                .iter()
+                .map(|(name, value)| (name.clone(), secret_found(value, nodes)))
+                .collect(),
             into: call.into.as_ref().and_then(|address| {
                 crate::delta::indices_of(nodes, address)
                     .map(|path| FieldToEdit { address: address.clone(), path })
             }),
         })
         .collect()
+}
+
+/// A secret box an argument names, `{"secret": address}`, given the child indices that reach it
+/// as well, which is what the page finds it by - the way it finds an `into`. Anything else as it
+/// is. A box the press took away is named by its address alone, and the page passes nothing.
+fn secret_found(value: &serde_json::Value, nodes: &[OverseerNode]) -> serde_json::Value {
+    let Some(address) = value.get("secret").and_then(|a| a.as_str()) else { return value.clone() };
+    let path = crate::delta::indices_of(nodes, address);
+    serde_json::json!({ "secret": { "address": address, "path": path } })
 }
 
 /// What a change to a worked-out document reaches, worked out - and only that, where it can be.

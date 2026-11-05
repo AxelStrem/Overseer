@@ -41,4 +41,18 @@ tab calls (label="Calls", mutable="guarded") {
             }
         }
     }
+
+    div (layout="horizontal") {
+        textbox current (placeholder="current password", kind="secret") = ""
+        textbox password (placeholder="new password", kind="secret") = ""
+
+        button change (label="Change the password") {
+            on click {
+                call (name="change_password", into="../said") {
+                    - current = <../current>
+                    - password = <../password>
+                }
+            }
+        }
+    }
 }

@@ -1614,6 +1614,11 @@ textbox becomes the picker itself, and holds what is picked like anything typed.
 string colour (label="", kind="color", width=30%) = "#6b7280"
 ```
 
+A textbox saying `kind="secret"` holds a password. It is drawn masked, and what is typed into it
+goes with no press: a formula reading it sees only what the file says it starts with. Its one use
+is to be handed to an operation by a `call` that names it (see "Asking the host for an
+operation"), after which it is emptied.
+
 What is typed belongs to whoever is typing, and is never written to the file - the way
 `mutable="guarded"` works. The file says what the box starts with, through the usual means, a
 value or a formula, and that is all it ever says. A press sends the text along, so actions can
@@ -1984,6 +1989,29 @@ the desktop, a file from the disk in a browser - answers that it is not availabl
 | `copy` | `text`: put on the clipboard | `Copied.` | both |
 | `fold_drawer` | `folded`, turned over if left out | | both |
 | `open_file`, `new_file` | | | desktop |
+
+A secret textbox (see "A form that fills an entry") is handed to an operation by naming it,
+`<path>`, rather than read with a formula. The host reads what is typed into it and passes that
+straight to the operation, so a password reaches neither the document nor the server's memory of
+the viewer; the box is emptied once the operation has run. Naming anything but a secret textbox
+this way refuses the press.
+
+```overseer
+div (mutable="guarded") {
+    textbox current (placeholder="current password", kind="secret") = ""
+    textbox password (placeholder="new password", kind="secret") = ""
+    string said = ""
+}
+
+button change (label="Change the password") {
+    on click {
+        call (name="change_password", into="../said") {
+            - current = <../current>
+            - password = <../password>
+        }
+    }
+}
+```
 
 A press made over the server's API (`/v1/event`) runs no calls: there is no page to run them.
 
@@ -2895,7 +2923,7 @@ div Tasks {
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `ease`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
-- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `limit` (on a `textbox` that picks), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
+- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`; `secret`, on a `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `limit` (on a `textbox` that picks), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`; `select` and `segments`, on an `enum`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`

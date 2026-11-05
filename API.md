@@ -315,7 +315,8 @@ A `call` in the block (see the specification's "Asking the host for an operation
 to run, so a press made here runs none and the answer does not name them. The page's own press,
 `run_overseer_event` through the bridge, answers with them in `calls`: each `name`, `args` worked
 out, and `into` - the guarded field for what the operation answers - by `address` and by the
-child indices `path` the page finds it by.
+child indices `path` the page finds it by. An argument naming a secret textbox is no value but
+`{"secret": {"address", "path"}}`: the page puts in what is typed there, which it never sends.
 
 ## Undoing: `POST /v1/undo`
 

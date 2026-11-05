@@ -760,6 +760,8 @@ export class OverseerRenderer {
     this.readOnly = false
         // What is typed into textboxes, by path - see `createTextboxElement`.
         this._typed = new Map()
+        // Which of those keys are secret boxes, which no press sends - see `typedText`.
+        this._secret = new Set()
         // What the textboxes that narrow a list hold, by the box's path - see `createNarrowingBox`.
         this._narrowings = new Map()
     }
@@ -7162,13 +7164,23 @@ export class OverseerRenderer {
         }
 
         const input = document.createElement('input')
-        // A colour is picked with the browser's own picker, and held like anything typed.
-        input.type = this.holdsAColour(node) ? 'color' : 'text'
+        const key = JSON.stringify(Array.isArray(node.__overseer_path) ? node.__overseer_path : [])
+        // A secret box - a password - is masked, and what is typed into it goes to no press: only
+        // to the operation a `call` names it for - see `runCalls`.
+        const secret = this.isSecretBox(node)
+        if (secret) {
+            this._secret.add(key)
+            input.type = 'password'
+            input.autocomplete = 'off'
+        } else {
+            this._secret.delete(key)
+            // A colour is picked with the browser's own picker, and held like anything typed.
+            input.type = this.holdsAColour(node) ? 'color' : 'text'
+        }
         input.className = 'textbox-input'
         const placeholder = this.getParameterValue(node, 'placeholder')
         if (placeholder) input.placeholder = String(placeholder)
-        const key = JSON.stringify(Array.isArray(node.__overseer_path) ? node.__overseer_path : [])
-        if (this.getParameterValue(node, 'narrows')) return this.createNarrowingBox(node, key)
+        if (!secret && this.getParameterValue(node, 'narrows')) return this.createNarrowingBox(node, key)
         const typed = this._typed.get(key)
         const starting = this.getNodeValue(node)
         input.value = typed !== undefined ? typed : (starting === null || starting === undefined ? '' : String(starting))
@@ -7177,7 +7189,7 @@ export class OverseerRenderer {
         // own chips and picker, with what is picked held here like anything typed. A form can
         // then offer tags the way every other place does, and they reach the new entry as the
         // text a set of tags is.
-        if (this.getParameterValue(node, 'vocabulary')) {
+        if (!secret && this.getParameterValue(node, 'vocabulary')) {
             return this.createTagsElement(node, {
                 read: () => {
                     const now = this._typed.get(key)
@@ -7264,10 +7276,18 @@ export class OverseerRenderer {
         return container
     }
 
+    /// A textbox saying `kind="secret"`.
+    isSecretBox(node) {
+        return !!node && String(node.node_type || node.type || '').toLowerCase() === 'textbox'
+            && this.getParameterValue(node, 'kind') === 'secret'
+    }
+
     /// Everything typed, as a press sends it: each path once, in the one spelling the door takes.
+    /// Never what a secret box holds.
     typedText() {
         const out = []
         for (const [key, text] of this._typed) {
+            if (this._secret.has(key)) continue
             try { out.push({ node_path: JSON.parse(key), value: { String: text } }) } catch (_) { /* not a path */ }
         }
         return out
@@ -7276,6 +7296,7 @@ export class OverseerRenderer {
     /// Forget what was typed, for a document that is not this one.
     forgetTypedText() {
         this._typed = new Map()
+        this._secret = new Set()
         this._narrowings = new Map()
     }
 
@@ -8009,13 +8030,44 @@ export class OverseerRenderer {
         const app = window.app
         return (async () => {
             for (const call of calls) {
-                const { answer, failed } = await runCall(call, app)
+                const secrets = []
+                const { answer, failed } = await runCall(this.withSecrets(call, secrets), app)
+                if (secrets.length > 0) this.emptyTextboxes(secrets)
                 if (call.into && answer !== null && this.writeCallAnswer(call.into, answer)) continue
                 if (failed) {
                     try { app.setStatus && app.setStatus(answer, '', 'error') } catch (_) { /* said in the console */ }
                 }
             }
         })()
+    }
+
+    /// The call with each secret box it names, `{secret: {address, path}}`, given what is typed
+    /// into it - read here, so that it goes from the box to the operation and nowhere else. The
+    /// boxes' paths go into `used`, to be emptied once the operation has run, whatever it said.
+    withSecrets(call, used) {
+        const args = call && call.args
+        if (!args || typeof args !== 'object') return call
+        const doc = window.app && window.app.currentDocument
+        const out = {}
+        for (const [name, value] of Object.entries(args)) {
+            const secret = value && typeof value === 'object' ? value.secret : undefined
+            if (!secret || typeof secret !== 'object') {
+                out[name] = value
+                continue
+            }
+            let node = null
+            let level = doc
+            for (const index of Array.isArray(secret.path) ? secret.path : []) {
+                node = Array.isArray(level) ? level[index] : null
+                if (!node) break
+                level = node.children
+            }
+            const at = node && this.isSecretBox(node) && Array.isArray(node.__overseer_path) ? node.__overseer_path : null
+            const typed = at ? this._typed.get(JSON.stringify(at)) : undefined
+            out[name] = typed === undefined ? '' : typed
+            if (at) used.push(at)
+        }
+        return { ...call, args: out }
     }
 
     /// What an operation answered, into the field its call named, found by the child indices

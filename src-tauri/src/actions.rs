@@ -664,6 +664,12 @@ fn plain(value: &OverseerValue) -> serde_json::Value {
     }
 }
 
+/// A `textbox (kind="secret")`: a password, say, which the page keeps to itself.
+pub fn is_secret_box(node: &OverseerNode) -> bool {
+    node.node_type == "textbox"
+        && matches!(node.parameters.get("kind"), Some(OverseerValue::String(kind)) if kind == "secret")
+}
+
 /// Whether the node at these indices, or anything above it, is `mutable="guarded"`.
 fn is_the_viewers(nodes: &[OverseerNode], indices: &[usize]) -> bool {
     crate::mutability::along(nodes, indices).is_guarded()
@@ -761,7 +767,9 @@ pub fn hold_typed_text(nodes: &mut Vec<OverseerNode>, typed: &[(Vec<String>, Ove
     for (path, value) in typed {
         let Some((_, indices)) = ActionExecutor::get_node_mut_by_path(nodes, path) else { continue };
         let Some(node) = ActionExecutor::get_node_mut_by_indices(nodes, &indices) else { continue };
-        if node.node_type != "textbox" {
+        // What is typed into a secret box is never put on the document, even for one press: a
+        // page sends it only to the operation a `call` names it for.
+        if node.node_type != "textbox" || is_secret_box(node) {
             continue;
         }
         let text = match value {
@@ -1737,6 +1745,14 @@ impl ActionExecutor {
                 let mut args = std::collections::BTreeMap::new();
                 for arg in &action.children {
                     let Some(value) = arg.parameters.get("value") else { continue };
+                    // A secret textbox is passed by naming it, `- current = <../current>`: the
+                    // page reads what is typed into it and hands that to the operation itself,
+                    // so a password never reaches the server. The answer says which box.
+                    if let OverseerValue::Template(target) = value {
+                        let address = Self::secret_box_at(nodes, owner_path, target)?;
+                        args.insert(arg.name.clone(), serde_json::json!({ "secret": address }));
+                        continue;
+                    }
                     let value = Self::evaluate_in_context(value, owner_path, nodes)?;
                     args.insert(arg.name.clone(), plain(&value));
                 }
@@ -2440,6 +2456,29 @@ impl ActionExecutor {
                 Ok(())
             }
         }
+    }
+
+    /// The address of the secret textbox a `call` argument names, `<../current>`, or why it
+    /// cannot be passed that way. Only a secret box: anything else is read with `$(...)`.
+    fn secret_box_at(nodes: &Vec<OverseerNode>, owner_path: &[String], target: &str) -> Result<String, OverseerError> {
+        let (segments, _param, anchored) = Self::split_path_and_param(target);
+        let indices = Self::resolve_target_indices(nodes, owner_path, anchored, &segments)
+            .ok_or_else(|| OverseerError::ValidationError(format!("Target not found: {}", target)))?;
+        let mut level: &[OverseerNode] = nodes;
+        let mut node = None;
+        for &index in &indices {
+            let here = level.get(index);
+            node = here;
+            level = here.map(|n| n.children.as_slice()).unwrap_or(&[]);
+        }
+        if !node.is_some_and(is_secret_box) {
+            return Err(OverseerError::ValidationError(format!(
+                "call: <{}> is not a secret textbox, and only one is passed by naming it - read anything else with $(...)",
+                target
+            )));
+        }
+        crate::delta::address_at(nodes, &indices)
+            .ok_or_else(|| OverseerError::ValidationError(format!("{} names nothing that can be shown", target)))
     }
 
     fn require_string(
