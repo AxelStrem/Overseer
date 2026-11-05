@@ -2560,6 +2560,26 @@ pub fn for_the_page(mut update: ResolvedUpdate) -> ResolvedUpdate {
     update
 }
 
+/// The document at `path` as `host/open` describes it to a drawer drawn beside it on this
+/// computer - the desktop's counterpart of the server's `DocumentRoot::open_beside`. The app opens
+/// any file there is, so one that exists may be edited and one that does not is not there at all;
+/// there is no `read` here.
+pub fn open_beside(path: &str) -> crate::environment::Open {
+    let at = std::path::Path::new(path);
+    let can = if at.is_file() { "edit" } else { "" };
+    let undoable = !can.is_empty()
+        && crate::undo::beside(at).is_some_and(|(folder, file)| crate::undo::depth(&folder, &file) > 0);
+    crate::environment::Open {
+        path: path.to_string(),
+        name: at
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        can: can.to_string(),
+        undoable,
+    }
+}
+
 /// Write a document, keeping what it said so the write can be taken back.
 ///
 /// The server has its own version of this, because it has a root directory and a document name.

@@ -205,6 +205,21 @@ async fn save_overseer_file_from_text(
         .map_err(|e| OverseerError::IoError(format!("Failed to save file: {}", e)))
 }
 
+/// Work out what a command asks as the page that sent it sees: the drawer's pane names the
+/// document open beside it in an `Overseer-Open` header, which its document reads as `host/open`.
+/// The main document's own commands say nothing, and see nothing open beside them. Each command
+/// does its work without awaiting anything, so what `environment::beside` holds for this thread
+/// holds for the whole of it.
+fn beside<T>(request: &tauri::ipc::Request<'_>, f: impl FnOnce() -> T) -> T {
+    let open = request
+        .headers()
+        .get("Overseer-Open")
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .filter(|path| !path.is_empty())
+        .map(|path| app_api::open_beside(&path));
+    overseer::environment::beside(open, f)
+}
+
 /// The window is the viewer, so its guarded fields are kept under one name.
 ///
 /// The server keeps a viewer's own values against the session its page minted, because several
@@ -221,12 +236,15 @@ const THE_WINDOW: &str = "desktop";
 /// change: one file write, and one step to take back.
 #[command]
 async fn write_overseer_values(
+    request: tauri::ipc::Request<'_>,
     path: String,
     values: Vec<app_api::ValueWrite>,
     shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    let _showing = app_api::describing_for(shown_version);
-    app_api::write_values_at(&path, &path, values, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::write_values_at(&path, &path, values, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// What the page should show now that something else wrote the file, described against what it
@@ -234,59 +252,74 @@ async fn write_overseer_values(
 /// the page asks both hosts the same things.
 #[command]
 async fn catch_up_overseer_document(
+    request: tauri::ipc::Request<'_>,
     path: String,
     shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    let _showing = app_api::describing_for(shown_version);
-    app_api::catch_up_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::catch_up_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// What the document says to do when it is opened, for this window alone - see
 /// `app_api::run_on_load_at`.
 #[command]
 async fn run_overseer_on_load(
+    request: tauri::ipc::Request<'_>,
     path: String,
     shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    let _showing = app_api::describing_for(shown_version);
-    app_api::run_on_load_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::run_on_load_at(&path, &path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// One tick of the page's clock, for this window alone - see `app_api::run_on_tick_at`.
 #[command]
 async fn run_overseer_tick(
+    request: tauri::ipc::Request<'_>,
     path: String,
     owners: Vec<String>,
     shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    let _showing = app_api::describing_for(shown_version);
-    app_api::run_on_tick_at(&path, &path, THE_WINDOW, &owners).map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::run_on_tick_at(&path, &path, THE_WINDOW, &owners).map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// One window more of a list, for this window alone - see `app_api::show_more_at`.
 #[command]
 async fn show_more_of_overseer_list(
+    request: tauri::ipc::Request<'_>,
     path: String,
     list_path: Vec<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    app_api::show_more_at(&path, &path, list_path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        app_api::show_more_at(&path, &path, list_path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// Add an entry to a list, with whatever fields the page has for it.
 #[command]
 async fn append_overseer_entry(
+    request: tauri::ipc::Request<'_>,
     path: String,
     list_path: Vec<String>,
     fields: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    app_api::append_entry_at(
-        &path,
-        &path,
-        list_path,
-        fields.unwrap_or_default(),
-        THE_WINDOW,
-    )
-    .map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        app_api::append_entry_at(
+            &path,
+            &path,
+            list_path,
+            fields.unwrap_or_default(),
+            THE_WINDOW,
+        )
+        .map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// Make sure a list has the entry a view is pointed at, and apply the edit that asked for it.
@@ -295,26 +328,33 @@ async fn append_overseer_entry(
 /// the entry real at that key. Both halves are one instruction because they are one change.
 #[command]
 async fn ensure_overseer_entry(
+    request: tauri::ipc::Request<'_>,
     path: String,
     wanted: app_api::EntryWanted,
     shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    let _showing = app_api::describing_for(shown_version);
-    app_api::ensure_entry_at(&path, &path, wanted, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::ensure_entry_at(&path, &path, wanted, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// And take one out.
 #[command]
 async fn remove_overseer_entry(
+    request: tauri::ipc::Request<'_>,
     path: String,
     entry_path: Vec<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    app_api::remove_entry_at(&path, &path, entry_path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        app_api::remove_entry_at(&path, &path, entry_path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// Move one to a place in a list, as a drag asks.
 #[command]
 async fn move_overseer_entry(
+    request: tauri::ipc::Request<'_>,
     path: String,
     entry_path: Vec<String>,
     to_list_path: Vec<String>,
@@ -322,14 +362,17 @@ async fn move_overseer_entry(
     setting: Option<app_api::ValueWrite>,
     shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    let _showing = app_api::describing_for(shown_version);
-    app_api::move_entry_at(&path, &path, entry_path, to_list_path, before, setting, THE_WINDOW)
-        .map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::move_entry_at(&path, &path, entry_path, to_list_path, before, setting, THE_WINDOW)
+            .map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 /// Run one handler, the same way.
 #[command]
 async fn run_overseer_event(
+    request: tauri::ipc::Request<'_>,
     path: String,
     node_path: Vec<String>,
     event_name: String,
@@ -337,42 +380,49 @@ async fn run_overseer_event(
     writing: Option<Vec<app_api::ValueWrite>>,
     shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    let _showing = app_api::describing_for(shown_version);
-    app_api::run_event_at(
-        &path,
-        &path,
-        node_path,
-        event_name,
-        THE_WINDOW,
-        typed.unwrap_or_default(),
-        writing.unwrap_or_default(),
-    )
-    .map(app_api::for_the_page).map(ForThePage)
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::run_event_at(
+            &path,
+            &path,
+            node_path,
+            event_name,
+            THE_WINDOW,
+            typed.unwrap_or_default(),
+            writing.unwrap_or_default(),
+        )
+        .map(app_api::for_the_page).map(ForThePage)
+    })
 }
 
 #[command]
-async fn parse_overseer_content(content: String, path: Option<String>) -> Result<ForThePage<Vec<OverseerNode>>> {
-    // The same call the server makes. This used to record where the server did not, because the
-    // recording cost seventy per cent of an open and only an editor got that back; it now costs
-    // almost nothing and both want the graph. See `app_api::recording_is_on`.
-    //
-    // Worked out as this window sees it. Without that, opening a document showed what it
-    // authored while the day this window had moved to was still being remembered - so the next
-    // press stepped back from the remembered day and the display jumped a day at once.
-    match path.as_deref() {
-        Some(named) => app_api::load_document_for(content, named, THE_WINDOW),
-        None => app_api::load_document(content),
-    }
-    .map(ForThePage)
+async fn parse_overseer_content(request: tauri::ipc::Request<'_>, content: String, path: Option<String>) -> Result<ForThePage<Vec<OverseerNode>>> {
+    beside(&request, || {
+        // The same call the server makes. This used to record where the server did not, because the
+        // recording cost seventy per cent of an open and only an editor got that back; it now costs
+        // almost nothing and both want the graph. See `app_api::recording_is_on`.
+        //
+        // Worked out as this window sees it. Without that, opening a document showed what it
+        // authored while the day this window had moved to was still being remembered - so the next
+        // press stepped back from the remembered day and the display jumped a day at once.
+        match path.as_deref() {
+            Some(named) => app_api::load_document_for(content, named, THE_WINDOW),
+            None => app_api::load_document(content),
+        }
+        .map(ForThePage)
+    })
 }
 
 #[command]
 async fn parse_overseer_content_selective(
+    request: tauri::ipc::Request<'_>,
     content: String,
     changed_fields: Vec<String>,
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<ForThePage<Vec<OverseerNode>>> {
-    app_api::resolve_selective(content, changed_fields, changed_field_values).map(ForThePage)
+    beside(&request, || {
+        app_api::resolve_selective(content, changed_fields, changed_field_values).map(ForThePage)
+    })
 }
 
 
@@ -382,11 +432,14 @@ async fn parse_overseer_content_selective(
 /// document each time.
 #[command]
 async fn parse_overseer_content_selective_with_text(
+    request: tauri::ipc::Request<'_>,
     content: String,
     changed_fields: Vec<String>,
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<ForThePage<app_api::ResolvedDocument>> {
-    app_api::resolve_selective_with_text(content, changed_fields, changed_field_values).map(ForThePage)
+    beside(&request, || {
+        app_api::resolve_selective_with_text(content, changed_fields, changed_field_values).map(ForThePage)
+    })
 }
 
 
@@ -397,11 +450,14 @@ async fn parse_overseer_content_selective_with_text(
 /// of nodes, and this says so instead.
 #[command]
 async fn parse_overseer_content_selective_update(
+    request: tauri::ipc::Request<'_>,
     content: String,
     changed_fields: Vec<String>,
     changed_field_values: Option<std::collections::HashMap<String, OverseerValue>>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    app_api::resolve_selective_update(content, changed_fields, changed_field_values).map(ForThePage)
+    beside(&request, || {
+        app_api::resolve_selective_update(content, changed_fields, changed_field_values).map(ForThePage)
+    })
 }
 
 /// Put the document back the way it was before the last write.
@@ -420,21 +476,27 @@ async fn find_overseer_files(_directory: String) -> Result<Vec<String>> {
 /// Run an event on the document's text.
 #[command]
 async fn execute_overseer_event_with_text(
+    request: tauri::ipc::Request<'_>,
     content: String,
     node_path: Vec<String>,
     event_name: String,
 ) -> Result<ForThePage<app_api::ResolvedDocument>> {
-    app_api::execute_event_on_text(content, node_path, event_name).map(ForThePage)
+    beside(&request, || {
+        app_api::execute_event_on_text(content, node_path, event_name).map(ForThePage)
+    })
 }
 
 /// `execute_overseer_event_with_text`, answering with what changed where possible.
 #[command]
 async fn execute_overseer_event_update(
+    request: tauri::ipc::Request<'_>,
     content: String,
     node_path: Vec<String>,
     event_name: String,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
-    app_api::execute_event_update(content, node_path, event_name).map(ForThePage)
+    beside(&request, || {
+        app_api::execute_event_update(content, node_path, event_name).map(ForThePage)
+    })
 }
 
 
