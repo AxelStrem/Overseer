@@ -5419,11 +5419,29 @@ impl FormulaEvaluator {
             }
             end -= 1;
         }
-        None
+        // Then the top, which is no ancestor's child: a document's top-level nodes, and the copies
+        // of the contexts it sees there - its own and the environment's, `host/themes`. A copy
+        // before anything else so named, as `find_node_by_name` has it, and never a declaration,
+        // which is worked out only in its copies.
+        let (first, rest) = path.split_first()?;
+        let top = root
+            .iter()
+            .find(|n| crate::contexts::is_copy(n) && &n.name == first)
+            .or_else(|| {
+                root.iter()
+                    .find(|n| !crate::contexts::is_context(n) && &n.name == first)
+            })?;
+        let mut node = top;
+        let mut walked = vec![top.name.clone()];
+        for seg in rest {
+            node = node
+                .get_accessible_children()
+                .into_iter()
+                .find(|c| &c.name == seg)?;
+            walked.push(node.name.clone());
+        }
+        Some((walked, node))
     }
-
-
-
 
     /// The child of this node reachable by name, without allocating a list of them all.
     ///

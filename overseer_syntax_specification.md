@@ -1033,7 +1033,9 @@ tab project (label="Project") {
 - **It is read like any other name**: `$(accent)`, `$(theme/surface)`. A formula finds the nearest
   context of that name above it, as it finds any name, by climbing. A context is not one of the
   things its container holds: a method chain over the container does not count it, and the page
-  does not draw it.
+  does not draw it. What it holds is read as anything else is: a list in a context is counted,
+  filtered and gone through with the list methods, `$(c/themes.count())`, wherever the context
+  is declared.
 - **It covers its whole container**, wherever the line sits among the container's children. A
   context written in an unnamed div or tab belongs to the container around it, as everything else
   written there does. The ones written at the top of a document cover the whole document.
