@@ -246,7 +246,9 @@ window.__preview = {
         const found = this.pathOf(target)
         if (found.missing !== undefined) return { why: 'no ' + JSON.stringify(found.missing) + ' under /' + found.under.join('/') }
         const wanted = JSON.stringify(found.path)
-        const all = Array.from(document.querySelectorAll('[data-path]')).filter((e) => e.getAttribute('data-path') === wanted)
+        // The open document's, never a document drawn in the drawer at the same path.
+        const all = Array.from(document.querySelectorAll('[data-path]'))
+            .filter((e) => e.getAttribute('data-path') === wanted && !e.closest('.overseer-pane'))
         if (!all.length) return { why: 'not drawn: /' + found.path.join('/'), node: found.node }
         // The outermost is the node itself; the rest are parts of it that carry its path too.
         const outer = all.filter((e) => !all.some((o) => o !== e && o.contains(e)))

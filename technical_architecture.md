@@ -92,6 +92,14 @@ theme it is based on changes, as for the files its mounts and bases read.
 | `app_api.rs` | the entry points both front ends call |
 | `server.rs`, `bin/server.rs` | the same, over HTTP |
 
+The page can draw a second document beside the open one, in the drawer: a pane (`src/pane.js`),
+an app of its own with a renderer of its own, which finds only the elements it drew and writes
+its theme on its own element rather than the page's root. Every command it sends names its
+document and the one open beside it, in the invoke's options; the browser bridge sends them as
+the request's `document` and `open`, and the server tells the pane's document of the open one as
+`host/open`. Its presses, edits, folds, clock and watch are its own; undo, the status line, and
+what its `call`s do are the page's.
+
 The page's own pages - the one shown while a document loads, and the one an error is shown on -
 are documents too, `src/pages/*.os`. They are needed exactly when there is no server to work them
 out, so the page carries them worked out already, in the shipped theme, light and dark, as

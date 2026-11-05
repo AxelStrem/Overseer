@@ -303,18 +303,33 @@ const iconParts = (raw) => {
     return LIBRARY_ICON.test(key) ? { key, color } : {}
 }
 
+// The class of the element a second document is drawn in - see `pane.js` - and how many are on
+// the page. With none, the page's own document has the page to itself, and finds what it drew
+// without looking at where.
+export const PANE_CLASS = 'overseer-pane'
+let panesOpen = 0
+export const paneOpened = () => { panesOpen += 1 }
+export const paneClosed = () => { panesOpen = Math.max(0, panesOpen - 1) }
+
+// The app whose document is being drawn just now, while a renderer draws something that reads
+// its file - see `drawingHere` - else the page's own.
+let drawingFor = null
+const appDrawing = () => drawingFor || (typeof window !== 'undefined' ? window.app : null)
+const askFor = (app, ...command) => (app && typeof app.ask === 'function' ? app.ask(...command) : invoke(...command))
+
 // A document's own icons, by the document and the path it gives: the address the page draws
 // them from once they have come, or the promise of one while they are on their way. An icon's
 // text never becomes part of the page - it is drawn as an image or a mask, where an SVG's
 // scripts do not run.
 const documentIcons = new Map()
 const documentIconAddress = (file) => {
-    const doc = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+    const app = appDrawing()
+    const doc = (app && app.currentFile) || ''
     const at = `${doc}\n${file}`
     const known = documentIcons.get(at)
     if (typeof known === 'string' || known === null) return known
     if (!known && doc) {
-        documentIcons.set(at, invoke('load_overseer_icon', { path: doc, icon: file })
+        documentIcons.set(at, askFor(app, 'load_overseer_icon', { path: doc, icon: file })
             .then((svg) => typeof svg === 'string' ? URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })) : null)
             .catch(() => null)
             .then((url) => {
@@ -339,14 +354,15 @@ const showDocumentIcon = (el, url) => {
 // from its own text with its colour and opacity written into it.
 const backdropIcons = new Map()
 const backdropIconText = ({ key, file }) => {
-    const doc = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+    const app = appDrawing()
+    const doc = (app && app.currentFile) || ''
     const at = key ? `/icons/${key}.svg` : `${doc}\n${file}`
     const known = backdropIcons.get(at)
     if (known !== undefined) return known
     if (!key && !doc) return null
     const asked = key
         ? (typeof fetch === 'function' ? fetch(at).then((r) => (r.ok ? r.text() : null)) : Promise.resolve(null))
-        : invoke('load_overseer_icon', { path: doc, icon: file })
+        : askFor(app, 'load_overseer_icon', { path: doc, icon: file })
     const coming = asked
         .then((svg) => (typeof svg === 'string' && /<svg[\s>]/.test(svg) ? svg : null))
         .catch(() => null)
@@ -453,12 +469,13 @@ const themeFonts = new Map()
 // a folded div is not fetched until the div is opened.
 const documentImages = new Map()
 const documentImageAddress = (file) => {
-    const doc = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+    const app = appDrawing()
+    const doc = (app && app.currentFile) || ''
     const at = `${doc}\n${file}`
     const known = documentImages.get(at)
     if (typeof known === 'string' || known === null) return known
     if (!known && doc) {
-        documentImages.set(at, invoke('load_overseer_image', { path: doc, image: file })
+        documentImages.set(at, askFor(app, 'load_overseer_image', { path: doc, image: file })
             .then((got) => {
                 if (!got || typeof got.data !== 'string' || !/^image\//.test(got.mime || '')) return null
                 const bytes = Uint8Array.from(atob(got.data), (c) => c.charCodeAt(0))
@@ -748,9 +765,17 @@ export class OverseerRenderer {
     static FIELD_PADDING = '4px 6px'
     static VALUE_MIN_HEIGHT = '20px'
 
-    constructor() {
-        this.contentDisplay = document.getElementById('content-display')
-        this.tabContainer = document.getElementById('tab-container')
+    /**
+     * The page's own document by default: drawn into `#content-display` and `#tab-container`, for
+     * `window.app`, with its theme on the page's root. A pane - the drawer's document - gives its
+     * own: the app that holds its document, the element it is drawn in, which is also where its
+     * theme goes, and the two inside it. See `pane.js`.
+     */
+    constructor(pane = null) {
+        this._app = pane ? pane.app : null
+        this.paneRoot = pane ? pane.root : null
+        this.contentDisplay = pane ? pane.content : document.getElementById('content-display')
+        this.tabContainer = pane ? pane.tabs : document.getElementById('tab-container')
         // Track live intervals so we can clear them on each full re-render
         this._liveIntervals = new Set()
         // Track newly materialized targets so updates apply to the exact node, not a loosely-resolved path
@@ -764,6 +789,46 @@ export class OverseerRenderer {
         this._secret = new Set()
         // What the textboxes that narrow a list hold, by the box's path - see `createNarrowingBox`.
         this._narrowings = new Map()
+    }
+
+    /// The app whose document this draws: its pane's, else the page's.
+    get app() {
+        return this._app || (typeof window !== 'undefined' ? window.app : null)
+    }
+
+    /// A command about this document, through its app's channel - see `OverseerApp.ask`.
+    ask(...command) {
+        return askFor(this.app, ...command)
+    }
+
+    /// The elements this document drew that match a selector: inside its pane, or - for the page's
+    /// own document - anywhere on the page but inside a pane. Two documents can have nodes at the
+    /// same path, and the same uids; neither may find the other's.
+    scopedAll(selector) {
+        if (this.paneRoot) return this.paneRoot.querySelectorAll(selector)
+        const all = document.querySelectorAll(selector)
+        if (panesOpen === 0) return all
+        return Array.from(all).filter((el) => !el.closest(`.${PANE_CLASS}`))
+    }
+
+    scopedOne(selector) {
+        if (this.paneRoot) return this.paneRoot.querySelector(selector)
+        if (panesOpen === 0) return document.querySelector(selector)
+        return this.scopedAll(selector)[0] || null
+    }
+
+    /// Where the document's own top writes its theme: the pane, or the page's root.
+    styleTop() {
+        if (this.paneRoot) return this.paneRoot
+        return typeof document !== 'undefined' ? document.documentElement : null
+    }
+
+    /// Something drawn with what it reads of its document's file - icons and images beside it -
+    /// read from this one's, and asked for through its channel.
+    drawingHere(draw) {
+        const was = drawingFor
+        drawingFor = this.app
+        try { return draw() } finally { drawingFor = was }
     }
 
     // Compute effective mutability mode at a specific path within a provided document tree.
@@ -812,7 +877,7 @@ export class OverseerRenderer {
                 try { return JSON.parse(JSON.stringify(obj)) } catch(_) { return obj }
             }
             const valuesEqual = (a, b) => {
-                try { return window?.app?.valuesEqual ? window.app.valuesEqual(a, b) : JSON.stringify(a) === JSON.stringify(b) } catch(_) { return false }
+                try { return this.app?.valuesEqual ? this.app.valuesEqual(a, b) : JSON.stringify(a) === JSON.stringify(b) } catch(_) { return false }
             }
             const walk = (node, parent, pathArr) => {
                 if (!node || typeof node !== 'object') return
@@ -967,7 +1032,7 @@ export class OverseerRenderer {
         }
         // Walk from node up to root looking for explicit mode
         try {
-            const doc = window?.app?.currentDocument
+            const doc = this.app?.currentDocument
             if (!Array.isArray(pathArr) || pathArr.length === 0 || !doc) {
                 // Without a resolvable path the displayed chain is the only signal available.
                 const displayMode = this._mutableFromDisplayChain(elementHint, doc)
@@ -1304,10 +1369,10 @@ export class OverseerRenderer {
             return null
         }
         try {
-            if (!window.app || !window.app.currentDocument) return gaveUp('no document is open')
+            if (!this.app || !this.app.currentDocument) return gaveUp('no document is open')
             const listPathArr = Array.isArray(meta.listPath) ? meta.listPath : []
             if (listPathArr.length === 0) return gaveUp('the view does not say which list', meta)
-            const listNode = this.findNodeByPath(window.app.currentDocument, listPathArr)
+            const listNode = this.findNodeByPath(this.app.currentDocument, listPathArr)
             if (!listNode || (listNode.node_type || '').toLowerCase() !== 'list') {
                 return gaveUp('nothing at that path is a list', listPathArr.join('/'))
             }
@@ -1333,7 +1398,7 @@ export class OverseerRenderer {
             // A document with no address cannot be written to, and this is a write - the same as
             // every other change the page makes. Making the entry in the page's own copy instead
             // is what this replaced; keeping that as a second path is how two would drift apart.
-            if (!window.app.currentFile) {
+            if (!this.app.currentFile) {
                 return gaveUp('the document has no address to write to')
             }
 
@@ -1383,19 +1448,19 @@ export class OverseerRenderer {
 
             // Said out loud for the same reason the edit and press paths say it: a save left over
             // from an earlier change must not go out on top of this write.
-            window.app._writingByInstruction = (window.app._writingByInstruction || 0) + 1
+            this.app._writingByInstruction = (this.app._writingByInstruction || 0) + 1
             let update = null
             try {
-                update = await invoke('ensure_overseer_entry', {
-                    path: window.app.currentFile,
-                    ...window.app.showing?.(),
+                update = await this.ask('ensure_overseer_entry', {
+                    path: this.app.currentFile,
+                    ...this.app.showing?.(),
                     wanted,
                 }).catch((e) => {
                     if (DEBUG_MODE) console.warn('[Overseer] the entry was refused', e)
                     return null
                 })
             } finally {
-                window.app._writingByInstruction -= 1
+                this.app._writingByInstruction -= 1
             }
             if (!update) return gaveUp('the backend refused to make the entry', wanted)
             if (options.press) options.answered = update
@@ -1403,7 +1468,7 @@ export class OverseerRenderer {
             // Written as part of making it, so nothing is waiting to be saved - and the answer
             // says what the file now holds, which the page has to take on or its next save is
             // refused for being built on a document it moved.
-            try { window.app.alreadyWritten && window.app.alreadyWritten(update) } catch (_) {}
+            try { this.app.alreadyWritten && this.app.alreadyWritten(update) } catch (_) {}
             // Two shapes of answer, and this needs both.
             //
             // A change is described as a delta when the backend still holds the document it last
@@ -1425,29 +1490,29 @@ export class OverseerRenderer {
             // and the press that followed kept its preview path and named a node the document
             // does not have. Silently, because that is how a press that names nothing fails.
             if (Array.isArray(update.changes)) {
-                window.app.tookTheText(update)
+                this.app.tookTheText(update)
                 try {
-                    const touched = window.app.applyDocumentChanges(
-                        window.app.currentDocument, update.changes)
-                    this.repaintNodes(touched, window.app.currentDocument)
+                    const touched = this.app.applyDocumentChanges(
+                        this.app.currentDocument, update.changes)
+                    this.repaintNodes(touched, this.app.currentDocument)
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('[Overseer] repaint after making the entry failed', e)
                 }
             } else if (Array.isArray(update.nodes)) {
-                window.app.tookTheText(update)
-                const older = window.app.currentDocument
+                this.app.tookTheText(update)
+                const older = this.app.currentDocument
                 try { this._tagGuardedChangesAfterBackendUpdate(older, update.nodes) } catch (_) {}
                 try {
-                    if (typeof window.app._applyResolvedDocumentWithFormulaPreservation === 'function') {
-                        window.app._applyResolvedDocumentWithFormulaPreservation(update.nodes)
+                    if (typeof this.app._applyResolvedDocumentWithFormulaPreservation === 'function') {
+                        this.app._applyResolvedDocumentWithFormulaPreservation(update.nodes)
                     } else {
-                        window.app.currentDocument = update.nodes
+                        this.app.currentDocument = update.nodes
                     }
-                } catch (_) { window.app.currentDocument = update.nodes }
+                } catch (_) { this.app.currentDocument = update.nodes }
                 // The whole document moved, so the whole of it is drawn again. Making an entry
                 // real happens once, when a day is first written to, so this is not a cost
                 // anything pays twice.
-                try { this.renderDocument(window.app.currentDocument) } catch (e) {
+                try { this.renderDocument(this.app.currentDocument) } catch (e) {
                     if (DEBUG_MODE) console.warn('[Overseer] redraw after making the entry failed', e)
                 }
             } else if (DEBUG_MODE) {
@@ -1457,7 +1522,7 @@ export class OverseerRenderer {
             // Found by its key rather than by where it went. A keyed list is written at either
             // end, and which end is the document's business rather than something to assume from
             // here - the same reading of the key that failed to find it a moment ago.
-            const listNow = this.findNodeByPath(window.app.currentDocument, listPathArr)
+            const listNow = this.findNodeByPath(this.app.currentDocument, listPathArr)
             const entry = this.entryKeyed(listNow, keyField, meta.keyValue)
             if (!entry) {
                 return gaveUp('the entry was made but cannot be found by its key', {
@@ -1559,7 +1624,7 @@ export class OverseerRenderer {
                 if (parts > 0) said.textContent += `, and ${older}`
             }
             note.appendChild(said)
-            const app = typeof window !== 'undefined' ? window.app : null
+            const app = typeof window !== 'undefined' ? this.app : null
             if (Array.isArray(path) && app && typeof app.showMoreOf === 'function') {
                 const window_ = Number(this.getParameterValue(node, 'window')) || count
                 const more = parts > 0 ? window_ : Math.min(window_, count)
@@ -1682,7 +1747,7 @@ export class OverseerRenderer {
     // unknown - means falling back to a full render, which is correct but is the thing being
     // avoided, so it is worth knowing when it happens.
     repaintNodes(nodes, document_) {
-        const doc = document_ || (window.app && window.app.currentDocument)
+        const doc = document_ || (this.app && this.app.currentDocument)
         // Lists an entry moved in - see `applyDocumentChanges`. An entry's place can be all that
         // changed about it, and then nothing else here is touched.
         const resorted = Array.isArray(nodes?.resorted) ? nodes.resorted : []
@@ -1699,7 +1764,7 @@ export class OverseerRenderer {
         const drawn = []
         // The elements a changed theme was written on again in this pass - see `restyleContext`.
         const restyled = new Set()
-        const hasLinks = !!document.querySelector('[data-link-proxy]')
+        const hasLinks = !!this.scopedOne('[data-link-proxy]')
         const within = (path) => Array.isArray(path)
             && drawn.some((d) => d.length <= path.length && d.every((s, i) => s === path[i]))
         const redraw = (path) => {
@@ -1820,8 +1885,8 @@ export class OverseerRenderer {
         const owner = at > 0 ? chain[at - 1] : null
         // An unnamed container shares its address with its parent's, so only its uid tells its
         // element apart.
-        const element = !owner ? document.documentElement
-            : owner.__uid ? document.querySelector(`[data-uid="${String(owner.__uid).replace(/[\\"]/g, '\\$&')}"]`) : null
+        const element = !owner ? this.styleTop()
+            : owner.__uid ? this.scopedOne(`[data-uid="${String(owner.__uid).replace(/[\\"]/g, '\\$&')}"]`) : null
         if (!element) return false
         if (restyled.has(element)) return true
         restyled.add(element)
@@ -1965,7 +2030,7 @@ export class OverseerRenderer {
 
     /// Where the sorts of the document open in this tab are kept, by list - see `foldsHere`.
     columnSortsHere() {
-        const file = (window.app && window.app.currentFile) || ''
+        const file = (this.app && this.app.currentFile) || ''
         if (!this._columnSorts || this._columnSortsFile !== file) {
             this._columnSortsFile = file
             this._columnSorts = new Map()
@@ -2142,9 +2207,9 @@ export class OverseerRenderer {
         let matches
         try {
             const quoted = wanted.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-            matches = Array.from(document.querySelectorAll(`[data-path="${quoted}"]`))
+            matches = Array.from(this.scopedAll(`[data-path="${quoted}"]`))
         } catch (_) {
-            matches = Array.from(document.querySelectorAll('[data-path]')).filter((el) => el.getAttribute('data-path') === wanted)
+            matches = Array.from(this.scopedAll('[data-path]')).filter((el) => el.getAttribute('data-path') === wanted)
         }
         if (matches.length === 0) return null
         let candidates = matches
@@ -2544,7 +2609,7 @@ export class OverseerRenderer {
                                                 if (!realPath) return
                                                 try { element.removeAttribute('data-link-phantom') } catch(_) {}
                                                 const pathArr = String(realPath).split('/')
-                                                const nodeReal = this.findNodeByPath(window.app.currentDocument, pathArr)
+                                                const nodeReal = this.findNodeByPath(this.app.currentDocument, pathArr)
                                                 if (nodeReal) {
                                                     try { element.innerHTML = '' } catch(_) {}
                                                     this.renderNode(nodeReal, element, nextInherited, pathArr)
@@ -3027,7 +3092,7 @@ export class OverseerRenderer {
             let linkStr = (typeof linkParam === 'string') ? linkParam
                 : (linkParam && typeof linkParam === 'object' && linkParam.String !== undefined) ? linkParam.String
                 : String(linkParam)
-            const doc = (window.app && window.app.currentDocument) ? window.app.currentDocument : null
+            const doc = (this.app && this.app.currentDocument) ? this.app.currentDocument : null
             if (!doc || !linkStr) return { targetNode: null, targetPath: null }
             // Support basic $(...) interpolation inside link strings, e.g.,
             // "/Root/List[key=$(../selected_date)]". We evaluate inner expressions
@@ -3516,7 +3581,7 @@ export class OverseerRenderer {
     /// open - as a value marked `guarded` is the viewer's: never written to the file, never
     /// anyone else's, and still there after a reload.
     tabMemoryKey(key) {
-        const file = (window.app && window.app.currentFile) || ''
+        const file = (this.app && this.app.currentFile) || ''
         return `overseer.tab|${file}|${key}`
     }
 
@@ -4106,7 +4171,7 @@ export class OverseerRenderer {
         cell.addEventListener('click', (event) => {
             event.preventDefault()
             event.stopPropagation()
-            const doc = window.app && window.app.currentDocument
+            const doc = this.app && this.app.currentDocument
             let path = []
             try { path = JSON.parse(list.dataset.listPath || '[]') } catch (_) { return }
             const node = doc && this.findNodeByPath(doc, path)
@@ -4155,7 +4220,7 @@ export class OverseerRenderer {
 
     /** Re-place every table on the page, after something underneath one was repainted. */
     arrangeTables() {
-        for (const list of document.querySelectorAll('.view-table')) this.arrangeTable(list)
+        for (const list of this.scopedAll('.view-table')) this.arrangeTable(list)
     }
 
     /**
@@ -4214,7 +4279,7 @@ export class OverseerRenderer {
 
     /// The node a list's `entry=<...>` names, looked for in the open document.
     templateNamed(name) {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!name || !doc) return null
         const stack = (Array.isArray(doc) ? doc : [doc]).slice().reverse()
         while (stack.length) {
@@ -4353,7 +4418,7 @@ export class OverseerRenderer {
     isTreeBranch(node, path) {
         if (String(node?.node_type || node?.type || '').toLowerCase() !== 'list') return false
         if (!Array.isArray(path) || path.length < 2) return false
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!doc) return false
         if (this._treeNamesFor !== doc) {
             this._treeNamesFor = doc
@@ -4383,7 +4448,7 @@ export class OverseerRenderer {
     /// The path of the outermost tree list above a path that goes down through the lists its
     /// entries hold their children in - the list that draws everything inside it.
     treeRootAbove(path, name = null) {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!doc || !Array.isArray(path)) return null
         for (let i = 1; i < path.length; i++) {
             const tree = this.treeOf(this.findNodeByPath(doc, path.slice(0, i)))
@@ -4567,9 +4632,9 @@ export class OverseerRenderer {
 
     /// Every tree list on screen laid out again - after anything is drawn again inside one.
     arrangeTrees() {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!doc) return
-        for (const element of document.querySelectorAll('.overseer-list.view-tree')) {
+        for (const element of this.scopedAll('.overseer-list.view-tree')) {
             let node = null
             try { node = this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { node = null }
             if (node) this.arrangeTree(element, node)
@@ -4711,7 +4776,7 @@ export class OverseerRenderer {
                     event.preventDefault()
                     event.stopPropagation()
                     this.setTreeFolded(row.path, !row.folded)
-                    const doc = window.app && window.app.currentDocument
+                    const doc = this.app && this.app.currentDocument
                     let list = null
                     try { list = this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { list = null }
                     if (list) this.arrangeTree(element, list)
@@ -4741,9 +4806,9 @@ export class OverseerRenderer {
 
     /** Put every board's entries back in the columns they now belong in. */
     arrangeBoards() {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!doc) return
-        for (const element of document.querySelectorAll('.overseer-list.view-board')) {
+        for (const element of this.scopedAll('.overseer-list.view-board')) {
             let node = null
             try { node = this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { node = null }
             if (node) this.arrangeBoard(element, node)
@@ -4785,14 +4850,14 @@ export class OverseerRenderer {
         // A tree's row goes to a place in its own tree, its branch with it.
         if (drag.list.dataset.treeMove) return [drag.list]
         const template = drag.list.dataset.movable === '1' ? (drag.list.dataset.entryTemplate || '') : null
-        for (const list of template === null ? [] : document.querySelectorAll('.overseer-list[data-movable="1"]')) {
+        for (const list of template === null ? [] : this.scopedAll('.overseer-list[data-movable="1"]')) {
             if (list.dataset.board || list.dataset.treeMove) continue
             const accepts = list === drag.list
                 ? list.dataset.sorted !== '1' || this.entriesTiedWith(list, drag.entry).length > 1
                 :(template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
             if (accepts) out.push(list)
         }
-        for (const board of document.querySelectorAll('.overseer-list.view-board')) {
+        for (const board of this.scopedAll('.overseer-list.view-board')) {
             const own = board === drag.list
             if (!own && (!template || board.dataset.movable !== '1'
                 || board.dataset.entryTemplate !== template || drag.entry.contains(board))) continue
@@ -5220,7 +5285,7 @@ export class OverseerRenderer {
         if (this.entriesTiedWith(list, entry).length > 1) return true
         const template = list.dataset.entryTemplate || ''
         if (template === '') return false
-        return Array.from(document.querySelectorAll('.overseer-list[data-movable="1"]'))
+        return Array.from(this.scopedAll('.overseer-list[data-movable="1"]'))
             .some((other) => other !== list && other.dataset.entryTemplate === template && !entry.contains(other))
     }
 
@@ -5237,7 +5302,7 @@ export class OverseerRenderer {
     /// faint where its list cannot be dragged, where its entry stays, or where it has nowhere to go.
     /// After every drawing, since a value can change any of them.
     arrangeGrips() {
-        for (const grip of document.querySelectorAll('.mark-grip')) {
+        for (const grip of this.scopedAll('.mark-grip')) {
             grip.dataset.live = this.gripCanDrag(grip) ? '1' : '0'
         }
     }
@@ -5566,7 +5631,7 @@ export class OverseerRenderer {
             const r = drag.list.getBoundingClientRect()
             if (drag.y >= r.top && drag.y <= r.bottom) target = drag.list
         }
-        for (const shown of document.querySelectorAll('.drop-here')) {
+        for (const shown of this.scopedAll('.drop-here')) {
             if (shown !== target) shown.classList.remove('drop-here')
         }
         drag.target = target
@@ -5636,7 +5701,7 @@ export class OverseerRenderer {
         drag.entry.classList.remove('is-dragged')
         for (const row of drag.tree?.branch || []) row.element?.classList.remove('is-dragged')
         document.body.classList.remove('overseer-dragging')
-        for (const list of document.querySelectorAll('.accepts-drop, .drop-here')) {
+        for (const list of this.scopedAll('.accepts-drop, .drop-here')) {
             list.classList.remove('accepts-drop', 'drop-here')
         }
         this._dragJustEnded = true
@@ -5716,7 +5781,7 @@ export class OverseerRenderer {
         const inLane = Array.from(body.children).filter((el) => el !== dragged && el.dataset && el.dataset.uid)
         const last = inLane[inLane.length - 1]
         if (!last) return null
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         let node = null
         try { node = this.findNodeByPath(doc, JSON.parse(board.dataset.path || '[]')) } catch (_) { node = null }
         if (!node) return null
@@ -5740,12 +5805,12 @@ export class OverseerRenderer {
      * field of the entry, named from it, to write where it lands - see `dropInLane`.
      */
     async moveEntry(element, entryPath, toListPath, beforePath, setting) {
-        const app = window.app
+        const app = this.app
         if (!app || !app.currentFile) return
         let update = null
         app._writingByInstruction = (app._writingByInstruction || 0) + 1
         try {
-            update = await invoke('move_overseer_entry', {
+            update = await this.ask('move_overseer_entry', {
                 path: app.currentFile,
                 ...app.showing?.(),
                 entry_path: entryPath,
@@ -5843,7 +5908,7 @@ export class OverseerRenderer {
             const uid = el.dataset && el.dataset.uid
             if (uid && this._uidToNode && this._uidToNode.has(uid)) return this._uidToNode.get(uid)
             if (el.dataset && el.dataset.path) {
-                return this.findNodeByPath(window.app.currentDocument, JSON.parse(el.dataset.path))
+                return this.findNodeByPath(this.app.currentDocument, JSON.parse(el.dataset.path))
             }
         } catch (_) { /* not one of ours */ }
         return null
@@ -5967,7 +6032,7 @@ export class OverseerRenderer {
     applyFilters() {
         const narrowings = this._narrowings ? [...this._narrowings.values()] : []
         if (narrowings.length === 0) return
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!doc) return
 
         // The boxes that narrow each list. An entry shows when all of them let it through.
@@ -5985,7 +6050,7 @@ export class OverseerRenderer {
         // is here at all. Several elements can share a path, because a transparent layout div
         // contributes no segment of its own.
         const byPath = new Map()
-        for (const element of document.querySelectorAll('[data-path]')) {
+        for (const element of this.scopedAll('[data-path]')) {
             const held = byPath.get(element.dataset.path)
             if (held) held.push(element)
             else byPath.set(element.dataset.path, [element])
@@ -6048,9 +6113,9 @@ export class OverseerRenderer {
             }
         }
         // A board's columns say how many they show, and the boxes have just changed that.
-        for (const board of document.querySelectorAll('.overseer-board')) this.countBoardColumns(board)
+        for (const board of this.scopedAll('.overseer-board')) this.countBoardColumns(board)
         // A tree's lines run on only to what shows.
-        for (const tree of document.querySelectorAll('.overseer-list.view-tree')) this.drawTreeLines(tree)
+        for (const tree of this.scopedAll('.overseer-list.view-tree')) this.drawTreeLines(tree)
     }
 
     /**
@@ -6125,7 +6190,7 @@ export class OverseerRenderer {
             const before = String(this.getNodeValue(node) || '')
             const after = tags.join(', ')
             this.updateNodeValue(node, after)
-            try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
+            try { this.app.markDocumentModified && this.app.markDocumentModified() } catch (_) {}
             try {
                 // The value has to travel, not just the path. What gets written to the file is
                 // the text the backend produced, and it can only put this edit into that text
@@ -6133,11 +6198,11 @@ export class OverseerRenderer {
                 // save writes text resolved from content that never had it, and the tag is gone
                 // on the next load.
                 const path = this.buildNodePath(container).join('/')
-                window.app.reevaluateDocumentSelective(
+                this.app.reevaluateDocumentSelective(
                     [path], [{ path, oldValue: before, newValue: after }]
                 )
             } catch (_) {
-                try { window.app.reevaluateDocumentSelective([]) } catch (_) {}
+                try { this.app.reevaluateDocumentSelective([]) } catch (_) {}
             }
         }
 
@@ -6404,7 +6469,7 @@ export class OverseerRenderer {
      */
     sendTickWithHandlers(node, container, checked, events) {
         const declared = events.filter((ev) => this.declaresEvent(node, ev))
-        if (declared.length === 0 || !window.app || !window.app.currentFile) return false
+        if (declared.length === 0 || !this.app || !this.app.currentFile) return false
         const holder = { dataset: { path: JSON.stringify(this.buildNodePath(container)) } }
         ;(async () => {
             for (const [i, ev] of declared.entries()) {
@@ -6433,22 +6498,22 @@ export class OverseerRenderer {
         try { this.arrangeBoards() } catch (_) { /* never break a write over a view */ }
         try { this.arrangeTrees() } catch (_) { /* never break a write over a view */ }
         try { this.arrangeGrips() } catch (_) { /* never break a write over a view */ }
-        if (this.declaresEvent(node, 'change') && window.app.currentFile) {
+        if (this.declaresEvent(node, 'change') && this.app.currentFile) {
             try {
                 await this.emitEvent(node, { dataset: { path: JSON.stringify(path) } }, 'change', { String: after })
             } catch (_) {}
             return
         }
-        try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
+        try { this.app.markDocumentModified && this.app.markDocumentModified() } catch (_) {}
         try {
             // With the value - see the note in `createTagsElement`. Waited for, unlike the
             // other fields, because a handler below may be about to read it from the file.
             const joined = path.join('/')
-            await window.app.reevaluateDocumentSelective(
+            await this.app.reevaluateDocumentSelective(
                 [joined], [{ path: joined, oldValue: before, newValue: after }]
             )
         } catch (_) {
-            try { await window.app.reevaluateDocumentSelective([]) } catch (_) {}
+            try { await this.app.reevaluateDocumentSelective([]) } catch (_) {}
         }
         const now = anchor ? this._pathFromAnchor(anchor) : path
         if (!now) return
@@ -6511,7 +6576,7 @@ export class OverseerRenderer {
             const found = this.leadingContext(at.children, name)
             if (found) return this.contextSays(found)
         }
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         const top = Array.isArray(doc) ? doc : []
         const found = this.leadingContext(top, name)
             || this.leadingContext(top.slice().reverse(), name)
@@ -6548,7 +6613,7 @@ export class OverseerRenderer {
      * in none, made up on the spot, must not have the whole document walked for each question.
      */
     parentOf(node) {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!doc || !node || typeof node !== 'object') return null
         const stale = !this._parents || this._parentsOf !== doc
         if (stale || (!this._parents.has(node) && !this._parentsFresh)) {
@@ -6578,7 +6643,7 @@ export class OverseerRenderer {
         lists.forEach((path, at) => {
             try {
                 const segments = path.split('/').filter(Boolean)
-                const list = this.findNodeByPath(window.app.currentDocument, segments)
+                const list = this.findNodeByPath(this.app.currentDocument, segments)
                 const key = String((list && this.getParameterValue(list, 'key')) || 'tag')
                 for (const entry of (list && list.children) || []) {
                     // A field of the entry, or of a layout div within it that names nothing.
@@ -6811,7 +6876,7 @@ export class OverseerRenderer {
     revealEntry(at) {
         const why = this.whyNotRevealed(at)
         if (why) return why
-        const entry = this.findNodeByPath(window.app.currentDocument, at)
+        const entry = this.findNodeByPath(this.app.currentDocument, at)
         // Outermost first, and asked again after each: an inner fold is not drawn, and has no
         // place to open, until the outer one is open.
         for (let folds = this.foldsAround(entry), left = 32; folds.length > 0 && left > 0; folds = this.foldsAround(entry), left--) {
@@ -6839,7 +6904,7 @@ export class OverseerRenderer {
 
     /// What keeps the entry at this path from being shown, or null when it can be.
     whyNotRevealed(at) {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         const entry = doc ? this.findNodeByPath(doc, at) : null
         if (!entry) return 'not in this document'
         const drawn = this.drawnElementOf(entry)
@@ -7305,7 +7370,7 @@ export class OverseerRenderer {
         for (const path of paths || []) {
             if (!Array.isArray(path)) continue
             this._typed.delete(JSON.stringify(path))
-            try { this.rerenderSubtree(window.app.currentDocument, path) } catch (_) { /* repainted with the rest */ }
+            try { this.rerenderSubtree(this.app.currentDocument, path) } catch (_) { /* repainted with the rest */ }
         }
     }
 
@@ -7313,7 +7378,7 @@ export class OverseerRenderer {
     /// away the one shown. Only one at a time: another press, or anything typed, means the person
     /// has moved on from it.
     sayRefused(element, sentence) {
-        for (const shown of document.querySelectorAll('.overseer-refusal')) shown.remove()
+        for (const shown of this.scopedAll('.overseer-refusal')) shown.remove()
         if (typeof sentence !== 'string' || !element || !element.isConnected) return
         const note = document.createElement('div')
         note.className = 'overseer-refusal'
@@ -7427,7 +7492,7 @@ export class OverseerRenderer {
         const file = String(this.getNodeValue(node) ?? '').trim()
         if (imageBeside(file)) {
             img.dataset.imageFile = file
-            const url = documentImageAddress(file)
+            const url = this.drawingHere(() => documentImageAddress(file))
             if (url !== undefined) showDocumentImage(img, url)
         } else {
             img.classList.add('image-missing')
@@ -7744,29 +7809,29 @@ export class OverseerRenderer {
             const was = this.getNodeValue(node)
             this.updateNodeValue(node, checkbox.checked)
             if (mode !== 'guarded' && this.sendTickWithHandlers(node, container, checkbox.checked, ['change'])) return
-            if (window.app && window.app.markDocumentModified) {
-                window.app.markDocumentModified()
+            if (this.app && this.app.markDocumentModified) {
+                this.app.markDocumentModified()
             }
-            if (window.app && window.app.reevaluateDocumentSelective) {
+            if (this.app && this.app.reevaluateDocumentSelective) {
                 // Try to determine field path for selective update
                 try {
                     const fieldPath = this.buildNodePath(container).join('/')
                     // With the value, or the save writes text that never saw this - see the
                     // note in `createTagsElement`, which had the same fault.
-                    window.app.reevaluateDocumentSelective(
+                    this.app.reevaluateDocumentSelective(
                         [fieldPath],
                         [{ path: fieldPath, oldValue: was, newValue: checkbox.checked }]
                     )
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
-                    window.app.reevaluateDocumentSelective([])
+                    this.app.reevaluateDocumentSelective([])
                 }
             }
             // Mark guarded flag on target if applicable so serializer may skip it
             try {
                 if (mode === 'guarded') {
                     const fieldPath = this.buildNodePath(container).join('/')
-                    const target = this.findNodeByPath(window.app.currentDocument, fieldPath.split('/'))
+                    const target = this.findNodeByPath(this.app.currentDocument, fieldPath.split('/'))
                     if (target) {
                         if (!target.parameters) target.parameters = {}
                         target.parameters._guarded_edit = { Boolean: true }
@@ -7795,7 +7860,7 @@ export class OverseerRenderer {
         const span = document.createElement('span')
         span.className = 'icon'
         span.setAttribute('aria-hidden', 'true')
-        for (const [attr, value] of Object.entries(iconAttributes(name))) span.setAttribute(attr, value)
+        for (const [attr, value] of Object.entries(this.drawingHere(() => iconAttributes(name)))) span.setAttribute(attr, value)
         return span
     }
 
@@ -7840,7 +7905,7 @@ export class OverseerRenderer {
         if (!NAME_MARKUP.test(s)) return this.setTextWithIcons(el, s)
         const held = document.createElement('span')
         held.className = 'chip-name'
-        held.innerHTML = this.drawChipsInHtml(nameHtml(s), null)
+        held.innerHTML = this.drawChipsInHtml(this.drawingHere(() => nameHtml(s)), null)
         el.textContent = ''
         el.appendChild(held)
         el.dataset.text = s
@@ -7950,7 +8015,7 @@ export class OverseerRenderer {
         const handler = kids.find((c) => c && (c.node_type || c.type) === 'on' && c.name === eventName)
         const actions = handler && Array.isArray(handler.children) ? handler.children : []
         if (actions.length === 0) return null
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!Array.isArray(doc)) return null
         const folds = []
         for (const action of actions) {
@@ -7982,7 +8047,7 @@ export class OverseerRenderer {
             : said && typeof said === 'object' && typeof said.String === 'string' ? said.String
             : null
         const at = this.foldPathFrom(own, literal(action.parameters && action.parameters.path))
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         const box = at && doc ? this.findNodeByPath(doc, at) : null
         if (!box || String(box.node_type || box.type || '').toLowerCase() !== 'textbox') return null
         if (!this.getParameterValue(box, 'narrows')) return null
@@ -8012,7 +8077,7 @@ export class OverseerRenderer {
         narrowing.text = String(narrowing.text || '').trim() === wanted ? '' : wanted
         try {
             const path = JSON.parse(key)
-            if (Array.isArray(path) && path.length > 0) this.rerenderSubtree(window.app.currentDocument, path)
+            if (Array.isArray(path) && path.length > 0) this.rerenderSubtree(this.app.currentDocument, path)
         } catch (_) { /* drawn again with the rest */ }
         this.applyFilters()
     }
@@ -8026,8 +8091,9 @@ export class OverseerRenderer {
      * failure with no field is said on the status line.
      */
     runCalls(calls) {
-        if (!Array.isArray(calls) || calls.length === 0 || !window.app) return Promise.resolve()
-        const app = window.app
+        if (!Array.isArray(calls) || calls.length === 0 || !this.app) return Promise.resolve()
+        // A pane's calls are the page's to run: `undo` and `keep` mean the document open beside it.
+        const app = this.app.host || this.app
         return (async () => {
             for (const call of calls) {
                 const secrets = []
@@ -8047,7 +8113,7 @@ export class OverseerRenderer {
     withSecrets(call, used) {
         const args = call && call.args
         if (!args || typeof args !== 'object') return call
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         const out = {}
         for (const [name, value] of Object.entries(args)) {
             const secret = value && typeof value === 'object' ? value.secret : undefined
@@ -8073,7 +8139,7 @@ export class OverseerRenderer {
     /// What an operation answered, into the field its call named, found by the child indices
     /// the answer to the press gave. False when the document no longer has that field.
     writeCallAnswer(into, value) {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!Array.isArray(doc) || !Array.isArray(into.path) || into.path.length === 0) return false
         let node = null
         let level = doc
@@ -8090,8 +8156,8 @@ export class OverseerRenderer {
         // already holds, so nothing in it would draw the field again.
         try { this.rerenderSubtree(doc, at) } catch (_) { /* drawn with the next change */ }
         const joined = at.join('/')
-        try { window.app.markDocumentModified && window.app.markDocumentModified() } catch (_) {}
-        Promise.resolve(window.app.reevaluateDocumentSelective(
+        try { this.app.markDocumentModified && this.app.markDocumentModified() } catch (_) {}
+        Promise.resolve(this.app.reevaluateDocumentSelective(
             [joined], [{ path: joined, oldValue: before, newValue: value }]
         )).catch(() => {})
         return true
@@ -8101,7 +8167,7 @@ export class OverseerRenderer {
     /// as its folds are.
     applyNarrowings(narrowings) {
         if (!Array.isArray(narrowings) || narrowings.length === 0) return
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!Array.isArray(doc)) return
         for (const one of narrowings) {
             if (!one || !Array.isArray(one.path) || one.path.length === 0) continue
@@ -8133,7 +8199,7 @@ export class OverseerRenderer {
     showFoldPressed(button) {
         try {
             const target = button.__overseerFoldTarget
-            const doc = window.app && window.app.currentDocument
+            const doc = this.app && this.app.currentDocument
             const div = Array.isArray(doc) && target ? this.findNodeByPath(doc, target) : null
             if (!div || !this.isFoldable(div)) {
                 button.classList.remove('toggled')
@@ -8185,22 +8251,22 @@ export class OverseerRenderer {
             if (mode !== 'guarded' && this.sendTickWithHandlers(node, container, checkbox.checked, ticked)) return
 
             // Mark document as modified
-            if (window.app && window.app.markDocumentModified) {
-                window.app.markDocumentModified()
+            if (this.app && this.app.markDocumentModified) {
+                this.app.markDocumentModified()
             }
             // Trigger reevaluation so formulas/computed params refresh
-            if (window.app && window.app.reevaluateDocumentSelective) {
+            if (this.app && this.app.reevaluateDocumentSelective) {
                 // Try to determine field path for selective update
                 try {
                     const fieldPath = this.buildNodePath(container).join('/')
                     // With the value - see the note in `createTagsElement`.
-                    window.app.reevaluateDocumentSelective(
+                    this.app.reevaluateDocumentSelective(
                         [fieldPath],
                         [{ path: fieldPath, oldValue: was, newValue: checkbox.checked }]
                     )
                 } catch (e) {
                     if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
-                    window.app.reevaluateDocumentSelective([])
+                    this.app.reevaluateDocumentSelective([])
                 }
             }
             // Determine which events are defined to avoid unnecessary backend calls
@@ -8221,7 +8287,7 @@ export class OverseerRenderer {
             try {
                 if (mode === 'guarded') {
                     const fieldPath = this.buildNodePath(container).join('/')
-                    const target = this.findNodeByPath(window.app.currentDocument, fieldPath.split('/'))
+                    const target = this.findNodeByPath(this.app.currentDocument, fieldPath.split('/'))
                     if (target) {
                         if (!target.parameters) target.parameters = {}
                         target.parameters._guarded_edit = { Boolean: true }
@@ -9496,7 +9562,7 @@ export class OverseerRenderer {
             if ((child?.node_type || child?.type) !== 'context') continue
             if (!this.isContextCopy(child)) continue
             if (child.name === 'theme') {
-                if (element === document.documentElement) {
+                if (element === this.styleTop()) {
                     this.writeTheme(element, child)
                     continue
                 }
@@ -9667,7 +9733,7 @@ export class OverseerRenderer {
                     for (const source of sources) {
                         const parts = iconParts(source)
                         if (!parts.key && !parts.file) continue
-                        const text = backdropIconText(parts)
+                        const text = this.drawingHere(() => backdropIconText(parts))
                         if (text instanceof Promise) {
                             waiting.push(text)
                             continue
@@ -9685,7 +9751,7 @@ export class OverseerRenderer {
                 }
                 const parts = iconParts(this.contextValue(key('source')))
                 if (!parts.key && !parts.file) continue
-                const text = backdropIconText(parts)
+                const text = this.drawingHere(() => backdropIconText(parts))
                 if (text instanceof Promise) {
                     waiting.push(text)
                     continue
@@ -9908,7 +9974,7 @@ export class OverseerRenderer {
             if (!element.isConnected) return
             this.writeBackdrop(element, backdrop, prefix, theme)
             if (prefix !== '--ov-') return
-            if (element === document.documentElement) return this.drawBackdropMotion(element)
+            if (element === this.styleTop()) return this.drawBackdropMotion(element)
             const own = this.ownBackdrop(element)
             element.classList.toggle('ov-themed-backdrop', own)
             if (own) element.classList.add('ov-themed-background')
@@ -10044,7 +10110,7 @@ export class OverseerRenderer {
         const said = String(this.getParameterValue(node, 'motion') ?? '').trim()
         const name = said.split(':')[0].trim().toLowerCase()
         if (!this._motionsSeen) this._motionsSeen = new Map()
-        const file = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+        const file = (typeof window !== 'undefined' && this.app && this.app.currentFile) || ''
         const key = `${file}\n${JSON.stringify(Array.isArray(path) ? path : [])}`
         const seen = this._motionsSeen.has(key)
         const before = this._motionsSeen.get(key)
@@ -10073,7 +10139,7 @@ export class OverseerRenderer {
         if (this.parameterHasFormula(node, 'ease') && node.parameters._computed_ease === undefined) return
         const duration = easeDuration(this.getParameterValue(node, 'ease'))
         if (!this._easesSeen) this._easesSeen = new Map()
-        const file = (typeof window !== 'undefined' && window.app && window.app.currentFile) || ''
+        const file = (typeof window !== 'undefined' && this.app && this.app.currentFile) || ''
         const key = `${file}\n${JSON.stringify(Array.isArray(path) ? path : [])}`
         const seen = this._easesSeen.get(key)
         let from = seen ? seen.values : null
@@ -10199,7 +10265,7 @@ export class OverseerRenderer {
 
     /** The document's own top: what it wrote there last time is taken off first. */
     applyDocumentContexts(nodes) {
-        const root = typeof document !== 'undefined' ? document.documentElement : null
+        const root = this.styleTop()
         if (!root || !root.style) return
         for (const name of Array.from(root.style)) {
             if (name.startsWith('--ov-')) root.style.removeProperty(name)
@@ -10894,7 +10960,7 @@ export class OverseerRenderer {
      */
     openFieldForEditing(field) {
         if (!field || !Array.isArray(field.path) || field.path.length === 0) return false
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!Array.isArray(doc)) return false
         const chain = []
         let level = doc
@@ -10917,7 +10983,7 @@ export class OverseerRenderer {
         this._openForEditing.add(node)
         drawAgain()
 
-        const drawn = node.__uid ? document.querySelector(`[data-uid="${node.__uid}"]`) : null
+        const drawn = node.__uid ? this.scopedOne(`[data-uid="${node.__uid}"]`) : null
         const value = drawn && (drawn.classList.contains('field-value') ? drawn : drawn.querySelector('.field-value'))
         if (!value) {
             this._openForEditing.delete(node)
@@ -10978,7 +11044,7 @@ export class OverseerRenderer {
 
     /// Where an edit not yet written is kept: per tab and per document, like folds and tabs.
     draftMemoryKey() {
-        return `overseer.draft:${(window.app && window.app.currentFile) || ''}`
+        return `overseer.draft:${(this.app && this.app.currentFile) || ''}`
     }
 
     /// Keep what is typed into a field's editor, for as long as it is open, so that a reload - or
@@ -10993,7 +11059,7 @@ export class OverseerRenderer {
         const none = { drop() {} }
         try {
             if (element.closest && element.closest('[data-link-phantom]')) return none
-            const at = this.indexPathOf(window.app && window.app.currentDocument, node)
+            const at = this.indexPathOf(this.app && this.app.currentDocument, node)
             if (!at) return none
             const key = this.foldKeyFor(node.__overseer_path)
             const memory = this.draftMemoryKey()
@@ -11060,14 +11126,14 @@ export class OverseerRenderer {
         try { draft = JSON.parse(sessionStorage.getItem(memory) || 'null') } catch (_) { draft = null }
         if (!draft || !Array.isArray(draft.path) || typeof draft.text !== 'string') return false
         const say = (message, kind) => {
-            try { window.app && window.app.setStatus && window.app.setStatus(message, '', kind) } catch (_) { /* no status bar */ }
+            try { this.app && this.app.setStatus && this.app.setStatus(message, '', kind) } catch (_) { /* no status bar */ }
         }
         const letGo = () => {
             try { sessionStorage.removeItem(memory) } catch (_) { /* nothing kept */ }
             say('An unsaved edit could not be put back into its field', 'warning')
             return false
         }
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         let node = null
         let parent = null
         let path = []
@@ -11125,7 +11191,7 @@ export class OverseerRenderer {
                 this._draftWatched = false
                 return false
             }
-            const doc = window.app && window.app.currentDocument
+            const doc = this.app && this.app.currentDocument
             let parent = null
             let node = null
             let level = Array.isArray(doc) ? doc : []
@@ -11135,7 +11201,7 @@ export class OverseerRenderer {
                 if (!node) break
                 level = Array.isArray(node.children) ? node.children : []
             }
-            const isDrawn = (n) => !!(n && n.__uid && document.querySelector(`[data-uid="${n.__uid}"]`))
+            const isDrawn = (n) => !!(n && n.__uid && this.scopedOne(`[data-uid="${n.__uid}"]`))
             if (node && !isDrawn(node)) {
                 const hidden = this.getParameterValue(node, 'hidden')
                 const hiddenWhileEmpty = hidden === true || String(hidden).toLowerCase() === 'true'
@@ -11167,7 +11233,7 @@ export class OverseerRenderer {
     /// it, and a fold would stay where it was and land on another item. A list without a key has
     /// nothing better than the place, so there a fold stays with the place.
     foldKeyFor(path) {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!Array.isArray(path) || !Array.isArray(doc)) return JSON.stringify(path || [])
         const segments = []
         let parent = null
@@ -11193,7 +11259,7 @@ export class OverseerRenderer {
     /// person and the file itself never see it. Each is kept with what the document said when it
     /// was made - see `isFolded`.
     foldsHere() {
-        const file = (window.app && window.app.currentFile) || ''
+        const file = (this.app && this.app.currentFile) || ''
         if (!this._folds || this._foldsFile !== file) {
             this._foldsFile = file
             this._folds = new Map()
@@ -11245,7 +11311,7 @@ export class OverseerRenderer {
         if (folded === said) folds.delete(key)
         else folds.set(key, { folded, said })
         this.keepFolds()
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         // Drawn again from the div, or from the nearest drawn ancestor when it was folded away.
         let drawn = false
         for (let i = path.length; i > 0 && !drawn; i--) {
@@ -11253,7 +11319,7 @@ export class OverseerRenderer {
         }
         if (!drawn) this.renderDocument(doc)
         // A button that opens this div may be outside what was drawn again.
-        document.querySelectorAll('.overseer-fold-button').forEach((button) => this.showFoldPressed(button))
+        this.scopedAll('.overseer-fold-button').forEach((button) => this.showFoldPressed(button))
     }
 
     /// The header of a foldable div with a label: pressed anywhere, it folds the div or unfolds it.
@@ -11325,7 +11391,7 @@ export class OverseerRenderer {
     /// applied to, the way `openFieldForEditing` finds its field.
     applyFolds(folds) {
         if (!Array.isArray(folds) || folds.length === 0) return
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!Array.isArray(doc)) return
         for (const fold of folds) {
             if (!fold || !Array.isArray(fold.path) || fold.path.length === 0) continue
@@ -11346,7 +11412,7 @@ export class OverseerRenderer {
             // `applyDocumentChanges`. Two places along from a project item's Talk is a count,
             // which no fold can turn, and the press did nothing at all.
             if (node && !nodeFitsAddress(node, above, fold.address)) {
-                window.app?.readWholeAfterAMisfit?.(fold.address)
+                this.app?.readWholeAfterAMisfit?.(fold.address)
                 continue
             }
             if (!node || !this.isFoldable(node)) continue
@@ -11501,7 +11567,7 @@ export class OverseerRenderer {
                     let position = 'append'
                     try {
                         const containerNodePath = JSON.parse(p.dataset.path || '[]')
-                        const containerNode = this.findNodeByPath(window.app.currentDocument, containerNodePath)
+                        const containerNode = this.findNodeByPath(this.app.currentDocument, containerNodePath)
                         const policyRaw = this.getParameterValue(containerNode, 'phantom-materialize')
                         const policy = (policyRaw ? String(policyRaw) : 'none').toLowerCase()
                         if (policy.endsWith('on-edit')) {
@@ -11515,7 +11581,7 @@ export class OverseerRenderer {
                     // step of its own.
                     let asAValue
                     try {
-                        asAValue = window.app.coerceToOverseerValue(node, newValue)
+                        asAValue = this.app.coerceToOverseerValue(node, newValue)
                     } catch (_) { asAValue = undefined }
                     const realPath = await this._materializePhantomAndComputePath(
                         metaWithTail, { position, value: asAValue })
@@ -11528,7 +11594,7 @@ export class OverseerRenderer {
                         const containerPathArr = JSON.parse(p.dataset.path || '[]')
                         if (Array.isArray(containerPathArr) && containerPathArr.length > 0) {
                             if (DEBUG_MODE) console.debug('[Overseer] Re-rendering link proxy container after materialization at path:', containerPathArr.join('/'))
-                            this.rerenderSubtree(window.app.currentDocument, containerPathArr)
+                            this.rerenderSubtree(this.app.currentDocument, containerPathArr)
                         }
                     } catch(_) { /* best-effort */ }
                     // Additionally, re-render the owning list subtree to ensure DOM paths align with the new instance
@@ -11536,7 +11602,7 @@ export class OverseerRenderer {
                         const listPathArr = Array.isArray(metaWithTail.listPath) ? metaWithTail.listPath : []
                         if (listPathArr.length > 0) {
                             
-                            this.rerenderSubtree(window.app.currentDocument, listPathArr)
+                            this.rerenderSubtree(this.app.currentDocument, listPathArr)
                         }
                     } catch(_) { /* best-effort */ }
                 }
@@ -11551,9 +11617,9 @@ export class OverseerRenderer {
             let preExistingValueSnapshot = undefined
             try {
                 const probePath = materializedRealPath ? materializedRealPath : fieldPath
-                if (probePath && window.app && window.app.currentDocument) {
+                if (probePath && this.app && this.app.currentDocument) {
                     const arr = String(probePath).split('/')
-                    const target = this.findNodeByPath(window.app.currentDocument, arr)
+                    const target = this.findNodeByPath(this.app.currentDocument, arr)
                     if (target && target.parameters && target.parameters.value !== undefined) {
                         try { preExistingValueSnapshot = JSON.parse(JSON.stringify(target.parameters.value)) } catch(_) { preExistingValueSnapshot = target.parameters.value }
                     }
@@ -11593,7 +11659,7 @@ export class OverseerRenderer {
                         return
                     }
                     const arr = materializedRealPath.split('/')
-                    const nodeAtTarget = this.findNodeByPath(window.app.currentDocument, arr)
+                    const nodeAtTarget = this.findNodeByPath(this.app.currentDocument, arr)
                     if (nodeAtTarget) {
                         const currentStr = String(this.getNodeValue(nodeAtTarget) ?? '')
                         const newStr = String(newValue ?? '')
@@ -11610,16 +11676,16 @@ export class OverseerRenderer {
                                 try {
                                     const listPathArr = targetPathArr.slice(0, -2)
                                     const listSelector = `[data-path='${JSON.stringify(listPathArr)}']`
-                                    const listEl = document.querySelector(listSelector)
+                                    const listEl = this.scopedOne(listSelector)
                                     if (listEl) targetEl = listEl.querySelector(selector)
                                 } catch(_) {}
-                                if (!targetEl) targetEl = document.querySelector(selector)
+                                if (!targetEl) targetEl = this.scopedOne(selector)
                                 if (targetEl) {
                                     const holder = targetEl.querySelector('.field-value, .text-content, .overseer-list-value') || targetEl
                                     // Try to respect numeric formatting (precision, prefix, suffix)
                                     let display = String(newStr)
                                     try {
-                                        const nodeAt = this.findNodeByPath(window.app.currentDocument, targetPathArr)
+                                        const nodeAt = this.findNodeByPath(this.app.currentDocument, targetPathArr)
                                         const pref = String(this.getParameterValue(nodeAt, 'prefix') ?? '')
                                         const suf = String(this.getParameterValue(nodeAt, 'suffix') ?? '')
                                         const precRaw = this.getParameterValue(nodeAt, 'precision')
@@ -11637,7 +11703,7 @@ export class OverseerRenderer {
                                     // As a fallback, re-render the owning list subtree
                                     try {
                                         const listPathArr = materializedRealPath.split('/').slice(0, -2)
-                                        this.rerenderSubtree(window.app.currentDocument, listPathArr)
+                                        this.rerenderSubtree(this.app.currentDocument, listPathArr)
                                     } catch(_) {}
                                 }
                             } catch(_) { /* best-effort paint */ }
@@ -11652,21 +11718,21 @@ export class OverseerRenderer {
                     }
                 }
             } catch(_) {}
-            if (fieldPath && window.app && window.app.currentDocument) {
+            if (fieldPath && this.app && this.app.currentDocument) {
                 if (DEBUG_MODE) console.log('🔧 Updating node in main document at path:', fieldPath, 'with value:', newValue)
                 // If we have a materialized path, check the rendered element first; if it already shows the same value, skip
                 try {
                     if (materializedRealPath && typeof newValue === 'string') {
                         const targetPathArr = materializedRealPath.split('/')
                         const sel = `[data-path='${JSON.stringify(targetPathArr)}']`
-                        const el = document.querySelector(sel)
+                        const el = this.scopedOne(sel)
                         if (el) {
                             const holder = el.querySelector('.field-value, .text-content, .overseer-list-value') || el
                             const shownRaw = holder ? this.textOf(holder) : ''
                             // Try to account for numeric fields that render with prefix/suffix (e.g., kg)
                             let prefix = '', suffix = ''
                             try {
-                                const n = this.findNodeByPath(window.app.currentDocument, targetPathArr)
+                                const n = this.findNodeByPath(this.app.currentDocument, targetPathArr)
                                 prefix = String(this.getParameterValue(n, 'prefix') ?? '')
                                 suffix = String(this.getParameterValue(n, 'suffix') ?? '')
                             } catch(_) {}
@@ -11684,7 +11750,7 @@ export class OverseerRenderer {
                             // A field drawn as its `shown` text does not show its value, so what
                             // it shows says nothing about whether the value is already there.
                             let drawnAsShown = false
-                            try { drawnAsShown = this.shownText(this.findNodeByPath(window.app.currentDocument, targetPathArr)) !== null } catch(_) {}
+                            try { drawnAsShown = this.shownText(this.findNodeByPath(this.app.currentDocument, targetPathArr)) !== null } catch(_) {}
                             
                             if (!drawnAsShown && (shown === want || eqNum3)) {
                                 
@@ -11704,19 +11770,19 @@ export class OverseerRenderer {
                 } catch(_) { /* fall back to path-based below */ }
                 if (!success) {
                     
-                    success = this.updateNodeValueByPath(window.app.currentDocument, fieldPath, newValue)
+                    success = this.updateNodeValueByPath(this.app.currentDocument, fieldPath, newValue)
                 }
                 if (!success) {
                     if (DEBUG_MODE) console.warn('⚠️ Failed to update node by path, attempting loose path resolution')
                     try {
-                        const targetNode = this.resolveNodeByPathLoose(window.app.currentDocument, fieldPath)
+                        const targetNode = this.resolveNodeByPathLoose(this.app.currentDocument, fieldPath)
                         if (targetNode) {
                             this.updateNodeValue(targetNode, newValue)
                         } else {
                             // Final fallback: use app-level robust resolver to locate the node
                             try {
-                                const alt = (window.app && typeof window.app.getNodeByPath === 'function')
-                                    ? window.app.getNodeByPath(window.app.currentDocument, fieldPath)
+                                const alt = (this.app && typeof this.app.getNodeByPath === 'function')
+                                    ? this.app.getNodeByPath(this.app.currentDocument, fieldPath)
                                     : null
                                 if (alt) {
                                     this.updateNodeValue(alt, newValue)
@@ -11739,7 +11805,7 @@ export class OverseerRenderer {
                     const wasGuarded = (element && element.getAttribute && element.getAttribute('data-guarded-edit') === '1') || mode === 'guarded'
                     if (wasGuarded) {
                         const arr = String(fieldPath).split('/')
-                        const target = this.findNodeByPath(window.app.currentDocument, arr)
+                        const target = this.findNodeByPath(this.app.currentDocument, arr)
                         if (target) {
                             if (!target.parameters) target.parameters = {}
                             target.parameters._guarded_edit = { Boolean: true }
@@ -11757,8 +11823,8 @@ export class OverseerRenderer {
                 // Immediately record this user edit for save-time merge to guard against
                 // any interim resolve that might overwrite the value before persisting.
                 try {
-                    if (window.app && window.app._pendingUserEdits && typeof window.app._pendingUserEdits.set === 'function') {
-                        window.app._pendingUserEdits.set(fieldPath, { value: newValue, ts: Date.now() })
+                    if (this.app && this.app._pendingUserEdits && typeof this.app._pendingUserEdits.set === 'function') {
+                        this.app._pendingUserEdits.set(fieldPath, { value: newValue, ts: Date.now() })
                     }
                 } catch(_) { /* best-effort only */ }
             } else {
@@ -11780,26 +11846,26 @@ export class OverseerRenderer {
             // take back, and the handler's write could land before the value's and lose it. A
             // formula typed in, and an entry just made from a phantom, keep the way below.
             const handled = this.declaresEvent(node, 'change')
-            if (handled && window.app && window.app.currentFile && fieldPath
+            if (handled && this.app && this.app.currentFile && fieldPath
                 && !isFormulaInput && !isUnderPhantom && !materializedRealPath) {
                 let target = null
-                try { target = this.findNodeByPath(window.app.currentDocument, String(fieldPath).split('/')) } catch(_) {}
-                const value = window.app.coerceToOverseerValue(target || node, newValue)
+                try { target = this.findNodeByPath(this.app.currentDocument, String(fieldPath).split('/')) } catch(_) {}
+                const value = this.app.coerceToOverseerValue(target || node, newValue)
                 try { await this.emitEvent(node, element, 'change', value) } catch(_) {}
                 return
             }
 
             // Mark document as modified
-            if (window.app && window.app.markDocumentModified) {
-                window.app.markDocumentModified()
+            if (this.app && this.app.markDocumentModified) {
+                this.app.markDocumentModified()
             }
             // Trigger reevaluation so formulas and computed values refresh
-            if (window.app && window.app.reevaluateDocumentSelective) {
+            if (this.app && this.app.reevaluateDocumentSelective) {
                 // Use pre-captured field path for selective update
                 if (fieldPath) {
                     if (DEBUG_MODE) console.log('🔄 Triggering selective update for field:', fieldPath)
                     // Pass the old and new values to help selective update system
-                    const updateResult = await window.app.reevaluateDocumentSelective([fieldPath], [{
+                    const updateResult = await this.app.reevaluateDocumentSelective([fieldPath], [{
                         path: fieldPath,
                         oldValue: oldValue,
                         newValue: newValue
@@ -11826,10 +11892,10 @@ export class OverseerRenderer {
                             try {
                                 const listPathArr = targetPathArr.slice(0, -2)
                                 const listSelector = `[data-path='${JSON.stringify(listPathArr)}']`
-                                const listEl = document.querySelector(listSelector)
+                                const listEl = this.scopedOne(listSelector)
                                 if (listEl) {
                                     // Remove any stray duplicates for the same path outside this list container
-                                    const allMatches = Array.from(document.querySelectorAll(selector))
+                                    const allMatches = Array.from(this.scopedAll(selector))
                                     for (const m of allMatches) {
                                         if (!listEl.contains(m)) {
                                             try { m.remove() } catch(_) {}
@@ -11838,7 +11904,7 @@ export class OverseerRenderer {
                                     targetEl = listEl.querySelector(selector)
                                 }
                             } catch(_) { /* ignore; fall back to global */ }
-                            if (!targetEl) targetEl = document.querySelector(selector)
+                            if (!targetEl) targetEl = this.scopedOne(selector)
                             if (targetEl) {
                                 const holder = targetEl.querySelector('.field-value, .text-content, .overseer-list-value') || targetEl
                                 const nv = (newValue == null) ? '' : String(newValue)
@@ -11853,7 +11919,7 @@ export class OverseerRenderer {
                                 // Last resort: refresh owning list subtree again
                                 try {
                                     const listPathArr = materializedRealPath.split('/').slice(0, -2) // .../WeightRecord__N/field -> take list path
-                                    this.rerenderSubtree(window.app.currentDocument, listPathArr)
+                                    this.rerenderSubtree(this.app.currentDocument, listPathArr)
                                 } catch(_) {}
                             }
                         }
@@ -11864,7 +11930,7 @@ export class OverseerRenderer {
                     }
                 } else {
                     if (DEBUG_MODE) console.warn('No field path available, falling back to full update')
-                    await window.app.reevaluateDocumentSelective([])
+                    await this.app.reevaluateDocumentSelective([])
                 }
             }
             // Emit change event for actions (only if not DOM-only/ selective backend update)
@@ -11995,7 +12061,7 @@ export class OverseerRenderer {
     takeImagesInto(textarea) {
         const imagesOf = (files) => Array.from(files || []).filter((f) => f && /^image\//.test(f.type || ''))
         const keep = async (images) => {
-            const doc = (window.app && window.app.currentFile) || ''
+            const doc = (this.app && this.app.currentFile) || ''
             if (!doc) return
             for (const image of images) {
                 let path
@@ -12006,7 +12072,7 @@ export class OverseerRenderer {
                         reader.onerror = () => reject(reader.error)
                         reader.readAsDataURL(image)
                     })
-                    path = await invoke('save_overseer_image', { path: doc, mime: image.type, data })
+                    path = await this.ask('save_overseer_image', { path: doc, mime: image.type, data })
                 } catch (e) {
                     this.sayRefused(textarea, `The image was not kept: ${e && e.message ? e.message : e}`)
                     continue
@@ -12124,8 +12190,8 @@ export class OverseerRenderer {
                 let preExistingValueSnapshot = undefined
                 let targetNode = null
                 try {
-                    if (fieldPath && window.app && window.app.currentDocument) {
-                        targetNode = this.findNodeByPath(window.app.currentDocument, String(fieldPath).split('/'))
+                    if (fieldPath && this.app && this.app.currentDocument) {
+                        targetNode = this.findNodeByPath(this.app.currentDocument, String(fieldPath).split('/'))
                         if (targetNode && targetNode.parameters && targetNode.parameters.value !== undefined) {
                             try { preExistingValueSnapshot = JSON.parse(JSON.stringify(targetNode.parameters.value)) } catch(_) { preExistingValueSnapshot = targetNode.parameters.value }
                         }
@@ -12147,7 +12213,7 @@ export class OverseerRenderer {
                 try {
                     const wasGuarded = element && element.getAttribute && element.getAttribute('data-guarded-edit') === '1'
                     if (wasGuarded && (targetNode || fieldPath)) {
-                        const tgt = targetNode || (this.findNodeByPath(window.app.currentDocument, String(fieldPath).split('/')))
+                        const tgt = targetNode || (this.findNodeByPath(this.app.currentDocument, String(fieldPath).split('/')))
                         if (tgt) {
                             if (!tgt.parameters) tgt.parameters = {}
                             tgt.parameters._guarded_edit = { Boolean: true }
@@ -12165,7 +12231,7 @@ export class OverseerRenderer {
                 // are written as one change, as an enum's pick is. Written first and the handler
                 // asked for after, the handler's write landed before the text's did, and the
                 // text was lost: a comment edited in a project tracker came back empty.
-                if (this.declaresEvent(node, 'change') && window.app && window.app.currentFile) {
+                if (this.declaresEvent(node, 'change') && this.app && this.app.currentFile) {
                     element.style.display = displayBefore
                     editorContainer.remove()
                     try { await this.emitEvent(node, element, 'change', { String: newValue }) } catch(_) {}
@@ -12173,11 +12239,11 @@ export class OverseerRenderer {
                 }
 
                 // Mark document as modified
-                if (window.app && window.app.markDocumentModified) {
-                    window.app.markDocumentModified()
+                if (this.app && this.app.markDocumentModified) {
+                    this.app.markDocumentModified()
                 }
                 // Trigger reevaluation so formulas/computed params refresh
-                if (window.app && window.app.reevaluateDocumentSelective) {
+                if (this.app && this.app.reevaluateDocumentSelective) {
                     // Try to determine field path for selective update
                     try {
                         const fp = fieldPath || this.buildNodePath(element).join('/')
@@ -12187,12 +12253,12 @@ export class OverseerRenderer {
                         // document went up as text and was written over the file. Every other
                         // field already passes the value; this one did not, so editing a
                         // markdown field was the one edit that still sent the document.
-                        window.app.reevaluateDocumentSelective(
+                        this.app.reevaluateDocumentSelective(
                             [fp], [{ path: fp, oldValue: was, newValue }]
                         )
                     } catch (e) {
                         if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
-                        window.app.reevaluateDocumentSelective([])
+                        this.app.reevaluateDocumentSelective([])
                     }
                 }
         // Emit change event for actions
@@ -12276,7 +12342,7 @@ export class OverseerRenderer {
             // Honour the container's phantom-materialize policy, as the edit path does.
             let position = 'append'
             try {
-                const containerNode = this.findNodeByPath(window.app.currentDocument, containerPathArr)
+                const containerNode = this.findNodeByPath(this.app.currentDocument, containerPathArr)
                 const policyRaw = this.getParameterValue(containerNode, 'phantom-materialize')
                 const policy = (policyRaw ? String(policyRaw) : 'none').toLowerCase()
                 if (policy.endsWith('on-edit')) {
@@ -12292,7 +12358,7 @@ export class OverseerRenderer {
             try {
                 container.removeAttribute('data-link-phantom')
                 if (containerPathArr.length > 0) {
-                    this.rerenderSubtree(window.app.currentDocument, containerPathArr)
+                    this.rerenderSubtree(this.app.currentDocument, containerPathArr)
                 }
             } catch(_) { /* best-effort */ }
 
@@ -12319,7 +12385,7 @@ export class OverseerRenderer {
      * an unkeyed list and means the caller should drop the event rather than guess.
      */
     _anchorForPath(path) {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         if (!doc || !Array.isArray(path) || path.length < 2) return null
         for (let i = path.length - 1; i > 0; i--) {
             const parent = this.findNodeByPath(doc, path.slice(0, i))
@@ -12345,7 +12411,7 @@ export class OverseerRenderer {
 
     /** The path that anchor points at now, or null if the entry has gone. */
     _pathFromAnchor(anchor) {
-        const doc = window.app && window.app.currentDocument
+        const doc = this.app && this.app.currentDocument
         const list = doc && this.findNodeByPath(doc, anchor.listPath)
         if (!list || !Array.isArray(list.children)) return null
         const entry = list.children.find((c) => {
@@ -12377,7 +12443,7 @@ export class OverseerRenderer {
      * take back. Only where there is a file to write to: the caller checks.
      */
     async emitEvent(node, element, eventName, withValue) {
-        if (!window.app || !window.app.currentDocument) return
+        if (!this.app || !this.app.currentDocument) return
         const path = (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
@@ -12435,7 +12501,7 @@ export class OverseerRenderer {
     }
 
     async _emitEventNow(node, element, eventName, pathOverride, withValue) {
-        if (!window.app || !window.app.currentDocument) return
+        if (!this.app || !this.app.currentDocument) return
         let path = Array.isArray(pathOverride) ? pathOverride
             : (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
@@ -12449,7 +12515,7 @@ export class OverseerRenderer {
             // entry and what the press does are one change and one step to take back.
             const declared = Array.isArray(node?.children)
                 && node.children.some(c => c && (c.node_type || c.type) === 'on' && c.name === eventName)
-            const press = (declared && window.app.currentFile)
+            const press = (declared && this.app.currentFile)
                 ? { event: eventName, typed: this.typedText() }
                 : null
             const made = await this._materializePhantomForEvent(element, press)
@@ -12510,8 +12576,8 @@ export class OverseerRenderer {
             // document and rebuilds it from the text, which is two orders of magnitude
             // smaller. Making a preview real, above, is a write the backend made and answered
             // with the text, so the text describes the document here too.
-            const knownText = typeof window.app._currentText === 'string'
-                ? window.app._currentText
+            const knownText = typeof this.app._currentText === 'string'
+                ? this.app._currentText
                 : null
             // Say which button was pressed, rather than sending the document it sits in.
             //
@@ -12522,10 +12588,10 @@ export class OverseerRenderer {
             //
             // With whatever is typed into the textboxes: the backend has no other way to know, and
             // a form copied into a new entry is exactly a press that has to.
-            const asAnInstruction = window.app.currentFile
+            const asAnInstruction = this.app.currentFile
                 ? {
-                    path: window.app.currentFile,
-                    ...window.app.showing?.(),
+                    path: this.app.currentFile,
+                    ...this.app.showing?.(),
                     node_path: path,
                     nodePath: path,
                     event_name: eventName,
@@ -12543,9 +12609,9 @@ export class OverseerRenderer {
                 if (asAnInstruction) {
                     // Said out loud for the same reason the edit path says it: a save left over
                     // from an earlier change must not go out on top of this write.
-                    window.app._writingByInstruction = (window.app._writingByInstruction || 0) + 1
+                    this.app._writingByInstruction = (this.app._writingByInstruction || 0) + 1
                     try {
-                        update = await invoke('run_overseer_event', asAnInstruction).catch((e) => {
+                        update = await this.ask('run_overseer_event', asAnInstruction).catch((e) => {
                             // Said no to by the document: nothing was written, and taking the
                             // long way would only ask it again.
                             if (refusalIn(e) !== null) throw e
@@ -12553,10 +12619,10 @@ export class OverseerRenderer {
                             return null
                         })
                     } finally {
-                        window.app._writingByInstruction -= 1
+                        this.app._writingByInstruction -= 1
                     }
                 } else {
-                    update = await invoke('execute_overseer_event_update', {
+                    update = await this.ask('execute_overseer_event_update', {
                         content: knownText,
                         node_path: path,
                         nodePath: path,
@@ -12569,7 +12635,7 @@ export class OverseerRenderer {
                     // the answer says what the file now holds, which the page has to take on
                     // or its next save is refused for being built on a document it moved.
                     writtenAsAnInstruction = true
-                    window.app.alreadyWritten && window.app.alreadyWritten(update)
+                    this.app.alreadyWritten && this.app.alreadyWritten(update)
                     // Forgotten now, so whatever is drawn next draws them empty.
                     emptied = Array.isArray(update.emptied) ? update.emptied : []
                     for (const p of emptied) this._typed.delete(JSON.stringify(p))
@@ -12579,13 +12645,13 @@ export class OverseerRenderer {
                     toFold = Array.isArray(update.folds) ? update.folds : []
                     toNarrow = Array.isArray(update.narrowings) ? update.narrowings : []
                     toCall = Array.isArray(update.calls) ? update.calls : []
-                    window.app.tookTheText(update)
-                    const touched = window.app.applyDocumentChanges(window.app.currentDocument, update.changes)
+                    this.app.tookTheText(update)
+                    const touched = this.app.applyDocumentChanges(this.app.currentDocument, update.changes)
                     try {
-                        this.repaintNodes(touched, window.app.currentDocument)
+                        this.repaintNodes(touched, this.app.currentDocument)
                     } catch (e) {
                         console.error('Render error (event repaint):', e)
-                        try { this.renderDocument(window.app.currentDocument) } catch(_) {}
+                        try { this.renderDocument(this.app.currentDocument) } catch(_) {}
                     }
                     // A press is one act, so it is written at once rather than waiting out the
                     // typing debounce: waiting risks it being swept into the same step as
@@ -12593,7 +12659,7 @@ export class OverseerRenderer {
                     // back two changes at a time. When it went as an instruction it is written
                     // already, and asking again would send the whole document to say so.
                     if (!asAnInstruction) {
-                        window.app.markDocumentModified && window.app.markDocumentModified(true)
+                        this.app.markDocumentModified && this.app.markDocumentModified(true)
                     }
                     // Nothing about them changed in the document, so the repaint above left them.
                     this.emptyTextboxes(emptied)
@@ -12617,10 +12683,10 @@ export class OverseerRenderer {
             // Not with a value to write: the text was made before the value was, and the handler
             // would read what it replaced. Only the instruction carries it.
             const theLongWay = (updated === undefined || updated === null) && withValue === undefined
-                ? (knownText ?? await window.app.textToWorkFrom())
+                ? (knownText ?? await this.app.textToWorkFrom())
                 : null
             if (theLongWay !== null && (updated === undefined || updated === null)) {
-                const answer = await invoke('execute_overseer_event_with_text', {
+                const answer = await this.ask('execute_overseer_event_with_text', {
                     content: theLongWay,
                     node_path: path,
                     nodePath: path,
@@ -12661,13 +12727,13 @@ export class OverseerRenderer {
             // An event can restructure the document. When the backend returned the new text
             // with it, that text describes the result and the next interaction can use it;
             // otherwise the app has no accurate text and must rebuild it once.
-            try { window.app._currentText = nextText; window.app._textVersion = null } catch(_) {}
-            const oldDoc = window.app.currentDocument
+            try { this.app._currentText = nextText; this.app._textVersion = null } catch(_) {}
+            const oldDoc = this.app.currentDocument
             // Tag any backend-driven changes under mutable=guarded so they remain UI-only until save
             try { this._tagGuardedChangesAfterBackendUpdate(oldDoc, newDoc) } catch(_) {}
             // Adopt using app’s preservation logic (formulas, flags), then render
-            try { if (typeof window.app._applyResolvedDocumentWithFormulaPreservation === 'function') { window.app._applyResolvedDocumentWithFormulaPreservation(newDoc) } else { window.app.currentDocument = newDoc } } catch(_) { window.app.currentDocument = newDoc }
-            window.app.renderer.renderDocument(window.app.currentDocument)
+            try { if (typeof this.app._applyResolvedDocumentWithFormulaPreservation === 'function') { this.app._applyResolvedDocumentWithFormulaPreservation(newDoc) } else { this.app.currentDocument = newDoc } } catch(_) { this.app.currentDocument = newDoc }
+            this.app.renderer.renderDocument(this.app.currentDocument)
             // A press is one act, so it is written at once rather than waiting out the
             // typing debounce: waiting risks it being swept into the same step as
             // whatever is typed next, which is what made undo look as though it took
@@ -12680,7 +12746,7 @@ export class OverseerRenderer {
             // very press had moved. That is the second half of the message about the document
             // having changed since the page opened it.
             if (!writtenAsAnInstruction) {
-                window.app.markDocumentModified && window.app.markDocumentModified(true)
+                this.app.markDocumentModified && this.app.markDocumentModified(true)
             }
             this.openFieldForEditing(toOpen)
             // Dropped here before, so Talk did nothing whenever its answer came whole.
@@ -12691,7 +12757,7 @@ export class OverseerRenderer {
             // Backend returned a status/boolean or unexpected shape; keep current document
             if (DEBUG_MODE) console.warn('[Overseer] emitEvent returned non-document value; preserving current document:', updated)
             // As a safety net, re-render the existing document if needed
-            try { window.app.renderer.renderDocument(window.app.currentDocument) } catch (_) {}
+            try { this.app.renderer.renderDocument(this.app.currentDocument) } catch (_) {}
         }
     // Reschedule timers based on the new document state
     }
@@ -12869,7 +12935,7 @@ export class OverseerRenderer {
     }
 
     renderMarkdown(text, node = null) {
-        const html = this._renderMarkdownAlone(text)
+        const html = this.drawingHere(() => this._renderMarkdownAlone(text))
         return typeof text === 'string' && text.indexOf('<#') !== -1 ? this.drawChipsInHtml(html, node) : html
     }
 
@@ -12924,7 +12990,7 @@ export class OverseerRenderer {
                     if (DEBUG_MODE) console.log('📝 Field change detected:', changeInfo)
                     
                     // Find all candidate elements with the same data-path and pick the deepest one
-                    const all = Array.from(document.querySelectorAll('[data-path]'))
+                    const all = Array.from(this.scopedAll('[data-path]'))
                     const candidates = []
                     for (const el of all) {
                         try {
@@ -12996,7 +13062,7 @@ export class OverseerRenderer {
             // may depend on interpolated fields (e.g., $(../selected_date)). This ensures
             // dynamic link bindings update without requiring a full document render.
             try {
-                const linkEls = Array.from(document.querySelectorAll('[data-link-proxy]'))
+                const linkEls = Array.from(this.scopedAll('[data-link-proxy]'))
                 if (linkEls.length > 0 && changedFieldPaths && changedFieldPaths.length > 0) {
                     if (DEBUG_MODE) console.log(`🔗 Considering refresh for ${linkEls.length} link proxy container(s) due to changes:`, changedFieldPaths)
                     for (const el of linkEls) {
@@ -13227,7 +13293,7 @@ export class OverseerRenderer {
     if (DEBUG_MODE) console.log(`🔄 Updating single field in DOM: ${fieldPath}`)
         
         // Find the DOM element for this field using the same logic as selective updates
-        const elements = document.querySelectorAll(`[data-path]`)
+        const elements = this.scopedAll(`[data-path]`)
         
         for (const element of elements) {
             try {
@@ -13307,7 +13373,7 @@ export class OverseerRenderer {
      */
     updateFieldByComparison(oldDocument, newDocument, fieldPath) {
         // Find all elements that might match this field path
-        const elements = document.querySelectorAll(`[data-path]`)
+        const elements = this.scopedAll(`[data-path]`)
         
         for (const element of elements) {
             try {

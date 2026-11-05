@@ -59,11 +59,27 @@
         }
     }
 
-    async function call(cmd, args) {
+    // A request is about this tab's document, unless it names another: the drawer draws a document
+    // of its own beside the one open, and says which it is, and which is open beside it - which
+    // the server tells the drawer's document as `host/open`. Named in the invoke's options, never
+    // in its arguments, which are the command's own.
+    const OF = 'Overseer-Document'
+    const BESIDE = 'Overseer-Open'
+    const said = (options, name) => {
+        const headers = options && options.headers
+        if (!headers) return undefined
+        if (typeof headers.get === 'function') return headers.get(name) ?? undefined
+        return headers[name]
+    }
+
+    async function call(cmd, args, options) {
+        const asked = { document: said(options, OF) ?? documentName, session, scheme: scheme(), args: args || {} }
+        const open = said(options, BESIDE)
+        if (open) asked.open = open
         const response = await fetch(`${base}/api/${encodeURIComponent(cmd)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ document: documentName, session, scheme: scheme(), args: args || {} }),
+            body: JSON.stringify(asked),
         })
         const body = await response.json().catch(() => null)
         // A session that ran out while the page was open: the way back in, and back here after,
@@ -82,20 +98,23 @@
     }
 
     window.__TAURI_INTERNALS__ = {
-        invoke: (cmd, args) => {
+        invoke: (cmd, args, options) => {
             // Raw byte payloads exist to avoid the desktop IPC's cost for a large document.
             // That cost is not this transport's, and a body of bytes would only have to be
             // decoded again, so it travels as JSON here.
             if (args instanceof Uint8Array || args instanceof ArrayBuffer) {
                 const text = new TextDecoder().decode(args)
-                return call(cmd, JSON.parse(text))
+                return call(cmd, JSON.parse(text), options)
             }
-            return call(cmd, args)
+            return call(cmd, args, options)
         },
         // Present so nothing that probes for it has to special-case its absence.
         transformCallback: (callback) => callback,
         convertFileSrc: (path) => path,
     }
+
+    // A pane's document is watched as this tab's is, and told what is heard: answers how to stop.
+    window.__overseerWatch = (name, app) => listen(name, () => app)
 
     if (!documentName) {
         window.addEventListener('DOMContentLoaded', () => {
@@ -114,7 +133,7 @@
             if (!window.app || typeof window.app.loadFile !== 'function') {
                 return setTimeout(open, 20)
             }
-            window.app.loadFile(documentName).then(listen).catch((e) => {
+            window.app.loadFile(documentName).then(() => listen(documentName, () => window.app)).catch((e) => {
                 console.error('could not open', documentName, e)
             })
         }
@@ -126,23 +145,35 @@
     // after a dropped connection, and the server then says the version as it is, so a write made
     // in between is caught up with too. A refused or failed answer - a deploy, say - ends the
     // stream, and it is opened again a little later.
-    function listen() {
-        if (typeof EventSource !== 'function') return
-        const source = new EventSource(`${base}/v1/watch?document=${encodeURIComponent(documentName)}`)
-        // What the files the document mounts say, just before each version - see `heardItReads`.
-        source.addEventListener('read', (event) => {
-            try { window.app && window.app.heardItReads && window.app.heardItReads(event.data) } catch (e) {
-                console.warn('could not take a change made elsewhere', e)
+    function listen(name, app) {
+        if (typeof EventSource !== 'function') return () => {}
+        let source = null
+        let stopped = false
+        const open = () => {
+            if (stopped) return
+            source = new EventSource(`${base}/v1/watch?document=${encodeURIComponent(name)}`)
+            // What the files the document mounts say, just before each version - see `heardItReads`.
+            source.addEventListener('read', (event) => {
+                const heard = app()
+                try { heard && heard.heardItReads && heard.heardItReads(event.data) } catch (e) {
+                    console.warn('could not take a change made elsewhere', e)
+                }
+            })
+            source.addEventListener('changed', (event) => {
+                const heard = app()
+                try { heard && heard.heardTheFile && heard.heardTheFile(event.data) } catch (e) {
+                    console.warn('could not take a change made elsewhere', e)
+                }
+            })
+            source.onerror = () => {
+                if (source.readyState !== EventSource.CLOSED) return
+                setTimeout(open, 10000)
             }
-        })
-        source.addEventListener('changed', (event) => {
-            try { window.app && window.app.heardTheFile && window.app.heardTheFile(event.data) } catch (e) {
-                console.warn('could not take a change made elsewhere', e)
-            }
-        })
-        source.onerror = () => {
-            if (source.readyState !== EventSource.CLOSED) return
-            setTimeout(listen, 10000)
+        }
+        open()
+        return () => {
+            stopped = true
+            if (source) source.close()
         }
     }
 })()

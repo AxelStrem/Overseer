@@ -626,7 +626,8 @@ body.drawer-folded .drawer-open {
     display: inline-block;
 }
 
-#tab-container:not(:has(.tab-button + .tab-button)) {
+#tab-container:not(:has(.tab-button + .tab-button)),
+.overseer-pane-tabs:not(:has(.tab-button + .tab-button)) {
     display: none;
 }
 
@@ -634,7 +635,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     display: none;
 }
 
-#tab-container {
+#tab-container,
+.overseer-pane-tabs {
     display: flex;
     gap: 4px;
     flex-wrap: wrap;
@@ -642,6 +644,29 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 #content-display {
     padding: 12px 20px 20px;
+}
+
+/* A second document, drawn in an element of its own - see pane.js. Its theme is written on the
+   pane rather than the page's root, and painted here as the body paints the page's. */
+.overseer-pane {
+    font-family: var(--ov-font);
+    background-image: var(--ov-backdrop, none);
+    background-size: var(--ov-backdrop-size, auto);
+    background-position: var(--ov-backdrop-position, 0% 0%);
+    background-repeat: var(--ov-backdrop-repeat, repeat);
+    color: var(--ov-text);
+    font-size: var(--ov-size);
+    line-height: var(--ov-leading, 1.6);
+    font-variant-numeric: var(--ov-numerals--css);
+}
+
+.overseer-pane-content {
+    padding: 4px 8px 8px;
+}
+
+.overseer-pane-error {
+    color: var(--ov-danger);
+    padding: 6px 8px;
 }
 
 .drawer-backdrop {

@@ -85,12 +85,14 @@ function docsEqual(a, b) {
 }
 
 export class OverseerApp {
-    constructor() {
+    /// The page's own document, unless `pane` says where another is drawn - see `DocumentPane`,
+    /// which is one.
+    constructor(pane = null) {
         this.currentFile = null
         this.currentDocument = null
         this.isDocumentModified = false
         this.fileManager = new FileManager()
-    this.renderer = new OverseerRenderer()
+    this.renderer = new OverseerRenderer(pane ? { ...pane, app: this } : null)
     // Keep the raw original text for comment/whitespace merge on save
     this._originalText = null
     // The same two texts named by version, when an answer named them rather than sending them -
@@ -99,7 +101,9 @@ export class OverseerApp {
     this._originalVersion = null
     // Track recent user edits to guard against stale backend overwrites during selective refresh
     this._pendingUserEdits = new Map() // path -> { value: OverseerValue|string|number|boolean, ts: ms }
-        
+        // A pane is the page's guest: the page's keys, screens and `window.app` stay the page's.
+        if (pane) return
+
         // Make app instance available globally for renderer
         window.app = this
         
@@ -110,6 +114,12 @@ export class OverseerApp {
         else this.showWelcomeScreen()
     }
     
+    /// A command about this document. The page's own goes as it always has; a pane's names its
+    /// own document - see `DocumentPane.ask`.
+    ask(...command) {
+        return invoke(...command)
+    }
+
     // Adopt a new document while preserving the original root array reference if possible so
     // external holders of app.currentDocument (e.g. test harness variables) observe updates.
     _adoptDocumentPreserveRoot(newDoc){
@@ -484,7 +494,7 @@ export class OverseerApp {
         try {
             // A program can save its own files as Overseer text under an extension of its own,
             // and name it in `extensions.txt` beside the settings; the settings hand them back.
-            const settings = await invoke('settings_read').catch(() => null)
+            const settings = await this.ask('settings_read').catch(() => null)
             const extensions = settings?.extensions?.length ? settings.extensions : ['os']
             const selected = await open({
                 filters: [
@@ -516,11 +526,11 @@ export class OverseerApp {
             if (DEBUG_MODE) this.setStatus('DEBUG: Starting file load...')
 
             // Read file content
-            const content = await invoke('load_overseer_file', { path: filePath })
+            const content = await this.ask('load_overseer_file', { path: filePath })
             if (DEBUG_MODE) this.setStatus(`DEBUG: File content loaded, length: ${content?.length || 'unknown'}`)
 
             // Parse the content
-            const overseerDocument = await invoke('parse_overseer_content', { content, path: filePath })
+            const overseerDocument = await this.ask('parse_overseer_content', { content, path: filePath })
             // The text a resolve starts from, so the first edit need not upload the document.
             this._currentText = content
             this._textVersion = null
@@ -566,7 +576,7 @@ export class OverseerApp {
             this.updateTitle()
 
             // Clear any previous content; avoid injecting bulky debug blocks into the document area
-            const contentDisplay = document.getElementById('content-display')
+            const contentDisplay = this.renderer.contentDisplay
             contentDisplay.innerHTML = ''
 
             if (DEBUG_MODE) this.setStatus('DEBUG: About to call renderer...')
@@ -628,7 +638,7 @@ tab Main {
     }
 }`
 
-                await invoke('save_overseer_file', { 
+                await this.ask('save_overseer_file', { 
                     path: selected, 
                     content: template 
                 })
@@ -701,7 +711,7 @@ tab Main {
                     ? { original: null, original_version: this._originalVersion, originalVersion: this._originalVersion }
                     : { original: null }
 
-            await invoke('save_overseer_file_from_text', {
+            await this.ask('save_overseer_file_from_text', {
                 path: this.currentFile,
                 content,
                 guarded,
@@ -711,7 +721,7 @@ tab Main {
                 ...baseline
             })
             try {
-                this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                this._originalText = await this.ask('load_overseer_file', { path: this.currentFile })
                 this._originalVersion = null
             } catch (_) { /* non-fatal */ }
             
@@ -1406,7 +1416,7 @@ tab Main {
             if (instruction) {
                 this._writingByInstruction = (this._writingByInstruction || 0) + 1
                 try {
-                    update = await invoke('write_overseer_values', instruction).catch((e) => {
+                    update = await this.ask('write_overseer_values', instruction).catch((e) => {
                         // Swallowing this is what let a whole class of trouble look like a
                         // backend fault: the page falls back to sending the document, shows the
                         // new value, and nothing is written. Say so at least.
@@ -1417,7 +1427,7 @@ tab Main {
                     this._writingByInstruction -= 1
                 }
             } else {
-                update = await invoke('parse_overseer_content_selective_update', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
+                update = await this.ask('parse_overseer_content_selective_update', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap }).catch(() => null)
             }
             if (instruction && update) {
                 this.alreadyWritten(update)
@@ -1447,7 +1457,7 @@ tab Main {
             let resolved = null
             const answer = (update && Array.isArray(update.nodes))
                 ? { nodes: update.nodes, text: update.text }
-                : await invoke('parse_overseer_content_selective_with_text', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
+                : await this.ask('parse_overseer_content_selective_with_text', { content: await contentNow(), changedFields: changedFieldPaths, changedFieldValues: changedValuesMap })
             resolved = answer.nodes
             this.tookTheText(answer)
             profileAt = profileMark('resolve (backend round trip)', profileAt)
@@ -1791,7 +1801,7 @@ tab Main {
                                 for (const p of aggCandidates) {
                                     if (stale) break
                                     const pathArr = p.split('/')
-                                    const el = document.querySelector(`[data-path='${JSON.stringify(pathArr)}']`)
+                                    const el = this.renderer.scopedOne(`[data-path='${JSON.stringify(pathArr)}']`)
                                     if (!el) continue
                                     const node = this.getNodeByPath(resolved, p)
                                     const valObj = node?.parameters?._computed_value || node?.parameters?.value
@@ -1898,7 +1908,7 @@ tab Main {
                 // change that failed is not in it, and the page shows what is.
                 const content = await this.textToWorkFrom()
                 if (typeof content !== 'string') throw new Error('no text to work the document out from')
-                const resolved = await invoke('parse_overseer_content', { content, path: this.currentFile })
+                const resolved = await this.ask('parse_overseer_content', { content, path: this.currentFile })
                 this._currentText = content
                 this._textVersion = null
                 if (this._isSupersededReevaluation(reevaluationTicket)) {
@@ -2058,7 +2068,7 @@ tab Main {
     /// catching up waits for it - and finds, more often than not, there is nothing left to do.
     busyForCatchingUp() {
         if (this._writingByInstruction > 0 || this._saving || this._rereading || this.isDocumentModified) return true
-        const shown = document.getElementById('content-display')
+        const shown = this.renderer && this.renderer.contentDisplay
         return !!(shown && shown.querySelector('.field-editor, .markdown-editor-container, .tag-picker'))
     }
 
@@ -2116,7 +2126,7 @@ tab Main {
     async catchUp() {
         const shown = this.showing()
         const file = this.currentFile
-        const update = await invoke('catch_up_overseer_document', { path: file, ...shown })
+        const update = await this.ask('catch_up_overseer_document', { path: file, ...shown })
         if (!update || file !== this.currentFile) return
         if (this.busyForCatchingUp() || JSON.stringify(this.showing()) !== JSON.stringify(shown)) return
         return this.showLooked(update)
@@ -2157,7 +2167,7 @@ tab Main {
     async runOnLoad() {
         const file = this.currentFile
         try {
-            const update = await invoke('run_overseer_on_load', { path: file, ...this.showing() })
+            const update = await this.ask('run_overseer_on_load', { path: file, ...this.showing() })
             if (!update || file !== this.currentFile) return
             this.showLooked(update)
         } catch (e) {
@@ -2220,7 +2230,7 @@ tab Main {
         }
         const shown = this.showing()
         try {
-            const update = await invoke('run_overseer_tick', { path: clock.file, owners: [owner], ...shown })
+            const update = await this.ask('run_overseer_tick', { path: clock.file, owners: [owner], ...shown })
             // Dropped, as a catch-up's is, when something began here meanwhile: it describes the
             // page as it was before that, and what began brings the viewer's state with it.
             if (update && this._clock === clock && this.currentFile === clock.file && !this.busyForCatchingUp()
@@ -2237,7 +2247,7 @@ tab Main {
     showWhole(update) {
         this.tookTheText(update)
         this.tookTheFile(update)
-        const display = document.getElementById('content-display')
+        const display = this.renderer && this.renderer.contentDisplay
         const scrolled = { page: window.scrollY, display: display ? display.scrollTop : 0 }
         this._applyResolvedDocumentWithFormulaPreservation(update.nodes)
         this.renderer.renderDocument(this.currentDocument)
@@ -2253,7 +2263,7 @@ tab Main {
     async showMoreOf(listPath) {
         const file = this.currentFile
         if (!file) return
-        const update = await invoke('show_more_of_overseer_list', { path: file, listPath })
+        const update = await this.ask('show_more_of_overseer_list', { path: file, listPath })
         if (!update || file !== this.currentFile || !Array.isArray(update.nodes)) return
         this.showWhole(update)
     }
@@ -2266,7 +2276,7 @@ tab Main {
         const version = this._textVersion
         if (!version || !this.currentFile) return null
         try {
-            const text = await invoke('load_overseer_text', { path: this.currentFile, version })
+            const text = await this.ask('load_overseer_text', { path: this.currentFile, version })
             // Kept only if nothing newer was taken on while this was being fetched.
             if (typeof text === 'string' && this._textVersion === version) {
                 this._currentText = text
@@ -2288,7 +2298,7 @@ tab Main {
         const held = await this.textInHand()
         if (typeof held === 'string') return held
         if (!this.currentFile) return null
-        const text = await invoke('load_overseer_file', { path: this.currentFile })
+        const text = await this.ask('load_overseer_file', { path: this.currentFile })
         if (typeof text !== 'string') return null
         this._currentText = text
         this._textVersion = null
@@ -2352,7 +2362,7 @@ tab Main {
         // would otherwise drop. See `collectViewerValues`.
         const viewers = this.collectViewerValues(this.currentDocument)
         try {
-            const outcome = await invoke('undo_overseer_file', { path: this.currentFile })
+            const outcome = await this.ask('undo_overseer_file', { path: this.currentFile })
             await this.rereadFromDisk()
             if (this.restoreViewerValues(this.currentDocument, viewers) > 0) {
                 // Drawn again with them. The text just read from the file is kept: it does not
@@ -2398,7 +2408,7 @@ tab Main {
         try {
             await this.loadFile(this.currentFile)
             try {
-                this._originalText = await invoke('load_overseer_file', { path: this.currentFile })
+                this._originalText = await this.ask('load_overseer_file', { path: this.currentFile })
                 this._originalVersion = null
             } catch (_) { /* non-fatal */ }
         } finally {
@@ -2454,6 +2464,30 @@ tab Main {
         }
         // Which document is open is what the drawer marks, and whether it offers to keep it.
         try { this.drawer && this.drawer.documentChanged() } catch (_) { /* a drawer is a convenience */ }
+        // And what a document drawn in the drawer is told of it, as `host/open`.
+        try { this.drawerPane && this.drawerPane.besideChanged() } catch (_) { /* the same */ }
+    }
+
+    /// Draw a document in the drawer, beside the one open - see `DocumentPane`. Answers the pane,
+    /// or null where the page has nowhere to draw it.
+    async openDrawerDocument(path, element = document.getElementById('drawer-document')) {
+        if (!element || !path) return null
+        // Asked for when wanted: the pane is an app, and this the module it is made from.
+        const { DocumentPane } = await import('./pane.js')
+        if (this.drawerPane) this.drawerPane.close()
+        const pane = new DocumentPane(this, element)
+        this.drawerPane = pane
+        element.hidden = false
+        await pane.open(path)
+        return pane
+    }
+
+    closeDrawerDocument() {
+        if (!this.drawerPane) return
+        const element = this.drawerPane.element
+        this.drawerPane.close()
+        this.drawerPane = null
+        if (element) element.hidden = true
     }
 
     showWelcomeScreen() {
@@ -2585,6 +2619,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const looksAbsolute = (p) => typeof p === 'string' && (/^[a-zA-Z]:\\/.test(p) || /^\\\\/.test(p) || /^\//.test(p))
         if (autoFile && looksAbsolute(autoFile)) {
             app.loadFile(autoFile)
+        }
+        // A document drawn in the drawer, beside the one open, until the drawer is one by itself.
+        const inDrawer = qs.get('drawer')
+        if (inDrawer) {
+            app.openDrawerDocument(inDrawer).catch((e) => console.warn('[Overseer] the document in the drawer could not open', e))
         }
     } catch {}
     
