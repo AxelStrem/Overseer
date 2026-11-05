@@ -806,8 +806,19 @@ calendar Steps (entry=int, span="month") {
   ```overseer
   int before = $(Days.at(date_add_days(date(), -1))/commits)
   ```
-- **The page** draws the days in view one to a row, each headed by its date; `header=false`
-  leaves the dates out.
+- **The page** draws the days in view as `layout=` says, each day from its template:
+
+  | layout | |
+  | --- | --- |
+  | `agenda` | one day to a row, its date to the left - when it says nothing |
+  | `day` | the first day in view, headed by its date |
+  | `week` | seven columns, Monday first, each day headed by its weekday and date |
+  | `month` | weeks as rows of seven columns, Monday first, the weekdays named above and each day's date over it; the days of the neighbouring months that fill a week are left blank |
+  | `year` | a heatmap: weeks as columns and weekdays as rows, each day a small square, the months named above the week each begins in; a day shows its value on hover, and scrolls sideways where the page is narrower |
+
+  A day of the heatmap takes its colour from its template's own style, worked out from its value:
+  `div Day (background-color=$(commits > 3 ? "#30a14e" : "")) { int commits = 0 }`.
+  `header=false` leaves the dates and names out.
 
 ## Advanced Features
 

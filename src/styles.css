@@ -1381,6 +1381,59 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     padding-right: 4px;
 }
 
+/* A calendar's drawings. Its days are placed by their order, see setUpCalendar. */
+.overseer-calendar.calendar-day > [data-path] ~ [data-path] {
+    display: none;
+}
+.overseer-calendar.calendar-day > .overseer-grid-heading.day {
+    text-align: start;
+    font-size: 12px;
+}
+.overseer-calendar .overseer-grid-heading.date {
+    text-align: start;
+    align-self: end;
+}
+.overseer-calendar .overseer-grid-heading.outside {
+    opacity: 0.4;
+}
+.overseer-calendar.calendar-year {
+    --ov-calendar-square: 12px;
+    grid-auto-flow: column;
+    grid-auto-columns: var(--ov-calendar-square);
+    gap: 3px;
+    justify-content: start;
+    overflow-x: auto;
+    max-width: 100%;
+}
+.overseer-calendar.calendar-year > .overseer-grid-heading {
+    font-size: 10px;
+    line-height: var(--ov-calendar-square);
+}
+.overseer-calendar.calendar-year > .overseer-grid-heading.month {
+    text-align: start;
+    white-space: nowrap;
+    overflow: visible;
+    line-height: normal;
+}
+/* A day of the heatmap is a square of its own colour, its value shown on hover. */
+.overseer-calendar.calendar-year > [data-path] {
+    width: var(--ov-calendar-square);
+    height: var(--ov-calendar-square);
+    min-width: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none;
+    border-radius: 2px;
+    overflow: hidden;
+    box-sizing: border-box;
+    /* Drawn in outline, so that a day its template paints no colour still shows as a day. */
+    box-shadow: inset 0 0 0 1px var(--ov-line);
+}
+.overseer-calendar.calendar-year > [data-path] > * {
+    visibility: hidden;
+}
+
 /* Suppress top margin when container explicitly marked tight */
 .overseer-div[data-tight="1"].layout-vertical > :first-child,
 .overseer-list[data-tight="1"].layout-vertical > :first-child {

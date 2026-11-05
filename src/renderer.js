@@ -101,6 +101,22 @@ const gridPlaceIn = (type, name) => {
     return { column: column - 1, row: 0 }
 }
 
+// A calendar's day by its name, `2026-11-04`, as midnight UTC in milliseconds, or null. Days are
+// counted in UTC so that no time zone or change of clocks moves one into the next.
+const DAY_MS = 86400000
+const calendarDay = (name) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(name || ''))
+    if (!m) return null
+    const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+    return Number.isNaN(ms) ? null : ms
+}
+// Monday is 0: a week starts on Monday everywhere, for now (item `weekstart`).
+const calendarWeekday = (ms) => (new Date(ms).getUTCDay() + 6) % 7
+const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+    'September', 'October', 'November', 'December']
+const CALENDAR_LAYOUTS = ['day', 'week', 'month', 'year', 'agenda']
+
 const BUTTON_HOVERS = ['background', 'border', 'glow', 'lift', 'grow', 'none']
 
 // How a backdrop layer can move on its own, and the seconds one round takes where `period` says none.
@@ -3689,20 +3705,134 @@ export class OverseerRenderer {
         }
     }
 
-    /// A calendar: its days in view, one to a row, each headed by its date to the left unless it
-    /// says `header=false`.
+    /// A calendar: its days in view, drawn as `layout=` says - `agenda` (one to a row, the date to
+    /// the left; the default), `day`, `week`, `month` or `year` (the heatmap). `header=false`
+    /// leaves the headings out.
+    ///
+    /// As in a grid, every day is placed by the order it is drawn in, never by a place of its
+    /// own: a day drawn again after an edit replaces its element, and would lose one. So the
+    /// days are put in order here, with blanks for the days of a week that are not in view.
     setUpCalendar(element, node) {
         const header = this.getParameterValue(node, 'header')
         const headed = !(header === false || String(header).toLowerCase() === 'false')
-        element.style.gridTemplateColumns = (headed ? 'auto ' : '') + 'minmax(0, 1fr)'
-        if (!headed) return
+        const asked = String(this.getParameterValue(node, 'layout') || '').toLowerCase()
+        const layout = CALENDAR_LAYOUTS.includes(asked) ? asked : 'agenda'
+        element.classList.add('overseer-calendar', `calendar-${layout}`)
+
+        const days = []
         for (const cell of Array.from(element.children).filter(el => el.dataset && el.dataset.path)) {
             let name = ''
             try { name = String(JSON.parse(cell.dataset.path).slice(-1)[0] || '') } catch (_) { /* no day */ }
+            const ms = calendarDay(name)
+            if (ms !== null) days.push({ cell, name, ms })
+        }
+        const heading = (text, kind) => {
             const h = document.createElement('div')
-            h.className = 'overseer-grid-heading row'
-            h.textContent = name
-            element.insertBefore(h, cell)
+            h.className = `overseer-grid-heading ${kind}`
+            h.textContent = text
+            return h
+        }
+        const blank = () => {
+            const b = document.createElement('div')
+            b.className = 'overseer-calendar-blank'
+            return b
+        }
+        // The days by their weeks, Monday to Sunday, each a day in view or null.
+        const weeks = () => {
+            const byDay = new Map(days.map(d => [d.ms, d]))
+            const out = []
+            if (!days.length) return out
+            const first = days[0].ms - calendarWeekday(days[0].ms) * DAY_MS
+            const last = days[days.length - 1].ms
+            for (let monday = first; monday <= last; monday += 7 * DAY_MS) {
+                out.push(Array.from({ length: 7 }, (_, i) => ({ ms: monday + i * DAY_MS, day: byDay.get(monday + i * DAY_MS) || null })))
+            }
+            return out
+        }
+        const put = (items) => { for (const item of items) element.appendChild(item) }
+        // Nothing is drawn after the last day: blanks there would only make the grid longer.
+        const lastDay = days.length ? days[days.length - 1].ms : 0
+
+        if (layout === 'agenda') {
+            element.style.gridTemplateColumns = (headed ? 'auto ' : '') + 'minmax(0, 1fr)'
+            if (headed) for (const d of days) element.insertBefore(heading(d.name, 'row'), d.cell)
+            return
+        }
+
+        if (layout === 'day') {
+            // The first day in view; the others stay in the page, hidden by the stylesheet, so
+            // that one drawn again after an edit is hidden too.
+            element.style.gridTemplateColumns = 'minmax(0, 1fr)'
+            if (headed && days.length) {
+                const d = new Date(days[0].ms)
+                element.insertBefore(heading(`${WEEKDAY_NAMES[calendarWeekday(days[0].ms)]}, ${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCFullYear()}`, 'column day'), days[0].cell)
+            }
+            return
+        }
+
+        if (layout === 'week' || layout === 'month') {
+            element.style.gridTemplateColumns = 'repeat(7, minmax(0, 1fr))'
+            const items = []
+            if (headed && layout === 'month') {
+                for (const name of WEEKDAY_NAMES) items.push(heading(name.slice(0, 3), 'column'))
+            }
+            for (const week of weeks()) {
+                if (headed) {
+                    // A week names its days by weekday and date, a month by the date alone, its
+                    // weekdays being named once above.
+                    for (const { ms, day } of week) {
+                        const date = new Date(ms).getUTCDate()
+                        const h = heading(layout === 'week' ? `${WEEKDAY_NAMES[calendarWeekday(ms)].slice(0, 3)} ${date}` : String(date), 'column date')
+                        if (!day) h.classList.add('outside')
+                        items.push(h)
+                    }
+                }
+                for (const { ms, day } of week) if (ms <= lastDay) items.push(day ? day.cell : blank())
+            }
+            put(items)
+            return
+        }
+
+        // The year: weeks as columns, weekdays as rows, each day a small square coloured by its
+        // own style; the month names above the week each begins in, the weekdays to the left.
+        element.style.gridTemplateRows = (headed ? 'auto ' : '') + 'repeat(7, var(--ov-calendar-square))'
+        element.style.gridTemplateColumns = headed ? 'max-content' : ''
+        const items = []
+        if (headed) {
+            items.push(heading('', 'corner'))
+            for (let i = 0; i < 7; i++) items.push(heading([0, 2, 4].includes(i) ? WEEKDAY_NAMES[i].slice(0, 3) : '', 'row'))
+        }
+        const all = weeks()
+        // A month that begins in a week names it; the first week names its own month only when the
+        // next month's name is not about to start over it.
+        const begins = all.map(week => {
+            const first = week.find(({ ms, day }) => day && new Date(ms).getUTCDate() === 1)
+            return first ? new Date(first.ms).getUTCMonth() : null
+        })
+        if (all.length && begins[0] === null && !begins.slice(1, 3).some(m => m !== null)) {
+            begins[0] = new Date(days[0].ms).getUTCMonth()
+        }
+        all.forEach((week, w) => {
+            if (headed) items.push(heading(begins[w] === null ? '' : MONTH_NAMES[begins[w]].slice(0, 3), 'column month'))
+            for (const { ms, day } of week) if (ms <= lastDay) items.push(day ? day.cell : blank())
+        })
+        put(items)
+        // Wider than a phone, it scrolls sideways: shown at its end, the latest days, once drawn.
+        requestAnimationFrame(() => { element.scrollLeft = element.scrollWidth })
+        // A square shows its day's value on hover. Set when the pointer comes, rather than once
+        // here, so that a day drawn again after an edit shows its new value.
+        if (!element._calendarHover) {
+            element._calendarHover = true
+            element.addEventListener('mouseover', (event) => {
+                let cell = event.target
+                while (cell && cell.parentElement !== element) cell = cell.parentElement
+                if (!cell || !cell.dataset || !cell.dataset.path) return
+                let name = ''
+                try { name = String(JSON.parse(cell.dataset.path).slice(-1)[0] || '') } catch (_) { /* no day */ }
+                const values = Array.from(cell.querySelectorAll('.field-value')).map(v => v.textContent.trim()).filter(Boolean)
+                const shown = values.length ? values.join(', ') : cell.textContent.trim()
+                cell.title = shown ? `${name}: ${shown}` : name
+            })
         }
     }
 
