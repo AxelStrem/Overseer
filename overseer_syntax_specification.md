@@ -142,6 +142,8 @@ int level (view="progress", layout="vertical", height=120px) = 70
   "Grids"
 - `array`: A grid of one row: a fixed number of elements, each made from one template or type -
   see "Arrays"
+- `calendar`: A cell for every day, each made from one template or type and named by its date,
+  showing the days in a range - see "Calendars"
 - `tab`: One page of a tab system, anywhere a node can stand - in a div, a list, another tab.
   The tabs that share a parent are one system: a bar of their labels and one page showing at a
   time, drawn where the first of them stands. Two systems at one level are two divs. At the top of
@@ -738,6 +740,74 @@ array Week (entry=int, length=7) {
   ```
 - **The page** draws the elements in one row headed by their letters; `layout="vertical"` draws
   them in one column with the letters to the left, and `header=false` leaves the letters out.
+
+### 10. Calendars
+
+A calendar holds a cell for every day, each made from its `entry=` - a template, or a field type
+such as `int` - without being written, and named by its date. What its block writes overrides
+only the day it names:
+
+```overseer
+calendar Days (entry=<Day>, from=$(date_add_days(today(), -364)), to=$(today())) {
+    - 2026-11-04 {
+        - commits = 5
+    }
+}
+calendar Steps (entry=int, span="month") {
+    - 2026-11-03 = 8200
+}
+```
+
+- **Only what is written is saved.** A day set since - by an action, the API or a person in the
+  page - is written into the block as `- 2026-11-05 { ... }` (or `- 2026-11-05 = 3` for a
+  calendar of a type), among the others in date order.
+- **The range** is which days are in view, not which days the calendar holds: every date is a
+  cell it may hold. `from=` and `to=` name the first and the last day, and may be formulas. Or
+  `span=` - `"day"`, `"week"` (Monday to Sunday), `"month"` or `"year"` - names the one that holds
+  `at=`, today when it says nothing; a `from=` or `to=` beside it wins over what the span gives.
+  A day written outside the range stays in the file and is kept with nothing said - it is history
+  - and comes into view when the range does. A name in the block that is no date is said as a
+  problem on the calendar, as is a range that is not one, or one longer than ten years.
+- **Moving the range** needs nothing more: the range reads a date the document keeps, and its
+  buttons step it. A guarded date steps for whoever pressed, and the file stays as it was.
+
+  ```overseer
+  date showing (mutable="guarded") = $(today())
+
+  calendar Week (entry=<Day>, from=$(date_add_days(../showing, -6)), to=$(../showing)) { }
+
+  button back (label="Back a week") {
+      on click {
+          set (path="../showing") = $(date_add_days(../showing, -7))
+      }
+  }
+  ```
+- **A day's address** is a step like any other: `log/Days/2026-11-04/commits`. An action may also
+  name a day by a date in brackets, written or worked out where the action is:
+  `set (path="../Days[$(today())]/commits") = 1`. A day out of view is set like any other, and
+  kept. A calendar has no entries to `append`, `remove` or `move`.
+- **A formula** reaches the days through the calendar's methods:
+
+  | method | |
+  | --- | --- |
+  | `cells()` | the days in view, in date order |
+  | `at(date)` | one day, in view or not - its value, or `at(date)/field` one of its fields |
+
+  ```overseer
+  int this_week = $(Days.cells().sum(|d| d/commits))
+  int monday = $(Steps.at("2026-11-02"))
+  ```
+
+  A day out of view that nobody wrote reads as the template has it, or as the type's empty value.
+- **A day's own date**: `date()`, in any formula inside a cell, gives the cell's date - the value
+  `at()` takes - so the template every day is made from can reach the day before. Outside a cell
+  it is an error.
+
+  ```overseer
+  int before = $(Days.at(date_add_days(date(), -1))/commits)
+  ```
+- **The page** draws the days in view one to a row, each headed by its date; `header=false`
+  leaves the dates out.
 
 ## Advanced Features
 
@@ -2795,7 +2865,7 @@ div Tasks {
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`, `chip`
 - **Tags**: `vocabulary`, `shape`, `chip` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`
-- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
+- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `calendar`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context, and `base=none` or `base=<node>` on an element of an override)
 
 ---

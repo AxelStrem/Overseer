@@ -750,7 +750,7 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     let (after_name, name_opt) = if dash_value.is_some() {
         (cur, None)
     } else {
-        opt(parse_identifier)(cur)?
+        opt(alt((parse_date_name, parse_identifier)))(cur)?
     };
     let mut node_name_value: Option<String> = None;
     cur = after_name;
@@ -1578,6 +1578,19 @@ fn parse_border_style_value(input: &str) -> IResult<&str, OverseerValue> {
             },
         ),
     ))(input)
+}
+
+/// A name that is a date, `2026-11-04`: what a calendar's cells are named by. Only as a node's
+/// name - a type or a parameter is never a date.
+fn parse_date_name(input: &str) -> IResult<&str, &str> {
+    let continues = input
+        .as_bytes()
+        .get(10)
+        .is_some_and(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'/' | b'-'));
+    match input.get(..10) {
+        Some(name) if !continues && crate::addressing::date_of(name).is_some() => Ok((&input[10..], name)),
+        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag))),
+    }
 }
 
 /// Parse identifiers (variable names, node types, etc.)

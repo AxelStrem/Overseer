@@ -79,7 +79,7 @@ pub fn find_beside(dir: &Path, path: &str) -> Option<OverseerNode> {
 /// field - a root named `tags` drew a tags field - and such a name is refused. The page lowercases
 /// a type before choosing, so the comparison ignores case.
 pub const TYPES: &[&str] = &[
-    "tab", "div", "list", "grid", "array", "list_item", "string", "textbox", "text", "tags", "enum", "int",
+    "tab", "div", "list", "grid", "array", "calendar", "list_item", "string", "textbox", "text", "tags", "enum", "int",
     "float", "date", "timestamp", "bool", "button", "checkbox", "chart", "image", "mark", "mount",
     "context",
 ];
@@ -110,6 +110,16 @@ pub fn find_or_why(document: &[OverseerNode], path: &str) -> Result<Option<Overs
             }
         }
     }
+}
+
+/// The template a reference names in the document itself, where it is - nothing for one in
+/// another file, which is no node of the document.
+pub fn in_document<'a>(document: &'a [OverseerNode], path: &str) -> Option<&'a OverseerNode> {
+    let found = reference(path);
+    if found.file.is_some() || is_type(&found.name) {
+        return None;
+    }
+    by_name(document, &found.name)
 }
 
 fn by_name<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {

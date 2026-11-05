@@ -1364,6 +1364,11 @@ pub fn resolve_values(nodes: &mut Vec<OverseerNode>) {
         resolve_document(nodes);
         return;
     }
+    // A calendar whose range the values moved holds other days now - see `calendars_moved`.
+    if calendars_moved(nodes) {
+        resolve_document(nodes);
+        return;
+    }
 
     let t = std::time::Instant::now();
     reads_reach(|| compute_chart_series(nodes));
@@ -1389,6 +1394,11 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     let before = has_a_window(nodes).then(|| nodes.clone());
     let reaching = Reaching::start();
     resolve_document_once(nodes);
+    // A calendar's range worked out while its template was copied can read what only the
+    // formulas after that work out, and then it is made again with what they gave.
+    if calendars_moved(nodes) {
+        resolve_document_once(nodes);
+    }
     let Some(before) = before else {
         return;
     };
@@ -1589,6 +1599,11 @@ pub fn resolve_specific_fields(
     let reached = reaching.take_new();
     if !reached.is_empty() {
         let _held = holding(reached);
+        resolve_document(nodes);
+        return;
+    }
+    // A calendar whose range the write moved holds other days now - see `calendars_moved`.
+    if calendars_moved(nodes) {
         resolve_document(nodes);
         return;
     }
@@ -3003,6 +3018,9 @@ fn resolve_node_templates(
     if matches!(node.node_type.as_str(), "grid" | "array") && make_grid_cells(node, all_nodes, missed) {
         local_progress = true;
     }
+    if node.node_type == "calendar" && make_calendar_cells(node, all_nodes, missed) {
+        local_progress = true;
+    }
 
     // If this node is a direct template instance (e.g., <Colorful> Instance { ... }),
     // clone the template's parameters and children, then merge overrides from the instance.
@@ -3246,62 +3264,20 @@ fn make_grid_cells(
         };
         return refuse(node, why);
     };
-    let cell = match node.parameters.get("entry").cloned() {
-        Some(OverseerValue::Template(path)) => match crate::bases::find_or_why(all_nodes, &path) {
-            Err(why) => return refuse(node, why),
-            Ok(None) => {
-                if crate::bases::reference(&path).file.is_none() {
-                    missed.push(crate::bases::reference(&path).name.clone());
-                }
-                return false;
-            }
-            Ok(Some(found)) => {
-                let template = as_a_template(found, &path, all_nodes, missed);
-                let mut cell = template.clone();
-                cell.adopt_template_snapshot(&template);
-                cell.node_type = template.name.clone();
-                cell.parameters.insert(
-                    "_original_type".to_string(),
-                    OverseerValue::String(template.node_type.clone()),
-                );
-                cell
-            }
-        },
-        Some(OverseerValue::String(type_name)) if crate::bases::is_type(&type_name) => {
-            let mut cell = OverseerNode::new_with_type(type_name.clone(), None);
-            cell.parameters
-                .insert("value".to_string(), empty_value_of(&type_name));
-            cell
-        }
-        _ => {
-            return refuse(
-                node,
-                format!("{} '{}' needs entry=, a template or a field type", kind, node.name),
-            )
-        }
+    let cell = match cell_of_entry(node, all_nodes, missed) {
+        Err(why) => return refuse(node, why),
+        Ok(None) => return false,
+        Ok(Some(cell)) => cell,
     };
-    let (indent_unit, newline) = node
-        .source_snapshot
-        .as_ref()
-        .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
-        .unwrap_or((None, None));
     let mut cells = Vec::with_capacity(columns * rows);
     for row in 0..rows {
         for column in 0..columns {
-            let mut one = cell.clone();
-            one.name = if array {
+            let name = if array {
                 crate::addressing::element_name(column)
             } else {
                 crate::addressing::cell_name(column, row)
             };
-            one.is_hierarchy_transparent = false;
-            mark_template_child_recursive(&mut one);
-            one.parameters.remove("_explicit_child_override");
-            one.parameters.remove("_override_present");
-            if one.source_snapshot.is_none() {
-                one.synthesize_snapshot_with_style_recursive(indent_unit.clone(), newline.clone());
-            }
-            cells.push(one);
+            cells.push(one_cell(node, &cell, name));
         }
     }
 
@@ -3348,6 +3324,378 @@ fn make_grid_cells(
         merge_node(node, &written, all_nodes);
     }
     true
+}
+
+/// What every cell of a grid, an array or a calendar is made from: a copy of its `entry=`, a
+/// template or a field type. `Ok(None)` while the template is not there yet, which is waited for
+/// as a list waits; `Err` says why there is nothing to make cells from.
+fn cell_of_entry(
+    node: &OverseerNode,
+    all_nodes: &[OverseerNode],
+    missed: &mut Vec<String>,
+) -> Result<Option<OverseerNode>, String> {
+    match node.parameters.get("entry").cloned() {
+        Some(OverseerValue::Template(path)) => match crate::bases::find_or_why(all_nodes, &path)? {
+            None => {
+                if crate::bases::reference(&path).file.is_none() {
+                    missed.push(crate::bases::reference(&path).name.clone());
+                }
+                Ok(None)
+            }
+            Some(found) => {
+                let template = as_a_template(found, &path, all_nodes, missed);
+                let mut cell = template.clone();
+                cell.adopt_template_snapshot(&template);
+                cell.node_type = template.name.clone();
+                cell.parameters.insert(
+                    "_original_type".to_string(),
+                    OverseerValue::String(template.node_type.clone()),
+                );
+                Ok(Some(cell))
+            }
+        },
+        Some(OverseerValue::String(type_name)) if crate::bases::is_type(&type_name) => {
+            let mut cell = OverseerNode::new_with_type(type_name.clone(), None);
+            cell.parameters
+                .insert("value".to_string(), empty_value_of(&type_name));
+            Ok(Some(cell))
+        }
+        _ => Err(format!(
+            "{} '{}' needs entry=, a template or a field type",
+            node.node_type, node.name
+        )),
+    }
+}
+
+/// One cell of `node`, named `name`, made from `cell` as `cell_of_entry` gave it: something the
+/// template gave, and so not saved until something is set in it.
+fn one_cell(node: &OverseerNode, cell: &OverseerNode, name: String) -> OverseerNode {
+    let (indent_unit, newline) = node
+        .source_snapshot
+        .as_ref()
+        .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
+        .unwrap_or((None, None));
+    let mut one = cell.clone();
+    one.name = name;
+    one.is_hierarchy_transparent = false;
+    mark_template_child_recursive(&mut one);
+    one.parameters.remove("_explicit_child_override");
+    one.parameters.remove("_override_present");
+    if one.source_snapshot.is_none() {
+        one.synthesize_snapshot_with_style_recursive(indent_unit, newline);
+    }
+    one
+}
+
+/// On a calendar: the days in view its cells were last made for, `2026-11-01..2026-11-30`, or
+/// why it has none. Compared with the range worked out again, it says whether the calendar has
+/// to be made again - see `calendars_moved`.
+pub const CALENDAR_RANGE: &str = "_calendar_range";
+
+/// On a cell of a calendar: whether its day is in view. A day outside it is kept, never drawn,
+/// and not among `cells()`.
+pub const IN_VIEW: &str = "_in_view";
+
+/// The most days a calendar shows at once: ten years. A range wider than that is a mistake, and
+/// would make a cell for every one of its days.
+const LONGEST_RANGE: i64 = 3660;
+
+/// The date a parameter of a calendar holds - written, or worked out at the calendar's place.
+fn calendar_date(
+    node: &OverseerNode,
+    key: &str,
+    path: &[String],
+    root: &[OverseerNode],
+) -> Result<Option<chrono::NaiveDate>, String> {
+    let Some(value) = node.parameters.get(key) else { return Ok(None) };
+    let value = match value {
+        OverseerValue::Formula(formula) => {
+            let context = crate::formula_evaluator::EvaluationContext::new_with_current(node, path.to_vec(), root);
+            crate::formula_evaluator::FormulaEvaluator::evaluate_formula(formula, &context)
+                .map_err(|_| format!("calendar '{}': {}= could not be worked out", node.name, key))?
+        }
+        other => other.clone(),
+    };
+    let text = match &value {
+        OverseerValue::Date(s) | OverseerValue::Timestamp(s) | OverseerValue::String(s) => s.trim().to_string(),
+        _ => String::new(),
+    };
+    text.get(..10)
+        .and_then(crate::addressing::date_of)
+        .map(Some)
+        .ok_or_else(|| format!("calendar '{}': {}= is not a date", node.name, key))
+}
+
+/// The first and the last day a calendar shows: `from=` and `to=`, or the `span=` - a `day`, a
+/// `week` from Monday, a `month` or a `year` - that holds `at=`, today when it says nothing.
+/// `from=` and `to=` each win over what the span would give.
+pub fn calendar_range(
+    node: &OverseerNode,
+    path: &[String],
+    root: &[OverseerNode],
+) -> Result<(chrono::NaiveDate, chrono::NaiveDate), String> {
+    use chrono::Datelike;
+    let from = calendar_date(node, "from", path, root)?;
+    let to = calendar_date(node, "to", path, root)?;
+    let span = match node.parameters.get("span") {
+        Some(OverseerValue::String(s)) => Some(s.trim().to_string()),
+        Some(_) => return Err(format!("calendar '{}': span= is day, week, month or year", node.name)),
+        None => None,
+    };
+    let spanned = match span.as_deref() {
+        None => None,
+        Some(span) => {
+            let at = match calendar_date(node, "at", path, root)? {
+                Some(at) => at,
+                None => crate::formula_evaluator::FormulaEvaluator::pinned_now()
+                    .with_timezone(&chrono::Local)
+                    .date_naive(),
+            };
+            let first = match span {
+                "day" => at,
+                "week" => at - chrono::Duration::days(at.weekday().num_days_from_monday() as i64),
+                "month" => at.with_day(1).expect("every month has a first"),
+                "year" => chrono::NaiveDate::from_ymd_opt(at.year(), 1, 1).expect("every year has a first"),
+                other => {
+                    return Err(format!(
+                        "calendar '{}': span= is day, week, month or year, not {}",
+                        node.name, other
+                    ))
+                }
+            };
+            let last = match span {
+                "day" => at,
+                "week" => first + chrono::Duration::days(6),
+                "month" => {
+                    let (year, month) = if at.month() == 12 { (at.year() + 1, 1) } else { (at.year(), at.month() + 1) };
+                    chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("a month") - chrono::Duration::days(1)
+                }
+                _ => chrono::NaiveDate::from_ymd_opt(at.year(), 12, 31).expect("every year has a last"),
+            };
+            Some((first, last))
+        }
+    };
+    let (from, to) = match (from, to, spanned) {
+        (Some(from), Some(to), _) => (from, to),
+        (from, to, Some((first, last))) => (from.unwrap_or(first), to.unwrap_or(last)),
+        _ => {
+            return Err(format!(
+                "calendar '{}' needs from= and to=, or span=",
+                node.name
+            ))
+        }
+    };
+    if to < from {
+        return Err(format!("calendar '{}': to= is before from=", node.name));
+    }
+    if (to - from).num_days() >= LONGEST_RANGE {
+        return Err(format!(
+            "calendar '{}' shows more than {} days",
+            node.name, LONGEST_RANGE
+        ));
+    }
+    Ok((from, to))
+}
+
+/// The range as `CALENDAR_RANGE` holds it.
+fn said_range(range: &Result<(chrono::NaiveDate, chrono::NaiveDate), String>) -> String {
+    match range {
+        Ok((from, to)) => format!("{}..{}", from, to),
+        Err(why) => why.clone(),
+    }
+}
+
+/// Fills a calendar with its cells: one for each day in view and one for each day its block
+/// wrote, made from its `entry=` and named by the date, `2026-11-04`, in date order. As a grid's,
+/// a cell is an instance's inherited field: only what the block wrote is saved, and a cell set
+/// since is written into the block. Unlike a grid's, every date is a cell the calendar may hold -
+/// the range is only what is in view - so a day written outside it is kept with nothing said, and
+/// only a name that is no date is a problem.
+///
+/// The range may be a formula - `today()`, a date a button steps - so it is worked out here, at
+/// the calendar's place in the document, and the calendar is made again whenever what it gives
+/// moves: the cells already there are kept, written or set, and the days now in view are added.
+/// Not in a template being made ready to copy, which is at no address of the document: each copy
+/// is made where it lands.
+///
+/// Returns whether it changed anything.
+fn make_calendar_cells(
+    node: &mut OverseerNode,
+    all_nodes: &[OverseerNode],
+    missed: &mut Vec<String>,
+) -> bool {
+    if !WORKING_OUT.with(|on| on.borrow().is_empty()) {
+        return false;
+    }
+    let address = WALKED.with(|w| w.borrow().0.join("/"));
+    let path = crate::addressing::name_path(all_nodes, &address)
+        .unwrap_or_else(|| address.split('/').map(str::to_string).collect());
+    let range = calendar_range(node, &path, all_nodes);
+    let said = said_range(&range);
+    let made = node.parameters.contains_key(GRID_MADE);
+    if made && matches!(node.parameters.get(CALENDAR_RANGE), Some(OverseerValue::String(s)) if *s == said) {
+        return false;
+    }
+    let cell = match cell_of_entry(node, all_nodes, missed) {
+        Err(why) => {
+            node.parameters
+                .insert(crate::bases::ERROR.to_string(), OverseerValue::String(why));
+            node.parameters
+                .insert(GRID_MADE.to_string(), OverseerValue::Boolean(true));
+            node.parameters
+                .insert(CALENDAR_RANGE.to_string(), OverseerValue::String(said));
+            return true;
+        }
+        Ok(None) => return false,
+        Ok(Some(cell)) => cell,
+    };
+    let in_view: Vec<chrono::NaiveDate> = match &range {
+        Ok((from, to)) => from.iter_days().take_while(|day| day <= to).collect(),
+        Err(_) => Vec::new(),
+    };
+    if made {
+        let held: std::collections::HashSet<chrono::NaiveDate> = node
+            .children
+            .iter()
+            .filter_map(|c| crate::addressing::date_of(&c.name))
+            .collect();
+        for day in &in_view {
+            if !held.contains(day) {
+                let one = one_cell(node, &cell, crate::addressing::date_name(*day));
+                node.children.push(one);
+            }
+        }
+    } else {
+        let written = std::mem::take(&mut node.children);
+        let mut days: std::collections::BTreeSet<chrono::NaiveDate> = in_view.iter().copied().collect();
+        days.extend(written.iter().filter_map(|w| crate::addressing::date_of(&w.name)));
+        node.children = days
+            .into_iter()
+            .map(|day| one_cell(node, &cell, crate::addressing::date_name(day)))
+            .collect();
+        node.parameters
+            .insert("_from_template".to_string(), OverseerValue::Boolean(true));
+        if !written.is_empty() {
+            let names: Vec<String> = written.iter().map(|w| w.name.clone()).collect();
+            node.parameters.insert(
+                "_explicit_overrides".to_string(),
+                OverseerValue::String(names.join(",")),
+            );
+            merge_node(node, &written, all_nodes);
+        }
+    }
+    // Days in date order; what is no day, kept from the block, after them as it was written.
+    node.children
+        .sort_by_key(|c| crate::addressing::date_of(&c.name).map_or((1, None), |day| (0, Some(day))));
+    let (first, last) = match &range {
+        Ok((from, to)) => (Some(*from), Some(*to)),
+        Err(_) => (None, None),
+    };
+    for child in node.children.iter_mut() {
+        if let Some(day) = crate::addressing::date_of(&child.name) {
+            let seen = first.is_some_and(|f| f <= day) && last.is_some_and(|l| day <= l);
+            child.parameters.insert(IN_VIEW.to_string(), OverseerValue::Boolean(seen));
+        }
+    }
+    let not_days: Vec<&str> = node
+        .children
+        .iter()
+        .map(|c| c.name.as_str())
+        .filter(|name| crate::addressing::date_of(name).is_none())
+        .collect();
+    let mut problems = Vec::new();
+    if let Err(why) = &range {
+        problems.push(why.clone());
+    }
+    if !not_days.is_empty() {
+        problems.push(format!(
+            "calendar '{}' holds days, and {} is none",
+            node.name,
+            not_days.join(", ")
+        ));
+    }
+    if problems.is_empty() {
+        node.parameters.remove(crate::bases::ERROR);
+    } else {
+        node.parameters.insert(
+            crate::bases::ERROR.to_string(),
+            OverseerValue::String(problems.join("; ")),
+        );
+    }
+    node.parameters
+        .insert(GRID_MADE.to_string(), OverseerValue::Boolean(true));
+    node.parameters
+        .insert(CALENDAR_RANGE.to_string(), OverseerValue::String(said));
+    true
+}
+
+/// Gives a calendar the cell of a day it has none for - one out of view nobody wrote, which an
+/// action names to set - in its place among the days. Returns whether it made one.
+pub fn add_calendar_day(calendar: &mut OverseerNode, day: &str, root: &[OverseerNode]) -> bool {
+    let Some(date) = crate::addressing::date_of(day) else { return false };
+    if calendar.children.iter().any(|c| c.name == day) {
+        return false;
+    }
+    let Ok(Some(cell)) = cell_of_entry(calendar, root, &mut Vec::new()) else { return false };
+    let mut one = one_cell(calendar, &cell, day.to_string());
+    one.parameters.insert(IN_VIEW.to_string(), OverseerValue::Boolean(false));
+    let at = calendar
+        .children
+        .iter()
+        .position(|c| crate::addressing::date_of(&c.name).map_or(true, |other| other > date))
+        .unwrap_or(calendar.children.len());
+    calendar.children.insert(at, one);
+    true
+}
+
+/// Whether a calendar's range has moved since its cells were made - a guarded date stepped by a
+/// button, a day turned over - so that the document has to be made again for the days now in
+/// view. Writing a value is otherwise no change of shape, and the paths that work out only what
+/// a write reached ask this.
+pub fn calendars_moved(nodes: &[OverseerNode]) -> bool {
+    // Asked after every write, so a document without a calendar is told so by a walk that builds
+    // no paths.
+    fn holds_one(children: &[OverseerNode]) -> bool {
+        children.iter().any(|c| c.node_type == "calendar" || holds_one(&c.children))
+    }
+    if !holds_one(nodes) {
+        return false;
+    }
+    fn walk(
+        children: &[OverseerNode],
+        root: &[OverseerNode],
+        trail: &mut Vec<String>,
+        level: &mut crate::addressing::Level,
+    ) -> bool {
+        for node in children {
+            if not_worked_out(node) {
+                continue;
+            }
+            let wrapper = crate::addressing::is_wrapper(node);
+            if !wrapper {
+                trail.push(level.segment(&node.name));
+            }
+            let moved = if node.node_type == "calendar" {
+                let address = trail.join("/");
+                let path = crate::addressing::name_path(root, &address)
+                    .unwrap_or_else(|| trail.clone());
+                let said = said_range(&calendar_range(node, &path, root));
+                !matches!(node.parameters.get(CALENDAR_RANGE), Some(OverseerValue::String(s)) if *s == said)
+            } else if wrapper {
+                walk(&node.children, root, trail, level)
+            } else {
+                walk(&node.children, root, trail, &mut crate::addressing::Level::default())
+            };
+            if !wrapper {
+                trail.pop();
+            }
+            if moved {
+                return true;
+            }
+        }
+        false
+    }
+    walk(nodes, nodes, &mut Vec::new(), &mut crate::addressing::Level::default())
 }
 
 /// Recursively infer '-' typed override children using the corresponding template node structure.

@@ -1586,6 +1586,13 @@ export class OverseerRenderer {
             if (!place || place.column >= columns || place.row >= rows) return false
         }
 
+        // A calendar draws the days in view. The others it holds - written outside the range, or
+        // set by an action - are kept, and drawn when the range comes round to them.
+        if (parentType === 'calendar') {
+            const seen = this.getParameterValue(childNode, '_in_view')
+            if (!(seen === true || String(seen).toLowerCase() === 'true')) return false
+        }
+
         // A list entry the resolver left out of view. Not merely hidden: nothing was worked out
         // for it and no template was copied onto it, so there is nothing here to draw - such a
         // row comes out as unformatted text showing raw handles, which is exactly what it is.
@@ -2908,6 +2915,7 @@ export class OverseerRenderer {
                     renderChildren()
                     if (nodeTypeLower === 'grid') this.setUpGrid(element, node)
                     if (nodeTypeLower === 'array') this.setUpArray(element, node)
+                    if (nodeTypeLower === 'calendar') this.setUpCalendar(element, node)
                     if (nodeTypeLower === 'list') {
                         this.setUpTree(element, node)
                         this.setUpTable(element, node)
@@ -2954,6 +2962,7 @@ export class OverseerRenderer {
                 return this.createListElement(node)
             case 'grid':
             case 'array':
+            case 'calendar':
                 return this.createGridElement(node)
             case 'list_item':
                 return this.createListItemElement(node)
@@ -3677,6 +3686,23 @@ export class OverseerRenderer {
         } else {
             const first = cells[0] || null
             for (let c = 0; c < length; c++) element.insertBefore(heading(gridColumnLetters(c), 'column'), first)
+        }
+    }
+
+    /// A calendar: its days in view, one to a row, each headed by its date to the left unless it
+    /// says `header=false`.
+    setUpCalendar(element, node) {
+        const header = this.getParameterValue(node, 'header')
+        const headed = !(header === false || String(header).toLowerCase() === 'false')
+        element.style.gridTemplateColumns = (headed ? 'auto ' : '') + 'minmax(0, 1fr)'
+        if (!headed) return
+        for (const cell of Array.from(element.children).filter(el => el.dataset && el.dataset.path)) {
+            let name = ''
+            try { name = String(JSON.parse(cell.dataset.path).slice(-1)[0] || '') } catch (_) { /* no day */ }
+            const h = document.createElement('div')
+            h.className = 'overseer-grid-heading row'
+            h.textContent = name
+            element.insertBefore(h, cell)
         }
     }
 
@@ -11103,7 +11129,7 @@ export class OverseerRenderer {
         // told for a container by what it holds.
         const kind = String(node.node_type || node.type || '').toLowerCase()
         const holds = Array.isArray(node.children) && node.children.length > 0
-        if (holds || ['div', 'list', 'grid', 'array', 'tab', 'table'].includes(kind)) {
+        if (holds || ['div', 'list', 'grid', 'array', 'calendar', 'tab', 'table'].includes(kind)) {
             const header = element.querySelector(':scope > .overseer-fold-header')
             element.insertBefore(line, header ? header.nextSibling : element.firstChild)
         } else if (element.parentNode === container) {
@@ -12878,7 +12904,8 @@ export class OverseerRenderer {
                 switch (nodeType) {
                     case 'list': return 'overseer-list'
                     case 'grid':
-                    case 'array': return 'overseer-grid'
+                    case 'array':
+                    case 'calendar': return 'overseer-grid'
                     case 'list_item':
                     case '-': return 'overseer-list-item'
                     case 'div': return 'overseer-div'
@@ -13297,6 +13324,7 @@ export class OverseerRenderer {
                 case 'list':
                 case 'grid':
                 case 'array':
+                case 'calendar':
                 case 'tab':
                     // Re-render container subtree for lists and tabs
                     try {

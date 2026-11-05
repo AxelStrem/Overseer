@@ -120,6 +120,22 @@ pub fn cell_place(name: &str) -> Option<(usize, usize)> {
     Some((column - 1, row - 1))
 }
 
+/// The date a calendar's cell is named by, `2026-11-04` - `None` for any other name, a date that
+/// is not one (`2026-02-30`) among them.
+pub fn date_of(name: &str) -> Option<chrono::NaiveDate> {
+    let shaped = name.len() == 10
+        && name.bytes().enumerate().all(|(i, b)| if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() });
+    if !shaped {
+        return None;
+    }
+    chrono::NaiveDate::parse_from_str(name, "%Y-%m-%d").ok()
+}
+
+/// The name of a calendar's cell for a date.
+pub fn date_name(date: chrono::NaiveDate) -> String {
+    date.format("%Y-%m-%d").to_string()
+}
+
 /// A value as the text a key compares by - what `key_of` gives for a field holding it.
 pub fn key_of_value(value: &OverseerValue) -> Option<String> {
     key_text(value)

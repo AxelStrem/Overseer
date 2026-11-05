@@ -1639,6 +1639,7 @@ impl ActionExecutor {
         owner_path: &[String],
         action: &OverseerNode,
     ) -> Result<(), OverseerError> {
+        Self::make_days_named(nodes, owner_path, action);
         match action.node_type.as_str() {
             // Opens a field for editing, as though it had been double-tapped.
             //
@@ -2496,9 +2497,22 @@ impl ActionExecutor {
             p = &p[1..];
         }
         let mut explicit_param: Option<String> = None;
+        // What is inside brackets is no step of the path: a formula naming a calendar's day,
+        // `Days[$(../showing)]`, has slashes and dots of its own.
+        let mut depth = 0usize;
+        let mut slashes = Vec::new();
+        let mut last_dot = None;
+        for (at, c) in p.char_indices() {
+            match c {
+                '[' => depth += 1,
+                ']' => depth = depth.saturating_sub(1),
+                '/' if depth == 0 => slashes.push(at),
+                '.' if depth == 0 => last_dot = Some(at),
+                _ => {}
+            }
+        }
         // support trailing .param on the last segment only, not for ".."
-        let last_slash = p.rfind('/');
-        let last_dot = p.rfind('.');
+        let last_slash = slashes.last().copied();
         if let Some(d) = last_dot {
             let is_after_slash = last_slash.map_or(true, |s| d > s);
             let is_not_parent = if d > 0 { &p[d - 1..=d] != ".." } else { true };
@@ -2509,7 +2523,13 @@ impl ActionExecutor {
                 p = lhs;
             }
         }
-        let segments = p.split('/').map(|s| s.trim().to_string()).collect();
+        let mut segments = Vec::with_capacity(slashes.len() + 1);
+        let mut start = 0;
+        for at in slashes.into_iter().filter(|at| *at < p.len()) {
+            segments.push(p[start..at].trim().to_string());
+            start = at + 1;
+        }
+        segments.push(p[start..].trim().to_string());
         (segments, explicit_param, anchored)
     }
 
@@ -2521,6 +2541,62 @@ impl ActionExecutor {
         let column: usize = column.trim().parse().ok()?;
         let row: usize = row.trim().parse().ok()?;
         Some((&seg[..open], crate::addressing::cell_name(column, row)))
+    }
+
+    /// A segment naming a calendar's cell by a day, `Days[2026-11-04]` or `Days[$(today())]`, as
+    /// the calendar's name and the cell's. The formula is worked out where the action is; what it
+    /// gives that is no date leaves the segment as it was written.
+    fn split_day(seg: &str, owner_path: &[String], nodes: &[OverseerNode]) -> Option<(String, String)> {
+        let open = seg.find('[').filter(|_| seg.ends_with(']'))?;
+        let inside = seg[open + 1..seg.len() - 1].trim();
+        let day = match inside.strip_prefix("$(").and_then(|rest| rest.strip_suffix(')')) {
+            Some(formula) => {
+                let ctx = Self::action_context(owner_path, nodes);
+                match FormulaEvaluator::evaluate_formula(formula, &ctx).ok()? {
+                    OverseerValue::Date(s) | OverseerValue::Timestamp(s) | OverseerValue::String(s) => {
+                        crate::addressing::date_of(s.trim().get(..10)?)?
+                    }
+                    _ => return None,
+                }
+            }
+            None => crate::addressing::date_of(inside)?,
+        };
+        Some((seg[..open].to_string(), crate::addressing::date_name(day)))
+    }
+
+    /// Makes the cell of each day an action's path names in a calendar that has none for it - a
+    /// day out of view nobody wrote - so that the action can set it like any other. The calendar
+    /// is found as the path itself will be; a path that names no calendar is left for the action
+    /// to refuse.
+    fn make_days_named(nodes: &mut Vec<OverseerNode>, owner_path: &[String], action: &OverseerNode) {
+        let Some(OverseerValue::String(target)) = action.parameters.get("path") else { return };
+        if !target.contains('[') && !target.split('/').any(|s| crate::addressing::date_of(s.trim()).is_some()) {
+            return;
+        }
+        let (segments, _param, anchored) = Self::split_path_and_param(target);
+        for (at, seg) in segments.iter().enumerate() {
+            let mut calendar_segments = segments[..at].to_vec();
+            let day = if let Some((calendar, day)) = Self::split_day(seg, owner_path, nodes) {
+                calendar_segments.push(calendar);
+                day
+            } else if let Some(day) = crate::addressing::date_of(seg) {
+                crate::addressing::date_name(day)
+            } else {
+                continue;
+            };
+            let Some(indices) = Self::resolve_target_indices(nodes, owner_path, anchored, &calendar_segments) else {
+                continue;
+            };
+            let is_calendar = Self::node_by_indices(nodes, &indices).is_some_and(|n| n.node_type == "calendar");
+            if !is_calendar {
+                continue;
+            }
+            let snapshot = nodes.clone();
+            let Some(calendar) = Self::get_node_mut_by_indices(nodes, &indices) else { continue };
+            if crate::resolver::add_calendar_day(calendar, &day, &snapshot) {
+                note_structural();
+            }
+        }
     }
 
     /// Resolve a mutable reference to a node given a base owner path and target path string.
@@ -2590,6 +2666,9 @@ impl ActionExecutor {
                 } else if let Some((grid, cell)) = Self::split_cell_place(seg) {
                     abs.push(grid.to_string());
                     abs.push(cell);
+                } else if let Some((calendar, day)) = Self::split_day(seg, owner_path, nodes) {
+                    abs.push(calendar);
+                    abs.push(day);
                 } else {
                     abs.push(seg.clone());
                 }

@@ -2983,6 +2983,29 @@ impl FormulaEvaluator {
                     "index() is only for a formula inside an array's element".to_string(),
                 ))
             }
+            // date(): the day of the calendar cell the formula is in, the date `at()` takes - a
+            // calendar's own `index()`.
+            "date" => {
+                if !args.is_empty() {
+                    return Err(OverseerError::FormulaError(
+                        "date() takes no arguments".to_string(),
+                    ));
+                }
+                let path = &context.node_path;
+                for i in (1..path.len()).rev() {
+                    let Some(day) = crate::addressing::date_of(&path[i]) else {
+                        continue;
+                    };
+                    let in_a_calendar = Self::resolve_path_to_node(&path[..i], context.document_root)
+                        .is_some_and(|parent| parent.node_type == "calendar");
+                    if in_a_calendar {
+                        return Ok(OverseerValue::Date(crate::addressing::date_name(day)));
+                    }
+                }
+                Err(OverseerError::FormulaError(
+                    "date() is only for a formula inside a calendar's cell".to_string(),
+                ))
+            }
             // depth(): how deep in its tree the entry the formula is in stands, 0 at the top -
             // for a list drawn with `tree=`, in either of its shapes.
             "depth" => {
@@ -4227,6 +4250,11 @@ impl FormulaEvaluator {
                             read.path = cell_path.into();
                             read.entries_alone = false;
                         }
+                        if list.is_empty() {
+                            if let Some(empty) = Self::calendar_day_left_empty(grid, call) {
+                                return Ok(empty);
+                            }
+                        }
                         return Ok(list
                             .first()
                             .and_then(|item| match item {
@@ -4791,6 +4819,73 @@ impl FormulaEvaluator {
         Some(Some(cell))
     }
 
+    /// What a calendar's own methods pick out of its cells: `cells()` the days in view, in date
+    /// order, and `at(date)` the one cell of a day, in view or not. A day nobody wrote and not in
+    /// view has no cell of its own, and reads as what its template has - the template itself, at
+    /// its place in the document; a calendar of a field type gives no cell, and `at()` reads as the
+    /// type's empty value - see `calendar_day_left_empty`.
+    fn calendar_pick<'a>(
+        calendar: &'a OverseerNode,
+        call: &MethodCall,
+        context: &EvaluationContext<'a>,
+    ) -> Option<Result<Vec<&'a OverseerNode>, OverseerError>> {
+        let in_view = |cell: &&OverseerNode| {
+            matches!(cell.parameters.get(crate::resolver::IN_VIEW), Some(OverseerValue::Boolean(true)))
+        };
+        match call.name.as_str() {
+            "cells" => {
+                if !call.args.is_empty() {
+                    return Some(Err(OverseerError::FormulaError("cells() takes no arguments".to_string())));
+                }
+                Some(Ok(calendar.children.iter().filter(in_view).collect()))
+            }
+            "at" => {
+                if call.args.len() != 1 {
+                    return Some(Err(OverseerError::FormulaError("a calendar's at() takes 1 argument, a date".to_string())));
+                }
+                let day = match Self::evaluate_expression(&call.args[0], context) {
+                    Ok(value) => match Self::to_local_date(&value) {
+                        Some(day) => day,
+                        None => {
+                            return Some(Err(OverseerError::FormulaError(format!(
+                                "a calendar's at() wants a date, not {:?}",
+                                value
+                            ))))
+                        }
+                    },
+                    Err(e) => return Some(Err(e)),
+                };
+                let name = crate::addressing::date_name(day);
+                if let Some(cell) = calendar.children.iter().find(|c| c.name == name) {
+                    return Some(Ok(vec![cell]));
+                }
+                let template = match calendar.parameters.get("entry") {
+                    Some(OverseerValue::Template(path)) => {
+                        crate::bases::in_document(context.document_root, path)
+                    }
+                    _ => None,
+                };
+                Some(Ok(template.into_iter().collect()))
+            }
+            _ => None,
+        }
+    }
+
+    /// What `Days.at(date)` reads as for a day with no cell, in a calendar of a field type: the
+    /// type's empty value, which is what the cell would hold. `None` for anything else.
+    fn calendar_day_left_empty(calendar: Option<&OverseerNode>, call: &MethodCall) -> Option<OverseerValue> {
+        let calendar = calendar.filter(|c| c.node_type == "calendar" && call.name == "at")?;
+        match calendar.parameters.get("entry") {
+            Some(OverseerValue::String(type_name)) => Some(match type_name.as_str() {
+                "int" => OverseerValue::Integer(0),
+                "float" => OverseerValue::Float(0.0),
+                "bool" | "checkbox" => OverseerValue::Boolean(false),
+                _ => OverseerValue::String(String::new()),
+            }),
+            _ => None,
+        }
+    }
+
     /// What a grid's own methods pick out of its cells, row by row: `cells()` all of them,
     /// `row(n)` and `column(n)` one line, `at(column, row)` one cell, each counted from 0. `None`
     /// for any other method, or for a node that is not a grid. A place outside the grid is an
@@ -4798,8 +4893,11 @@ impl FormulaEvaluator {
     fn grid_pick<'a>(
         grid: &'a OverseerNode,
         call: &MethodCall,
-        context: &EvaluationContext,
+        context: &EvaluationContext<'a>,
     ) -> Option<Result<Vec<&'a OverseerNode>, OverseerError>> {
+        if grid.node_type == "calendar" {
+            return Self::calendar_pick(grid, call, context);
+        }
         let array = grid.node_type == "array";
         let methods: &[&str] = if array {
             &["cells", "at"]
