@@ -172,6 +172,31 @@ impl DocumentRoot {
         self.resolve_for(name, crate::access::Need::Read)
     }
 
+    /// The document a page has open, as `host/open` tells another document of it: what whoever is
+    /// asking may do with it - as `access` answers - and whether undo would take anything back.
+    /// One they may not open is named and nothing more, as one that is not there would be.
+    pub fn open_beside(&self, name: &str) -> crate::environment::Open {
+        let (can, path) = match self.resolve_for(name, crate::access::Need::Edit) {
+            Ok(path) => ("edit", Some(path)),
+            Err(RequestError::ReadOnly(_)) => ("read", self.resolve(name).ok()),
+            Err(_) => ("", None),
+        };
+        let undoable = path
+            .as_deref()
+            .filter(|_| can == "edit")
+            .and_then(crate::undo::beside)
+            .is_some_and(|(folder, file)| crate::undo::depth(&folder, &file) > 0);
+        crate::environment::Open {
+            path: name.to_string(),
+            name: Path::new(name)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            can: can.to_string(),
+            undoable,
+        }
+    }
+
     /// The same, for whoever is asking, to do `need` with it - see `access`.
     ///
     /// What is refused answers as what is missing does, so nobody learns from an error what is

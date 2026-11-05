@@ -10,7 +10,11 @@ use overseer::types::{OverseerNode, OverseerValue};
 
 fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
     for node in nodes {
-        if node.name == name && node.node_type != "context" {
+        // What a context holds is not the document's own: `host/kind` is not the `kind` asked for.
+        if node.node_type == "context" {
+            continue;
+        }
+        if node.name == name {
             return Some(node);
         }
         if let Some(hit) = find(&node.children, name) {

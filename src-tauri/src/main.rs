@@ -442,6 +442,7 @@ async fn execute_overseer_event_update(
 
 
 fn main() {
+    overseer::environment::set_kind("desktop");
     // Install a panic hook to surface detailed errors in the terminal during development
     std::panic::set_hook(Box::new(|info| {
         eprintln!("\n================= RUST PANIC =================");

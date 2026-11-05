@@ -33,12 +33,33 @@ pub const MODE: &str = "mode";
 /// What `mode` says to follow the system.
 pub const SYSTEM: &str = "system";
 
-/// The context that says who is looking: `me/handle`, their username, and `me/name`, what they
-/// are called. Both are empty for whoever has no account - see `people`.
+/// The context that says who is looking: `me/handle`, their username, `me/name`, what they are
+/// called, and `me/admin`, whether they run the server. Empty and false for whoever has no
+/// account - see `people`.
 pub const ME: &str = "me";
+
+/// The context that says what the document is shown in: `host/kind`, the themes there are and the
+/// one chosen, and `host/open`, the document open beside it - see `Open`.
+pub const HOST: &str = "host";
+
+/// What `host/kind` says until the process says otherwise: a page the server serves.
+pub const BROWSER: &str = "browser";
+
+/// The document open beside the one being worked out - the one a drawer is drawn next to - as
+/// whoever serves the request says it: its name there, and what the asker may do with it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Open {
+    pub path: String,
+    pub name: String,
+    /// `"edit"`, `"read"`, or empty where the asker may not open it at all.
+    pub can: String,
+    /// Whether there is a write to it that undo would take back.
+    pub undoable: bool,
+}
 
 static FILE_HERE: Mutex<Option<PathBuf>> = Mutex::new(None);
 static SCHEME_HERE: Mutex<Option<String>> = Mutex::new(None);
+static KIND_HERE: Mutex<Option<String>> = Mutex::new(None);
 
 thread_local! {
     /// The settings a request is worked out under, where whoever serves it said - the server, for
@@ -47,6 +68,11 @@ thread_local! {
     static SCOPED_FILE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     /// The scheme the page that sent this request is in.
     static SCOPED_SCHEME: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Whether whoever this request is answered for runs the server - something the server's
+    /// accounts know, and the documents do not.
+    static SCOPED_ADMIN: RefCell<Option<bool>> = const { RefCell::new(None) };
+    /// The document the page that sent this request has open beside the one asked about.
+    static SCOPED_OPEN: RefCell<Option<Open>> = const { RefCell::new(None) };
     /// Set while a mounted document is worked out, which sees the environment through its host.
     static LEFT_OUT: Cell<bool> = const { Cell::new(false) };
 }
@@ -62,6 +88,13 @@ pub fn set_file(file: Option<PathBuf>) {
 pub fn set_scheme(scheme: Option<&str>) {
     if let Ok(mut held) = SCHEME_HERE.lock() {
         *held = scheme.map(str::to_string);
+    }
+}
+
+/// What this process shows documents in, as `host/kind` says it: `"desktop"` for the app.
+pub fn set_kind(kind: &str) {
+    if let Ok(mut held) = KIND_HERE.lock() {
+        *held = Some(kind.to_string());
     }
 }
 
@@ -85,6 +118,20 @@ pub fn with_file<T>(file: PathBuf, f: impl FnOnce() -> T) -> T {
 pub fn seen_as<T>(scheme: Option<&str>, f: impl FnOnce() -> T) -> T {
     match scheme {
         Some(scheme) => scoped(&SCOPED_SCHEME, Some(scheme.to_string()), f),
+        None => f(),
+    }
+}
+
+/// Work for someone who does, or does not, run the server.
+pub fn as_admin<T>(admin: bool, f: impl FnOnce() -> T) -> T {
+    scoped(&SCOPED_ADMIN, Some(admin), f)
+}
+
+/// Work as a page that has this document open beside the one asked about. Nothing said leaves
+/// what was there.
+pub fn beside<T>(open: Option<Open>, f: impl FnOnce() -> T) -> T {
+    match open {
+        Some(open) => scoped(&SCOPED_OPEN, Some(open), f),
         None => f(),
     }
 }
@@ -140,18 +187,20 @@ fn settings(file: &Path) -> Option<Vec<OverseerNode>> {
 }
 
 /// The context declarations a document's top is seen under, in the order they are written: those
-/// of the settings, where any are in force, and `me`, which is there without them as well - empty,
-/// as for anyone nobody has signed in. None for a mounted document, which sees the environment
-/// through its host.
+/// of the settings, where any are in force, then `me` and `host`, which are there without them as
+/// well - empty, as for anyone nobody has signed in. None for a mounted document, which sees the
+/// environment through its host.
 pub fn declarations() -> Vec<OverseerNode> {
     if LEFT_OUT.with(Cell::get) {
         return Vec::new();
     }
     let mut out = Vec::new();
-    if let Some(nodes) = file().and_then(|file| settings(&file)) {
-        gather(&nodes, &mut out);
+    let settings = file().and_then(|file| settings(&file));
+    if let Some(nodes) = &settings {
+        gather(nodes, &mut out);
     }
     out.push(me());
+    out.push(host(settings.as_deref()));
     out
 }
 
@@ -161,6 +210,11 @@ fn looking() -> Option<String> {
         crate::access::Asker::Person(handle) => Some(handle),
         _ => None,
     }
+}
+
+/// Whether whoever is looking runs the server: false for nobody, and wherever no server said.
+fn admin() -> bool {
+    looking().is_some() && SCOPED_ADMIN.with(|held| held.borrow().unwrap_or(false))
 }
 
 /// Whoever is looking, as `me` says them: their username and their name, both empty for nobody.
@@ -184,18 +238,62 @@ fn who_is_looking() -> (String, String) {
 /// people, so a new one is seen at once, in every document.
 fn me() -> OverseerNode {
     let (handle, name) = who_is_looking();
-    let quoted =
-        |s: &str| crate::file_ops::FileOperations::serialize_value(&OverseerValue::String(s.to_string()));
     let text = format!(
-        "context {} {{\n    string handle = {}\n    string name = {}\n}}\n",
+        "context {} {{\n    string handle = {}\n    string name = {}\n    bool admin = {}\n}}\n",
         ME,
         quoted(&handle),
-        quoted(&name)
+        quoted(&name),
+        admin()
     );
     crate::parser::parse_document(&text)
         .ok()
         .and_then(|(_, mut nodes)| nodes.pop())
         .expect("the context of who is looking is a document")
+}
+
+fn quoted(s: &str) -> String {
+    crate::file_ops::FileOperations::serialize_value(&OverseerValue::String(s.to_string()))
+}
+
+/// `context host`: what this process shows documents in, the themes there are to choose from and
+/// the one the settings chose, and the document open beside this one, where the page said.
+fn host(settings: Option<&[OverseerNode]>) -> OverseerNode {
+    let kind = KIND_HERE
+        .lock()
+        .ok()
+        .and_then(|held| held.clone())
+        .unwrap_or_else(|| BROWSER.to_string());
+    let theme = settings.and_then(crate::app_api::chosen_theme).unwrap_or_default();
+    let open = SCOPED_OPEN.with(|held| held.borrow().clone()).unwrap_or_default();
+    let mut text = format!(
+        "context {} {{\n    string kind = {}\n    string theme = {}\n",
+        HOST,
+        quoted(&kind),
+        quoted(&theme)
+    );
+    // A keyed list, so that it is a vocabulary: an enum picks a theme out of it. Its entries are
+    // written whole, by place, as a list's are once worked out: the copy of a context is put in
+    // after a document's templates are, and would hold entries nothing made.
+    text.push_str("    list themes (key=\"tag\") {\n");
+    for (at, name) in themes().iter().enumerate() {
+        text.push_str(&format!(
+            "        div Theme__{} {{\n            string tag = {}\n        }}\n",
+            at + 1,
+            quoted(name)
+        ));
+    }
+    text.push_str("    }\n");
+    text.push_str(&format!(
+        "    div open {{\n        string path = {}\n        string name = {}\n        string can = {}\n        bool undoable = {}\n    }}\n}}\n",
+        quoted(&open.path),
+        quoted(&open.name),
+        quoted(&open.can),
+        open.undoable
+    ));
+    crate::parser::parse_document(&text)
+        .ok()
+        .and_then(|(_, mut nodes)| nodes.pop())
+        .expect("the context of the host is a document")
 }
 
 /// The declarations of the settings' top level, looked through its wrappers as a container's are.
@@ -225,8 +323,23 @@ pub fn settle_mode(node: &mut OverseerNode) {
 /// What tells two worked-out copies of one text in one folder apart: whether there were settings,
 /// and the mode they came to. A document held worked out light is not the one a dark page wants.
 pub fn key() -> String {
+    // What the page or the server says of the host, which no settings file holds. What it says of
+    // the themes is read from files `held` names.
+    let open = SCOPED_OPEN.with(|held| held.borrow().clone());
+    let host = match open {
+        Some(open) if !LEFT_OUT.with(Cell::get) => format!(
+            ";open={}|{}|{}|{}",
+            open.path, open.name, open.can, open.undoable
+        ),
+        _ => String::new(),
+    };
+    let kind = KIND_HERE.lock().ok().and_then(|held| held.clone());
+    let host = match kind {
+        Some(kind) if kind != BROWSER => format!("{};kind={}", host, kind),
+        _ => host,
+    };
     if file().is_none() {
-        return String::new();
+        return host;
     }
     let mode = declarations()
         .into_iter()
@@ -242,8 +355,8 @@ pub fn key() -> String {
         .unwrap_or_default();
     // Two people never share a copy: each sees their own `me`, and their own settings.
     match looking() {
-        Some(handle) => format!("mode={};me={}", mode, handle),
-        None => format!("mode={}", mode),
+        Some(handle) => format!("mode={};me={};admin={}{}", mode, handle, admin(), host),
+        None => format!("mode={}{}", mode, host),
     }
 }
 
@@ -272,7 +385,7 @@ pub fn look() -> String {
 /// Who is looking, as `me` says them - see `look`.
 pub fn who() -> String {
     let (handle, name) = who_is_looking();
-    format!("{}\n{}", handle, name)
+    format!("{}\n{}\n{}", handle, name, admin())
 }
 
 /// The names the environment declares, `me` among them: what a document's top sees from it.

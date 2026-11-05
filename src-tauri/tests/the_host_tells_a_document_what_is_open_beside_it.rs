@@ -1,0 +1,207 @@
+//! `context host` tells a document what it is shown in - `host/kind`, the themes there are and the
+//! one chosen - and `host/open`, the document the page has open beside it, as a drawer is. `me/admin`
+//! says whether whoever is looking runs the server. All of it is there whether or not anything was
+//! said, empty or false where nothing was, and a document asked with another one open beside it is
+//! worked out again for it.
+#![cfg(feature = "server")]
+
+use overseer::access::Asker;
+use overseer::environment::{as_admin, beside};
+use overseer::server::DocumentRoot;
+use overseer::types::{OverseerNode, OverseerValue};
+use std::path::{Path, PathBuf};
+
+const DRAWER: &str = r#"tab drawer {
+    string kind = $(host/kind)
+    string theme = $(host/theme)
+    string open_path = $(host/open/path)
+    string open_name = $(host/open/name)
+    string open_can = $(host/open/can)
+    bool undoable = $(host/open/undoable)
+    bool admin = $(me/admin)
+    enum look (vocabulary="/host/themes") = "default"
+}
+"#;
+
+const NOTES: &str = "tab notes (mutable=true) {\n    string note = \"\"\n}\n";
+
+const SHARING: &str = r#"div (hidden=true) {
+    div Share {
+        string document = ""
+        string with = ""
+        string can = "read"
+    }
+}
+
+list Shares (entry=<Share>) {
+    - {
+        - document = "notes.os"
+        - with = "bob"
+        - can = "read"
+    }
+}
+"#;
+
+fn write(root: &Path, name: &str, text: &str) {
+    let file = root.join(name);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, text).unwrap();
+}
+
+/// ap31 and bob, each with the drawer, and notes of ap31's that bob may read.
+fn served(test: &str) -> (DocumentRoot, PathBuf) {
+    let root = std::env::temp_dir().join(format!("overseer-host-{}-{}", test, std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for person in ["ap31", "bob"] {
+        write(&root, &format!("{}/drawer.os", person), DRAWER);
+    }
+    write(&root, "ap31/notes.os", NOTES);
+    write(&root, "ap31/sharing.os", SHARING);
+    let documents = DocumentRoot::new(&root)
+        .unwrap()
+        .with_accounts(|name| name == "ap31" || name == "bob");
+    (documents, root)
+}
+
+fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+    nodes.iter().find_map(|n| {
+        if n.name == name && n.node_type != "context" {
+            Some(n)
+        } else {
+            find(&n.children, name)
+        }
+    })
+}
+
+fn value(nodes: &[OverseerNode], name: &str) -> OverseerValue {
+    let node = find(nodes, name).unwrap_or_else(|| panic!("no {}", name));
+    assert!(
+        !node.parameters.contains_key(overseer::bases::ERROR),
+        "{}: {:?}",
+        name,
+        node.parameters
+    );
+    node.parameters
+        .get("_computed_value")
+        .or_else(|| node.parameters.get("value"))
+        .cloned()
+        .unwrap_or_else(|| panic!("{} has no value", name))
+}
+
+fn text(nodes: &[OverseerNode], name: &str) -> String {
+    match value(nodes, name) {
+        OverseerValue::String(s) => s,
+        other => panic!("{} is {:?}", name, other),
+    }
+}
+
+fn truth(nodes: &[OverseerNode], name: &str) -> bool {
+    match value(nodes, name) {
+        OverseerValue::Boolean(b) => b,
+        other => panic!("{} is {:?}", name, other),
+    }
+}
+
+fn person(name: &str) -> Asker {
+    Asker::Person(name.into())
+}
+
+#[test]
+fn with_nothing_said_the_host_is_a_browser_with_nothing_open() {
+    let (documents, _) = served("bare");
+    let nodes = documents.as_asker(person("ap31"), || documents.open("drawer.os").unwrap());
+    assert_eq!(text(&nodes, "kind"), "browser");
+    assert_eq!(text(&nodes, "open_path"), "");
+    assert_eq!(text(&nodes, "open_name"), "");
+    assert_eq!(text(&nodes, "open_can"), "");
+    assert!(!truth(&nodes, "undoable"));
+    assert!(!truth(&nodes, "admin"));
+}
+
+#[test]
+fn the_themes_there_are_are_a_vocabulary_and_the_chosen_one_is_named() {
+    let (documents, _) = served("themes");
+    let nodes = documents.as_asker(person("ap31"), || documents.open("drawer.os").unwrap());
+    let names = documents.as_asker(person("ap31"), overseer::environment::themes);
+    assert!(names.contains(&"default".to_string()), "{:?}", names);
+    // Nobody has chosen yet: the settings are as `DEFAULT` says, the theme that ships.
+    assert_eq!(text(&nodes, "theme"), "default");
+    // The list is in the tree where the page looks for a vocabulary: `/host/themes`.
+    let host = nodes
+        .iter()
+        .find(|n| n.node_type == "context" && n.name == "host")
+        .expect("the host's context at the top");
+    let themes = host.children.iter().find(|n| n.name == "themes").expect("host/themes");
+    let tags: Vec<String> = themes
+        .children
+        .iter()
+        .map(|entry| text(&entry.children, "tag"))
+        .collect();
+    assert_eq!(tags, names);
+    assert_eq!(
+        themes.parameters.get("key"),
+        Some(&OverseerValue::String("tag".into())),
+        "an entry is known by its tag"
+    );
+}
+
+#[test]
+fn only_an_admin_reads_me_admin_as_true() {
+    let (documents, _) = served("admin");
+    let admin = |asker: Asker, is: bool| {
+        documents.as_asker(asker, || as_admin(is, || truth(&documents.open("drawer.os").unwrap(), "admin")))
+    };
+    assert!(admin(person("ap31"), true));
+    assert!(!admin(person("bob"), false));
+    // Straight after, the same document: what ap31 was shown is not what bob is.
+    assert!(admin(person("ap31"), true));
+    // Nobody signed in runs nothing, whatever was said.
+    assert!(!documents.as_asker(Asker::Anyone, || as_admin(true, || {
+        truth(&documents.open("ap31/drawer.os").unwrap(), "admin")
+    })));
+}
+
+#[test]
+fn the_document_open_beside_is_described_as_the_asker_may_use_it() {
+    let (documents, _) = served("open");
+    let drawn_beside = |asker: &str, open: &str| {
+        documents.as_asker(person(asker), || {
+            let open = documents.open_beside(open);
+            beside(Some(open), || documents.open("drawer.os").unwrap())
+        })
+    };
+    let nodes = drawn_beside("ap31", "notes.os");
+    assert_eq!(text(&nodes, "open_path"), "notes.os");
+    assert_eq!(text(&nodes, "open_name"), "notes");
+    assert_eq!(text(&nodes, "open_can"), "edit");
+
+    // The same drawer, another document beside it: worked out again, not handed back.
+    let nodes = drawn_beside("ap31", "drawer.os");
+    assert_eq!(text(&nodes, "open_path"), "drawer.os");
+    assert_eq!(text(&nodes, "open_name"), "drawer");
+
+    let nodes = drawn_beside("bob", "ap31/notes.os");
+    assert_eq!(text(&nodes, "open_can"), "read");
+    let nodes = drawn_beside("bob", "ap31/missing.os");
+    assert_eq!(text(&nodes, "open_can"), "");
+}
+
+#[test]
+fn a_write_to_the_open_document_makes_it_undoable_and_undo_takes_that_back() {
+    let (documents, _) = served("undo");
+    let undoable = || {
+        documents.as_asker(person("ap31"), || {
+            let open = documents.open_beside("notes.os");
+            beside(Some(open), || truth(&documents.open("drawer.os").unwrap(), "undoable"))
+        })
+    };
+    assert!(!undoable());
+    documents.as_asker(person("ap31"), || {
+        documents
+            .set_at("notes.os", "notes/note", OverseerValue::String("written".into()))
+            .unwrap();
+    });
+    assert!(undoable(), "a write to the open document is there to take back");
+    documents.as_asker(person("ap31"), || documents.undo("notes.os").unwrap());
+    assert!(!undoable(), "and once taken back, nothing is");
+}

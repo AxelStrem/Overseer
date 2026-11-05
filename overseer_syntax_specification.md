@@ -1290,8 +1290,9 @@ context mode = "system"
 #### Who is looking
 
 `me` is a context of the environment beside the theme and the mode: `me/handle` is the username of
-whoever is looking, and `me/name` what they are called. Both are empty where nobody is signed in,
-and in the desktop app. `me` is there whether or not settings are in force, so a document worked
+whoever is looking, `me/name` what they are called, and `me/admin` whether they run the server -
+may invite others and give someone a new password. They are empty and false where nobody is
+signed in, and in the desktop app. `me` is there whether or not settings are in force, so a document worked
 out on its own reads it as empty and does not fail on it; a mounted document sees the `me` of the
 place it is mounted at.
 
@@ -1321,6 +1322,35 @@ tab notes (mutable=true) {
 
 The mount's `source` is relative to the document, as always: `../people.os` from a document in a
 person's folder, `../../people.os` from one in a folder of theirs.
+
+#### What it is shown in
+
+`host` is a context of the environment beside `me`, there in the same way, and says what the
+document is shown in:
+
+- `host/kind`: `"browser"` for a page the server serves, `"desktop"` in the app.
+- `host/themes`: the themes there are to choose from (see "The theme and the mode"), a list keyed by
+  `tag`, so a vocabulary - `enum look (vocabulary="/host/themes")` picks one. `host/theme` is the
+  one the settings chose, empty where they name none by its file.
+- `host/open`: the document the page has open beside this one, as a drawer is drawn beside the
+  document it is about. `path` is its name as the server knows it, `name` the file's name without
+  its extension, `can` what whoever is looking may do with it - `"edit"`, `"read"`, or empty where
+  they may not open it - and `undoable` whether undo would take a write to it back. It is said by
+  the page with each request, and is empty and false where nothing is open beside the document;
+  a document that reads it is worked out again whenever it says something else.
+
+```overseer
+tab drawer {
+    string here (label="Open") = $(host/open/name)
+    enum look (label="Look", vocabulary="/host/themes", view="select") = $(host/theme)
+    div (hidden=$(!host/open/undoable)) {
+        button undo (label="Undo") { }
+    }
+    div (hidden=$(!me/admin)) {
+        button invite (label="Invite someone") { }
+    }
+}
+```
 
 ### 3. Actions and Events
 

@@ -1349,9 +1349,143 @@
               "String": ""
             }
           }
+        },
+        {
+          "name": "admin",
+          "node_type": "bool",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Boolean": false
+            }
+          }
         }
       ],
       "name": "me",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        }
+      }
+    },
+    {
+      "children": [
+        {
+          "name": "kind",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "browser"
+            }
+          }
+        },
+        {
+          "name": "theme",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "default"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "tag",
+                  "node_type": "string",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "default"
+                    }
+                  }
+                }
+              ],
+              "name": "Theme__1",
+              "node_type": "div",
+              "parameters": {
+                "_effective_layout": {
+                  "String": "vertical"
+                }
+              }
+            }
+          ],
+          "name": "themes",
+          "node_type": "list",
+          "parameters": {
+            "_effective_layout": {
+              "String": "horizontal"
+            },
+            "key": {
+              "String": "tag"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "path",
+              "node_type": "string",
+              "parameters": {
+                "value": {
+                  "String": ""
+                }
+              }
+            },
+            {
+              "name": "name",
+              "node_type": "string",
+              "parameters": {
+                "value": {
+                  "String": ""
+                }
+              }
+            },
+            {
+              "name": "can",
+              "node_type": "string",
+              "parameters": {
+                "value": {
+                  "String": ""
+                }
+              }
+            },
+            {
+              "name": "undoable",
+              "node_type": "bool",
+              "parameters": {
+                "value": {
+                  "Boolean": false
+                }
+              }
+            }
+          ],
+          "name": "open",
+          "node_type": "div",
+          "parameters": {
+            "_effective_layout": {
+              "String": "horizontal"
+            }
+          }
+        }
+      ],
+      "name": "host",
       "node_type": "context",
       "parameters": {
         "_context_copy": {
@@ -2713,9 +2847,143 @@
               "String": ""
             }
           }
+        },
+        {
+          "name": "admin",
+          "node_type": "bool",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Boolean": false
+            }
+          }
         }
       ],
       "name": "me",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        }
+      }
+    },
+    {
+      "children": [
+        {
+          "name": "kind",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "browser"
+            }
+          }
+        },
+        {
+          "name": "theme",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "default"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "tag",
+                  "node_type": "string",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "default"
+                    }
+                  }
+                }
+              ],
+              "name": "Theme__1",
+              "node_type": "div",
+              "parameters": {
+                "_effective_layout": {
+                  "String": "vertical"
+                }
+              }
+            }
+          ],
+          "name": "themes",
+          "node_type": "list",
+          "parameters": {
+            "_effective_layout": {
+              "String": "horizontal"
+            },
+            "key": {
+              "String": "tag"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "path",
+              "node_type": "string",
+              "parameters": {
+                "value": {
+                  "String": ""
+                }
+              }
+            },
+            {
+              "name": "name",
+              "node_type": "string",
+              "parameters": {
+                "value": {
+                  "String": ""
+                }
+              }
+            },
+            {
+              "name": "can",
+              "node_type": "string",
+              "parameters": {
+                "value": {
+                  "String": ""
+                }
+              }
+            },
+            {
+              "name": "undoable",
+              "node_type": "bool",
+              "parameters": {
+                "value": {
+                  "Boolean": false
+                }
+              }
+            }
+          ],
+          "name": "open",
+          "node_type": "div",
+          "parameters": {
+            "_effective_layout": {
+              "String": "horizontal"
+            }
+          }
+        }
+      ],
+      "name": "host",
       "node_type": "context",
       "parameters": {
         "_context_copy": {

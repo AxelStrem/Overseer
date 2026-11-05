@@ -2266,31 +2266,36 @@ pub fn settings_in(file: &std::path::Path) -> Settings {
     let text = std::fs::read_to_string(file)
         .unwrap_or_else(|_| crate::environment::DEFAULT.to_string());
     let nodes = crate::parser::parse_document(&text).map(|(_, nodes)| nodes).unwrap_or_default();
-    let mut theme = None;
+    let theme = chosen_theme(&nodes);
     let mut mode = crate::environment::SYSTEM.to_string();
     for node in declared_settings(&nodes) {
-        match node.name.as_str() {
-            "theme" => {
-                if let Some(OverseerValue::Template(path)) = node.parameters.get("base") {
-                    theme = crate::bases::reference(path).file.and_then(|file| {
-                        std::path::Path::new(&file)
-                            .file_stem()
-                            .map(|stem| stem.to_string_lossy().into_owned())
-                    });
-                }
+        if node.name == crate::environment::MODE {
+            if let Some(OverseerValue::String(said)) = node.parameters.get("value") {
+                mode = said.clone();
             }
-            crate::environment::MODE => {
-                if let Some(OverseerValue::String(said)) = node.parameters.get("value") {
-                    mode = said.clone();
-                }
-            }
-            _ => {}
         }
     }
     let (themes, extensions) = crate::environment::with_file(file.to_path_buf(), || {
         (crate::environment::themes(), crate::bases::document_extensions())
     });
     Settings { themes, theme, mode, extensions }
+}
+
+/// The theme a settings document chose, by the name of the file its `theme` is based on.
+pub fn chosen_theme(nodes: &[OverseerNode]) -> Option<String> {
+    let mut theme = None;
+    for node in declared_settings(nodes) {
+        if node.name == "theme" {
+            if let Some(OverseerValue::Template(path)) = node.parameters.get("base") {
+                theme = crate::bases::reference(path).file.and_then(|file| {
+                    std::path::Path::new(&file)
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                });
+            }
+        }
+    }
+    theme
 }
 
 /// The declarations a settings document makes at its top, as it wrote them.

@@ -109,6 +109,10 @@ struct CommandBody {
     /// `overseer::environment`. Absent for a caller with no page, which is drawn light.
     #[serde(default)]
     scheme: Option<String>,
+    /// The document the page has open beside the one this is about - the drawer's neighbour -
+    /// which `host/open` describes. Absent where nothing is drawn beside another.
+    #[serde(default)]
+    open: Option<String>,
     #[serde(default)]
     args: serde_json::Value,
 }
@@ -124,6 +128,7 @@ async fn command(
         Caller::Person(user) => Some(user.clone()),
         _ => None,
     };
+    let admin = person.as_ref().is_some_and(|user| user.admin);
     let asked = cmd.clone();
     // What a visitor is looking at is kept apart from what the same tab looked at in someone's
     // documents, where a document of the same name may be quite another.
@@ -134,13 +139,18 @@ async fn command(
     // Resolving is CPU work, long enough on a large document to block the thread it lands on.
     let outcome = tokio::task::spawn_blocking(move || {
         documents.as_asker(caller.asker(), || {
-            overseer::environment::seen_as(body.scheme.as_deref(), || {
-                documents.command_for(
-                    session.as_deref().unwrap_or(""),
-                    body.document.as_deref(),
-                    &cmd,
-                    &body.args,
-                )
+            let open = body.open.as_deref().map(|name| documents.open_beside(name));
+            overseer::environment::as_admin(admin, || {
+                overseer::environment::beside(open, || {
+                    overseer::environment::seen_as(body.scheme.as_deref(), || {
+                        documents.command_for(
+                            session.as_deref().unwrap_or(""),
+                            body.document.as_deref(),
+                            &cmd,
+                            &body.args,
+                        )
+                    })
+                })
             })
         })
     })
