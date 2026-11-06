@@ -1578,6 +1578,11 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     pointer-events: none;
 }
 
+/* A long press there shows the popup, not the menu iOS would offer over it. */
+[data-hover-text], [data-own-hover], [data-full-chip] {
+    -webkit-touch-callout: none;
+}
+
 /* A label the container asked not to show. It stays in the page: the text is the only place the
  * field says what it is, and something above the column or under the mouse will want to read it.
  *

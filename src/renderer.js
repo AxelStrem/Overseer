@@ -9351,6 +9351,11 @@ export class OverseerRenderer {
     /// waits about a second before appearing, and on a touch screen it never appears at all -
     /// and the thing most worth showing this way is a label that has been hidden, which would
     /// then be unreadable rather than merely tucked away.
+    ///
+    /// A finger cannot rest on something without pressing it, so on a touch screen a long press
+    /// shows the popup, the click that ends it is swallowed - an icon button held to read what it
+    /// is does not also run - and the next touch anywhere puts it away. A node that declares
+    /// `on hold` has asked for that gesture itself, and keeps it.
     watchForHoverText(within) {
         if (!within || within.dataset.hoverTextWatched === '1') return
         within.dataset.hoverTextWatched = '1'
@@ -9415,8 +9420,12 @@ export class OverseerRenderer {
             }
         }
 
+        const saying = '[data-full-chip], [data-own-hover], [data-hover-text]'
         within.addEventListener('mouseover', (event) => {
-            const target = event.target?.closest?.('[data-full-chip], [data-own-hover], [data-hover-text]')
+            // A tap sends the mouse events of old after it, and a popup shown by those would stay
+            // up after every tap on a field; on a touch screen the long press below shows it.
+            if (this._lastPointer && this._lastPointer !== 'mouse') return
+            const target = event.target?.closest?.(saying)
             if (!target) return
             if (this._hoverTimer) clearTimeout(this._hoverTimer)
             // A moment's pause, so running the mouse across a table does not flash a popup for
@@ -9424,12 +9433,69 @@ export class OverseerRenderer {
             this._hoverTimer = setTimeout(() => show(target), 300)
         })
         within.addEventListener('mouseout', (event) => {
-            const target = event.target?.closest?.('[data-full-chip], [data-own-hover], [data-hover-text]')
+            const target = event.target?.closest?.(saying)
             if (!target) return
             hide()
         })
+
+        let longPress = null
+        let swallow = false
+        const letGo = () => {
+            if (longPress) clearTimeout(longPress.timer)
+            longPress = null
+        }
+        within.addEventListener('pointerdown', (event) => {
+            swallow = false
+            letGo()
+            if (event.pointerType === 'mouse') return
+            const target = event.target?.closest?.(saying)
+            if (!target) return
+            // A node with `on hold` keeps the long press where the press would reach it; a field
+            // inside one that answers for itself is not the hold's, and says what it says.
+            const holder = event.target.closest('[data-holds]')
+            if (holder && this.whatTakesTheTap(event.target, holder) === holder) return
+            longPress = {
+                x: event.clientX,
+                y: event.clientY,
+                id: event.pointerId,
+                // A little shorter than a hold's own default, so the two are not one gesture apart.
+                timer: setTimeout(() => {
+                    longPress = { ...longPress, timer: null, shown: true }
+                    swallow = true
+                    show(target)
+                }, 500),
+            }
+        })
+        within.addEventListener('pointermove', (event) => {
+            if (!longPress || longPress.shown || event.pointerId !== longPress.id) return
+            if (Math.hypot(event.clientX - longPress.x, event.clientY - longPress.y) > 10) letGo()
+        })
+        within.addEventListener('pointerup', () => { if (longPress && !longPress.shown) letGo() })
+        within.addEventListener('pointercancel', () => { if (longPress && !longPress.shown) letGo() })
+        // In the capture phase, so the button or the pressable div under the finger never sees it.
+        within.addEventListener('click', (event) => {
+            if (!swallow) return
+            swallow = false
+            event.preventDefault()
+            event.stopImmediatePropagation()
+        }, true)
+        within.addEventListener('contextmenu', (event) => {
+            if (!longPress) return
+            // Where the text can be edited, the phone's own menu to select and copy it is wanted.
+            const el = event.target
+            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+            event.preventDefault()
+        }, true)
         // Anything that moves what is on screen leaves the popup pointing at nothing.
         window.addEventListener('scroll', hide, { passive: true })
+        if (this._touchHidesHoverText) return
+        this._touchHidesHoverText = true
+        // The next touch anywhere puts a long press's popup away, and does what it would anyway.
+        // Ahead of everything, which is also where it is told what kind of pointer comes next.
+        document.addEventListener('pointerdown', (event) => {
+            this._lastPointer = event.pointerType || 'mouse'
+            if (event.pointerType !== 'mouse') hide()
+        }, true)
     }
 
     // Apply conservative default styles for fields (string/number/text/date/timestamp/bool/checkbox)
