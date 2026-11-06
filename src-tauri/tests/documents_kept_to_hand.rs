@@ -5,8 +5,6 @@
 //! and written the same way, through the same instructions as any other change.
 
 use overseer::menu;
-use overseer::server::DocumentRoot;
-use serde_json::json;
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -88,31 +86,6 @@ fn keeping_one_is_one_step_to_take_back() {
         menu::keep(&file, "tasks.os", "Tasks").unwrap();
         let before = overseer::undo::take(&folder, menu::FILE).expect("a step to take back");
         assert!(!before.contains("tasks.os"), "{}", before);
-    });
-}
-
-#[test]
-fn the_server_keeps_its_own_list_in_its_own_folder() {
-    // Through the door the page uses, with the page's message. Which document the page happens to
-    // be showing has nothing to do with it.
-    serialised(|| {
-        let root = a_folder("server");
-        std::fs::write(root.join("tasks.os"), "tab tasks {\n}\n").unwrap();
-        let service = DocumentRoot::new(&root).expect("root");
-        let ask = |cmd: &str, args: serde_json::Value| {
-            service.command_for("alice", Some("tasks.os"), cmd, &args).expect(cmd)
-        };
-        assert_eq!(ask("menu_places", json!({})), json!([]));
-        ask("menu_keep", json!({ "place": "tasks.os", "name": "Tasks" }));
-        let kept = ask("menu_keep", json!({ "place": "projects/overseer.os" }));
-        assert_eq!(kept, json!([
-            { "path": "tasks.os", "name": "Tasks", "folder": "", "label": "" },
-            { "path": "projects/overseer.os", "name": "", "folder": "", "label": "" },
-        ]));
-        assert_eq!(ask("menu_drop", json!({ "place": "tasks.os" })), json!([{ "path": "projects/overseer.os", "name": "", "folder": "", "label": "" }]));
-        assert_eq!(ask("menu_location", json!({})), json!(menu::FILE));
-        assert!(root.join(menu::FILE).exists());
-        assert!(service.list().contains(&menu::FILE.to_string()), "the list is a document like any other");
     });
 }
 
@@ -249,27 +222,5 @@ fn a_document_that_inherits_its_tab_is_called_by_that_tab_label() {
         std::env::remove_var("OVERSEER_LIBRARY");
         let labels: Vec<String> = places.into_iter().map(|p| p.label).collect();
         assert_eq!(labels, vec!["Overseer", "Project", "Mine", "Sheet", "", ""]);
-    });
-}
-
-#[test]
-fn the_server_says_what_each_document_it_keeps_calls_itself() {
-    serialised(|| {
-        let root = a_folder("server_labels");
-        std::fs::create_dir_all(root.join("projects")).unwrap();
-        std::fs::write(root.join("tracker.os"), "tab tracker (label=\"Calories\") {\n}\n").unwrap();
-        std::fs::write(root.join("projects").join("overseer.os"), "tab project (label=\"Overseer\") {\n}\n").unwrap();
-        let service = DocumentRoot::new(&root).expect("root");
-        let ask = |cmd: &str, args: serde_json::Value| {
-            service.command_for("alice", Some("tracker.os"), cmd, &args).expect(cmd)
-        };
-        ask("menu_keep", json!({ "place": "tracker.os" }));
-        ask("menu_keep", json!({ "place": "projects/overseer.os", "name": "Mine" }));
-        ask("menu_keep", json!({ "place": "../outside.os" }));
-        assert_eq!(ask("menu_places", json!({})), json!([
-            { "path": "tracker.os", "name": "", "folder": "", "label": "Calories" },
-            { "path": "projects/overseer.os", "name": "Mine", "folder": "", "label": "Overseer" },
-            { "path": "../outside.os", "name": "", "folder": "", "label": "" },
-        ]));
     });
 }

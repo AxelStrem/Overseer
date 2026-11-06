@@ -45,6 +45,7 @@ export class DocumentPane extends OverseerApp {
     async open(path) {
         this.stopWatching()
         this._opening = path
+        const besideAsked = this.host && this.host.currentFile
         try {
             await this.loadFile(path)
         } finally {
@@ -52,6 +53,9 @@ export class DocumentPane extends OverseerApp {
         }
         if (this.currentFile !== path) return
         this._beside = this.host && this.host.currentFile
+        // Opened with the page, the pane may have asked before the document beside it was open,
+        // and been told of nothing: told again now, rather than at the next change.
+        if (this._beside !== besideAsked) this.besideChanged()
         const watch = typeof window !== 'undefined' ? window.__overseerWatch : null
         if (typeof watch === 'function') this._stopWatching = watch(path, this)
     }

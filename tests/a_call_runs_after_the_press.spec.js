@@ -30,14 +30,18 @@ const base = (name, node_type, parameters = {}, children = [], transparent = fal
   source_id: '', source_fingerprint: 1, param_order: [], authored_dash: false,
 })
 
-// t / [ said, go ]
+// t / [ said, go, (hidden) [ made ] ]
 const SAID = [0, 0]
+const MADE = [0, 2, 0]
 
 const theDocument = () => [base('t', 'tab', { mutable: { Boolean: true } }, [
   base('said', 'string', { value: { String: '' }, mutable: { String: 'guarded' } }),
   base('go', 'button', { label: { String: 'Go' } }, [
     base('click', 'on', {}, [base('call', 'call', { name: { String: 'copy' } })]),
   ]),
+  base('div', 'div', { hidden: { Boolean: true } }, [
+    base('made', 'string', { value: { String: '' }, mutable: { String: 'guarded' } }),
+  ], true),
 ])]
 
 let app
@@ -104,6 +108,17 @@ describe('a press that calls', () => {
     const written = writes()
     expect(written.length, 'the answer was not written').toBe(1)
     expect(written[0].values).toEqual([{ node_path: ['t', 'said'], value: { String: 'Copied.' } }])
+  })
+
+  it('writes the answer into a field in a part not drawn while it is empty', async () => {
+    answering([{ name: 'copy', args: { text: 'hello' }, into: { address: 't/made', path: MADE } }])
+    render()
+    await press()
+    await settled()
+    const written = writes()
+    expect(written.length, 'the answer was not written').toBe(1)
+    expect(written[0].values).toEqual([{ node_path: ['t', 'made'], value: { String: 'Copied.' } }])
+    expect(document.getElementById('status-message').textContent).not.toContain('Copied.')
   })
 
   it('says why an operation this host lacks did nothing', async () => {

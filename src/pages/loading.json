@@ -1366,6 +1366,18 @@
           }
         },
         {
+          "name": "written_name",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
           "name": "admin",
           "node_type": "bool",
           "parameters": {
@@ -1452,6 +1464,18 @@
           }
         },
         {
+          "name": "accounts",
+          "node_type": "bool",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Boolean": false
+            }
+          }
+        },
+        {
           "name": "theme",
           "node_type": "string",
           "parameters": {
@@ -1460,6 +1484,30 @@
             },
             "value": {
               "String": "default"
+            }
+          }
+        },
+        {
+          "name": "chosen_mode",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "system"
+            }
+          }
+        },
+        {
+          "name": "chosen_week_start",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "system"
             }
           }
         },
@@ -1476,6 +1524,18 @@
                     },
                     "value": {
                       "String": "default"
+                    }
+                  }
+                },
+                {
+                  "name": "name",
+                  "node_type": "string",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "Default"
                     }
                   }
                 }
@@ -2936,6 +2996,18 @@
           }
         },
         {
+          "name": "written_name",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
           "name": "admin",
           "node_type": "bool",
           "parameters": {
@@ -3022,6 +3094,18 @@
           }
         },
         {
+          "name": "accounts",
+          "node_type": "bool",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Boolean": false
+            }
+          }
+        },
+        {
           "name": "theme",
           "node_type": "string",
           "parameters": {
@@ -3030,6 +3114,30 @@
             },
             "value": {
               "String": "default"
+            }
+          }
+        },
+        {
+          "name": "chosen_mode",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "system"
+            }
+          }
+        },
+        {
+          "name": "chosen_week_start",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": "system"
             }
           }
         },
@@ -3046,6 +3154,18 @@
                     },
                     "value": {
                       "String": "default"
+                    }
+                  }
+                },
+                {
+                  "name": "name",
+                  "node_type": "string",
+                  "parameters": {
+                    "_label_layout": {
+                      "String": "horizontal"
+                    },
+                    "value": {
+                      "String": "Default"
                     }
                   }
                 }

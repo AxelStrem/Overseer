@@ -16,17 +16,12 @@ function setupDOM() {
         <span id="file-path"></span></div>
       <div id="welcome-screen" class="screen"></div><div id="editor-screen" class="screen"></div>
       <div id="error-screen" class="screen"></div><div id="error-message"></div>
-    </div>
-    <span id="account-who"></span>
-    <input id="account-name" value="Alice">
-    <span id="account-preview"></span>
-    <div id="account-shape-choices"></div>`
+    </div>`
 }
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
 import { CHIP_SHAPES } from '../src/renderer.js'
-import { Account } from '../src/account.js'
 
 const base = (name, node_type) => ({
   name, node_type, parameters: {}, children: [], is_hierarchy_transparent: false,
@@ -88,19 +83,6 @@ describe('a vocabulary entry with a shape of its own', () => {
   it('keeps its shape when mentioned in text', () => {
     const field = app.currentDocument[0].children[1]
     expect(app.renderer.inlineChip('alice', field).classList.contains('chip-shape-tag')).toBe(true)
-  })
-
-  it('is drawn in the shape a person chose in the drawer, and each shape is offered', () => {
-    const account = new Account(app)
-    account.person = { username: 'alice', name: 'Alice', shape: 'notch' }
-    account.paint()
-    expect(document.querySelector('#account-who .tag-chip').classList.contains('chip-shape-notch')).toBe(true)
-    const offered = Array.from(document.querySelectorAll('#account-shape-choices .account-shape-choice'))
-    expect(offered.map((b) => b.dataset.shape)).toEqual(CHIP_SHAPES)
-    expect(offered.filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.dataset.shape)).toEqual(['notch'])
-    offered.find((b) => b.dataset.shape === 'wave').click()
-    expect(account.shape).toBe('wave')
-    expect(document.querySelector('#account-preview .tag-chip').classList.contains('chip-shape-wave')).toBe(true)
   })
 })
 

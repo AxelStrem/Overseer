@@ -8195,13 +8195,19 @@ export class OverseerRenderer {
         const doc = this.app && this.app.currentDocument
         if (!Array.isArray(doc) || !Array.isArray(into.path) || into.path.length === 0) return false
         let node = null
+        let parent = null
+        let worked = []
         let level = doc
         for (const index of into.path) {
             node = level && level[index]
             if (!node) return false
+            // Worked out as it goes, as a draft's is: a field in a part hidden while it is empty
+            // - where an answer usually goes - has not been drawn, and carries no drawn path.
+            worked = parent ? this.childPathFor(parent, node, worked) : [node.name || node.node_type || node.type || `root_${index}`]
+            parent = node
             level = Array.isArray(node.children) ? node.children : []
         }
-        const at = node.__overseer_path
+        const at = Array.isArray(node.__overseer_path) && node.__overseer_path.length ? node.__overseer_path : worked
         if (!Array.isArray(at) || at.length === 0) return false
         const before = this.getNodeValue(node)
         this.updateNodeValue(node, value)

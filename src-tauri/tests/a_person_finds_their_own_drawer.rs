@@ -62,7 +62,11 @@ fn served(root: &Path) -> DocumentRoot {
 }
 
 fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
-    nodes.iter().find_map(|n| if n.name == name { Some(n) } else { find(&n.children, name) })
+    find_where(nodes, &|n| n.name == name)
+}
+
+fn find_where<'a>(nodes: &'a [OverseerNode], wanted: &dyn Fn(&OverseerNode) -> bool) -> Option<&'a OverseerNode> {
+    nodes.iter().find_map(|n| if wanted(n) { Some(n) } else { find_where(&n.children, wanted) })
 }
 
 /// The names of a list's entries, each with the names under it.
@@ -101,7 +105,9 @@ fn a_menu_becomes_the_drawers_places_with_its_folders_as_entries_holding_their_d
     assert!(text.contains("- path = \"projects/overseer.os\""), "{}", text);
 
     let nodes = documents.as_asker(Asker::Person("ap31".into()), || documents.open("drawer.os").unwrap());
-    let places = find(&nodes, "Places").expect("the drawer inherits the base's list");
+    // The list drawn as a tree, not the one inside the template of its entries.
+    let places = find_where(&nodes, &|n| n.name == "Places" && n.parameters.contains_key("tree"))
+        .expect("the drawer inherits the base's list");
     assert_eq!(
         names(places),
         vec![

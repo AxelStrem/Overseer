@@ -2282,9 +2282,19 @@ pub fn settings_in(file: &std::path::Path) -> Settings {
         .unwrap_or_else(|_| crate::environment::DEFAULT.to_string());
     let nodes = crate::parser::parse_document(&text).map(|(_, nodes)| nodes).unwrap_or_default();
     let theme = chosen_theme(&nodes);
+    let (mode, week_start) = chosen_look(&nodes);
+    let (themes, extensions) = crate::environment::with_file(file.to_path_buf(), || {
+        (crate::environment::themes(), crate::bases::document_extensions())
+    });
+    Settings { themes, theme, mode, week_start, extensions }
+}
+
+/// The mode and the first weekday a settings document chose, as it wrote them: `"system"` stays
+/// `"system"`, where a document's `mode` and `week_start` are what it stands for.
+pub fn chosen_look(nodes: &[OverseerNode]) -> (String, String) {
     let mut mode = crate::environment::SYSTEM.to_string();
     let mut week_start = crate::environment::SYSTEM.to_string();
-    for node in declared_settings(&nodes) {
+    for node in declared_settings(nodes) {
         if let Some(OverseerValue::String(said)) = node.parameters.get("value") {
             if node.name == crate::environment::MODE {
                 mode = said.clone();
@@ -2293,10 +2303,7 @@ pub fn settings_in(file: &std::path::Path) -> Settings {
             }
         }
     }
-    let (themes, extensions) = crate::environment::with_file(file.to_path_buf(), || {
-        (crate::environment::themes(), crate::bases::document_extensions())
-    });
-    Settings { themes, theme, mode, week_start, extensions }
+    (mode, week_start)
 }
 
 /// The theme a settings document chose, by the name of the file its `theme` is based on.

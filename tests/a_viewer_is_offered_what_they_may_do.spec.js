@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // Who is looking, on a server that keeps accounts. The server says who is asking and whether the
 // open document is theirs to change; the page lists what they may open under whose it is, draws a
-// document shared only to be read as read-only, keeps from a stranger what would be refused them,
-// and gives a person their profile and their keys, and an admin the links that let others in.
+// document shared only to be read as read-only, and offers a stranger the way in. A person's
+// profile, keys and the links an admin makes are the drawer document's.
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { invoke } from '@tauri-apps/api/core'
@@ -13,33 +13,6 @@ import { OverseerRenderer } from '../src/renderer.js'
 function setupDOM() {
   document.body.className = 'in-browser'
   document.body.innerHTML = `
-    <section id="drawer-account" hidden>
-      <span id="account-who"></span>
-      <button id="account-sharing"></button>
-      <input id="account-name">
-      <input id="account-colour" type="color"><button id="account-colour-default"></button>
-      <span id="account-preview"></span>
-      <input id="account-icon-search"><button id="account-icon-none"></button>
-      <div id="account-icon-choices"></div>
-      <button id="account-save-name"></button><div id="account-name-said"></div>
-      <input id="account-current"><input id="account-password">
-      <button id="account-save-password"></button><div id="account-password-said"></div>
-      <details id="account-keys">
-        <ul id="account-key-list"></ul>
-        <input id="account-key-name"><button id="account-make-key"></button>
-        <div id="account-key-said"></div>
-        <div id="account-key-row" hidden><input id="account-key"><button id="account-key-copy"></button></div>
-      </details>
-      <details id="account-admin" hidden>
-        <button id="account-invite"></button>
-        <input id="account-reset-username">
-        <button id="account-reset"></button>
-        <div id="account-invite-said"></div>
-        <div id="account-link-row" hidden><input id="account-link"><button id="account-copy"></button></div>
-      </details>
-      <button id="account-sign-out"></button>
-    </section>
-    <a id="drawer-all-documents" href="/">All documents</a>
     <a id="drawer-sign-in" hidden>Sign in</a>
     <div id="document-list" hidden></div>`
 }
@@ -123,154 +96,18 @@ describe('a viewer is offered what they may do', () => {
     expect(owner.renderer.getEffectiveMutableMode(field)).toBe('true')
   })
 
-  it('offers a stranger the way in, and no profile', async () => {
+  it('offers a stranger the way in, back to the document', async () => {
     await started({ asker: 'stranger', person: null, can: 'read' })
     expect(document.body.classList.contains('viewer-stranger')).toBe(true)
-    expect(document.getElementById('drawer-account').hidden).toBe(true)
     expect(document.getElementById('drawer-sign-in').hidden).toBe(false)
     expect(document.getElementById('drawer-sign-in').getAttribute('href')).toBe('/signin?next=%2Fdoc%2Fap31%2Ftasks.os')
-    expect(document.getElementById('drawer-all-documents').hidden).toBe(true)
   })
 
-  it('leaves the token and the desktop app as they were', async () => {
+  it('leaves the token, a person and the desktop app with no way in to offer', async () => {
     await started({ asker: 'anyone', person: null, can: 'edit' })
     expect(document.body.classList.contains('viewer-stranger')).toBe(false)
-    expect(document.getElementById('drawer-account').hidden).toBe(true)
     expect(document.getElementById('drawer-sign-in').hidden).toBe(true)
-  })
-
-  it('shows a person their name, and saves a new one', async () => {
-    fetching({ '/account/me': { ...BOB, name: 'Robert' } })
     await started({ asker: 'person', person: BOB, can: 'edit' })
-    expect(document.getElementById('drawer-account').hidden).toBe(false)
-    expect(document.getElementById('account-who').textContent).toBe('Bob')
-    expect(document.getElementById('account-admin').hidden).toBe(true)
-    document.getElementById('account-name').value = 'Robert'
-    document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(document.getElementById('account-who').textContent).toBe('Robert'))
-    expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Robert', colour: '', icon: '', shape: '' } })
-  })
-
-  it('previews their chip as they style it, and saves the colour they pick', async () => {
-    fetching({ '/account/me': { ...BOB, name: '**Bo**b', colour: '#0f766e' } })
-    await started({ asker: 'person', person: { ...BOB, colour: '#e11d48' }, can: 'edit' })
-    const who = document.querySelector('#account-who .tag-chip')
-    expect(who.style.backgroundColor).toBe('rgb(225, 29, 72)')
-    expect(document.getElementById('account-colour').value).toBe('#e11d48')
-
-    const name = document.getElementById('account-name')
-    name.value = '**Bo**b'
-    name.dispatchEvent(new Event('input'))
-    const colour = document.getElementById('account-colour')
-    colour.value = '#0f766e'
-    colour.dispatchEvent(new Event('input'))
-    const preview = document.querySelector('#account-preview .tag-chip')
-    expect(preview.querySelector('strong').textContent).toBe('Bo')
-    expect(preview.style.backgroundColor).toBe('rgb(15, 118, 110)')
-
-    document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: '**Bo**b', colour: '#0f766e', icon: '', shape: '' } }))
-    await vi.waitFor(() => expect(document.querySelector('#account-who strong')?.textContent).toBe('Bo'))
-  })
-
-  it('goes back to the default colour when asked', async () => {
-    fetching({ '/account/me': BOB })
-    await started({ asker: 'person', person: { ...BOB, colour: '#e11d48' }, can: 'edit' })
-    document.getElementById('account-colour-default').click()
-    expect(document.querySelector('#account-preview .tag-chip').style.backgroundColor).toBe('rgb(107, 114, 128)')
-    document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: '', shape: '' } }))
-  })
-
-  it('finds an icon by its name, shows it before the name, and saves it', async () => {
-    fetching({
-      '/icons/index.json': ['bone', 'bot', 'bot-off', 'robot'],
-      '/account/me': { ...BOB, icon: 'robot' },
-    })
-    await started({ asker: 'person', person: { ...BOB, icon: 'bot' }, can: 'edit' })
-    const choices = () => [...document.querySelectorAll('#account-icon-choices .account-icon-choice')]
-    expect(choices().map((c) => c.dataset.icon)).toEqual(['bot'])
-    expect(choices()[0].getAttribute('aria-pressed')).toBe('true')
-    expect(document.querySelector('#account-who .tag-chip .chip-icon').dataset.icon).toBe('bot')
-
-    const search = document.getElementById('account-icon-search')
-    search.value = 'bot'
-    search.dispatchEvent(new Event('input'))
-    await vi.waitFor(() => expect(choices().map((c) => c.dataset.icon)).toEqual(['bot', 'bot-off', 'robot']))
-    choices()[2].click()
-    expect(document.querySelector('#account-preview .tag-chip .chip-icon').dataset.icon).toBe('robot')
-    expect(document.querySelector('#account-preview .tag-chip').textContent).toBe('Bob')
-
-    document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: 'robot', shape: '' } }))
-    expect(fetched.filter((f) => f.url === '/icons/index.json')).toHaveLength(1)
-  })
-
-  it('takes the icon away when asked', async () => {
-    fetching({ '/account/me': BOB })
-    await started({ asker: 'person', person: { ...BOB, icon: 'bot' }, can: 'edit' })
-    document.getElementById('account-icon-none').click()
-    expect(document.querySelector('#account-preview .chip-icon')).toBeNull()
-    expect(document.querySelectorAll('#account-icon-choices .account-icon-choice')).toHaveLength(0)
-    document.getElementById('account-save-name').click()
-    await vi.waitFor(() => expect(fetched).toContainEqual({ url: '/account/me', body: { name: 'Bob', colour: '', icon: '', shape: '' } }))
-  })
-
-  it('opens their sharing document, made when there is none', async () => {
-    fetching({ '/account/sharing': { document: 'bob/sharing.os' } })
-    const { account } = await started({ asker: 'person', person: BOB, can: 'edit' })
-    document.getElementById('account-sharing').click()
-    await vi.waitFor(() => expect(account.navigate).toHaveBeenCalledWith('/doc/bob/sharing.os'))
-  })
-
-  it('gives an admin an invite link to copy, and a refusal is said as it was', async () => {
-    fetching({ '/account/invite': { link: '/join?invite=abc' } })
-    await started({ asker: 'person', person: AP31, can: 'edit' })
-    expect(document.getElementById('account-admin').hidden).toBe(false)
-    document.getElementById('account-invite').click()
-    await vi.waitFor(() => expect(document.getElementById('account-link-row').hidden).toBe(false))
-    expect(document.getElementById('account-link').value).toBe(window.location.origin + '/join?invite=abc')
-
-    fetching({})
-    document.getElementById('account-reset-username').value = 'bob'
-    document.getElementById('account-reset').click()
-    await vi.waitFor(() => expect(document.getElementById('account-invite-said').textContent).toBe('only an admin may invite'))
-    expect(fetched).toContainEqual({ url: '/account/invite', body: { reset: 'bob' } })
-  })
-
-  it('makes a key and shows it once, lists the keys, and revokes one when asked twice', async () => {
-    let keys = [{ name: 'laptop', made: '2026-10-01T10:00:00Z', used: '2026-10-20T08:00:00Z' }]
-    const calls = []
-    globalThis.fetch = vi.fn(async (url, options) => {
-      const method = (options && options.method) || 'GET'
-      calls.push([method, url, options && options.body ? JSON.parse(options.body) : null])
-      let answer = { keys }
-      if (method === 'POST' && url === '/account/keys') {
-        keys = [...keys, { name: 'desktop bot', made: '2026-10-22T10:00:00Z', used: null }]
-        answer = { name: 'desktop bot', key: 'osk_secret' }
-      } else if (method === 'DELETE') {
-        keys = keys.filter((k) => '/account/keys/' + encodeURIComponent(k.name) !== url)
-        answer = { revoked: 'desktop bot' }
-      }
-      return { ok: true, status: 200, json: async () => answer }
-    })
-    const { account } = await started({ asker: 'person', person: BOB, can: 'edit' })
-    const listed = () => Array.from(document.querySelectorAll('#account-key-list li')).map((li) => li.textContent)
-
-    document.getElementById('account-key-name').value = 'desktop bot'
-    document.getElementById('account-make-key').click()
-    await vi.waitFor(() => expect(document.getElementById('account-key-row').hidden).toBe(false))
-    expect(document.getElementById('account-key').value).toBe('osk_secret')
-    expect(calls).toContainEqual(['POST', '/account/keys', { name: 'desktop bot' }])
-    await vi.waitFor(() => expect(listed()).toEqual(['laptopused 2026-10-20Revoke', 'desktop botnever usedRevoke']))
-
-    account.confirm = vi.fn(() => false)
-    document.querySelectorAll('#account-key-list button')[1].click()
-    expect(calls.some(([method]) => method === 'DELETE')).toBe(false)
-    account.confirm = vi.fn(() => true)
-    document.querySelectorAll('#account-key-list button')[1].click()
-    await vi.waitFor(() => expect(listed()).toEqual(['laptopused 2026-10-20Revoke']))
-    expect(calls).toContainEqual(['DELETE', '/account/keys/desktop%20bot', null])
-    expect(document.getElementById('account-key-row').hidden).toBe(true)
+    expect(document.getElementById('drawer-sign-in').hidden).toBe(true)
   })
 })

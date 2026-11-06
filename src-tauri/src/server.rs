@@ -195,8 +195,16 @@ impl DocumentRoot {
             .as_deref()
             .and_then(crate::menu::label_in)
             .unwrap_or_else(|| stem.clone());
+        // Named as whoever is asking names it: `tasks.os` for their own, whichever way the page
+        // wrote it, so that it reads the same as the documents their drawer keeps.
+        let own = match crate::access::asker() {
+            crate::access::Asker::Person(me) => name
+                .strip_prefix(&format!("{}/", me))
+                .filter(|rest| self.named(rest) == name),
+            _ => None,
+        };
         crate::environment::Open {
-            path: name.to_string(),
+            path: own.unwrap_or(name).to_string(),
             name: stem,
             label,
             can: can.to_string(),
@@ -1009,36 +1017,6 @@ impl DocumentRoot {
                     }
                 });
                 Ok(serde_json::json!({ "asker": asker, "can": can }))
-            }
-            // The documents kept to hand - see `menu`. The server's list lives in its own folder
-            // and names documents as this server does, so whichever document the page is showing
-            // has nothing to do with it.
-            // Nobody signed in has no documents kept to hand, and keeps none.
-            "menu_places" if crate::access::asker() == crate::access::Asker::Stranger
-                || crate::access::asker() == crate::access::Asker::Visitor =>
-            {
-                Ok(serde_json::json!([]))
-            }
-            "menu_places" | "menu_keep" | "menu_drop" | "menu_location" => {
-                let file = self.menu_file()?;
-                let failed = |e: OverseerError| RequestError::Failed(format!("the menu: {:?}", e));
-                // Each named as this server names documents, and only those under its folder read.
-                let labelled = |places| crate::menu::labelled(places, |path| self.resolve(path).ok());
-                match cmd {
-                    "menu_places" => as_json(labelled(crate::menu::places(&file).map_err(failed)?)),
-                    "menu_keep" => {
-                        let place = arg_str(args, &["place"])
-                            .ok_or_else(|| RequestError::Rejected("'place' is required".into()))?;
-                        let name = arg_str(args, &["name"]).unwrap_or_default();
-                        as_json(labelled(crate::menu::keep(&file, &place, &name).map_err(failed)?))
-                    }
-                    "menu_drop" => {
-                        let place = arg_str(args, &["place"])
-                            .ok_or_else(|| RequestError::Rejected("'place' is required".into()))?;
-                        as_json(labelled(crate::menu::drop(&file, &place).map_err(failed)?))
-                    }
-                    _ => as_json(crate::menu::FILE),
-                }
             }
             // The drawer whoever is asking draws - see `drawer`: a person's own beside their
             // settings, the server's at its root, and for anyone with neither the base itself.

@@ -14,6 +14,11 @@ use std::path::{Path, PathBuf};
 const DRAWER: &str = r#"tab drawer {
     string kind = $(host/kind)
     string theme = $(host/theme)
+    string chosen_mode = $(host/chosen_mode)
+    string chosen_week = $(host/chosen_week_start)
+    bool accounts = $(host/accounts)
+    string me_name = $(me/name)
+    string written = $(me/written_name)
     string open_path = $(host/open/path)
     string open_name = $(host/open/name)
     string open_label = $(host/open/label)
@@ -158,6 +163,61 @@ fn the_themes_there_are_are_a_vocabulary_and_the_chosen_one_is_named() {
 }
 
 #[test]
+fn the_look_is_said_as_the_settings_chose_it_system_and_all() {
+    let (documents, root) = served("look");
+    let nodes = documents.as_asker(person("ap31"), || documents.open("drawer.os").unwrap());
+    assert_eq!(text(&nodes, "chosen_mode"), "system");
+    assert_eq!(text(&nodes, "chosen_week"), "system");
+    write(&root, "ap31/settings.os", "context mode = \"dark\"
+context week_start = \"sunday\"
+");
+    let nodes = documents.as_asker(person("ap31"), || documents.open("drawer.os").unwrap());
+    assert_eq!(text(&nodes, "chosen_mode"), "dark");
+    assert_eq!(text(&nodes, "chosen_week"), "sunday");
+    // Each theme is a chip with a name a person reads.
+    let host = nodes
+        .iter()
+        .find(|n| n.node_type == "context" && n.name == "host")
+        .expect("the host's context at the top");
+    let themes = host.children.iter().find(|n| n.name == "themes").expect("host/themes");
+    let default = themes
+        .children
+        .iter()
+        .find(|entry| text(&entry.children, "tag") == "default")
+        .expect("the shipped theme");
+    assert_eq!(text(&default.children, "name"), "Default");
+}
+
+#[test]
+fn a_host_keeps_accounts_where_people_and_strangers_are_told_apart() {
+    let (documents, _) = served("accounts");
+    let accounts = |asker: Asker, name: &str| {
+        documents.as_asker(asker, || truth(&documents.open(name).unwrap(), "accounts"))
+    };
+    assert!(accounts(person("ap31"), "drawer.os"));
+    assert!(!accounts(Asker::Anyone, "ap31/drawer.os"));
+}
+
+#[test]
+fn a_name_written_with_markup_is_plain_in_me_name_and_whole_in_written_name() {
+    let (documents, root) = served("written");
+    let person_named = |tag: &str, name: &str| overseer::people::Person {
+        tag: tag.into(),
+        name: name.into(),
+        colour: None,
+        icon: None,
+        shape: None,
+    };
+    overseer::people::write(&root, &[person_named("ap31", "**Dmitrii** <icon=bot>"), person_named("bob", "")]).unwrap();
+    let nodes = documents.as_asker(person("ap31"), || documents.open("drawer.os").unwrap());
+    assert_eq!(text(&nodes, "me_name"), "Dmitrii");
+    assert_eq!(text(&nodes, "written"), "**Dmitrii** <icon=bot>");
+    // Bob wrote none: both are his username.
+    let nodes = documents.as_asker(person("bob"), || documents.open("drawer.os").unwrap());
+    assert_eq!(text(&nodes, "written"), "bob");
+}
+
+#[test]
 fn only_an_admin_reads_me_admin_as_true() {
     let (documents, _) = served("admin");
     let admin = |asker: Asker, is: bool| {
@@ -198,7 +258,13 @@ fn the_document_open_beside_is_described_as_the_asker_may_use_it() {
     assert_eq!(text(&nodes, "open_path"), "drawer.os");
     assert_eq!(text(&nodes, "open_name"), "drawer");
 
+    // Their own, written out in full as an address has it, is named as they name it.
+    let nodes = drawn_beside("ap31", "ap31/notes.os");
+    assert_eq!(text(&nodes, "open_path"), "notes.os");
+    assert_eq!(text(&nodes, "open_can"), "edit");
+
     let nodes = drawn_beside("bob", "ap31/notes.os");
+    assert_eq!(text(&nodes, "open_path"), "ap31/notes.os");
     assert_eq!(text(&nodes, "open_can"), "read");
     let nodes = drawn_beside("bob", "ap31/missing.os");
     assert_eq!(text(&nodes, "open_can"), "");

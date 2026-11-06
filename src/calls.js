@@ -43,25 +43,17 @@ const text = (value) => (value === undefined || value === null ? '' : String(val
 export const OPERATIONS = {
     async open({ path }, app) {
         const place = text(path)
+        // With nothing named, a browser goes to every document there is to open.
+        if (!place && inBrowser()) return void navigate('/')
         if (!place) throw new Error('Nothing to open.')
-        if (app.drawer) return void await app.drawer.open(place)
+        // Lying over the page, the drawer makes way for what was opened from it.
+        if (app.drawer && app.drawer.overlaid()) app.drawer.fold(true)
+        if (place === (app.currentFile ? String(app.currentFile) : null)) return
         if (inBrowser()) return void navigate('/doc/' + place.split('/').map(encodeURIComponent).join('/'))
         await app.loadFile(place)
     },
     async undo(_, app) {
         await app.undoLastChange()
-    },
-    async keep({ path }, app) {
-        const place = text(path) || (app.currentFile ? String(app.currentFile) : '')
-        if (!place) throw new Error('No document to keep.')
-        const places = await invoke('menu_keep', { place })
-        listChanged(app, places)
-    },
-    async drop({ path }, app) {
-        const place = text(path)
-        if (!place) throw new Error('No document to take off the list.')
-        const places = await invoke('menu_drop', { place })
-        listChanged(app, places)
     },
     async look({ theme, mode, week_start }, app) {
         const choice = {}
@@ -71,7 +63,6 @@ export const OPERATIONS = {
         const settings = await invoke('settings_choose', choice)
         if (app.drawer) {
             app.drawer.settings = settings
-            app.drawer.paintSettings()
             await app.drawer.redraw()
         } else if (app.currentFile && typeof app.loadFile === 'function') {
             await app.loadFile(app.currentFile)
@@ -82,10 +73,7 @@ export const OPERATIONS = {
         const person = await request('POST', '/account/me', {
             name: text(name).trim(), colour: text(colour), icon: text(icon), shape: text(shape)
         })
-        if (app.account) {
-            app.account.person = person
-            app.account.paint()
-        }
+        if (app.account) app.account.person = person
         return 'Saved.'
     }),
     change_password: browser(async ({ current, password }) => {
@@ -109,6 +97,10 @@ export const OPERATIONS = {
         if (!text(person)) throw new Error('Whose password?')
         const made = await request('POST', '/account/invite', { reset: text(person) })
         return window.location.origin + made.link
+    }),
+    sharing: browser(async () => {
+        const made = await request('POST', '/account/sharing', {})
+        navigate('/doc/' + String(made.document).split('/').map(encodeURIComponent).join('/'))
     }),
     sign_out: browser(async () => {
         try {
@@ -144,14 +136,6 @@ function browser(operation) {
 function desktop(operation) {
     operation.host = 'desktop'
     return operation
-}
-
-/// The drawer shows the list of documents, and the window's title may come from it.
-function listChanged(app, places) {
-    if (!app.drawer) return
-    if (Array.isArray(places)) app.drawer.places = places
-    app.drawer.paint()
-    app.drawer.named()
 }
 
 /**

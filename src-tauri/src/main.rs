@@ -24,31 +24,6 @@ fn menu_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf> {
     Ok(folder.join(overseer::menu::FILE))
 }
 
-/// The desktop's entries are files on this computer, read where they are.
-fn labelled(places: Vec<overseer::menu::Place>) -> Vec<overseer::menu::Place> {
-    overseer::menu::labelled(places, |path| Some(std::path::PathBuf::from(path)))
-}
-
-#[command]
-async fn menu_places(app: tauri::AppHandle) -> Result<Vec<overseer::menu::Place>> {
-    Ok(labelled(overseer::menu::places(&menu_file(&app)?)?))
-}
-
-#[command]
-async fn menu_keep(app: tauri::AppHandle, place: String, name: Option<String>) -> Result<Vec<overseer::menu::Place>> {
-    Ok(labelled(overseer::menu::keep(&menu_file(&app)?, &place, &name.unwrap_or_default())?))
-}
-
-#[command]
-async fn menu_drop(app: tauri::AppHandle, place: String) -> Result<Vec<overseer::menu::Place>> {
-    Ok(labelled(overseer::menu::drop(&menu_file(&app)?, &place)?))
-}
-
-#[command]
-async fn menu_location(app: tauri::AppHandle) -> Result<String> {
-    Ok(menu_file(&app)?.to_string_lossy().to_string())
-}
-
 /// The drawer this app draws, in the same settings folder - see `overseer::drawer` - made the
 /// first time from what the menu there held.
 #[command]
@@ -614,10 +589,6 @@ fn main() {
             remove_overseer_entry,
             move_overseer_entry,
             ensure_overseer_entry,
-            menu_places,
-            menu_keep,
-            menu_drop,
-            menu_location,
             drawer_location,
             settings_read,
             settings_choose,

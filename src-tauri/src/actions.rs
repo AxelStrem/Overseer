@@ -316,9 +316,8 @@ pub struct Changed {
 /// The operations a `call` may ask for. The page has one of each, or says it has not - the
 /// desktop has no accounts, the browser opens no files from the disk.
 pub const OPERATIONS: &[&str] = &[
-    "open", "undo", "keep", "drop", "look", "save_profile", "change_password", "make_key",
-    "drop_key", "invite", "reset_password", "sign_out", "copy", "fold_drawer", "open_file",
-    "new_file",
+    "open", "undo", "look", "save_profile", "change_password", "make_key", "drop_key", "invite",
+    "reset_password", "sharing", "sign_out", "copy", "fold_drawer", "open_file", "new_file",
 ];
 
 /// One operation asked of the host: which, with what, and the guarded field, by address, that

@@ -26,18 +26,22 @@ fn read(relative: &str) -> String {
         .unwrap_or_else(|e| panic!("could not read {}: {}", relative, e))
 }
 
-/// Every `invoke('name'` the frontend makes.
+/// Every `invoke('name'` the frontend makes, and every `ask('name'` - an app asks through `ask`,
+/// which names the document it is about. `account.js` is left out: what it asks is the server's
+/// alone, and a page in the desktop app never asks it.
 fn asked_for() -> BTreeSet<String> {
     let mut found = BTreeSet::new();
-    for source in ["src/main.js", "src/renderer.js", "src/file-manager.js", "src/drawer.js"] {
+    for source in ["src/main.js", "src/renderer.js", "src/file-manager.js", "src/drawer.js", "src/calls.js", "src/pane.js"] {
         let text = read(source);
-        let mut rest = text.as_str();
-        while let Some(at) = rest.find("invoke('") {
-            rest = &rest[at + "invoke('".len()..];
-            if let Some(end) = rest.find('\'') {
-                let name = &rest[..end];
-                if name.chars().all(|c| c.is_ascii_lowercase() || c == '_') && !name.is_empty() {
-                    found.insert(name.to_string());
+        for needle in ["invoke('", "ask('"] {
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find(needle) {
+                rest = &rest[at + needle.len()..];
+                if let Some(end) = rest.find('\'') {
+                    let name = &rest[..end];
+                    if name.chars().all(|c| c.is_ascii_lowercase() || c == '_') && !name.is_empty() {
+                        found.insert(name.to_string());
+                    }
                 }
             }
         }
@@ -79,10 +83,9 @@ fn the_server_offers() -> BTreeSet<String> {
             let Some(end) = rest.find('"') else { break };
             let name = &rest[..end];
             // The command names the page uses, rather than every string an arm happens to hold -
-            // the drawer's `menu_*`, `drawer_*` and `settings_*` among them.
+            // the drawer's `drawer_*` and `settings_*` among them.
             if name.contains("overseer")
                 || name.starts_with("find_")
-                || name.starts_with("menu_")
                 || name.starts_with("drawer_")
                 || name.starts_with("settings_")
                 || name == "report_color_scheme"

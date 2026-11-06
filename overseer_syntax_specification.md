@@ -1329,7 +1329,8 @@ tab (label="This week") {
 
 `me` is a context of the environment beside the theme and the mode: `me/handle` is the username of
 whoever is looking, `me/name` what they are called, and `me/admin` whether they run the server -
-may invite others and give someone a new password. `me/colour`, `me/icon` and `me/shape` are
+may invite others and give someone a new password. `me/written_name` is the name as they wrote
+it, markup and all, for a profile that changes it. `me/colour`, `me/icon` and `me/shape` are
 their chip as the directory of people below draws it - a colour they did not choose is the
 directory's own. `me/keys` lists the keys they made to reach the server from scripts and bots, keyed
 by `name`, each with `made` and `used`, the timestamps it was made and last used - empty where it
@@ -1371,15 +1372,22 @@ person's folder, `../../people.os` from one in a folder of theirs.
 document is shown in:
 
 - `host/kind`: `"browser"` for a page the server serves, `"desktop"` in the app.
+- `host/accounts`: whether people sign in here - true on a server that keeps accounts, where a
+  `me/handle` that is empty means nobody has signed in yet, and false on one that does not and in
+  the app.
 - `host/themes`: the themes there are to choose from (see "The theme and the mode"), a list keyed by
-  `tag`, so a vocabulary - `enum look (vocabulary="/host/themes")` picks one. `host/theme` is the
-  one the settings chose, empty where they name none by its file.
+  `tag`, each with the `name` a person reads, so a vocabulary - `enum look (vocabulary="/host/themes")`
+  picks one. `host/theme` is the one the settings chose, empty where they name none by its file.
+- `host/chosen_mode` and `host/chosen_week_start`: the mode and the first weekday the settings
+  chose, as they say them - `"system"` where they follow the computer, where `mode` and
+  `week_start` are what that stands for.
 - `host/icons`: the names of the library's icons (see "Icons"), a list keyed by `tag` with each
   entry's `icon` the same name, so a vocabulary whose chips draw the icon before its name. It is
   there only for a document that names `host/icons` somewhere, a formula or a `vocabulary`: the
   others are worked out without it.
 - `host/open`: the document the page has open beside this one, as a drawer is drawn beside the
-  document it is about. `path` is its name as the server knows it, `name` the file's name without
+  document it is about. `path` is its name as whoever is looking names it - `tasks.os` for their
+  own, `bob/notes.os` for one of Bob's - as a drawer keeps it, `name` the file's name without
   its extension, `label` what it is called - the label of the tab it is wrapped in, as a
   tracker's is, and its `name` where it has none or whoever is looking may not read it - `can` what whoever is looking may do with it - `"edit"`, `"read"`, or empty where
   they may not open it - and `undoable` whether undo would take a write to it back. It is said by
@@ -2010,10 +2018,8 @@ the desktop, a file from the disk in a browser - answers that it is not availabl
 
 | operation | arguments | answers | host |
 | --- | --- | --- | --- |
-| `open` | `path`, the document as the list of documents names it | | both |
+| `open` | `path`, the document as the host names it - in a browser, every document there is to open where it names none | | both |
 | `undo` | | | both |
-| `keep` | `path`, the open document if left out: added to the list of documents | | both |
-| `drop` | `path`: taken off the list of documents | | both |
 | `look` | `theme`, `mode` (`light`, `dark`, `system`), `week_start` (a day, or `system`), any of them | | both |
 | `save_profile` | `name`, `colour`, `icon`, `shape` | `Saved.` | browser |
 | `change_password` | `current`, `password` | `Changed.` | browser |
@@ -2021,6 +2027,7 @@ the desktop, a file from the disk in a browser - answers that it is not availabl
 | `drop_key` | `name` | `Revoked "name".` | browser |
 | `invite` | | a link to join, good for one person | browser |
 | `reset_password` | `person`, a username | a link that sets their new password | browser |
+| `sharing` | none: the person's sharing document is opened, made the first time | | browser |
 | `sign_out` | | | browser |
 | `copy` | `text`: put on the clipboard | `Copied.` | both |
 | `fold_drawer` | `folded`, turned over if left out | | both |

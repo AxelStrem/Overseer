@@ -436,17 +436,10 @@ export class OverseerApp {
     }
 
     initializeEventListeners() {
-        // File operations
-    const openBtn = document.getElementById('open-file-btn')
-    if (openBtn) openBtn.addEventListener('click', () => this.openFile())
-    const newBtn = document.getElementById('new-file-btn')
-    if (newBtn) newBtn.addEventListener('click', () => this.newFile())
     // There is no Save and no Reload. Every change writes itself, so Save could only ask for
     // what had already happened, and "discard unsaved changes and reload" named a state that
     // can no longer arise. Undo is what stands in for both: the way back from a change is a
-    // step, not a re-read.
-    const undoBtn = document.getElementById('undo-file-btn')
-    if (undoBtn) undoBtn.addEventListener('click', () => this.undoLastChange())
+    // step, not a re-read - the drawer's Undo, or Ctrl+Z.
     // Ctrl+Z, unless something is being typed into - inside a field the browser's own undo is
     // the one wanted, and taking the whole document back mid-word would be a surprise.
     document.addEventListener('keydown', (event) => {
@@ -571,8 +564,6 @@ export class OverseerApp {
             this._originalText = content
             this.isDocumentModified = false
 
-            const undoBtn = document.getElementById('undo-file-btn')
-            if (undoBtn) undoBtn.disabled = false
             this.updateTitle()
 
             // Clear any previous content; avoid injecting bulky debug blocks into the document area
@@ -2418,8 +2409,8 @@ tab Main {
         }
     }
 
-    /// The window's title, and a browser tab's: the open document by the name the drawer calls it,
-    /// or by its file's name when nothing calls it anything. The path stays in the drawer.
+    /// The window's title, and a browser tab's: the open document by the label of its tab, or by its
+    /// file's name when nothing calls it anything. The path is the drawer's to show.
     showDocumentName() {
         if (!this.currentFile) {
             document.title = 'Overseer'
@@ -2444,10 +2435,11 @@ tab Main {
             
             this.showDocumentName()
 
-            // Update file path display in toolbar
-            filePathElement.textContent = `${this.currentFile}${modifiedMarker}`
-            filePathElement.style.display = 'block'
-            
+            if (filePathElement) {
+                filePathElement.textContent = `${this.currentFile}${modifiedMarker}`
+                filePathElement.style.display = 'block'
+            }
+
             // Update status bar with current file info
             if (this.renderer && this.renderer.readOnly) {
                 this.setStatus(`Reading: ${fileName}`, 'Read only', 'success')
@@ -2460,13 +2452,14 @@ tab Main {
             }
         } else {
             document.title = 'Overseer'
-            filePathElement.textContent = ''
-            filePathElement.style.display = 'none'
+            if (filePathElement) {
+                filePathElement.textContent = ''
+                filePathElement.style.display = 'none'
+            }
             this.setStatus('Ready', 'No file open')
         }
-        // Which document is open is what the drawer marks, and whether it offers to keep it.
-        try { this.drawer && this.drawer.documentChanged() } catch (_) { /* a drawer is a convenience */ }
-        // And what a document drawn in the drawer is told of it, as `host/open`.
+        // Which document is open is what the drawer is told, as `host/open`: it marks it, and
+        // offers to keep it.
         try { this.drawerPane && this.drawerPane.besideChanged() } catch (_) { /* the same */ }
     }
 
@@ -2629,14 +2622,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (autoFile && looksAbsolute(autoFile)) {
             app.loadFile(autoFile)
         }
-        // A document drawn in the drawer, beside the one open, until the drawer is one by itself.
+        // The drawer is whoever is looking's own drawer document, unless the address names
+        // another document to draw there in its place.
         const inDrawer = qs.get('drawer')
-        // `own` is whoever is looking's own drawer, asked for only until it replaces the drawer
-        // drawn by the page itself, so that the two are not drawn at once.
-        if (inDrawer === 'own') {
-            app.openOwnDrawer().catch((e) => console.warn('[Overseer] the drawer could not open', e))
-        } else if (inDrawer) {
+        if (inDrawer && inDrawer !== 'own') {
             app.openDrawerDocument(inDrawer).catch((e) => console.warn('[Overseer] the document in the drawer could not open', e))
+        } else {
+            app.openOwnDrawer().catch((e) => console.warn('[Overseer] the drawer could not open', e))
         }
     } catch {}
     

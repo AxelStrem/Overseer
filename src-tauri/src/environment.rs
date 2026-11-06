@@ -444,12 +444,20 @@ fn chip_of_whoever_is_looking() -> (String, String, String) {
 /// of people, so a change is seen at once, in every document; their keys are as the server said.
 fn me() -> OverseerNode {
     let (handle, name) = who_is_looking();
+    // As written, markup and all, for a profile that changes it: written back as `name` is, it
+    // would lose its markup.
+    let written = looking()
+        .zip(crate::access::root())
+        .and_then(|(handle, root)| crate::people::name_of(&root, &handle))
+        .filter(|written| !written.trim().is_empty())
+        .unwrap_or_else(|| name.clone());
     let (colour, icon, shape) = chip_of_whoever_is_looking();
     let mut text = format!(
-        "context {} {{\n    string handle = {}\n    string name = {}\n    bool admin = {}\n    string colour = {}\n    string icon = {}\n    string shape = {}\n",
+        "context {} {{\n    string handle = {}\n    string name = {}\n    string written_name = {}\n    bool admin = {}\n    string colour = {}\n    string icon = {}\n    string shape = {}\n",
         ME,
         quoted(&handle),
         quoted(&name),
+        quoted(&written),
         admin(),
         quoted(&colour),
         quoted(&icon),
@@ -495,12 +503,22 @@ fn host(settings: Option<&[OverseerNode]>) -> OverseerNode {
         .and_then(|held| held.clone())
         .unwrap_or_else(|| BROWSER.to_string());
     let theme = settings.and_then(crate::app_api::chosen_theme).unwrap_or_default();
+    let (mode, week_start) = crate::app_api::chosen_look(settings.unwrap_or_default());
+    // Whether people sign in here: a server answering a person or a stranger keeps accounts, and
+    // one answering its token or a visitor, like the desktop app, does not.
+    let accounts = matches!(
+        crate::access::asker(),
+        crate::access::Asker::Person(_) | crate::access::Asker::Stranger
+    );
     let open = SCOPED_OPEN.with(|held| held.borrow().clone()).unwrap_or_default();
     let mut text = format!(
-        "context {} {{\n    string kind = {}\n    string theme = {}\n",
+        "context {} {{\n    string kind = {}\n    bool accounts = {}\n    string theme = {}\n    string chosen_mode = {}\n    string chosen_week_start = {}\n",
         HOST,
         quoted(&kind),
-        quoted(&theme)
+        accounts,
+        quoted(&theme),
+        quoted(&mode),
+        quoted(&week_start)
     );
     // A keyed list, so that it is a vocabulary: an enum picks a theme out of it. Its entries are
     // written whole, by place, as a list's are once worked out: the copy of a context is put in
@@ -508,9 +526,10 @@ fn host(settings: Option<&[OverseerNode]>) -> OverseerNode {
     text.push_str("    list themes (key=\"tag\") {\n");
     for (at, name) in themes().iter().enumerate() {
         text.push_str(&format!(
-            "        div Theme__{} {{\n            string tag = {}\n        }}\n",
+            "        div Theme__{} {{\n            string tag = {}\n            string name = {}\n        }}\n",
             at + 1,
-            quoted(name)
+            quoted(name),
+            quoted(&theme_name(name))
         ));
     }
     text.push_str("    }\n");
@@ -526,6 +545,16 @@ fn host(settings: Option<&[OverseerNode]>) -> OverseerNode {
         .ok()
         .and_then(|(_, mut nodes)| nodes.pop())
         .expect("the context of the host is a document")
+}
+
+/// A theme as a person reads its name: `high_contrast` is "High contrast".
+fn theme_name(file: &str) -> String {
+    let words = file.replace(['_', '-'], " ");
+    let mut letters = words.chars();
+    letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default()
 }
 
 /// The declarations of the settings' top level, looked through its wrappers as a container's are.

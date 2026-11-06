@@ -113,6 +113,14 @@ documents, as the drawer's list is a tree. Whoever has no folder of their own, a
 visitor, is named the base itself, `library:drawer/drawer.os`, the one library file a page may
 open, and only to read; no request writes to the shipped library at all.
 
+The page opens that drawer in the pane as it starts (`?drawer=<name>` draws another document there
+instead), and keeps only the shell around it (`src/drawer.js`): folding it, Ctrl+\, lying over the
+page on a narrow screen, the status line under it and the way in for a stranger. Everything the
+drawer offers is the document's - keeping the open document is an `append` to its own `Places`,
+the look and the account are `call`s - and what it shows of the person, the host and the open
+document it reads from `me` and `host`, so a person who rewrites their drawer loses nothing the
+page did for them.
+
 The page's own pages - the one shown while a document loads, and the one an error is shown on -
 are documents too, `src/pages/*.os`. They are needed exactly when there is no server to work them
 out, so the page carries them worked out already, in the shipped theme, light and dark, as

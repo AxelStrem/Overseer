@@ -1,15 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
-import { request } from './calls.js'
-import { CHIP_SHAPES } from './renderer.js'
 
 /**
  * Who is looking, on a server that keeps accounts: what the page shows them and lets them do.
  *
  * The server answers `access` with who is asking - a person, a stranger, or the token (`anyone`) -
  * and whether the open document is theirs to change. From that the page draws a document shared
- * only to be read as read-only, keeps from a stranger what the server would refuse them, and gives
- * a person their profile: their name, their chip's colour, icon and shape, and their password, their sharing document, the keys programs act
- * as them with, signing out, and for an admin the links that invite someone or set a new password.
+ * only to be read as read-only, and offers a stranger the way in. What a person does with their
+ * account - their profile, password, keys, sharing, the links an admin makes - is the drawer
+ * document's (`library/drawer/drawer.os`), through its `call`s.
  *
  * With no document open it lists what the person may open: their own, what others share with them,
  * and what is public.
@@ -17,17 +15,10 @@ import { CHIP_SHAPES } from './renderer.js'
  * The desktop app has no accounts, and a server without them answers as the token: both are left
  * exactly as they were.
  */
-/// The colour of a person's chip until they choose one - the template's in `people.os`.
-const DEFAULT_COLOUR = '#6b7280'
-/// How many icons a search offers at once: enough to pick from, few enough to draw at once.
-const ICONS_OFFERED = 48
-
 export class Account {
     constructor(app) {
         this.app = app
         this.inBrowser = typeof window !== 'undefined' && window.__OVERSEER_HOST__ === 'browser'
-        this.navigate = (url) => window.location.assign(url)
-        this.confirm = (question) => window.confirm(question)
         this.asker = 'anyone'
         this.person = null
         this.can = null
@@ -84,32 +75,8 @@ export class Account {
         }
     }
 
+    /// The way in, for a stranger: back to this document once signed in.
     wire() {
-        const on = (id, what) => {
-            const el = document.getElementById(id)
-            if (el) el.addEventListener('click', what)
-        }
-        on('account-save-name', () => this.saveName())
-        on('account-colour-default', () => { this.colour = null; this.preview() })
-        on('account-icon-none', () => { this.icon = null; this.preview() })
-        on('account-shape-default', () => { this.shape = null; this.preview() })
-        const typed = (id, what) => {
-            const el = document.getElementById(id)
-            if (el) el.addEventListener('input', what)
-        }
-        typed('account-name', () => this.preview())
-        typed('account-colour', () => { this.colour = this.valueOf('account-colour'); this.preview() })
-        typed('account-icon-search', () => this.offerIcons())
-        on('account-save-password', () => this.savePassword())
-        on('account-sharing', () => this.openSharing())
-        on('account-sign-out', () => this.signOut())
-        on('account-invite', () => this.invite())
-        on('account-reset', () => this.invite(this.valueOf('account-reset-username')))
-        on('account-copy', () => this.copy())
-        on('account-make-key', () => this.makeKey())
-        on('account-key-copy', () => this.copyKey())
-        const keys = document.getElementById('account-keys')
-        if (keys) keys.addEventListener('toggle', () => { if (keys.open) this.listKeys() })
         const signIn = document.getElementById('drawer-sign-in')
         if (signIn) {
             const here = window.location.pathname + window.location.search
@@ -118,269 +85,8 @@ export class Account {
     }
 
     paint() {
-        const section = document.getElementById('drawer-account')
-        if (section) section.hidden = !this.person
-        const who = document.getElementById('account-who')
-        if (who) this.drawChip(who, this.person && this.person.name, this.person && this.person.colour, this.person && this.person.icon, this.person && this.person.shape)
-        const name = document.getElementById('account-name')
-        if (name && this.person) name.value = this.person.name || ''
-        this.colour = (this.person && this.person.colour) || null
-        this.icon = (this.person && this.person.icon) || null
-        this.shape = (this.person && this.person.shape) || null
-        this.preview()
-        const admin = document.getElementById('account-admin')
-        if (admin) admin.hidden = !(this.person && this.person.admin)
         const signIn = document.getElementById('drawer-sign-in')
         if (signIn) signIn.hidden = this.asker !== 'stranger'
-        const all = document.getElementById('drawer-all-documents')
-        if (all) all.hidden = this.asker === 'stranger'
-    }
-
-    /// The person's chip as documents draw it: their icon and their name, styled as written, on
-    /// their colour or on the directory's grey (`people.rs`) when they chose none, in their shape
-    /// or a pill.
-    drawChip(el, name, colour, icon, shape) {
-        el.textContent = ''
-        if (!this.person) return
-        const renderer = this.app && this.app.renderer
-        const said = name || this.person.username
-        if (!renderer) { el.textContent = said; return }
-        el.appendChild(renderer.tagChip(this.person.username, { name: said, named: true, colour: colour || DEFAULT_COLOUR, icon: icon || null, shape: shape || null }, null))
-    }
-
-    /// The chip as the profile's fields would make it, before it is saved.
-    preview() {
-        const colour = document.getElementById('account-colour')
-        if (colour) colour.value = this.colour || DEFAULT_COLOUR
-        const shown = document.getElementById('account-preview')
-        if (shown) this.drawChip(shown, this.valueOf('account-name'), this.colour, this.icon, this.shape)
-        this.offerIcons()
-        this.offerShapes()
-    }
-
-    /// Every shape a chip can take, each drawn as the person's own chip in it, the chosen one marked.
-    offerShapes() {
-        const offered = document.getElementById('account-shape-choices')
-        if (!offered || !this.person) return
-        offered.textContent = ''
-        for (const shape of CHIP_SHAPES) {
-            const choice = document.createElement('button')
-            choice.type = 'button'
-            choice.className = 'account-shape-choice'
-            choice.title = shape
-            choice.dataset.shape = shape
-            choice.setAttribute('aria-pressed', String(shape === this.shape))
-            this.drawChip(choice, this.valueOf('account-name'), this.colour, this.icon, shape)
-            choice.addEventListener('click', () => { this.shape = shape; this.preview() })
-            offered.appendChild(choice)
-        }
-    }
-
-    /// The library's icon names, fetched once, the first time they are searched.
-    iconNames() {
-        if (!this._iconNames) {
-            this._iconNames = fetch('/icons/index.json')
-                .then((response) => (response.ok ? response.json() : []))
-                .catch(() => [])
-                .then((names) => (Array.isArray(names) ? names.filter((n) => typeof n === 'string') : []))
-        }
-        return this._iconNames
-    }
-
-    /// The icons whose names hold what the search says, those starting with it first; with
-    /// nothing searched, only the one chosen, so that the profile shows what it is.
-    async offerIcons() {
-        const offered = document.getElementById('account-icon-choices')
-        if (!offered) return
-        const searched = this.valueOf('account-icon-search').toLowerCase()
-        let names = this.icon ? [this.icon] : []
-        if (searched) {
-            const all = await this.iconNames()
-            // A search typed while the names were on their way has its own answer coming.
-            if (searched !== this.valueOf('account-icon-search').toLowerCase()) return
-            const starting = all.filter((n) => n.startsWith(searched))
-            const holding = all.filter((n) => !n.startsWith(searched) && n.includes(searched))
-            names = [...starting, ...holding].slice(0, ICONS_OFFERED)
-        }
-        const renderer = this.app && this.app.renderer
-        offered.textContent = ''
-        for (const name of names) {
-            const choice = document.createElement('button')
-            choice.type = 'button'
-            choice.className = 'account-icon-choice'
-            choice.title = name
-            choice.dataset.icon = name
-            choice.setAttribute('aria-pressed', String(name === this.icon))
-            if (renderer) choice.appendChild(renderer.createIconElement(name))
-            else choice.textContent = name
-            choice.addEventListener('click', () => { this.icon = name; this.preview() })
-            offered.appendChild(choice)
-        }
-        if (searched && names.length === 0) offered.textContent = 'No icon has that name.'
-    }
-
-    valueOf(id) {
-        const el = document.getElementById(id)
-        return el ? String(el.value || '').trim() : ''
-    }
-
-    /// Say how a change went, beside the form it came from.
-    say(id, message, failed = false) {
-        const el = document.getElementById(id)
-        if (!el) return
-        el.textContent = message
-        el.classList.toggle('error', failed)
-    }
-
-    /// A call to the server's account routes, which are no command of the page's.
-    async post(url, body) {
-        return this.call('POST', url, body || {})
-    }
-
-    async call(method, url, body) {
-        return request(method, url, body)
-    }
-
-    async saveName() {
-        const name = this.valueOf('account-name')
-        if (!name) return this.say('account-name-said', 'A name cannot be empty.', true)
-        try {
-            this.person = await this.post('/account/me', { name, colour: this.colour || '', icon: this.icon || '', shape: this.shape || '' })
-            this.paint()
-            this.say('account-name-said', 'Saved.')
-        } catch (e) {
-            this.say('account-name-said', e.message, true)
-        }
-    }
-
-    async savePassword() {
-        const current = document.getElementById('account-current')
-        const fresh = document.getElementById('account-password')
-        if (!current || !fresh) return
-        try {
-            await this.post('/account/me', { password: fresh.value, current: current.value })
-            current.value = ''
-            fresh.value = ''
-            this.say('account-password-said', 'Changed.')
-        } catch (e) {
-            this.say('account-password-said', e.message, true)
-        }
-    }
-
-    /// The person's own sharing document, made the first time it is asked for.
-    async openSharing() {
-        try {
-            const made = await this.post('/account/sharing')
-            this.navigate('/doc/' + String(made.document).split('/').map(encodeURIComponent).join('/'))
-        } catch (e) {
-            console.warn('[Overseer] the sharing document could not be opened', e)
-            if (this.app && this.app.drawer) this.app.drawer.notice('The sharing document could not be opened.')
-        }
-    }
-
-    async signOut() {
-        try {
-            await fetch('/signout', { method: 'POST' })
-        } catch (_) { /* the sign-in page is where this goes either way */ }
-        this.navigate('/signin')
-    }
-
-    /// A link that lets someone join, or with a username one that sets their new password.
-    async invite(reset) {
-        try {
-            const made = await this.post('/account/invite', reset ? { reset } : {})
-            const link = document.getElementById('account-link')
-            const shown = document.getElementById('account-link-row')
-            if (link) link.value = window.location.origin + made.link
-            if (shown) shown.hidden = false
-            this.say('account-invite-said', reset
-                ? `A link that sets a new password for ${reset}, good for 7 days:`
-                : 'A link to join, good for 7 days and for one person:')
-        } catch (e) {
-            this.say('account-invite-said', e.message, true)
-        }
-    }
-
-    async copy() {
-        const link = document.getElementById('account-link')
-        if (!link || !link.value) return
-        try {
-            await navigator.clipboard.writeText(link.value)
-            this.say('account-invite-said', 'Copied.')
-        } catch (_) {
-            link.select()
-        }
-    }
-
-    /// The person's keys, by name and last use, each with a way to revoke it.
-    async listKeys() {
-        const target = document.getElementById('account-key-list')
-        if (!target) return
-        let keys = []
-        try {
-            keys = (await this.call('GET', '/account/keys')).keys || []
-        } catch (e) {
-            return this.say('account-key-said', e.message, true)
-        }
-        target.textContent = ''
-        for (const key of keys) {
-            const item = document.createElement('li')
-            const name = document.createElement('span')
-            name.className = 'account-key-name'
-            name.textContent = key.name
-            const used = document.createElement('span')
-            used.className = 'account-key-used'
-            used.textContent = key.used ? 'used ' + String(key.used).slice(0, 10) : 'never used'
-            const revoke = document.createElement('button')
-            revoke.className = 'drawer-action quiet'
-            revoke.textContent = 'Revoke'
-            revoke.addEventListener('click', () => this.revokeKey(key.name))
-            item.append(name, used, revoke)
-            target.appendChild(item)
-        }
-    }
-
-    /// Make a key, and show it the only time the server gives it.
-    async makeKey() {
-        const name = this.valueOf('account-key-name')
-        if (!name) return this.say('account-key-said', 'A key needs a name.', true)
-        try {
-            const made = await this.post('/account/keys', { name })
-            const key = document.getElementById('account-key')
-            const row = document.getElementById('account-key-row')
-            if (key) key.value = made.key
-            if (row) row.hidden = false
-            const field = document.getElementById('account-key-name')
-            if (field) field.value = ''
-            this.say('account-key-said', `The key "${made.name}". Copy it now: it is not shown again.`)
-            await this.listKeys()
-        } catch (e) {
-            this.say('account-key-said', e.message, true)
-        }
-    }
-
-    async revokeKey(name) {
-        if (!this.confirm(`Revoke the key "${name}"? Whatever uses it is refused from now on.`)) return
-        try {
-            await this.call('DELETE', '/account/keys/' + encodeURIComponent(name))
-            const row = document.getElementById('account-key-row')
-            if (row) row.hidden = true
-            this.say('account-key-said', `Revoked "${name}".`)
-            await this.listKeys()
-        } catch (e) {
-            this.say('account-key-said', e.message, true)
-        }
-    }
-
-    async copyKey() {
-        const key = document.getElementById('account-key')
-        if (!key || !key.value) return
-        try {
-            await navigator.clipboard.writeText(key.value)
-            this.say('account-key-said', 'Copied.')
-        } catch (_) {
-            key.select()
-        }
     }
 
     /// Everything the person may open, under who it is from, in place of the welcome screen.
