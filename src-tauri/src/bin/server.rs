@@ -1489,6 +1489,8 @@ async fn serve() {
     let frontend = match frontend_dir.canonicalize() {
         Ok(dir) if dir.join("index.html").exists() => {
             println!("serving the frontend from {}", dir.display());
+            // `host/icons` lists what the page's build put beside its icons.
+            overseer::environment::set_icons(overseer::environment::icon_names_in(&dir));
             Some(Arc::new(dir))
         }
         _ => {

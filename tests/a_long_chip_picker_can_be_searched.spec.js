@@ -125,4 +125,17 @@ describe('a long chip picker', () => {
     find().click()
     expect(document.querySelector('.tag-picker')).not.toBeNull()
   })
+
+  it('draws a hundred chips of thousands, and finds the rest by what is typed', () => {
+    const icons = Array.from({ length: 3000 }, (_, i) => [`icon-${i}`, `Icon ${i}`, ''])
+    render({ foods: icons })
+    open()
+    expect(offered()).toHaveLength(100)
+    expect(document.querySelector('.tag-picker-more').textContent).toBe('2900 more - type to narrow')
+    type('icon-2999')
+    expect(offered()).toEqual(['icon-2999'])
+    expect(document.querySelector('.tag-picker-more')).toBeNull()
+    key('Enter')
+    expect(held()).toEqual(['icon-2999'])
+  })
 })

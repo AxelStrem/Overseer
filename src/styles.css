@@ -3621,6 +3621,9 @@ body.ov-backdrop-moving {
  * not reflow a list of a hundred tasks. */
 .tag-picker {
     position: absolute;
+    /* Set from the top of the row it is opened in: a row that centres its items - an enum's -
+       would centre a long picker on it too, half of it above the field. */
+    align-self: flex-start;
     z-index: 20;
     display: flex;
     flex-wrap: wrap;
@@ -3661,6 +3664,13 @@ body.ov-backdrop-moving {
     background-color: var(--ov-surface);
     color: inherit;
     font: inherit;
+}
+
+/* What a long picker leaves undrawn until typing narrows it. */
+.tag-picker-more {
+    flex: 1 0 100%;
+    opacity: 0.6;
+    font-size: 0.85em;
 }
 
 .tag-picker .tag-option.tag-option-lit {

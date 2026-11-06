@@ -1374,6 +1374,10 @@ document is shown in:
 - `host/themes`: the themes there are to choose from (see "The theme and the mode"), a list keyed by
   `tag`, so a vocabulary - `enum look (vocabulary="/host/themes")` picks one. `host/theme` is the
   one the settings chose, empty where they name none by its file.
+- `host/icons`: the names of the library's icons (see "Icons"), a list keyed by `tag` with each
+  entry's `icon` the same name, so a vocabulary whose chips draw the icon before its name. It is
+  there only for a document that names `host/icons` somewhere, a formula or a `vocabulary`: the
+  others are worked out without it.
 - `host/open`: the document the page has open beside this one, as a drawer is drawn beside the
   document it is about. `path` is its name as the server knows it, `name` the file's name without
   its extension, `label` what it is called - the label of the tab it is wrapped in, as a
@@ -2111,6 +2115,13 @@ name the library does not have leaves an empty space the size of an icon. An ico
 says its name on hover. A button wider than what it shows - given a `width`, or stretched across
 a vertical div - keeps its icon and label together in its middle.
 
+The names are a vocabulary every document can pick from, `host/icons` (see "What it is shown
+in"), so a field holding an icon's name picks one with a search, its chip drawn with the icon:
+
+```overseer
+enum icon (label="Icon", vocabulary="/host/icons") = "carrot"
+```
+
 ##### Icons in text
 
 Any text a document shows can hold an icon, written `<icon=name>` where the icon goes: a label, a
@@ -2307,7 +2318,9 @@ tags after (vocabulary="/project/Items, /project/History") = "parser, escape"
 
 A picker offering more than a dozen chips opens with a box to find one in. Every word typed into
 it must be found in a chip's key, `name` or `title` for the chip to stay; the arrow keys move
-between those left, Enter picks the one lit, and Escape closes the picker.
+between those left, Enter picks the one lit, and Escape closes the picker. It shows the first
+hundred that fit and says how many more there are, so a vocabulary of thousands - `host/icons` -
+is narrowed by typing rather than drawn whole.
 
 A `context vocabulary` (see "Contexts") is the vocabulary of every field inside its container that
 names none of its own, and of the chips in their text (see "Chips in text"). A field that names its

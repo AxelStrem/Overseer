@@ -288,7 +288,10 @@ struct Work {
 /// time are taken out first, and everything is worked out again from the declarations.
 pub fn resolve_contexts(nodes: &mut Vec<OverseerNode>) {
     leave_out_copies(nodes);
-    let environment = crate::environment::declarations();
+    let mut environment = crate::environment::declarations();
+    if crate::environment::reads_icons(nodes) {
+        crate::environment::with_icons(&mut environment);
+    }
     if environment.is_empty() && !declares_any(nodes) {
         return;
     }
@@ -345,7 +348,10 @@ pub fn resolve_contexts_within(nodes: &mut Vec<OverseerNode>, at: &[usize]) {
     if !declares_any(&container.children) {
         return;
     }
-    let environment = crate::environment::declarations();
+    let mut environment = crate::environment::declarations();
+    if crate::environment::reads_icons(nodes) {
+        crate::environment::with_icons(&mut environment);
+    }
     let mut seen = Visible::new();
     for declaration in &environment {
         let worked_out = override_with(&[], visible(&seen, &declaration.name), declaration);

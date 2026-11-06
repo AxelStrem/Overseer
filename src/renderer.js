@@ -69,6 +69,9 @@ const CHIP_IN_TEXT = /<#([^<>\s]+)>/g
 const CHIP_IN_HTML = /&lt;#([^<>&\s]+)&gt;/g
 /// How many chips a picker offers before it opens with a box to find one in.
 const PICKER_FINDS_FROM = 12
+/// How many chips a picker with a find box draws at once: the rest are found by typing. Every
+/// icon's name, a vocabulary of thousands, would freeze the page drawn whole.
+const PICKER_SHOWS = 100
 /// The opening of an inline span mark of markdown, `<color=red | ...>` or `<motion=wave | ...>`.
 const SPAN_MARK_IN_TEXT = /<(?:color|motion)=/
 /// The ways a button can answer hover, the theme's `button/hover`; each is a class in the stylesheet.
@@ -7004,28 +7007,31 @@ export class OverseerRenderer {
         picker.className = 'tag-picker'
         const dismiss = () => { picker.remove(); document.removeEventListener('click', dismiss) }
         const pick = (tag) => { dismiss(); chosen(tag) }
-        const options = available.map((tag) => {
-            const option = this.tagChip(tag, vocabulary.get(tag), null)
-            option.classList.add('tag-option')
-            option.addEventListener('click', (event) => {
+        const option = (tag) => {
+            const chip = this.tagChip(tag, vocabulary.get(tag), null)
+            chip.classList.add('tag-option')
+            chip.addEventListener('click', (event) => {
                 event.stopPropagation()
                 pick(tag)
             })
-            picker.appendChild(option)
-            return { tag, option }
-        })
+            return chip
+        }
         beside.parentElement.appendChild(picker)
         if (available.length > PICKER_FINDS_FROM) {
-            this.letPickerFind(picker, options, (tag) => this.pickerHaystack(tag, vocabulary.get(tag), by), pick, () => {
+            this.letPickerFind(picker, available, option, (tag) => this.pickerHaystack(tag, vocabulary.get(tag), by), pick, () => {
                 dismiss()
                 if (beside.focus) beside.focus()
             })
+        } else {
+            available.forEach((tag) => picker.appendChild(option(tag)))
         }
         setTimeout(() => document.addEventListener('click', dismiss), 0)
     }
 
-    /// The find box at the top of a long picker: `haystack(tag)` is the text a tag is found by.
-    letPickerFind(picker, options, haystack, pick, close) {
+    /// The find box at the top of a long picker, and the chips that fit what is typed in it -
+    /// `PICKER_SHOWS` of them at most, each made by `option(tag)` the first time it is shown.
+    /// `haystack(tag)` is the text a tag is found by.
+    letPickerFind(picker, available, option, haystack, pick, close) {
         picker.classList.add('tag-picker-finds')
         const find = document.createElement('input')
         find.type = 'search'
@@ -7033,10 +7039,17 @@ export class OverseerRenderer {
         find.placeholder = 'find'
         find.setAttribute('aria-label', 'find')
         find.addEventListener('click', (event) => event.stopPropagation())
-        picker.prepend(find)
+        picker.appendChild(find)
+        const more = document.createElement('span')
+        more.className = 'tag-picker-more'
 
-        const haystacks = options.map(({ tag }) => haystack(tag))
-        let shown = options
+        const haystacks = available.map((tag) => haystack(tag))
+        const made = new Map()
+        const madeFor = (tag) => {
+            if (!made.has(tag)) made.set(tag, option(tag))
+            return made.get(tag)
+        }
+        let shown = []
         let lit = -1
         const light = (at) => {
             if (shown[lit]) shown[lit].option.classList.remove('tag-option-lit')
@@ -7046,15 +7059,21 @@ export class OverseerRenderer {
             now.option.classList.add('tag-option-lit')
             if (now.option.scrollIntoView) now.option.scrollIntoView({ block: 'nearest' })
         }
+        const draw = (words) => {
+            const fits = available.filter((_, i) => words.every((word) => haystacks[i].includes(word)))
+            shown = fits.slice(0, PICKER_SHOWS).map((tag) => ({ tag, option: madeFor(tag) }))
+            while (picker.lastChild !== find) picker.lastChild.remove()
+            shown.forEach(({ option }) => picker.appendChild(option))
+            if (fits.length > shown.length) {
+                more.textContent = `${fits.length - shown.length} more - type to narrow`
+                picker.appendChild(more)
+            }
+        }
+        draw([])
         find.addEventListener('input', () => {
             const words = find.value.toLowerCase().split(/\s+/).filter(Boolean)
             light(-1)
-            shown = []
-            options.forEach((one, i) => {
-                const fits = words.every((word) => haystacks[i].includes(word))
-                one.option.style.display = fits ? '' : 'none'
-                if (fits) shown.push(one)
-            })
+            draw(words)
             // Something typed lights the first that fits, so Enter takes it.
             if (words.length > 0 && shown.length > 0) light(0)
         })

@@ -575,6 +575,17 @@ fn main() {
 
     match tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // The icon names the page's build lists, for `host/icons`. The resolver reads the
+            // embedded page, and in development the built one in `dist`, where there may be none.
+            let names = app
+                .asset_resolver()
+                .get("icons/index.json".to_string())
+                .and_then(|asset| overseer::environment::icon_names(asset.bytes()))
+                .unwrap_or_default();
+            overseer::environment::set_icons(names);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             load_overseer_file,
             load_overseer_text,

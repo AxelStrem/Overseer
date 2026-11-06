@@ -22,7 +22,7 @@
 use crate::types::{OverseerNode, OverseerValue};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The settings document's name, beside the documents on the server and in the app's settings
 /// folder.
@@ -52,6 +52,9 @@ pub const ME: &str = "me";
 /// The context that says what the document is shown in: `host/kind`, the themes there are and the
 /// one chosen, and `host/open`, the document open beside it - see `Open`.
 pub const HOST: &str = "host";
+
+/// The list in `host` of the names of the library's icons - see `set_icons`.
+pub const ICONS: &str = "icons";
 
 /// What `host/kind` says until the process says otherwise: a page the server serves.
 pub const BROWSER: &str = "browser";
@@ -83,6 +86,8 @@ static FILE_HERE:Mutex<Option<PathBuf>> = Mutex::new(None);
 static SCHEME_HERE: Mutex<Option<String>> = Mutex::new(None);
 static WEEK_HERE: Mutex<Option<String>> = Mutex::new(None);
 static KIND_HERE: Mutex<Option<String>> = Mutex::new(None);
+/// `host/icons`, parsed once: it is cloned into every document that reads it.
+static ICONS_HERE: Mutex<Option<Arc<OverseerNode>>> = Mutex::new(None);
 
 thread_local! {
     /// The settings a request is worked out under, where whoever serves it said - the server, for
@@ -130,6 +135,99 @@ pub fn set_week_start(day: Option<&str>) {
 pub fn set_kind(kind: &str) {
     if let Ok(mut held) = KIND_HERE.lock() {
         *held = Some(kind.to_string());
+    }
+}
+
+/// The names of the library's icons, as `host/icons` lists them. The page's build makes them
+/// (`icons/index.json`, beside the icons), so whoever serves the page says what they are when it
+/// starts - see `icon_names_in`. Until then the list is empty.
+pub fn set_icons(names: Vec<String>) {
+    let list = icon_list(&names);
+    if let Ok(mut held) = ICONS_HERE.lock() {
+        *held = Some(Arc::new(list));
+    }
+}
+
+/// `list icons`, keyed by `tag`, an entry for each name.
+fn icon_list(names: &[String]) -> OverseerNode {
+    let mut text = format!("list {} (key=\"tag\") {{
+", ICONS);
+    // Written whole, by place, as `host/themes` is; `icon` draws each one before its name.
+    for (at, name) in names.iter().enumerate() {
+        text.push_str(&format!(
+            "    div Icon__{} {{
+        string tag = {}
+        string icon = {}
+    }}
+",
+            at + 1,
+            quoted(name),
+            quoted(name)
+        ));
+    }
+    text.push_str("}
+");
+    crate::parser::parse_document(&text)
+        .ok()
+        .and_then(|(_, mut nodes)| nodes.pop())
+        .expect("the list of icons is a document")
+}
+
+/// The names `host/icons` lists, in its order.
+pub fn icons() -> Vec<String> {
+    let list = ICONS_HERE.lock().ok().and_then(|held| held.clone());
+    let Some(list) = list else {
+        return Vec::new();
+    };
+    list.children
+        .iter()
+        .filter_map(|entry| entry.children.iter().find(|field| field.name == "tag"))
+        .filter_map(|tag| match tag.parameters.get("value") {
+            Some(OverseerValue::String(name)) => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The icon names a built page keeps in `icons/index.json` under `folder`, or none where it has
+/// none or they do not read.
+pub fn icon_names_in(folder: &Path) -> Vec<String> {
+    std::fs::read(folder.join("icons").join("index.json"))
+        .ok()
+        .and_then(|bytes| icon_names(&bytes))
+        .unwrap_or_default()
+}
+
+/// The icon names an `index.json` holds: a list of strings.
+pub fn icon_names(bytes: &[u8]) -> Option<Vec<String>> {
+    serde_json::from_slice(bytes).ok()
+}
+
+/// Whether a document reads `host/icons` - names it in any parameter, a formula or a
+/// `vocabulary`. Some 1,500 entries would cost every other document its work-out and its size
+/// on the way to the page, so `host` carries them only for one that does - see `with_icons`.
+pub fn reads_icons(nodes: &[OverseerNode]) -> bool {
+    nodes.iter().any(|node| {
+        node.parameters.values().any(|value| match value {
+            OverseerValue::String(text) | OverseerValue::Formula(text) => {
+                text.contains("host/icons")
+            }
+            _ => false,
+        }) || reads_icons(&node.children)
+    })
+}
+
+/// The environment's declarations with `host/icons` in its `host`.
+pub fn with_icons(declarations: &mut [OverseerNode]) {
+    let list = ICONS_HERE.lock().ok().and_then(|held| held.clone());
+    let list = match list {
+        Some(list) => (*list).clone(),
+        None => icon_list(&[]),
+    };
+    if let Some(host) = declarations.iter_mut().find(|node| node.name == HOST) {
+        if !host.children.iter().any(|child| child.name == ICONS) {
+            host.children.push(list);
+        }
     }
 }
 
