@@ -289,9 +289,7 @@ struct Work {
 pub fn resolve_contexts(nodes: &mut Vec<OverseerNode>) {
     leave_out_copies(nodes);
     let mut environment = crate::environment::declarations();
-    if crate::environment::reads_icons(nodes) {
-        crate::environment::with_icons(&mut environment);
-    }
+    crate::environment::with_icons(&mut environment, crate::environment::reads_icons(nodes));
     if environment.is_empty() && !declares_any(nodes) {
         return;
     }
@@ -349,9 +347,7 @@ pub fn resolve_contexts_within(nodes: &mut Vec<OverseerNode>, at: &[usize]) {
         return;
     }
     let mut environment = crate::environment::declarations();
-    if crate::environment::reads_icons(nodes) {
-        crate::environment::with_icons(&mut environment);
-    }
+    crate::environment::with_icons(&mut environment, crate::environment::reads_icons(nodes));
     let mut seen = Visible::new();
     for declaration in &environment {
         let worked_out = override_with(&[], visible(&seen, &declaration.name), declaration);

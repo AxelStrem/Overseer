@@ -88,6 +88,8 @@ static WEEK_HERE: Mutex<Option<String>> = Mutex::new(None);
 static KIND_HERE: Mutex<Option<String>> = Mutex::new(None);
 /// `host/icons`, parsed once: it is cloned into every document that reads it.
 static ICONS_HERE: Mutex<Option<Arc<OverseerNode>>> = Mutex::new(None);
+/// The same names as a vocabulary's records - see `with_icons`.
+static ICON_RECORDS_HERE: Mutex<Option<Arc<String>>> = Mutex::new(None);
 
 thread_local! {
     /// The settings a request is worked out under, where whoever serves it said - the server, for
@@ -143,9 +145,23 @@ pub fn set_kind(kind: &str) {
 /// starts - see `icon_names_in`. Until then the list is empty.
 pub fn set_icons(names: Vec<String>) {
     let list = icon_list(&names);
+    let records = icon_records(&names);
     if let Ok(mut held) = ICONS_HERE.lock() {
         *held = Some(Arc::new(list));
     }
+    if let Ok(mut held) = ICON_RECORDS_HERE.lock() {
+        *held = Some(Arc::new(records));
+    }
+}
+
+/// What a vocabulary takes of each icon, as the resolver says it for the entries of a list's
+/// parts not read: `[{"key": "carrot", "icon": "carrot"}]` - see `resolver::UNREAD_VOCABULARY`.
+fn icon_records(names: &[String]) -> String {
+    let records: Vec<serde_json::Value> = names
+        .iter()
+        .map(|name| serde_json::json!({ "key": name, "icon": name }))
+        .collect();
+    serde_json::to_string(&records).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// `list icons`, keyed by `tag`, an entry for each name.
@@ -203,26 +219,71 @@ pub fn icon_names(bytes: &[u8]) -> Option<Vec<String>> {
     serde_json::from_slice(bytes).ok()
 }
 
-/// Whether a document reads `host/icons` - names it in any parameter, a formula or a
-/// `vocabulary`. Some 1,500 entries would cost every other document its work-out and its size
-/// on the way to the page, so `host` carries them only for one that does - see `with_icons`.
-pub fn reads_icons(nodes: &[OverseerNode]) -> bool {
-    nodes.iter().any(|node| {
-        node.parameters.values().any(|value| match value {
-            OverseerValue::String(text) | OverseerValue::Formula(text) => {
-                text.contains("host/icons")
-            }
-            _ => false,
-        }) || reads_icons(&node.children)
-    })
+/// How a document reads `host/icons`: not at all, only as a vocabulary, or otherwise too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IconsRead {
+    Not,
+    /// Named only by a `vocabulary` parameter or a `context vocabulary`, which draw chips and
+    /// offer picks from a vocabulary's records as well as from entries.
+    AsVocabulary,
+    /// Named in a formula or anywhere else, which reads the list's entries.
+    Whole,
 }
 
-/// The environment's declarations with `host/icons` in its `host`.
-pub fn with_icons(declarations: &mut [OverseerNode]) {
-    let list = ICONS_HERE.lock().ok().and_then(|held| held.clone());
-    let list = match list {
-        Some(list) => (*list).clone(),
-        None => icon_list(&[]),
+/// How a document reads `host/icons` - names it in a `vocabulary`, or in any other parameter or
+/// a formula. Its thousands of entries would cost every other document its work-out and its size
+/// on the way to the page, so `host` carries them only for one that reads them - see `with_icons`.
+pub fn reads_icons(nodes: &[OverseerNode]) -> IconsRead {
+    let mut read = IconsRead::Not;
+    for node in nodes {
+        for (key, value) in node.parameters.iter() {
+            let named = match value {
+                OverseerValue::String(text) | OverseerValue::Formula(text) => text.contains("host/icons"),
+                _ => false,
+            };
+            if !named {
+                continue;
+            }
+            let as_vocabulary = matches!(value, OverseerValue::String(_))
+                && (key == "vocabulary"
+                    || (node.node_type == "context" && node.name == "vocabulary" && key == "value"));
+            if !as_vocabulary {
+                return IconsRead::Whole;
+            }
+            read = IconsRead::AsVocabulary;
+        }
+        match reads_icons(&node.children) {
+            IconsRead::Whole => return IconsRead::Whole,
+            below => read = read.max(below),
+        }
+    }
+    read
+}
+
+/// The environment's declarations with `host/icons` in its `host`, as the document reads it.
+///
+/// A document that reads it only as a vocabulary is given the list without entries, and the
+/// names as the vocabulary's records: some 7,700 entries of two fields each were 2.8 MB to work
+/// out and send with every open, where the records are one string made when the names were set.
+pub fn with_icons(declarations: &mut [OverseerNode], read: IconsRead) {
+    if read == IconsRead::Not {
+        return;
+    }
+    let list = if read == IconsRead::AsVocabulary {
+        let records = ICON_RECORDS_HERE.lock().ok().and_then(|held| held.clone());
+        let mut list = icon_list(&[]);
+        let records = records.map(|records| (*records).clone()).unwrap_or_else(|| "[]".to_string());
+        list.parameters.insert(
+            crate::resolver::UNREAD_VOCABULARY.to_string(),
+            OverseerValue::String(records),
+        );
+        list
+    } else {
+        let list = ICONS_HERE.lock().ok().and_then(|held| held.clone());
+        match list {
+            Some(list) => (*list).clone(),
+            None => icon_list(&[]),
+        }
     };
     if let Some(host) = declarations.iter_mut().find(|node| node.name == HOST) {
         if !host.children.iter().any(|child| child.name == ICONS) {

@@ -1,6 +1,7 @@
 //! `host/icons` lists the names of the library's icons, keyed by `tag`, each with its `icon`, so
 //! that any field holding an icon's name can pick one from them. It is there only for a document
-//! that names it: the others are worked out, and sent, without some 1,500 entries.
+//! that names it: the others are worked out, and sent, without some 7,700 entries. One that names
+//! it only as a vocabulary is sent the names as the vocabulary's records, and no entries.
 #![cfg(feature = "server")]
 
 use overseer::server::DocumentRoot;
@@ -11,6 +12,17 @@ const PICKER: &str = r#"tab profile (mutable=true) {
     enum icon (vocabulary="/host/icons") = "carrot"
     int offered = $(host/icons.count())
     string found = $(host/icons.find(icon)/icon)
+}
+"#;
+
+const PICKS_ONLY: &str = r#"tab profile (mutable=true) {
+    enum icon (vocabulary="/host/icons") = "carrot"
+}
+"#;
+
+const MENTIONS: &str = r#"tab notes (mutable=true) {
+    context vocabulary = "/host/icons"
+    tags marks = ""
 }
 "#;
 
@@ -26,6 +38,8 @@ fn served(test: &str) -> (DocumentRoot, PathBuf) {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("profile.os"), PICKER).unwrap();
     std::fs::write(root.join("notes.os"), PLAIN).unwrap();
+    std::fs::write(root.join("picks.os"), PICKS_ONLY).unwrap();
+    std::fs::write(root.join("mentions.os"), MENTIONS).unwrap();
     // The names are the process's, as the server sets them from the page it serves when it starts.
     overseer::environment::set_icons(names());
     (DocumentRoot::new(&root).unwrap(), root)
@@ -67,6 +81,41 @@ fn a_document_that_names_host_icons_picks_from_them() {
     let icons = host(&nodes).children.iter().find(|n| n.name == "icons").expect("host/icons");
     assert_eq!(icons.parameters.get("key"), Some(&OverseerValue::String("tag".into())));
     assert_eq!(icons.children.len(), 3);
+}
+
+fn records(icons: &OverseerNode) -> serde_json::Value {
+    match icons.parameters.get(overseer::resolver::UNREAD_VOCABULARY) {
+        Some(OverseerValue::String(text)) => serde_json::from_str(text).unwrap(),
+        other => panic!("no records: {:?}", other),
+    }
+}
+
+#[test]
+fn a_document_that_picks_from_them_is_sent_their_names_and_no_entries() {
+    let (documents, _) = served("picks");
+    for name in ["picks.os", "mentions.os"] {
+        let nodes = documents.open(name).unwrap();
+        let icons = host(&nodes).children.iter().find(|n| n.name == "icons").expect("host/icons");
+        assert!(icons.children.is_empty(), "{}: {} entries", name, icons.children.len());
+        assert_eq!(
+            records(icons),
+            serde_json::json!([
+                { "key": "apple", "icon": "apple" },
+                { "key": "carrot", "icon": "carrot" },
+                { "key": "sparkles", "icon": "sparkles" },
+            ]),
+            "{}",
+            name
+        );
+    }
+}
+
+#[test]
+fn a_document_that_reads_them_in_a_formula_is_sent_the_entries_alone() {
+    let (documents, _) = served("formula");
+    let nodes = documents.open("profile.os").unwrap();
+    let icons = host(&nodes).children.iter().find(|n| n.name == "icons").expect("host/icons");
+    assert!(!icons.parameters.contains_key(overseer::resolver::UNREAD_VOCABULARY));
 }
 
 #[test]

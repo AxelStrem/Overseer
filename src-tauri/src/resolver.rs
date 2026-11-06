@@ -1498,6 +1498,11 @@ fn name_unread_entries(nodes: &mut Vec<OverseerNode>) {
         found: &mut Vec<(Vec<usize>, Option<String>)>,
     ) {
         for (index, node) in nodes.iter().enumerate() {
+            // The host's lists have no parts, and `host/icons` holds its records from the
+            // environment - see `environment::with_icons`.
+            if node.node_type == "context" && node.name == crate::environment::HOST {
+                continue;
+            }
             at.push(index);
             if node.node_type == "list" {
                 let wanted = crate::parts::leaves_parts_unread(node) && names.contains(&node.name);

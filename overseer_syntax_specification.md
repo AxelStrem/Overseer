@@ -1384,7 +1384,9 @@ document is shown in:
 - `host/icons`: the names of the library's icons (see "Icons"), a list keyed by `tag` with each
   entry's `icon` the same name, so a vocabulary whose chips draw the icon before its name. It is
   there only for a document that names `host/icons` somewhere, a formula or a `vocabulary`: the
-  others are worked out without it.
+  others are worked out without it. A document that names it only as a `vocabulary` is given the
+  names as the vocabulary's chips and picks, and not as entries: thousands of them would be
+  worked out and sent with each open. A formula reading it has the entries.
 - `host/open`: the document the page has open beside this one, as a drawer is drawn beside the
   document it is about. `path` is its name as whoever is looking names it - `tasks.os` for their
   own, `bob/notes.os` for one of Bob's - as a drawer keeps it, `name` the file's name without
