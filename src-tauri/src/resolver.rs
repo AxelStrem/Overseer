@@ -3426,8 +3426,28 @@ fn calendar_date(
         .ok_or_else(|| format!("calendar '{}': {}= is not a date", node.name, key))
 }
 
+/// The day a calendar's weeks start on, as the nearest `week_start` says it, counted from Monday.
+///
+/// Read as a formula reading the name would, at the calendar's place: a document's own
+/// `context week_start` on the way up is met there. The calendar is made while its template is
+/// copied, before the copies of the contexts are put in, so where nothing on the way up says it
+/// the environment's is taken - the settings', settled, else the day the page reported.
+fn calendar_week_start(node: &OverseerNode, path: &[String], root: &[OverseerNode]) -> Result<u32, String> {
+    let context = crate::formula_evaluator::EvaluationContext::new_with_current(node, path.to_vec(), root);
+    let said = match crate::formula_evaluator::FormulaEvaluator::evaluate_formula(crate::environment::WEEK_START, &context) {
+        Ok(OverseerValue::String(said)) if said == crate::environment::SYSTEM => crate::environment::first_weekday().to_string(),
+        Ok(OverseerValue::String(said)) => said,
+        _ => crate::environment::week_start(),
+    };
+    crate::environment::a_day(&said)
+        .and_then(|day| crate::environment::DAYS.iter().position(|d| *d == day))
+        .map(|at| at as u32)
+        .ok_or_else(|| format!("calendar '{}': week_start is a day of the week, not '{}'", node.name, said))
+}
+
 /// The first and the last day a calendar shows: `from=` and `to=`, or the `span=` - a `day`, a
-/// `week` from Monday, a `month` or a `year` - that holds `at=`, today when it says nothing.
+/// `week` from the `week_start` (see `calendar_week_start`), a `month` or a `year` - that holds
+/// `at=`, today when it says nothing.
 /// `from=` and `to=` each win over what the span would give.
 pub fn calendar_range(
     node: &OverseerNode,
@@ -3453,7 +3473,11 @@ pub fn calendar_range(
             };
             let first = match span {
                 "day" => at,
-                "week" => at - chrono::Duration::days(at.weekday().num_days_from_monday() as i64),
+                "week" => {
+                    let start = calendar_week_start(node, path, root)?;
+                    let back = (at.weekday().num_days_from_monday() + 7 - start) % 7;
+                    at - chrono::Duration::days(back as i64)
+                }
                 "month" => at.with_day(1).expect("every month has a first"),
                 "year" => chrono::NaiveDate::from_ymd_opt(at.year(), 1, 1).expect("every year has a first"),
                 other => {

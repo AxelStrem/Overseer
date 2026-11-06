@@ -59,6 +59,19 @@
         }
     }
 
+    // The first day of the week in the browser's locale, which a document whose settings say
+    // `week_start = "system"` counts weeks from. A browser that cannot say starts them on Monday.
+    const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    const weekStart = () => {
+        try {
+            const locale = new Intl.Locale(navigator.language || 'en')
+            const info = typeof locale.getWeekInfo === 'function' ? locale.getWeekInfo() : locale.weekInfo
+            return DAYS[((info && info.firstDay) || 1) - 1] || DAYS[0]
+        } catch (_) {
+            return DAYS[0]
+        }
+    }
+
     // A request is about this tab's document, unless it names another: the drawer draws a document
     // of its own beside the one open, and says which it is, and which is open beside it - which
     // the server tells the drawer's document as `host/open`. Named in the invoke's options, never
@@ -74,7 +87,7 @@
     }
 
     async function call(cmd, args, options) {
-        const asked = { document: said(options, OF) ?? documentName, session, scheme: scheme(), args: args || {} }
+        const asked = { document: said(options, OF) ?? documentName, session, scheme: scheme(), week_start: weekStart(), args: args || {} }
         const open = said(options, BESIDE)
         if (open) asked.open = open
         const response = await fetch(`${base}/api/${encodeURIComponent(cmd)}`, {

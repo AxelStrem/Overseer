@@ -763,8 +763,8 @@ calendar Steps (entry=int, span="month") {
   calendar of a type), among the others in date order.
 - **The range** is which days are in view, not which days the calendar holds: every date is a
   cell it may hold. `from=` and `to=` name the first and the last day, and may be formulas. Or
-  `span=` - `"day"`, `"week"` (Monday to Sunday), `"month"` or `"year"` - names the one that holds
-  `at=`, today when it says nothing; a `from=` or `to=` beside it wins over what the span gives.
+  `span=` - `"day"`, `"week"` (seven days from the `week_start`, see "The day a week starts on"),
+  `"month"` or `"year"` - names the one that holds `at=`, today when it says nothing; a `from=` or `to=` beside it wins over what the span gives.
   A day written outside the range stays in the file and is kept with nothing said - it is history
   - and comes into view when the range does. A name in the block that is no date is said as a
   problem on the calendar, as is a range that is not one, or one longer than ten years.
@@ -812,8 +812,8 @@ calendar Steps (entry=int, span="month") {
   | --- | --- |
   | `agenda` | one day to a row, its date to the left - when it says nothing |
   | `day` | the first day in view, headed by its date |
-  | `week` | seven columns, Monday first, each day headed by its weekday and date |
-  | `month` | weeks as rows of seven columns, Monday first, the weekdays named above and each day's date over it; the days of the neighbouring months that fill a week are left blank |
+  | `week` | seven columns, the `week_start` first, each day headed by its weekday and date |
+  | `month` | weeks as rows of seven columns, the `week_start` first, the weekdays named above and each day's date over it; the days of the neighbouring months that fill a week are left blank |
   | `year` | a heatmap: weeks as columns and weekdays as rows, each day a small square, the months named above the week each begins in; a day shows its value on hover, and scrolls sideways where the page is narrower |
 
   A day of the heatmap takes its colour from its template's own style, worked out from its value:
@@ -1067,10 +1067,10 @@ tab project (label="Project") {
 - **It is addressed by its declaration**, once: `project/Sidebar/theme/surface` is the line the
   document wrote, and a write there changes it. What a container sees, worked out, has no address
   of its own, and a node read over the server does not list it among its children.
-- **Some names the page reads itself**: `theme` (below), and `vocabulary`, `hide-labels` and
-  `hover-text`, which say how the fields inside a container are drawn (see "Tags", "Hiding Labels"
-  and "Saying More When Asked"). A field's own parameter of the same name is that field's alone, and
-  wins over the context for it.
+- **Some names the page reads itself**: `theme` and `week_start` (below), and `vocabulary`,
+  `hide-labels` and `hover-text`, which say how the fields inside a container are drawn (see
+  "Tags", "Hiding Labels" and "Saying More When Asked"). A field's own parameter of the same name
+  is that field's alone, and wins over the context for it.
 
 #### The theme and the mode
 
@@ -1083,13 +1083,15 @@ context theme (base=<themes/default.os/theme>) {
     - accent = "#e11d48"
 }
 context mode = "system"
+context week_start = "system"
 ```
 
 - **They are seen at the top of every document**, before anything the document declares, so a
   document's own `context theme { - accent = red }` changes one key and keeps the rest, and a part
   of it can change more for what is inside that part. A mounted document sees them through the one
   that mounts it. Where there is no `settings.os` yet, it is as though it held
-  `context theme (base=<themes/default.os/theme>) { }` and `context mode = "system"`.
+  `context theme (base=<themes/default.os/theme>) { }`, `context mode = "system"` and
+  `context week_start = "system"`.
 - **A theme is a `context theme`** in a file of its own. Those that ship with Overseer are in its
   library's `themes` folder; one in a `themes` folder beside `settings.os`, or in a user's library,
   is offered beside them, and takes the place of a shipped one of the same name. Its keys are `background`, `surface`,
@@ -1293,12 +1295,35 @@ context mode = "system"
 - **They are the document's only until it uses the name for something else.** A field named `mode`
   is that field for itself and what is inside it, where a context the document declares itself
   would be refused: a document that never asked for a theme cannot be told its names are taken.
-- **The drawer chooses them**: a theme from those there are, and Light, Dark or System. The mode is
-  written to `settings.os` as a value; the theme as the `base=` of its `context theme`, so the keys
+- **The drawer chooses them**: a theme from those there are, Light, Dark or System, and the day a
+  week starts on. The mode and the day are written to `settings.os` as values; the theme as the `base=` of its `context theme`, so the keys
   the user changed inside the block stay as they were, now changing the theme chosen.
 - **On a server that keeps accounts, each person has their own**: `settings.os` in their folder,
   beside their documents, so each sees every document - another's included - in their own look.
   Nobody signed in sees the server's, at its root.
+
+#### The day a week starts on
+
+`week_start` is a context of the environment beside the theme and the mode: the day a week starts
+on, `"monday"` to `"sunday"`. A calendar's `span="week"`, and the weeks its `week`, `month` and
+`year` layouts are drawn in, start on the `week_start` it sees, and a formula reads it as any
+name, `$(week_start)`:
+
+```overseer
+tab (label="This week") {
+    context week_start = "sunday"
+    calendar Steps (entry=int, span="week", layout="week") { }
+}
+```
+
+- **`"system"` is the first day of the week where the page is** - in its locale, sent with every
+  request as the scheme is - and Monday where nothing says, as for the bot. A formula reads the day
+  it stands for, never `"system"`.
+- **It is there whether or not settings are in force**, `"system"` where they do not say it, so a
+  person's settings choose it for every document they see, and a document, a tab or any container
+  changes it for what is inside, as any context.
+- `weekday` and the other formula functions number the days from Monday whatever it says: a
+  number of a day is not a way of drawing weeks.
 
 #### Who is looking
 
@@ -1980,7 +2005,7 @@ the desktop, a file from the disk in a browser - answers that it is not availabl
 | `undo` | | | both |
 | `keep` | `path`, the open document if left out: added to the list of documents | | both |
 | `drop` | `path`: taken off the list of documents | | both |
-| `look` | `theme`, `mode` (`light`, `dark`, `system`), either or both | | both |
+| `look` | `theme`, `mode` (`light`, `dark`, `system`), `week_start` (a day, or `system`), any of them | | both |
 | `save_profile` | `name`, `colour`, `icon`, `shape` | `Saved.` | browser |
 | `change_password` | `current`, `password` | `Changed.` | browser |
 | `make_key` | `name` | the key, shown only this once | browser |

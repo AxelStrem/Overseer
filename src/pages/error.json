@@ -1147,6 +1147,21 @@
       }
     },
     {
+      "name": "week_start",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        },
+        "value": {
+          "String": "monday"
+        }
+      }
+    },
+    {
       "children": [
         {
           "name": "handle",
@@ -2463,6 +2478,21 @@
         },
         "value": {
           "String": "light"
+        }
+      }
+    },
+    {
+      "name": "week_start",
+      "node_type": "context",
+      "parameters": {
+        "_context_copy": {
+          "Boolean": true
+        },
+        "_label_layout": {
+          "String": "horizontal"
+        },
+        "value": {
+          "String": "monday"
         }
       }
     },

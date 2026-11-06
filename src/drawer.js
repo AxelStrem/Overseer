@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { textWithoutIcons } from './renderer.js'
+import { localeWeekStart, textWithoutIcons } from './renderer.js'
 
 /**
  * The drawer: the documents kept to hand, and what there is to do with the one that is open.
@@ -50,6 +50,8 @@ export class Drawer {
         for (const button of document.querySelectorAll('#drawer-mode [data-mode]')) {
             button.addEventListener('click', () => this.choose({ mode: button.dataset.mode }))
         }
+        const week = document.getElementById('drawer-week')
+        if (week) week.addEventListener('change', () => this.choose({ weekStart: week.value }))
         this.watchTheScheme()
         // Ctrl+\, as in the tools this was modelled on. One listener for the page, whichever
         // drawer was started last - a second would toggle it straight back.
@@ -78,7 +80,7 @@ export class Drawer {
     /// document again in it. In a browser the bridge sends it with every request; the desktop app
     /// keeps what it was last told.
     watchTheScheme() {
-        const report = () => invoke('report_color_scheme', { scheme: this.scheme() }).catch(() => { /* drawn light */ })
+        const report = () => invoke('report_color_scheme', { scheme: this.scheme(), weekStart: localeWeekStart() }).catch(() => { /* drawn light */ })
         this.reported = report()
         try {
             const query = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)')
@@ -129,9 +131,14 @@ export class Drawer {
             button.setAttribute('aria-pressed', String(on))
             button.disabled = !settings
         }
+        const week = document.getElementById('drawer-week')
+        if (week) {
+            week.value = (settings && settings.week_start) || 'system'
+            week.disabled = !settings
+        }
     }
 
-    /// Choose a theme or a mode: written to the settings, and the open document drawn again in it.
+    /// Choose a theme, a mode or the day a week starts on: written to the settings, and the open document drawn again in it.
     async choose(choice) {
         try {
             this.settings = await invoke('settings_choose', choice)

@@ -2270,6 +2270,8 @@ pub struct Settings {
     pub theme: Option<String>,
     /// `light`, `dark` or `system`.
     pub mode: String,
+    /// The day a week starts on, `monday` to `sunday`, or `system` for the locale's.
+    pub week_start: String,
     /// The extensions a document may have, without the dot - see `bases::document_extensions`.
     pub extensions: Vec<String>,
 }
@@ -2281,17 +2283,20 @@ pub fn settings_in(file: &std::path::Path) -> Settings {
     let nodes = crate::parser::parse_document(&text).map(|(_, nodes)| nodes).unwrap_or_default();
     let theme = chosen_theme(&nodes);
     let mut mode = crate::environment::SYSTEM.to_string();
+    let mut week_start = crate::environment::SYSTEM.to_string();
     for node in declared_settings(&nodes) {
-        if node.name == crate::environment::MODE {
-            if let Some(OverseerValue::String(said)) = node.parameters.get("value") {
+        if let Some(OverseerValue::String(said)) = node.parameters.get("value") {
+            if node.name == crate::environment::MODE {
                 mode = said.clone();
+            } else if node.name == crate::environment::WEEK_START {
+                week_start = said.clone();
             }
         }
     }
     let (themes, extensions) = crate::environment::with_file(file.to_path_buf(), || {
         (crate::environment::themes(), crate::bases::document_extensions())
     });
-    Settings { themes, theme, mode, extensions }
+    Settings { themes, theme, mode, week_start, extensions }
 }
 
 /// The theme a settings document chose, by the name of the file its `theme` is based on.
@@ -2324,20 +2329,27 @@ fn declared_settings(nodes: &[OverseerNode]) -> Vec<&OverseerNode> {
     out
 }
 
-/// Choose a theme, a mode or both, as one change to the settings - made first, where there are
-/// none yet, with what they would have said.
+/// Choose a theme, a mode, the day a week starts on, or any of them, as one change to the settings
+/// - made first, where there are none yet, with what they would have said.
 ///
-/// The mode is an ordinary value. The theme is the `base=` of the settings' `theme`, so that what
+/// The mode and the first weekday are ordinary values; settings from before there was a first
+/// weekday to choose are given its declaration, at their end. The theme is the `base=` of the settings' `theme`, so that what
 /// the user has changed of it - the keys inside the block - stays as it is and now changes the
 /// theme chosen instead.
 pub fn choose_settings(
     file: &std::path::Path,
     theme: Option<String>,
     mode: Option<String>,
+    week_start: Option<String>,
 ) -> Result<Settings> {
     if let Some(mode) = &mode {
         if !["light", "dark", crate::environment::SYSTEM].contains(&mode.as_str()) {
             return Err(OverseerError::ValidationError(format!("no mode '{}'", mode)));
+        }
+    }
+    if let Some(day) = &week_start {
+        if day != crate::environment::SYSTEM && !crate::environment::DAYS.contains(&day.as_str()) {
+            return Err(OverseerError::ValidationError(format!("no day '{}'", day)));
         }
     }
     if let Some(theme) = &theme {
@@ -2359,6 +2371,25 @@ pub fn choose_settings(
                     &format!("/{}", crate::environment::MODE),
                     OverseerValue::String(mode),
                 )?;
+            }
+            if let Some(day) = week_start {
+                if declaration_mut(nodes, crate::environment::WEEK_START).is_none() {
+                    let text = format!(
+                        "context {} = {}\n",
+                        crate::environment::WEEK_START,
+                        crate::file_ops::FileOperations::serialize_value(&OverseerValue::String(day.clone()))
+                    );
+                    let (_, mut made) = crate::parser::parse_document(&text)
+                        .map_err(|_| OverseerError::ValidationError("the first weekday could not be written".into()))?;
+                    nodes.append(&mut made);
+                    crate::actions::note_acted();
+                } else {
+                    crate::actions::ActionExecutor::assign_value(
+                        nodes,
+                        &format!("/{}", crate::environment::WEEK_START),
+                        OverseerValue::String(day),
+                    )?;
+                }
             }
             if let Some(theme) = theme {
                 let declaration = declaration_mut(nodes, "theme").ok_or_else(|| {

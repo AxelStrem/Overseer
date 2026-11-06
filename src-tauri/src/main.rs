@@ -82,20 +82,29 @@ async fn settings_choose(
     app: tauri::AppHandle,
     theme: Option<String>,
     mode: Option<String>,
+    week_start: Option<String>,
 ) -> Result<app_api::Settings> {
     let file = settings_file(&app)?;
     if let Some(folder) = file.parent() {
         let _ = std::fs::create_dir_all(folder);
     }
-    app_api::choose_settings(&file, theme, mode)
+    app_api::choose_settings(&file, theme, mode, week_start)
 }
 
-/// The scheme the page is in, which a `mode` of "system" stands for. The app has one page, so it
-/// is kept for the process until the page says otherwise.
+/// The scheme the page is in, which a `mode` of "system" stands for, and the first day of the week
+/// in its locale, which a `week_start` of "system" stands for. The app has one page, so both are
+/// kept for the process until the page says otherwise.
 #[command]
-async fn report_color_scheme(app: tauri::AppHandle, scheme: String) -> Result<()> {
+async fn report_color_scheme(
+    app: tauri::AppHandle,
+    scheme: String,
+    week_start: Option<String>,
+) -> Result<()> {
     settings_file(&app)?;
     overseer::environment::set_scheme(Some(&scheme));
+    if week_start.is_some() {
+        overseer::environment::set_week_start(week_start.as_deref());
+    }
     Ok(())
 }
 

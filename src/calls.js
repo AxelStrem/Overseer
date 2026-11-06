@@ -63,10 +63,11 @@ export const OPERATIONS = {
         const places = await invoke('menu_drop', { place })
         listChanged(app, places)
     },
-    async look({ theme, mode }, app) {
+    async look({ theme, mode, week_start }, app) {
         const choice = {}
         if (text(theme)) choice.theme = text(theme)
         if (text(mode)) choice.mode = text(mode)
+        if (text(week_start)) choice.weekStart = text(week_start)
         const settings = await invoke('settings_choose', choice)
         if (app.drawer) {
             app.drawer.settings = settings

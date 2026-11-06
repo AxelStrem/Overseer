@@ -109,6 +109,10 @@ struct CommandBody {
     /// `overseer::environment`. Absent for a caller with no page, which is drawn light.
     #[serde(default)]
     scheme: Option<String>,
+    /// The first day of the week in the page's locale, which a `week_start` of "system" stands
+    /// for. Absent for a caller with no page, whose weeks start on Monday.
+    #[serde(default)]
+    week_start: Option<String>,
     /// The document the page has open beside the one this is about - the drawer's neighbour -
     /// which `host/open` describes. Absent where nothing is drawn beside another.
     #[serde(default)]
@@ -143,12 +147,14 @@ async fn command(
             overseer::environment::as_admin(admin, || {
                 overseer::environment::beside(open, || {
                     overseer::environment::seen_as(body.scheme.as_deref(), || {
-                        documents.command_for(
-                            session.as_deref().unwrap_or(""),
-                            body.document.as_deref(),
-                            &cmd,
-                            &body.args,
-                        )
+                        overseer::environment::weeks_start_on(body.week_start.as_deref(), || {
+                            documents.command_for(
+                                session.as_deref().unwrap_or(""),
+                                body.document.as_deref(),
+                                &cmd,
+                                &body.args,
+                            )
+                        })
                     })
                 })
             })

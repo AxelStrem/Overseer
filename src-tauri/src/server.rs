@@ -1057,13 +1057,14 @@ impl DocumentRoot {
             "settings_choose" => {
                 let theme = arg_str(args, &["theme"]);
                 let mode = arg_str(args, &["mode"]);
+                let week_start = arg_str(args, &["week_start", "weekStart"]);
                 // Someone who has only just joined may have no folder yet.
                 if let Some(folder) = self.settings_file().parent() {
                     std::fs::create_dir_all(folder)
                         .map_err(|e| RequestError::Failed(format!("the settings: {}", e.kind())))?;
                 }
                 as_json(
-                    app_api::choose_settings(&self.settings_file(), theme, mode)
+                    app_api::choose_settings(&self.settings_file(), theme, mode, week_start)
                         .map_err(|e| RequestError::Failed(format!("the settings: {:?}", e)))?,
                 )
             }

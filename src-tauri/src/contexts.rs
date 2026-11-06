@@ -555,7 +555,7 @@ fn override_with(
     worked_out
         .parameters
         .insert(CONTEXT_COPY.to_string(), OverseerValue::Boolean(true));
-    crate::environment::settle_mode(&mut worked_out);
+    crate::environment::settle(&mut worked_out);
     forget_the_text(&mut worked_out);
     worked_out
 }

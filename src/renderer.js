@@ -110,9 +110,21 @@ const calendarDay = (name) => {
     const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
     return Number.isNaN(ms) ? null : ms
 }
-// Monday is 0: a week starts on Monday everywhere, for now (item `weekstart`).
+// Monday is 0, as ISO counts; a calendar's week starts on its `week_start`, counted the same way.
 const calendarWeekday = (ms) => (new Date(ms).getUTCDay() + 6) % 7
 const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+const WEEK_DAYS = WEEKDAY_NAMES.map(name => name.toLowerCase())
+/// The first day of the week in this browser's locale, as `week_start` names it, Monday where the
+/// browser cannot say. Reported to the server, which a `week_start` of "system" stands for.
+export const localeWeekStart = () => {
+    try {
+        const locale = new Intl.Locale((typeof navigator !== 'undefined' && navigator.language) || 'en')
+        const info = typeof locale.getWeekInfo === 'function' ? locale.getWeekInfo() : locale.weekInfo
+        return WEEK_DAYS[((info && info.firstDay) || 1) - 1] || WEEK_DAYS[0]
+    } catch (_) {
+        return WEEK_DAYS[0]
+    }
+}
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
     'September', 'October', 'November', 'December']
 const CALENDAR_LAYOUTS = ['day', 'week', 'month', 'year', 'agenda']
@@ -3790,6 +3802,13 @@ export class OverseerRenderer {
         const layout = CALENDAR_LAYOUTS.includes(asked) ? asked : 'agenda'
         element.classList.add('overseer-calendar', `calendar-${layout}`)
 
+        // The day its weeks start on, Monday 0: the nearest `week_start`, which the server settled
+        // from the locale where the settings say "system", and Monday where nothing says one, as
+        // the server counts a week's span.
+        const said = WEEK_DAYS.indexOf(String(this.contextAt(node, 'week_start') ?? '').trim().toLowerCase())
+        const start = said >= 0 ? said : 0
+        const weekday = (ms) => WEEKDAY_NAMES[calendarWeekday(ms)]
+
         const days = []
         for (const cell of Array.from(element.children).filter(el => el.dataset && el.dataset.path)) {
             let name = ''
@@ -3808,15 +3827,15 @@ export class OverseerRenderer {
             b.className = 'overseer-calendar-blank'
             return b
         }
-        // The days by their weeks, Monday to Sunday, each a day in view or null.
+        // The days by their weeks, each from its first day, each a day in view or null.
         const weeks = () => {
             const byDay = new Map(days.map(d => [d.ms, d]))
             const out = []
             if (!days.length) return out
-            const first = days[0].ms - calendarWeekday(days[0].ms) * DAY_MS
+            const first = days[0].ms - ((calendarWeekday(days[0].ms) - start + 7) % 7) * DAY_MS
             const last = days[days.length - 1].ms
-            for (let monday = first; monday <= last; monday += 7 * DAY_MS) {
-                out.push(Array.from({ length: 7 }, (_, i) => ({ ms: monday + i * DAY_MS, day: byDay.get(monday + i * DAY_MS) || null })))
+            for (let begins = first; begins <= last; begins += 7 * DAY_MS) {
+                out.push(Array.from({ length: 7 }, (_, i) => ({ ms: begins + i * DAY_MS, day: byDay.get(begins + i * DAY_MS) || null })))
             }
             return out
         }
@@ -3836,7 +3855,7 @@ export class OverseerRenderer {
             element.style.gridTemplateColumns = 'minmax(0, 1fr)'
             if (headed && days.length) {
                 const d = new Date(days[0].ms)
-                element.insertBefore(heading(`${WEEKDAY_NAMES[calendarWeekday(days[0].ms)]}, ${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCFullYear()}`, 'column day'), days[0].cell)
+                element.insertBefore(heading(`${weekday(days[0].ms)}, ${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCFullYear()}`, 'column day'), days[0].cell)
             }
             return
         }
@@ -3845,7 +3864,7 @@ export class OverseerRenderer {
             element.style.gridTemplateColumns = 'repeat(7, minmax(0, 1fr))'
             const items = []
             if (headed && layout === 'month') {
-                for (const name of WEEKDAY_NAMES) items.push(heading(name.slice(0, 3), 'column'))
+                for (let i = 0; i < 7; i++) items.push(heading(WEEKDAY_NAMES[(start + i) % 7].slice(0, 3), 'column'))
             }
             for (const week of weeks()) {
                 if (headed) {
@@ -3853,7 +3872,7 @@ export class OverseerRenderer {
                     // weekdays being named once above.
                     for (const { ms, day } of week) {
                         const date = new Date(ms).getUTCDate()
-                        const h = heading(layout === 'week' ? `${WEEKDAY_NAMES[calendarWeekday(ms)].slice(0, 3)} ${date}` : String(date), 'column date')
+                        const h = heading(layout === 'week' ? `${weekday(ms).slice(0, 3)} ${date}` : String(date), 'column date')
                         if (!day) h.classList.add('outside')
                         items.push(h)
                     }
@@ -3871,7 +3890,7 @@ export class OverseerRenderer {
         const items = []
         if (headed) {
             items.push(heading('', 'corner'))
-            for (let i = 0; i < 7; i++) items.push(heading([0, 2, 4].includes(i) ? WEEKDAY_NAMES[i].slice(0, 3) : '', 'row'))
+            for (let i = 0; i < 7; i++) items.push(heading([0, 2, 4].includes(i) ? WEEKDAY_NAMES[(start + i) % 7].slice(0, 3) : '', 'row'))
         }
         const all = weeks()
         // A month that begins in a week names it; the first week names its own month only when the

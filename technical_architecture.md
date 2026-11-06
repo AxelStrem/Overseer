@@ -64,8 +64,12 @@ Above a document's top is the environment, `environment.rs`: the context declara
 user's `settings.os`, read with their references settled where that file is, and worked out as the
 visible contexts the document's top starts from. Where the document declares nothing at its top,
 its copies of them go last rather than first, so no node of the document moves. A `mode` saying
-`"system"` is made the scheme the request reported. The server scopes each request to the settings
-beside its documents and to the scheme the page sent; the desktop app keeps both for the process.
+`"system"` is made the scheme the request reported, and a `week_start` saying `"system"` - there
+whether or not the settings say it - the first weekday of the page's locale, Monday where none was
+reported. The server scopes each request to the settings beside its documents and to the scheme
+and first weekday the page sent; the desktop app keeps them for the process. A calendar's
+`span="week"` reads the `week_start` as it makes its cells, before the copies are put in, so it
+looks for a declaration on its way up and takes the environment's where it meets none.
 A mount is worked out without the environment, and sees it through its host. A worked-out document
 is held under its text, its folder, and the mode it came to, and is let go once `settings.os` or a
 theme it is based on changes, as for the files its mounts and bases read.

@@ -23,7 +23,9 @@ const base = (name, node_type) => ({
 
 const iso = (ms) => new Date(ms).toISOString().slice(0, 10)
 
-export function calendarDocument({ from, to, layout, header, values = {} }) {
+// `weekStart` puts a `week_start` in front of the tab's children, as the resolver puts the copy
+// of a context the tab sees.
+export function calendarDocument({ from, to, layout, header, weekStart, values = {} }) {
   const parameters = { entry: { String: 'int' }, from: { String: from }, to: { String: to } }
   if (layout !== undefined) parameters.layout = { String: layout }
   if (header !== undefined) parameters.header = { Boolean: header }
@@ -34,8 +36,11 @@ export function calendarDocument({ from, to, layout, header, values = {} }) {
       parameters: { value: { Integer: values[name] || 0 }, _in_view: { Boolean: true } },
     }))
   }
+  const seen = weekStart === undefined ? [] : [Object.assign(base('week_start', 'context'), {
+    parameters: { value: { String: weekStart }, _context_copy: { Boolean: true } },
+  })]
   return [Object.assign(base('t', 'tab'), {
-    children: [Object.assign(base('Days', 'calendar'), { parameters, children })],
+    children: [...seen, Object.assign(base('Days', 'calendar'), { parameters, children })],
   })]
 }
 

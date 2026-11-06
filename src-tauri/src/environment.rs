@@ -13,6 +13,11 @@
 //!
 //! `mode` may say `"system"`, which is the scheme the page reports the browser is in - light or
 //! dark - with each request. A scheme nobody reported, as for the bot, is light.
+//!
+//! `week_start` is the day a week starts on, and may say `"system"` too: the first day of the
+//! week in the page's own locale, which it reports with each request as it does the scheme. Where
+//! nobody reported one, as for the bot, a week starts on Monday, as ISO says. It is there whether
+//! or not settings are in force, as `me` is, so a calendar can count on it.
 
 use crate::types::{OverseerNode, OverseerValue};
 use std::cell::{Cell, RefCell};
@@ -25,13 +30,19 @@ pub const FILE: &str = "settings.os";
 
 /// What the settings say until someone has chosen: the theme that ships with Overseer, light or
 /// dark as the system is.
-pub const DEFAULT: &str = "// How every document looks, until it says otherwise: the theme it is drawn in, and whether it\r\n// is light or dark. \"system\" follows the browser's or the computer's own setting.\r\n\r\ncontext theme (base=<themes/default.os/theme>) { }\r\ncontext mode = \"system\"\r\n";
+pub const DEFAULT: &str = "// How every document looks, until it says otherwise: the theme it is drawn in, whether it is\r\n// light or dark, and the day a week starts on. \"system\" follows the browser's or the computer's\r\n// own setting.\r\n\r\ncontext theme (base=<themes/default.os/theme>) { }\r\ncontext mode = \"system\"\r\ncontext week_start = \"system\"\r\n";
 
 /// The name whose `"system"` is the reported scheme.
 pub const MODE: &str = "mode";
 
 /// What `mode` says to follow the system.
 pub const SYSTEM: &str = "system";
+
+/// The name of the day a week starts on, whose `"system"` is the reported first day.
+pub const WEEK_START: &str = "week_start";
+
+/// The days a week can start on, as `week_start` names them, from Monday.
+pub const DAYS: [&str; 7] = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
 /// The context that says who is looking: `me/handle`, their username, `me/name`, what they are
 /// called, and `me/admin`, whether they run the server. Empty and false for whoever has no
@@ -59,6 +70,7 @@ pub struct Open {
 
 static FILE_HERE: Mutex<Option<PathBuf>> = Mutex::new(None);
 static SCHEME_HERE: Mutex<Option<String>> = Mutex::new(None);
+static WEEK_HERE: Mutex<Option<String>> = Mutex::new(None);
 static KIND_HERE: Mutex<Option<String>> = Mutex::new(None);
 
 thread_local! {
@@ -68,6 +80,8 @@ thread_local! {
     static SCOPED_FILE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     /// The scheme the page that sent this request is in.
     static SCOPED_SCHEME: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The first day of the week in the locale of the page that sent this request.
+    static SCOPED_WEEK: RefCell<Option<String>> = const { RefCell::new(None) };
     /// Whether whoever this request is answered for runs the server - something the server's
     /// accounts know, and the documents do not.
     static SCOPED_ADMIN: RefCell<Option<bool>> = const { RefCell::new(None) };
@@ -88,6 +102,13 @@ pub fn set_file(file: Option<PathBuf>) {
 pub fn set_scheme(scheme: Option<&str>) {
     if let Ok(mut held) = SCHEME_HERE.lock() {
         *held = scheme.map(str::to_string);
+    }
+}
+
+/// The first day of the week the desktop app's page last reported. Anything but a day is left out.
+pub fn set_week_start(day: Option<&str>) {
+    if let Ok(mut held) = WEEK_HERE.lock() {
+        *held = day.and_then(a_day).map(str::to_string);
     }
 }
 
@@ -120,6 +141,21 @@ pub fn seen_as<T>(scheme: Option<&str>, f: impl FnOnce() -> T) -> T {
         Some(scheme) => scoped(&SCOPED_SCHEME, Some(scheme.to_string()), f),
         None => f(),
     }
+}
+
+/// Work as the page whose locale starts a week on this day sees. Nothing reported, or anything but
+/// a day, leaves what was there.
+pub fn weeks_start_on<T>(day: Option<&str>, f: impl FnOnce() -> T) -> T {
+    match day.and_then(a_day) {
+        Some(day) => scoped(&SCOPED_WEEK, Some(day.to_string()), f),
+        None => f(),
+    }
+}
+
+/// The day as `DAYS` names it, whatever its case, or None for anything else.
+pub fn a_day(said: &str) -> Option<&'static str> {
+    let said = said.trim();
+    DAYS.iter().copied().find(|day| day.eq_ignore_ascii_case(said))
 }
 
 /// Work for someone who does, or does not, run the server.
@@ -175,6 +211,31 @@ pub fn scheme() -> &'static str {
     }
 }
 
+/// The day `week_start = "system"` stands for here: the one reported, Monday where none was.
+pub fn first_weekday() -> &'static str {
+    let reported = SCOPED_WEEK
+        .with(|held| held.borrow().clone())
+        .or_else(|| WEEK_HERE.lock().ok().and_then(|held| held.clone()));
+    reported.as_deref().and_then(a_day).unwrap_or(DAYS[0])
+}
+
+/// The day a week starts on at a document's top: what the settings say, settled, else the day
+/// reported. As said, which may be no day at all - a calendar that reads it says so.
+pub fn week_start() -> String {
+    declarations()
+        .into_iter()
+        .filter(|node| node.name == WEEK_START)
+        .last()
+        .map(|mut node| {
+            settle(&mut node);
+            match node.parameters.get("value") {
+                Some(OverseerValue::String(said)) => said.clone(),
+                _ => String::new(),
+            }
+        })
+        .unwrap_or_else(|| first_weekday().to_string())
+}
+
 /// The settings document's nodes, with its references settled where it is: a theme it names is
 /// looked for beside it, then in the library. `DEFAULT` where there is no file.
 fn settings(file: &Path) -> Option<Vec<OverseerNode>> {
@@ -188,7 +249,8 @@ fn settings(file: &Path) -> Option<Vec<OverseerNode>> {
 
 /// The context declarations a document's top is seen under, in the order they are written: those
 /// of the settings, where any are in force, then `me` and `host`, which are there without them as
-/// well - empty, as for anyone nobody has signed in. None for a mounted document, which sees the
+/// well - empty, as for anyone nobody has signed in - and `week_start`, `"system"` where the
+/// settings do not say it. None for a mounted document, which sees the
 /// environment through its host.
 pub fn declarations() -> Vec<OverseerNode> {
     if LEFT_OUT.with(Cell::get) {
@@ -198,6 +260,9 @@ pub fn declarations() -> Vec<OverseerNode> {
     let settings = file().and_then(|file| settings(&file));
     if let Some(nodes) = &settings {
         gather(nodes, &mut out);
+    }
+    if !out.iter().any(|node| node.name == WEEK_START) {
+        out.push(week_start_system());
     }
     out.push(me());
     out.push(host(settings.as_deref()));
@@ -249,6 +314,15 @@ fn me() -> OverseerNode {
         .ok()
         .and_then(|(_, mut nodes)| nodes.pop())
         .expect("the context of who is looking is a document")
+}
+
+/// `context week_start = "system"`, for settings that do not say it, and where there are none.
+fn week_start_system() -> OverseerNode {
+    let text = format!("context {} = {}\n", WEEK_START, quoted(SYSTEM));
+    crate::parser::parse_document(&text)
+        .ok()
+        .and_then(|(_, mut nodes)| nodes.pop())
+        .expect("the context of the first weekday is a document")
 }
 
 fn quoted(s: &str) -> String {
@@ -307,15 +381,18 @@ fn gather(nodes: &[OverseerNode], out: &mut Vec<OverseerNode>) {
     }
 }
 
-/// A `mode` that says `"system"`, made the scheme it stands for. Any other node is left as it is.
-pub fn settle_mode(node: &mut OverseerNode) {
-    if node.name != MODE {
-        return;
-    }
+/// A `mode` or a `week_start` that says `"system"`, made the scheme or the day it stands for. Any
+/// other node is left as it is.
+pub fn settle(node: &mut OverseerNode) {
+    let stands_for = match node.name.as_str() {
+        MODE => scheme(),
+        WEEK_START => first_weekday(),
+        _ => return,
+    };
     if let Some(OverseerValue::String(said)) = node.parameters.get("value") {
         if said == SYSTEM {
             node.parameters
-                .insert("value".to_string(), OverseerValue::String(scheme().to_string()));
+                .insert("value".to_string(), OverseerValue::String(stands_for.to_string()));
         }
     }
 }
@@ -338,6 +415,9 @@ pub fn key() -> String {
         Some(kind) if kind != BROWSER => format!("{};kind={}", host, kind),
         _ => host,
     };
+    // A week from Monday says nothing, so the copies kept for most people keep their names.
+    let week = week_start();
+    let host = if week == DAYS[0] { host } else { format!("{};week={}", host, week) };
     if file().is_none() {
         return host;
     }
@@ -346,7 +426,7 @@ pub fn key() -> String {
         .filter(|node| node.name == MODE)
         .last()
         .map(|mut node| {
-            settle_mode(&mut node);
+            settle(&mut node);
             match node.parameters.get("value") {
                 Some(OverseerValue::String(said)) => said.clone(),
                 _ => String::new(),
@@ -361,7 +441,7 @@ pub fn key() -> String {
 }
 
 /// What the environment says besides who is looking: each declaration of the settings as it
-/// stands, with `mode` settled, and the files its themes were read from and how each stood. Two
+/// stands, with `mode` and `week_start` settled, and the files its themes were read from and how each stood. Two
 /// people whose settings say the same in the same scheme see the same here, wherever their
 /// settings are kept - see `document_cache`, which hands a document worked out for one of them to
 /// the other on the strength of it.
@@ -370,7 +450,7 @@ pub fn look() -> String {
     let mut out = String::new();
     for node in declarations.iter().filter(|node| node.name != ME) {
         let mut node = node.clone();
-        settle_mode(&mut node);
+        settle(&mut node);
         describe(&node, &mut out);
     }
     for (file, stamp) in crate::bases::held(&declarations) {

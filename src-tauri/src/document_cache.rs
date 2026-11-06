@@ -243,8 +243,19 @@ fn leans_of_tree(nodes: &[OverseerNode], names: &[String]) -> Leans {
             (!crate::contexts::is_context(node) && names.contains(&node.name)) || named(&node.children, names)
         })
     }
+    // A week's span holds the days from the `week_start`, read when the calendar's cells are made
+    // rather than by a value the graph sees: a calendar is as the environment saw it.
+    fn spans_a_week(nodes: &[OverseerNode]) -> bool {
+        nodes.iter().any(|node| {
+            (node.node_type == "calendar"
+                && matches!(node.parameters.get("span"), Some(crate::types::OverseerValue::String(s)) if s.trim() == "week"))
+                || spans_a_week(&node.children)
+        })
+    }
     if named(nodes, names) {
         Leans::ALL
+    } else if spans_a_week(nodes) {
+        Leans { look: true, me: false }
     } else {
         Leans::default()
     }
