@@ -62,13 +62,24 @@ pub const BROWSER: &str = "browser";
 pub struct Open {
     pub path: String,
     pub name: String,
+    /// What the drawer calls it: the label of the tab it is wrapped in, else `name`.
+    pub label: String,
     /// `"edit"`, `"read"`, or empty where the asker may not open it at all.
     pub can: String,
     /// Whether there is a write to it that undo would take back.
     pub undoable: bool,
 }
 
-static FILE_HERE: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// One of the keys of whoever is looking, as `me/keys` lists it: never the key itself.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Key {
+    pub name: String,
+    pub made: chrono::DateTime<chrono::Utc>,
+    /// When it was last used, if ever.
+    pub used: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+static FILE_HERE:Mutex<Option<PathBuf>> = Mutex::new(None);
 static SCHEME_HERE: Mutex<Option<String>> = Mutex::new(None);
 static WEEK_HERE: Mutex<Option<String>> = Mutex::new(None);
 static KIND_HERE: Mutex<Option<String>> = Mutex::new(None);
@@ -87,6 +98,9 @@ thread_local! {
     static SCOPED_ADMIN: RefCell<Option<bool>> = const { RefCell::new(None) };
     /// The document the page that sent this request has open beside the one asked about.
     static SCOPED_OPEN: RefCell<Option<Open>> = const { RefCell::new(None) };
+    /// The keys of whoever this request is answered for, which the server's accounts hold and
+    /// no document does.
+    static SCOPED_KEYS: RefCell<Option<Vec<Key>>> = const { RefCell::new(None) };
     /// Set while a mounted document is worked out, which sees the environment through its host.
     static LEFT_OUT: Cell<bool> = const { Cell::new(false) };
 }
@@ -161,6 +175,19 @@ pub fn a_day(said: &str) -> Option<&'static str> {
 /// Work for someone who does, or does not, run the server.
 pub fn as_admin<T>(admin: bool, f: impl FnOnce() -> T) -> T {
     scoped(&SCOPED_ADMIN, Some(admin), f)
+}
+
+/// Work for someone who holds these keys, as `me/keys` lists them.
+pub fn with_keys<T>(keys: Vec<Key>, f: impl FnOnce() -> T) -> T {
+    scoped(&SCOPED_KEYS, Some(keys), f)
+}
+
+/// The keys of whoever is looking: none for nobody, and wherever no server said.
+fn keys() -> Vec<Key> {
+    if looking().is_none() {
+        return Vec::new();
+    }
+    SCOPED_KEYS.with(|held| held.borrow().clone()).unwrap_or_default()
 }
 
 /// Work as a page that has this document open beside the one asked about. Nothing said leaves
@@ -299,17 +326,49 @@ fn who_is_looking() -> (String, String) {
     }
 }
 
-/// `context me`, for whoever is looking. Their name is read from the server's directory of
-/// people, so a new one is seen at once, in every document.
+/// Whoever is looking's chip, as the directory of people draws it: its colour, icon and shape,
+/// all empty for nobody.
+fn chip_of_whoever_is_looking() -> (String, String, String) {
+    looking()
+        .zip(crate::access::root())
+        .and_then(|(handle, root)| crate::people::person_of(&root, &handle))
+        .map(|person| {
+            (
+                person.colour.unwrap_or_default(),
+                person.icon.unwrap_or_default(),
+                person.shape.unwrap_or_default(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+/// `context me`, for whoever is looking. Their name and chip are read from the server's directory
+/// of people, so a change is seen at once, in every document; their keys are as the server said.
 fn me() -> OverseerNode {
     let (handle, name) = who_is_looking();
-    let text = format!(
-        "context {} {{\n    string handle = {}\n    string name = {}\n    bool admin = {}\n}}\n",
+    let (colour, icon, shape) = chip_of_whoever_is_looking();
+    let mut text = format!(
+        "context {} {{\n    string handle = {}\n    string name = {}\n    bool admin = {}\n    string colour = {}\n    string icon = {}\n    string shape = {}\n",
         ME,
         quoted(&handle),
         quoted(&name),
-        admin()
+        admin(),
+        quoted(&colour),
+        quoted(&icon),
+        quoted(&shape)
     );
+    // Written whole, by place, as `host/themes` is.
+    text.push_str("    list keys (key=\"name\") {\n");
+    for (at, key) in keys().iter().enumerate() {
+        text.push_str(&format!(
+            "        div Key__{} {{\n            string name = {}\n            timestamp made = {}\n            timestamp used = {}\n        }}\n",
+            at + 1,
+            quoted(&key.name),
+            quoted(&key.made.to_rfc3339()),
+            quoted(&key.used.map(|used| used.to_rfc3339()).unwrap_or_default())
+        ));
+    }
+    text.push_str("    }\n}\n");
     crate::parser::parse_document(&text)
         .ok()
         .and_then(|(_, mut nodes)| nodes.pop())
@@ -358,9 +417,10 @@ fn host(settings: Option<&[OverseerNode]>) -> OverseerNode {
     }
     text.push_str("    }\n");
     text.push_str(&format!(
-        "    div open {{\n        string path = {}\n        string name = {}\n        string can = {}\n        bool undoable = {}\n    }}\n}}\n",
+        "    div open {{\n        string path = {}\n        string name = {}\n        string label = {}\n        string can = {}\n        bool undoable = {}\n    }}\n}}\n",
         quoted(&open.path),
         quoted(&open.name),
+        quoted(&open.label),
         quoted(&open.can),
         open.undoable
     ));
@@ -405,8 +465,8 @@ pub fn key() -> String {
     let open = SCOPED_OPEN.with(|held| held.borrow().clone());
     let host = match open {
         Some(open) if !LEFT_OUT.with(Cell::get) => format!(
-            ";open={}|{}|{}|{}",
-            open.path, open.name, open.can, open.undoable
+            ";open={}|{}|{}|{}|{}",
+            open.path, open.name, open.label, open.can, open.undoable
         ),
         _ => String::new(),
     };
@@ -465,7 +525,23 @@ pub fn look() -> String {
 /// Who is looking, as `me` says them - see `look`.
 pub fn who() -> String {
     let (handle, name) = who_is_looking();
-    format!("{}\n{}\n{}", handle, name, admin())
+    let (colour, icon, shape) = chip_of_whoever_is_looking();
+    // When each key was last used is left out: using one would throw away every copy kept for
+    // its owner.
+    let keys: Vec<String> = keys()
+        .iter()
+        .map(|key| format!("{}@{}", key.name, key.made.to_rfc3339()))
+        .collect();
+    format!(
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        handle,
+        name,
+        admin(),
+        colour,
+        icon,
+        shape,
+        keys.join("|")
+    )
 }
 
 /// The names the environment declares, `me` among them: what a document's top sees from it.

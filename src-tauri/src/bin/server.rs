@@ -133,6 +133,19 @@ async fn command(
         _ => None,
     };
     let admin = person.as_ref().is_some_and(|user| user.admin);
+    // Read from the store the accounts hold in memory, for `me/keys`: a few names and dates.
+    let keys = match (&person, &service.accounts) {
+        (Some(user), Some(accounts)) => accounts
+            .keys(&user.username)
+            .into_iter()
+            .map(|key| overseer::environment::Key {
+                name: key.name,
+                made: key.made,
+                used: key.used,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let asked = cmd.clone();
     // What a visitor is looking at is kept apart from what the same tab looked at in someone's
     // documents, where a document of the same name may be quite another.
@@ -144,7 +157,7 @@ async fn command(
     let outcome = tokio::task::spawn_blocking(move || {
         documents.as_asker(caller.asker(), || {
             let open = body.open.as_deref().map(|name| documents.open_beside(name));
-            overseer::environment::as_admin(admin, || {
+            let within = || {
                 overseer::environment::beside(open, || {
                     overseer::environment::seen_as(body.scheme.as_deref(), || {
                         overseer::environment::weeks_start_on(body.week_start.as_deref(), || {
@@ -157,7 +170,8 @@ async fn command(
                         })
                     })
                 })
-            })
+            };
+            overseer::environment::as_admin(admin, || overseer::environment::with_keys(keys, within))
         })
     })
     .await

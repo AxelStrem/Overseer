@@ -62,6 +62,9 @@ fn start(port: u16, name: &str) -> Server {
     write(&root, "ap31/recipes.os", "string soup = \"lentil\"\n");
     write(&root, "ap31/private.os", "string entry = \"a secret\"\n");
     write(&root, "bob/weight.os", "int kg = 80\n");
+    for person in ["ap31", "bob"] {
+        write(&root, &format!("{}/keys.os", person), "string names = \"\"\n");
+    }
     let mut child = Command::new(env!("CARGO_BIN_EXE_overseer-server"))
         .args([
             "--root",
@@ -277,4 +280,35 @@ fn keys_are_listed_by_name_and_only_their_owner_handles_them() {
     assert_eq!(ask(port, "POST", "/account/keys", &[], json("{\"name\":\"x\"}")).status, 401);
     let token = format!("Authorization: Bearer {}", TOKEN);
     assert_eq!(ask(port, "POST", "/account/keys", &[token], json("{\"name\":\"x\"}")).status, 400);
+}
+
+/// How many keys `session`'s owner holds and the first one's name, as a document of theirs reads
+/// `me/keys`.
+fn keys_read_by_a_document(port: u16, session: &str) -> String {
+    let body = r#"{"document":"keys.os","args":{"content":"string names = $(me/keys.count() + \" \" + me/keys.first()/name)\n"}}"#;
+    let answer = ask(port, "POST", "/api/parse_overseer_content", &[cookie(session)], json(body));
+    assert_eq!(answer.status, 200, "{}", answer.body);
+    answer
+        .body
+        .split("\"_computed_value\":{\"String\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no names in {}", answer.body))
+        .to_string()
+}
+
+#[test]
+fn a_document_reads_the_keys_of_whoever_is_looking() {
+    let server = start(4864, "read");
+    let port = server.port;
+    let (ap31, bob) = ap31_and_bob(&server);
+    make_key(port, &ap31, "desktop bot");
+    make_key(port, &ap31, "agent");
+    assert_eq!(keys_read_by_a_document(port, &ap31), "2 desktop bot");
+    assert_eq!(keys_read_by_a_document(port, &bob), "0 ", "bob holds none of ap31's");
+
+    // Revoked, it is gone at once, not left in a copy kept from before.
+    let revoked = ask(port, "DELETE", "/account/keys/agent", &[cookie(&ap31)], None);
+    assert_eq!(revoked.status, 200, "{}", revoked.body);
+    assert_eq!(keys_read_by_a_document(port, &ap31), "1 desktop bot");
 }

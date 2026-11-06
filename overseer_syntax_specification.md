@@ -1329,7 +1329,11 @@ tab (label="This week") {
 
 `me` is a context of the environment beside the theme and the mode: `me/handle` is the username of
 whoever is looking, `me/name` what they are called, and `me/admin` whether they run the server -
-may invite others and give someone a new password. They are empty and false where nobody is
+may invite others and give someone a new password. `me/colour`, `me/icon` and `me/shape` are
+their chip as the directory of people below draws it - a colour they did not choose is the
+directory's own. `me/keys` lists the keys they made to reach the server from scripts and bots, keyed
+by `name`, each with `made` and `used`, the timestamps it was made and last used - empty where it
+never was; the keys themselves are never in it. They are all empty and false where nobody is
 signed in, and in the desktop app. `me` is there whether or not settings are in force, so a document worked
 out on its own reads it as empty and does not fail on it; a mounted document sees the `me` of the
 place it is mounted at.
@@ -1372,14 +1376,15 @@ document is shown in:
   one the settings chose, empty where they name none by its file.
 - `host/open`: the document the page has open beside this one, as a drawer is drawn beside the
   document it is about. `path` is its name as the server knows it, `name` the file's name without
-  its extension, `can` what whoever is looking may do with it - `"edit"`, `"read"`, or empty where
+  its extension, `label` what it is called - the label of the tab it is wrapped in, as a
+  tracker's is, and its `name` where it has none or whoever is looking may not read it - `can` what whoever is looking may do with it - `"edit"`, `"read"`, or empty where
   they may not open it - and `undoable` whether undo would take a write to it back. It is said by
   the page with each request, and is empty and false where nothing is open beside the document;
   a document that reads it is worked out again whenever it says something else.
 
 ```overseer
 tab drawer {
-    string here (label="Open") = $(host/open/name)
+    string here (label="Open") = $(host/open/label)
     enum look (label="Look", vocabulary="/host/themes", view="select") = $(host/theme)
     div (hidden=$(!host/open/undoable)) {
         button undo (label="Undo") { }

@@ -86,12 +86,23 @@ pub fn write(root: &Path, people: &[Person]) -> std::io::Result<()> {
 
 type Stamp = Option<(std::time::SystemTime, u64)>;
 
-static HELD: LazyLock<Mutex<std::collections::HashMap<std::path::PathBuf, (Stamp, Vec<(String, String)>)>>> =
+static HELD: LazyLock<Mutex<std::collections::HashMap<std::path::PathBuf, (Stamp, Vec<Person>)>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 /// Everyone the directory in `root` names, as `(username, display name)`, read again only once
 /// the file has changed. Empty where there is none.
 pub fn read(root: &Path) -> Vec<(String, String)> {
+    everyone(root).into_iter().map(|person| (person.tag, person.name)).collect()
+}
+
+/// The person the directory in `root` lists as `username`, with their chip as it is drawn: a
+/// colour, icon or shape they did not choose is the template's.
+pub fn person_of(root: &Path, username: &str) -> Option<Person> {
+    everyone(root).into_iter().find(|person| person.tag == username)
+}
+
+/// Everyone the directory in `root` names, whole - see `read`.
+fn everyone(root: &Path) -> Vec<Person> {
     let file = root.join(FILE);
     let stamp = std::fs::metadata(&file)
         .ok()
@@ -173,7 +184,7 @@ pub fn plain(name: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn collect(nodes: &[OverseerNode], out: &mut Vec<(String, String)>) {
+fn collect(nodes: &[OverseerNode], out: &mut Vec<Person>) {
     for node in nodes {
         if node.node_type == "list" {
             for (_, entry) in crate::addressing::effective_children(node) {
@@ -195,7 +206,13 @@ fn collect(nodes: &[OverseerNode], out: &mut Vec<(String, String)>) {
                         })
                 };
                 if let Some(tag) = field("tag") {
-                    out.push((tag, field("name").unwrap_or_default()));
+                    out.push(Person {
+                        tag,
+                        name: field("name").unwrap_or_default(),
+                        colour: field("colour"),
+                        icon: field("icon"),
+                        shape: field("shape"),
+                    });
                 }
             }
         } else {

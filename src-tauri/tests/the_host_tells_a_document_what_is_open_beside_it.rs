@@ -16,14 +16,22 @@ const DRAWER: &str = r#"tab drawer {
     string theme = $(host/theme)
     string open_path = $(host/open/path)
     string open_name = $(host/open/name)
+    string open_label = $(host/open/label)
     string open_can = $(host/open/can)
     bool undoable = $(host/open/undoable)
     bool admin = $(me/admin)
+    string colour = $(me/colour)
+    string icon = $(me/icon)
+    string shape = $(me/shape)
+    int keys = $(me/keys.count())
+    string first_key = $(me/keys.first()/name)
     enum look (vocabulary="/host/themes") = "default"
 }
 "#;
 
 const NOTES: &str = "tab notes (mutable=true) {\n    string note = \"\"\n}\n";
+
+const JOURNAL: &str = "tab journal (label=\"My journal\") {\n    string entry = \"\"\n}\n";
 
 const SHARING: &str = r#"div (hidden=true) {
     div Share {
@@ -56,6 +64,7 @@ fn served(test: &str) -> (DocumentRoot, PathBuf) {
         write(&root, &format!("{}/drawer.os", person), DRAWER);
     }
     write(&root, "ap31/notes.os", NOTES);
+    write(&root, "ap31/journal.os", JOURNAL);
     write(&root, "ap31/sharing.os", SHARING);
     let documents = DocumentRoot::new(&root)
         .unwrap()
@@ -113,9 +122,12 @@ fn with_nothing_said_the_host_is_a_browser_with_nothing_open() {
     assert_eq!(text(&nodes, "kind"), "browser");
     assert_eq!(text(&nodes, "open_path"), "");
     assert_eq!(text(&nodes, "open_name"), "");
+    assert_eq!(text(&nodes, "open_label"), "");
     assert_eq!(text(&nodes, "open_can"), "");
     assert!(!truth(&nodes, "undoable"));
     assert!(!truth(&nodes, "admin"));
+    assert_eq!(text(&nodes, "icon"), "");
+    assert_eq!(value(&nodes, "keys"), OverseerValue::Integer(0));
 }
 
 #[test]
@@ -173,7 +185,13 @@ fn the_document_open_beside_is_described_as_the_asker_may_use_it() {
     let nodes = drawn_beside("ap31", "notes.os");
     assert_eq!(text(&nodes, "open_path"), "notes.os");
     assert_eq!(text(&nodes, "open_name"), "notes");
+    // Not wrapped in a labelled tab: called by its file's name.
+    assert_eq!(text(&nodes, "open_label"), "notes");
     assert_eq!(text(&nodes, "open_can"), "edit");
+
+    let nodes = drawn_beside("ap31", "journal.os");
+    assert_eq!(text(&nodes, "open_name"), "journal");
+    assert_eq!(text(&nodes, "open_label"), "My journal");
 
     // The same drawer, another document beside it: worked out again, not handed back.
     let nodes = drawn_beside("ap31", "drawer.os");
@@ -184,6 +202,7 @@ fn the_document_open_beside_is_described_as_the_asker_may_use_it() {
     assert_eq!(text(&nodes, "open_can"), "read");
     let nodes = drawn_beside("bob", "ap31/missing.os");
     assert_eq!(text(&nodes, "open_can"), "");
+    assert_eq!(text(&nodes, "open_label"), "missing");
 }
 
 #[test]
@@ -204,4 +223,58 @@ fn a_write_to_the_open_document_makes_it_undoable_and_undo_takes_that_back() {
     assert!(undoable(), "a write to the open document is there to take back");
     documents.as_asker(person("ap31"), || documents.undo("notes.os").unwrap());
     assert!(!undoable(), "and once taken back, nothing is");
+}
+
+#[test]
+fn me_carries_the_chip_the_directory_draws_and_the_keys_the_server_holds() {
+    let (documents, root) = served("me");
+    let chosen = |tag: &str, colour: Option<&str>, icon: Option<&str>, shape: Option<&str>| overseer::people::Person {
+        tag: tag.into(),
+        name: tag.into(),
+        colour: colour.map(String::from),
+        icon: icon.map(String::from),
+        shape: shape.map(String::from),
+    };
+    overseer::people::write(
+        &root,
+        &[chosen("ap31", Some("#ff8800"), Some("bot"), Some("tag")), chosen("bob", None, None, None)],
+    )
+    .unwrap();
+    let made = chrono::DateTime::parse_from_rfc3339("2026-11-01T10:00:00Z").unwrap().to_utc();
+    let key = |name: &str| overseer::environment::Key {
+        name: name.into(),
+        made,
+        used: None,
+    };
+    let drawn = |asker: &str, keys: Vec<overseer::environment::Key>| {
+        documents.as_asker(person(asker), || {
+            overseer::environment::with_keys(keys, || documents.open("drawer.os").unwrap())
+        })
+    };
+
+    let nodes = drawn("ap31", vec![key("laptop"), key("bot")]);
+    assert_eq!(text(&nodes, "colour"), "#ff8800");
+    assert_eq!(text(&nodes, "icon"), "bot");
+    assert_eq!(text(&nodes, "shape"), "tag");
+    assert_eq!(value(&nodes, "keys"), OverseerValue::Integer(2));
+    assert_eq!(text(&nodes, "first_key"), "laptop");
+
+    // A key revoked: the same drawer, worked out again rather than handed back.
+    let nodes = drawn("ap31", vec![key("bot")]);
+    assert_eq!(value(&nodes, "keys"), OverseerValue::Integer(1));
+    assert_eq!(text(&nodes, "first_key"), "bot");
+
+    // Bob chose nothing: his chip is the template's colour, with no icon and no shape of its own.
+    let nodes = drawn("bob", Vec::new());
+    assert_eq!(text(&nodes, "colour"), "#6b7280");
+    assert_eq!(text(&nodes, "icon"), "");
+    assert_eq!(text(&nodes, "shape"), "");
+    assert_eq!(value(&nodes, "keys"), OverseerValue::Integer(0));
+
+    // Nobody signed in holds no keys, whatever was said.
+    let nodes = documents.as_asker(Asker::Anyone, || {
+        overseer::environment::with_keys(vec![key("laptop")], || documents.open("ap31/drawer.os").unwrap())
+    });
+    assert_eq!(value(&nodes, "keys"), OverseerValue::Integer(0));
+    assert_eq!(text(&nodes, "colour"), "");
 }

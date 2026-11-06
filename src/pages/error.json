@@ -1198,6 +1198,54 @@
               "Boolean": false
             }
           }
+        },
+        {
+          "name": "colour",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
+          "name": "icon",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
+          "name": "shape",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
+          "name": "keys",
+          "node_type": "list",
+          "parameters": {
+            "_effective_layout": {
+              "String": "horizontal"
+            },
+            "key": {
+              "String": "name"
+            }
+          }
         }
       ],
       "name": "me",
@@ -1287,6 +1335,15 @@
             },
             {
               "name": "name",
+              "node_type": "string",
+              "parameters": {
+                "value": {
+                  "String": ""
+                }
+              }
+            },
+            {
+              "name": "label",
               "node_type": "string",
               "parameters": {
                 "value": {
@@ -2533,6 +2590,54 @@
               "Boolean": false
             }
           }
+        },
+        {
+          "name": "colour",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
+          "name": "icon",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
+          "name": "shape",
+          "node_type": "string",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "String": ""
+            }
+          }
+        },
+        {
+          "name": "keys",
+          "node_type": "list",
+          "parameters": {
+            "_effective_layout": {
+              "String": "horizontal"
+            },
+            "key": {
+              "String": "name"
+            }
+          }
         }
       ],
       "name": "me",
@@ -2622,6 +2727,15 @@
             },
             {
               "name": "name",
+              "node_type": "string",
+              "parameters": {
+                "value": {
+                  "String": ""
+                }
+              }
+            },
+            {
+              "name": "label",
               "node_type": "string",
               "parameters": {
                 "value": {

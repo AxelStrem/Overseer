@@ -179,7 +179,7 @@ pub fn labelled(places: Vec<Place>, locate: impl Fn(&str) -> Option<std::path::P
 /// Wrapping a whole document in a tab is a habit rather than a rule, but where it is followed the
 /// tab's label is what the document calls itself - and what it is shown as when documents are put
 /// together, each in its own tab.
-fn label_in(file: &Path) -> Option<String> {
+pub fn label_in(file: &Path) -> Option<String> {
     use std::io::BufRead;
     let reader = std::io::BufReader::new(std::fs::File::open(file).ok()?);
     let mut head = String::new();

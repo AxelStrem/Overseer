@@ -2600,12 +2600,15 @@ pub fn open_beside(path: &str) -> crate::environment::Open {
     let can = if at.is_file() { "edit" } else { "" };
     let undoable = !can.is_empty()
         && crate::undo::beside(at).is_some_and(|(folder, file)| crate::undo::depth(&folder, &file) > 0);
+    let name = at
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let label = crate::menu::label_in(at).unwrap_or_else(|| name.clone());
     crate::environment::Open {
         path: path.to_string(),
-        name: at
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        name,
+        label,
         can: can.to_string(),
         undoable,
     }

@@ -186,12 +186,19 @@ impl DocumentRoot {
             .filter(|_| can == "edit")
             .and_then(crate::undo::beside)
             .is_some_and(|(folder, file)| crate::undo::depth(&folder, &file) > 0);
+        let stem = Path::new(name)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // Only a document the asker may read tells them what its tab is called.
+        let label = path
+            .as_deref()
+            .and_then(crate::menu::label_in)
+            .unwrap_or_else(|| stem.clone());
         crate::environment::Open {
             path: name.to_string(),
-            name: Path::new(name)
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            name: stem,
+            label,
             can: can.to_string(),
             undoable,
         }

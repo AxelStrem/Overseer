@@ -10,6 +10,7 @@ use std::path::PathBuf;
 const DRAWER: &str = r#"tab drawer {
     string open_path = $(host/open/path)
     string open_name = $(host/open/name)
+    string open_label = $(host/open/label)
     string open_can = $(host/open/can)
     bool undoable = $(host/open/undoable)
 }
@@ -17,12 +18,15 @@ const DRAWER: &str = r#"tab drawer {
 
 const NOTES: &str = "tab notes (mutable=true) {\n    string note = \"\"\n}\n";
 
+const JOURNAL: &str = "tab journal (label=\"My journal\") {\n    string entry = \"\"\n}\n";
+
 fn folder(test: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("overseer-desktop-open-{}-{}", test, std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("drawer.os"), DRAWER).unwrap();
     std::fs::write(root.join("notes.os"), NOTES).unwrap();
+    std::fs::write(root.join("journal.os"), JOURNAL).unwrap();
     root
 }
 
@@ -80,12 +84,18 @@ fn a_file_open_beside_the_drawer_is_described_to_it() {
     let nodes = drawn_beside(&drawer, &notes);
     assert_eq!(text(&nodes, "open_path"), notes);
     assert_eq!(text(&nodes, "open_name"), "notes");
+    assert_eq!(text(&nodes, "open_label"), "notes", "no labelled tab: its file's name");
     assert_eq!(text(&nodes, "open_can"), "edit");
     assert!(!truth(&nodes, "undoable"));
+
+    let nodes = drawn_beside(&drawer, &slashed(root.join("journal.os")));
+    assert_eq!(text(&nodes, "open_name"), "journal");
+    assert_eq!(text(&nodes, "open_label"), "My journal");
 
     let missing = slashed(root.join("missing.os"));
     let nodes = drawn_beside(&drawer, &missing);
     assert_eq!(text(&nodes, "open_name"), "missing");
+    assert_eq!(text(&nodes, "open_label"), "missing");
     assert_eq!(text(&nodes, "open_can"), "", "a file that is not there is not the app's to open");
 }
 

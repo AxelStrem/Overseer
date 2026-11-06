@@ -116,6 +116,8 @@ fn person(name: &str) -> Asker {
 fn find<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
     nodes
         .iter()
+        // The environment's contexts are left out: `me/colour` is no field of the document's.
+        .filter(|n| n.node_type != "context")
         .find_map(|n| if n.name == name { Some(n) } else { find(&n.children, name) })
 }
 
