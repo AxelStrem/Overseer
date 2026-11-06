@@ -2680,6 +2680,17 @@ tags can explain itself as a whole and each tag in it on its own. A field whose 
 chip the mouse is on - the stage above - is talking about it already, and says both: its own text,
 and the chip's title under it.
 
+A button says it the same way, and answers `context hover-text` as a field does. `true` says its
+label; a button drawn as an icon alone says its name, or the icon's where it has none:
+
+```overseer
+button drop (icon="trash-2", hover-text="Remove this record") { ... }
+```
+
+A div and a chart say only their own `hover-text`, never the context's: over any part of a div
+that says nothing of its own, the div's text is what is shown, so a card a person presses can say
+what pressing it does.
+
 #### Markdown Text Formatting:
 ```overseer
 text MarkdownContent (markdown=true) = "# Heading

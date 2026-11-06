@@ -3404,7 +3404,8 @@ export class OverseerRenderer {
             btn.classList.add('icon-button')
             btn.appendChild(this.createIconElement(icon))
             const title = textWithoutIcons(this.getParameterValue(node, 'label') || '') || icon
-            if (title) btn.title = String(title)
+            if (title) btn.setAttribute('aria-label', String(title))
+            if (!this.sayOnHover(btn, node, String(title)) && title) btn.title = String(title)
         } else {
             const label = this.getParameterValue(node, 'label') || 'Load'
             const labelSpan = document.createElement('span')
@@ -3693,6 +3694,9 @@ export class OverseerRenderer {
         div.classList.add(`layout-${layout}`)
         this.applyFlowColumns(div, node, layout)
         
+        this.sayOnHover(div, node, textWithoutIcons(this.getParameterValue(node, 'label') || ''),
+            { fromContext: false })
+
         // Apply spacing and margins
         this.applyLayoutStyles(div, node)
         this.applyNodeStyles(div, node)
@@ -7925,18 +7929,18 @@ export class OverseerRenderer {
         const icon = (this.getParameterValue(node, 'icon') || '').toString().trim()
         const labelText = this.getParameterValue(node, 'label')
         const labelSays = textWithoutIcons(labelText ?? '').trim()
+        // What an icon-only button goes by, having no words of its own to show.
+        let named = ''
         if (!icon && labelSays === '' && labelText && String(labelText).indexOf('<icon=') !== -1) {
             // A label of icons alone is the long way of saying `icon=`, and is drawn the same.
             button.classList.add('icon-button')
             this.setTextWithIcons(button, labelText)
-            if (node.name) button.title = String(node.name)
+            if (node.name) named = String(node.name)
         } else if (icon && (!labelText || String(labelText).trim() === '')) {
             // Icon-only button
             button.classList.add('icon-button')
             button.appendChild(this.createIconElement(icon))
-            // Set tooltip from node name or icon name for accessibility
-            const title = node.name || icon
-            if (title) button.title = String(title)
+            named = String(node.name || icon)
         } else {
             // Label (and optional leading icon)
             if (icon) {
@@ -7951,6 +7955,7 @@ export class OverseerRenderer {
             this.setTextWithIcons(labelSpan, labelText ? String(labelText) : '')
             button.appendChild(labelSpan)
         }
+        this.labelButtonForHover(button, node, named || labelSays, named)
         // Guard: ensure no internal children (like event handlers/actions) are appended
         // If any children exist, they are non-visual and handled by emitEvent only
         // We intentionally do not render node.children for buttons
@@ -7971,6 +7976,16 @@ export class OverseerRenderer {
         this.markFoldButton(button, node)
         this.drawInKindLook(button)
         return button
+    }
+
+    /// What a button says on hover: its `hover-text`, or the nearest `context hover-text`, with
+    /// `true` saying its label - or, on an icon-only button, the name it goes by. The browser's
+    /// own title says that name only where nothing else does, so the two never show together; a
+    /// screen reader is given the name either way.
+    labelButtonForHover(button, node, label, named) {
+        if (named) button.setAttribute('aria-label', named)
+        if (this.sayOnHover(button, node, label)) button.removeAttribute('title')
+        else if (named) button.title = named
     }
 
     /// The path of the div a button opens - by `toggle_fold` or `unfold` in its `on click` - found
@@ -8308,6 +8323,10 @@ export class OverseerRenderer {
     createChartElement(node) {
         const container = document.createElement('div')
         container.className = 'overseer-chart'
+        // Placed above the chart, as any popup is where there is room, so it stays clear of the
+        // chart's own tooltips for its points.
+        this.sayOnHover(container, node, textWithoutIcons(this.getParameterValue(node, 'label') || ''),
+            { fromContext: false })
         
         // Create canvas for Chart.js
         const canvas = document.createElement('canvas')
@@ -9232,17 +9251,34 @@ export class OverseerRenderer {
     /// something this field says about itself that is only read when somebody asks.
     ///
     /// The field's own, or else the nearest `context hover-text`, so a list's entry template says
-    /// it once and every cell answers with the name of its own column.
-    hoverTextFor(node, label) {
+    /// it once and every cell answers with the name of its own column. A div or a chart reads
+    /// only its own: the context says how the fields and buttons inside are drawn, and a div
+    /// answering an inherited `true` would cover everything in it with its own name.
+    ///
+    /// `label` is the label element, or the name as text where there is no element to read it
+    /// from - a button's label, or the name an icon-only button goes by.
+    hoverTextFor(node, label, { fromContext = true } = {}) {
         let said = this.getParameterValue(node, 'hover-text')
-        if (said === undefined || said === null) said = this.contextAt(node, 'hover-text')
+        if ((said === undefined || said === null) && fromContext) said = this.contextAt(node, 'hover-text')
         if (said === undefined || said === null || said === false || said === 'false') return null
         if (said === true || said === 'true') {
-            const named = label ? this.textOf(label) : ''
+            const named = typeof label === 'string' ? label : (label ? this.textOf(label) : '')
             return named && named.trim() !== '' ? named : null
         }
         const given = String(said)
         return given.trim() === '' ? null : given
+    }
+
+    /// Settle what a button, a div or a chart says on hover, on the element the popup finds it on.
+    sayOnHover(element, node, named, { fromContext = true } = {}) {
+        const saying = this.hoverTextFor(node, named, { fromContext })
+        if (saying) {
+            element.dataset.hoverText = saying
+            element._hoverNode = node
+        } else {
+            delete element.dataset.hoverText
+        }
+        return saying
     }
 
     /// The one popup the page draws, made when something first asks for it.
@@ -13551,9 +13587,17 @@ export class OverseerRenderer {
                 case 'bool':
                     this.updateCheckboxElement(element, newNode)
                     break
-                case 'button':
-                    // No visual incremental update needed
+                case 'button': {
+                    // Nothing drawn changes, but a hover text that is a formula is worked out again.
+                    const button = element.tagName === 'BUTTON' ? element : element.querySelector('button')
+                    if (button) {
+                        const named = button.getAttribute('aria-label') || ''
+                        const words = button.querySelector('.overseer-button-label')
+                        const label = named || (words ? textWithoutIcons(this.textOf(words)).trim() : '')
+                        this.labelButtonForHover(button, newNode, label, named)
+                    }
                     return true
+                }
                 case 'checkbox':
                     this.updateCheckboxElement(element, newNode)
                     break
