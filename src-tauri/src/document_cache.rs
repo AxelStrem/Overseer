@@ -238,9 +238,14 @@ fn leans_of_graph(graph: &crate::dependencies::Graph, names: &[String]) -> Leans
 /// something hides it from what is inside, and the graph cannot tell what is under that node from
 /// what is under a copy: such a tree is held as the environment saw it, and handed to nobody else.
 fn leans_of_tree(nodes: &[OverseerNode], names: &[String]) -> Leans {
+    // A copy is worked out again for whoever it is handed to, so what is inside one hides nothing
+    // from the document's own values. Looked into, `host`'s own `theme` held every document
+    // served under accounts as one person saw it.
     fn named(nodes: &[OverseerNode], names: &[String]) -> bool {
         nodes.iter().any(|node| {
-            (!crate::contexts::is_context(node) && names.contains(&node.name)) || named(&node.children, names)
+            !crate::contexts::is_copy(node)
+                && ((!crate::contexts::is_context(node) && names.contains(&node.name))
+                    || named(&node.children, names))
         })
     }
     // A week's span holds the days from the `week_start`, read when the calendar's cells are made
