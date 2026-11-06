@@ -59,7 +59,7 @@ const DOC: &str = r#"tab t (label="T", mutable=true) {
 "#;
 
 /// Saving consults a process-wide registry of parsed sources, so two of these running at once
-/// see each other's document.
+/// see each other's document. The view state is process-wide too, and these tests forget all of it.
 static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn value_at(nodes: &[OverseerNode], address: &str) -> Option<OverseerValue> {
@@ -237,11 +237,9 @@ const STEPPED: &str = r#"tab t (label="T", mutable=true) {
 }
 "#;
 
-static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[test]
 fn a_range_a_button_steps_moves_for_the_viewer_and_leaves_the_file_alone() {
-    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let root = std::env::temp_dir().join(format!("overseer_calendar_step_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
