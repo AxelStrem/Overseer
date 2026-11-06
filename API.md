@@ -135,7 +135,9 @@ Two files at the root are the server's. `people.os` is the directory of everyone
 someone joins or changes their name, anyone may read it, and no request writes it, the token's
 included. Documents mount it to show people by name (see "Who is looking" in the specification).
 `settings.os` at the root is the look the token and anyone not signed in see; each person's own is
-`settings.os` in their folder, which the drawer's choices are written to.
+`settings.os` in their folder, which the drawer's choices are written to. Beside it is their
+`drawer.os`, the drawer they see, made the first time the page asks for it; anyone without a folder
+is given the shipped one, `library:drawer/drawer.os`, to read.
 
 ### Examples
 

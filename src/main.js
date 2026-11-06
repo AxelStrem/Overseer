@@ -2484,6 +2484,13 @@ tab Main {
         return pane
     }
 
+    /// Draw whoever is looking's own drawer in the pane - their `drawer.os`, or the base where they
+    /// have none - as the host names it.
+    async openOwnDrawer(element) {
+        const where = await invoke('drawer_location')
+        return where ? this.openDrawerDocument(String(where), element) : null
+    }
+
     closeDrawerDocument() {
         if (!this.drawerPane) return
         const element = this.drawerPane.element
@@ -2624,7 +2631,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         // A document drawn in the drawer, beside the one open, until the drawer is one by itself.
         const inDrawer = qs.get('drawer')
-        if (inDrawer) {
+        // `own` is whoever is looking's own drawer, asked for only until it replaces the drawer
+        // drawn by the page itself, so that the two are not drawn at once.
+        if (inDrawer === 'own') {
+            app.openOwnDrawer().catch((e) => console.warn('[Overseer] the drawer could not open', e))
+        } else if (inDrawer) {
             app.openDrawerDocument(inDrawer).catch((e) => console.warn('[Overseer] the document in the drawer could not open', e))
         }
     } catch {}

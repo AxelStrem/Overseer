@@ -207,6 +207,16 @@ impl DocumentRoot {
         name: &str,
         need: crate::access::Need,
     ) -> std::result::Result<PathBuf, RequestError> {
+        // The drawer's base, for whoever has none of their own: the one file of the library a
+        // page may open, and only to read - see `drawer`.
+        if name == crate::drawer::LIBRARY_NAME {
+            let file = crate::drawer::base_file()
+                .ok_or_else(|| RequestError::NotFound(format!("no document '{}'", name)))?;
+            return match need {
+                crate::access::Need::Read => Ok(file),
+                crate::access::Need::Edit => Err(RequestError::ReadOnly(crate::access::READ_ONLY.into())),
+            };
+        }
         let asker = crate::access::asker();
         let hidden = || match asker {
             crate::access::Asker::Stranger => RequestError::SignIn,
@@ -1023,6 +1033,18 @@ impl DocumentRoot {
                     _ => as_json(crate::menu::FILE),
                 }
             }
+            // The drawer whoever is asking draws - see `drawer`: a person's own beside their
+            // settings, the server's at its root, and for anyone with neither the base itself.
+            "drawer_location" => match self.menu_file() {
+                Ok(menu) => {
+                    let file = menu.with_file_name(crate::drawer::FILE);
+                    crate::drawer::ensure(&file, &menu, |path| self.resolve(path).ok())
+                        .map_err(|e| RequestError::Failed(format!("the drawer: {:?}", e)))?;
+                    as_json(crate::drawer::FILE)
+                }
+                Err(RequestError::SignIn) => as_json(crate::drawer::LIBRARY_NAME),
+                Err(other) => Err(other),
+            },
             // How every document here is drawn - see `environment`. Kept beside the documents, as
             // the menu is, whichever document the page is showing.
             "settings_read" => as_json(app_api::settings_in(&self.settings_file())),

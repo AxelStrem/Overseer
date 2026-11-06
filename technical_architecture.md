@@ -100,6 +100,15 @@ the request's `document` and `open`, and the server tells the pane's document of
 `host/open`. Its presses, edits, folds, clock and watch are its own; undo, the status line, and
 what its `call`s do are the page's.
 
+What the drawer draws is a document of whoever is looking (`drawer.rs`): their `drawer.os` beside
+their `settings.os`, inheriting the base Overseer ships, `library/drawer/drawer.os`. The host
+names it in answer to `drawer_location` - the desktop's in its settings folder, the server's in
+the person's folder or at its root - and makes it the first time it is asked for, holding what
+the old list of documents, `menu.os`, held: each folder there becomes an entry holding its
+documents, as the drawer's list is a tree. Whoever has no folder of their own, a stranger or a
+visitor, is named the base itself, `library:drawer/drawer.os`, the one library file a page may
+open, and only to read; no request writes to the shipped library at all.
+
 The page's own pages - the one shown while a document loads, and the one an error is shown on -
 are documents too, `src/pages/*.os`. They are needed exactly when there is no server to work them
 out, so the page carries them worked out already, in the shipped theme, light and dark, as

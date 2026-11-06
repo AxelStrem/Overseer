@@ -109,7 +109,10 @@ pub fn may(file: &Path, need: Need) -> bool {
             return true;
         };
         let Ok(within_root) = file.strip_prefix(&asking.root) else {
-            return true;
+            // The templates that ship with Overseer are read by every document a server works
+            // out, and a page may open the drawer's base itself - see `drawer` - but nothing a
+            // request does changes them for everyone.
+            return need == Need::Read || !crate::drawer::in_shipped_library(&file);
         };
         // The directory of people is the server's to write, from its accounts, and nobody's
         // through a document - the token's included, or a name could be changed past the profile.

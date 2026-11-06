@@ -49,6 +49,16 @@ async fn menu_location(app: tauri::AppHandle) -> Result<String> {
     Ok(menu_file(&app)?.to_string_lossy().to_string())
 }
 
+/// The drawer this app draws, in the same settings folder - see `overseer::drawer` - made the
+/// first time from what the menu there held.
+#[command]
+async fn drawer_location(app: tauri::AppHandle) -> Result<String> {
+    let menu = menu_file(&app)?;
+    let file = menu.with_file_name(overseer::drawer::FILE);
+    overseer::drawer::ensure(&file, &menu, |path| Some(std::path::PathBuf::from(path)))?;
+    Ok(file.to_string_lossy().to_string())
+}
+
 /// How every document is drawn - see `overseer::environment` - kept in the same settings folder
 /// as the menu, and made the settings everything this app works out is drawn through.
 fn settings_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf> {
@@ -588,6 +598,7 @@ fn main() {
             menu_keep,
             menu_drop,
             menu_location,
+            drawer_location,
             settings_read,
             settings_choose,
             report_color_scheme

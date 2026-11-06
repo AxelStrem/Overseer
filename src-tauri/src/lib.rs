@@ -7,6 +7,7 @@ pub mod app_api;
 pub mod bases;
 pub mod contexts;
 pub mod dependencies;
+pub mod drawer;
 pub mod document_cache;
 pub mod document_disk;
 pub mod environment;
