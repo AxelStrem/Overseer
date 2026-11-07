@@ -3534,6 +3534,250 @@ fn said_range(range: &Result<(chrono::NaiveDate, chrono::NaiveDate), String>) ->
     }
 }
 
+/// On a view - a calendar with `of=`, which draws another calendar's days with its own range and
+/// layout: the address of the calendar it shows.
+pub const VIEW_OF: &str = "_view_of";
+
+/// On a view: its own address, which names it on the days it shows - see `IN_VIEW_OF`.
+pub const VIEW_AT: &str = "_view_at";
+
+/// On a cell of a calendar that has views, followed by a view's address: whether the day is in
+/// that view's range.
+pub const IN_VIEW_OF: &str = "_in_view@";
+
+/// On a cell of a calendar that has views, followed by a view's address, `@` and a parameter's
+/// name: what the view's own `entry=` gives that parameter, worked out at the cell like any of
+/// the cell's own - see `view_parameters`.
+pub const VIEW_PARAMETER: &str = "_view@";
+
+/// The address `of=` names, from the view at `address`: `../Days` from the view's place, as a
+/// formula's path steps over named nodes only; `/log/Days` from the nearest ancestor holding
+/// `log`; a bare `Days` on the view and then up through its ancestors. Nothing for an address no
+/// node is at.
+fn view_target_address(view: &OverseerNode, address: &str, root: &[OverseerNode]) -> Option<String> {
+    let said = match view.parameters.get("of") {
+        Some(OverseerValue::String(s)) => s.trim().to_string(),
+        _ => return None,
+    };
+    let at: Vec<&str> = address.split('/').filter(|s| !s.is_empty()).collect();
+    let exists = |candidate: &str| crate::addressing::find(root, candidate).is_some();
+    let joined = |prefix: &[&str], rest: &str| {
+        if prefix.is_empty() { rest.to_string() } else { format!("{}/{}", prefix.join("/"), rest) }
+    };
+    if let Some(anchored) = said.strip_prefix('/') {
+        let first = anchored.split('/').next().unwrap_or("");
+        return (0..at.len())
+            .rev()
+            .map(|end| (joined(&at[..end], first), joined(&at[..end], anchored)))
+            .find(|(holder, _)| exists(holder))
+            .map(|(_, target)| target)
+            .filter(|target| exists(target));
+    }
+    if said.starts_with("..") || said.starts_with("./") || said == "." {
+        let mut steps: Vec<&str> = at.clone();
+        for step in said.split('/').filter(|s| !s.is_empty()) {
+            match step {
+                "." => {}
+                ".." => {
+                    steps.pop()?;
+                }
+                other => steps.push(other),
+            }
+        }
+        let target = steps.join("/");
+        return exists(&target).then_some(target);
+    }
+    (0..=at.len())
+        .rev()
+        .map(|end| joined(&at[..end], &said))
+        .find(|target| exists(target))
+}
+
+/// Whether anything in the document is a view, asked before walking it with addresses.
+fn holds_a_view(nodes: &[OverseerNode]) -> bool {
+    nodes
+        .iter()
+        .any(|n| (n.node_type == "calendar" && n.parameters.contains_key("of")) || holds_a_view(&n.children))
+}
+
+/// The views of the calendar at `target`, each with its address.
+fn views_of<'a>(target: &str, root: &'a [OverseerNode]) -> Vec<(String, &'a OverseerNode)> {
+    if !holds_a_view(root) {
+        return Vec::new();
+    }
+    let mut views = Vec::new();
+    crate::addressing::walk(root, &mut |address, node| {
+        if node.node_type == "calendar"
+            && node.parameters.contains_key("of")
+            && !not_worked_out(node)
+            && view_target_address(node, address, root).as_deref() == Some(target)
+        {
+            views.push((address.to_string(), node));
+        }
+    });
+    views
+}
+
+/// A view's range, worked out at its own place.
+fn view_range(
+    view: &OverseerNode,
+    address: &str,
+    root: &[OverseerNode],
+) -> Result<(chrono::NaiveDate, chrono::NaiveDate), String> {
+    let path = crate::addressing::name_path(root, address)
+        .unwrap_or_else(|| address.split('/').map(str::to_string).collect());
+    calendar_range(view, &path, root)
+}
+
+/// What `CALENDAR_RANGE` holds for a calendar: its range, and the range of each of its views, which
+/// it makes cells for too - so a view's range moving makes the calendar it shows again.
+fn calendar_said(node: &OverseerNode, address: &str, path: &[String], root: &[OverseerNode]) -> String {
+    let mut said = said_range(&calendar_range(node, path, root));
+    if !node.parameters.contains_key("of") {
+        for (view_address, view) in views_of(address, root) {
+            said.push_str(&format!("; {}={}", view_address, said_range(&view_range(view, &view_address, root))));
+        }
+    }
+    said
+}
+
+/// The parameters a view's own `entry=` gives the days it shows, over those of the template the
+/// calendar's days are made from: the view's `entry=` is a template made from that one, and only
+/// what it sets differently is read - `<Day> HeatDay (background-color=$(...))` colours the days
+/// of one view alone. Nothing for a view that names no `entry=`. A template not made from the
+/// calendar's, or one adding fields of its own, is said as a problem on the view.
+fn view_parameters(
+    view: &OverseerNode,
+    target: &OverseerNode,
+    root: &[OverseerNode],
+) -> Result<Vec<(String, OverseerValue)>, String> {
+    let Some(entry) = view.parameters.get("entry") else { return Ok(Vec::new()) };
+    let not_made_from = || {
+        format!(
+            "calendar '{}': its entry= is to be a template made from the entry= of '{}'",
+            view.name, target.name
+        )
+    };
+    let (OverseerValue::Template(own_path), Some(OverseerValue::Template(days_path))) = (entry, target.parameters.get("entry")) else {
+        return Err(not_made_from());
+    };
+    let days_name = crate::bases::reference(days_path).name;
+    if crate::bases::short(own_path) == crate::bases::short(days_path) {
+        return Ok(Vec::new());
+    }
+    let own =crate::bases::find_or_why(root, own_path)?.ok_or_else(not_made_from)?;
+    let days = crate::bases::find_or_why(root, days_path)?.ok_or_else(not_made_from)?;
+    // Up its chain of templates, as written or as made: a template made from another names it,
+    // and once copied is typed by it.
+    let mut base = own.clone();
+    let mut made_from = false;
+    for _ in 0..16 {
+        let next = match &base.template {
+            Some(path) => crate::bases::reference(path).name,
+            None if base.parameters.contains_key("_original_type") => base.node_type.clone(),
+            None => break,
+        };
+        if next == days_name {
+            made_from = true;
+            break;
+        }
+        match crate::bases::find_or_why(root, &next).ok().flatten() {
+            Some(found) => base = found,
+            None => break,
+        }
+    }
+    if !made_from {
+        return Err(not_made_from());
+    }
+    let fields: std::collections::HashSet<&str> = days.children.iter().map(|c| c.name.as_str()).collect();
+    let added: Vec<&str> = own
+        .children
+        .iter()
+        .map(|c| c.name.as_str())
+        .filter(|name| !name.is_empty() && !fields.contains(name))
+        .collect();
+    if !added.is_empty() {
+        return Err(format!(
+            "calendar '{}': its entry= styles the days of '{}' and adds no fields, not {}",
+            view.name,
+            target.name,
+            added.join(", ")
+        ));
+    }
+    let mut given: Vec<(String, OverseerValue)> = own
+        .parameters
+        .iter()
+        .filter(|(key, value)| {
+            !key.starts_with('_') && key.as_str() != "value" && days.parameters.get(key.as_str()) != Some(*value)
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    given.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(given)
+}
+
+/// Settles a view - a calendar with `of=` - which holds no cells: the calendar it shows makes
+/// them, for its own range and every view's, and marks each with the views it is in view for -
+/// see `make_calendar_cells`. Here the view's own range is worked out, and what is wrong with
+/// it said: an `of=` that names no calendar, or names another view; days written in its own
+/// block; an `entry=` that is no template made from the days'.
+///
+/// Returns whether it changed anything.
+fn make_calendar_view(node: &mut OverseerNode, address: &str, path: &[String], all_nodes: &[OverseerNode]) -> bool {
+    let range = calendar_range(node, path, all_nodes);
+    let said = said_range(&range);
+    if node.parameters.contains_key(GRID_MADE)
+        && matches!(node.parameters.get(CALENDAR_RANGE), Some(OverseerValue::String(s)) if *s == said)
+    {
+        return false;
+    }
+    let mut problems = Vec::new();
+    if let Err(why) = &range {
+        problems.push(why.clone());
+    }
+    let target_address = view_target_address(node, address, all_nodes);
+    let target = target_address
+        .as_deref()
+        .and_then(|at| crate::addressing::find(all_nodes, at))
+        .filter(|t| t.node_type == "calendar");
+    match target {
+        None => problems.push(format!("calendar '{}': of= names no calendar", node.name)),
+        Some(target) if target.parameters.contains_key("of") => problems.push(format!(
+            "calendar '{}' shows '{}', which shows another calendar's days itself",
+            node.name, target.name
+        )),
+        Some(target) => {
+            if let Err(why) = view_parameters(node, target, all_nodes) {
+                problems.push(why);
+            }
+        }
+    }
+    if !node.children.is_empty() {
+        problems.push(format!(
+            "calendar '{}' shows the days of another and holds none of its own",
+            node.name
+        ));
+    }
+    match (target, &target_address) {
+        (Some(target), Some(at)) if !target.parameters.contains_key("of") => {
+            node.parameters.insert(VIEW_OF.to_string(), OverseerValue::String(at.clone()));
+        }
+        _ => {
+            node.parameters.remove(VIEW_OF);
+        }
+    }
+    node.parameters.insert(VIEW_AT.to_string(), OverseerValue::String(address.to_string()));
+    if problems.is_empty() {
+        node.parameters.remove(crate::bases::ERROR);
+    } else {
+        node.parameters
+            .insert(crate::bases::ERROR.to_string(), OverseerValue::String(problems.join("; ")));
+    }
+    node.parameters.insert(GRID_MADE.to_string(), OverseerValue::Boolean(true));
+    node.parameters.insert(CALENDAR_RANGE.to_string(), OverseerValue::String(said));
+    true
+}
+
 /// Fills a calendar with its cells: one for each day in view and one for each day its block
 /// wrote, made from its `entry=` and named by the date, `2026-11-04`, in date order. As a grid's,
 /// a cell is an instance's inherited field: only what the block wrote is saved, and a cell set
@@ -3559,8 +3803,11 @@ fn make_calendar_cells(
     let address = WALKED.with(|w| w.borrow().0.join("/"));
     let path = crate::addressing::name_path(all_nodes, &address)
         .unwrap_or_else(|| address.split('/').map(str::to_string).collect());
+    if node.parameters.contains_key("of") {
+        return make_calendar_view(node, &address, &path, all_nodes);
+    }
     let range = calendar_range(node, &path, all_nodes);
-    let said = said_range(&range);
+    let said = calendar_said(node, &address, &path, all_nodes);
     let made = node.parameters.contains_key(GRID_MADE);
     if made && matches!(node.parameters.get(CALENDAR_RANGE), Some(OverseerValue::String(s)) if *s == said) {
         return false;
@@ -3578,10 +3825,30 @@ fn make_calendar_cells(
         Ok(None) => return false,
         Ok(Some(cell)) => cell,
     };
-    let in_view: Vec<chrono::NaiveDate> = match &range {
-        Ok((from, to)) => from.iter_days().take_while(|day| day <= to).collect(),
-        Err(_) => Vec::new(),
+    // Each view's days, with what its own `entry=` gives them - see `make_calendar_view`.
+    let views: Vec<(String, Option<(chrono::NaiveDate, chrono::NaiveDate)>, Vec<(String, OverseerValue)>)> =
+        views_of(&address, all_nodes)
+            .into_iter()
+            .map(|(at, view)| {
+                let range = view_range(view, &at, all_nodes).ok();
+                let given = view_parameters(view, node, all_nodes).unwrap_or_default();
+                (at, range, given)
+            })
+            .collect();
+    let days_of = |range: &(chrono::NaiveDate, chrono::NaiveDate)| {
+        let (from, to) = *range;
+        from.iter_days().take_while(move |day| *day <= to)
     };
+    let mut wanted: std::collections::BTreeSet<chrono::NaiveDate> = std::collections::BTreeSet::new();
+    if let Ok(own) = &range {
+        wanted.extend(days_of(own));
+    }
+    for (_, view_range, _) in &views {
+        if let Some(view_range) = view_range {
+            wanted.extend(days_of(view_range));
+        }
+    }
+    let in_view: Vec<chrono::NaiveDate> = wanted.into_iter().collect();
     if made {
         let held: std::collections::HashSet<chrono::NaiveDate> = node
             .children
@@ -3624,6 +3891,24 @@ fn make_calendar_cells(
         if let Some(day) = crate::addressing::date_of(&child.name) {
             let seen = first.is_some_and(|f| f <= day) && last.is_some_and(|l| day <= l);
             child.parameters.insert(IN_VIEW.to_string(), OverseerValue::Boolean(seen));
+            child.parameters.retain(|key, _| {
+                !key.starts_with(IN_VIEW_OF)
+                    && !key.starts_with(VIEW_PARAMETER)
+                    && !key.strip_prefix("_computed_").is_some_and(|k| k.starts_with(VIEW_PARAMETER))
+            });
+            for (at, view_range, given) in &views {
+                let seen = view_range.is_some_and(|(f, l)| f <= day && day <= l);
+                child
+                    .parameters
+                    .insert(format!("{}{}", IN_VIEW_OF, at), OverseerValue::Boolean(seen));
+                if seen {
+                    for (key, value) in given {
+                        child
+                            .parameters
+                            .insert(format!("{}{}@{}", VIEW_PARAMETER, at, key), value.clone());
+                    }
+                }
+            }
         }
     }
     let not_days: Vec<&str> = node
@@ -3708,7 +3993,7 @@ pub fn calendars_moved(nodes: &[OverseerNode]) -> bool {
                 let address = trail.join("/");
                 let path = crate::addressing::name_path(root, &address)
                     .unwrap_or_else(|| trail.clone());
-                let said = said_range(&calendar_range(node, &path, root));
+                let said = calendar_said(node, &address, &path, root);
                 !matches!(node.parameters.get(CALENDAR_RANGE), Some(OverseerValue::String(s)) if *s == said)
             } else if wrapper {
                 walk(&node.children, root, trail, level)

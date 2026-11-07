@@ -4146,10 +4146,17 @@ impl FormulaEvaluator {
                 }
                 _ => Self::eval_expr_to_node(base, context).map(|node| (Vec::new(), node)),
             };
-            let (walked, node) = match found {
+            let (mut walked, node) = match found {
                 Some(found) => found,
                 None => return Ok(OverseerValue::String("null".to_string())),
             };
+            // What is read through a view is read of the calendar it shows, whose days a change
+            // reaches - see `calendar_pick`.
+            if let Some(OverseerValue::String(of)) = node.parameters.get(crate::resolver::VIEW_OF) {
+                if let Some((_, shown)) = crate::addressing::find(context.document_root, of).and_then(Self::path_in_pass) {
+                    walked = shown;
+                }
+            }
             // A list inside an entry is read whole, as `meals/*/parts`: which entries every
             // meal's parts hold is not something the graph can name.
             read.entries_alone = !walked.is_empty()
@@ -4251,7 +4258,7 @@ impl FormulaEvaluator {
                             read.entries_alone = false;
                         }
                         if list.is_empty() {
-                            if let Some(empty) = Self::calendar_day_left_empty(grid, call) {
+                            if let Some(empty) = Self::calendar_day_left_empty(grid, call, context.document_root) {
                                 return Ok(empty);
                             }
                         }
@@ -4829,6 +4836,23 @@ impl FormulaEvaluator {
         call: &MethodCall,
         context: &EvaluationContext<'a>,
     ) -> Option<Result<Vec<&'a OverseerNode>, OverseerError>> {
+        // A view reads the days of the calendar it shows: `cells()` those in its own range,
+        // `at()` any of them - see `resolver::make_calendar_view`.
+        if let Some(OverseerValue::String(of)) = calendar.parameters.get(crate::resolver::VIEW_OF) {
+            let target = crate::addressing::find(context.document_root, of)?;
+            if call.name == "cells" && call.args.is_empty() {
+                let mark = match calendar.parameters.get(crate::resolver::VIEW_AT) {
+                    Some(OverseerValue::String(at)) => format!("{}{}", crate::resolver::IN_VIEW_OF, at),
+                    _ => return Some(Ok(Vec::new())),
+                };
+                return Some(Ok(target
+                    .children
+                    .iter()
+                    .filter(|cell| matches!(cell.parameters.get(&mark), Some(OverseerValue::Boolean(true))))
+                    .collect()));
+            }
+            return Self::calendar_pick(target, call, context);
+        }
         let in_view = |cell: &&OverseerNode| {
             matches!(cell.parameters.get(crate::resolver::IN_VIEW), Some(OverseerValue::Boolean(true)))
         };
@@ -4873,8 +4897,17 @@ impl FormulaEvaluator {
 
     /// What `Days.at(date)` reads as for a day with no cell, in a calendar of a field type: the
     /// type's empty value, which is what the cell would hold. `None` for anything else.
-    fn calendar_day_left_empty(calendar: Option<&OverseerNode>, call: &MethodCall) -> Option<OverseerValue> {
+    fn calendar_day_left_empty(
+        calendar: Option<&OverseerNode>,
+        call: &MethodCall,
+        root: &[OverseerNode],
+    ) -> Option<OverseerValue> {
         let calendar = calendar.filter(|c| c.node_type == "calendar" && call.name == "at")?;
+        // A view's days are the calendar's it shows.
+        let calendar = match calendar.parameters.get(crate::resolver::VIEW_OF) {
+            Some(OverseerValue::String(of)) => crate::addressing::find(root, of)?,
+            _ => calendar,
+        };
         match calendar.parameters.get("entry") {
             Some(OverseerValue::String(type_name)) => Some(match type_name.as_str() {
                 "int" => OverseerValue::Integer(0),

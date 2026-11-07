@@ -1687,7 +1687,8 @@ export class OverseerRenderer {
         // A calendar draws the days in view. The others it holds - written outside the range, or
         // set by an action - are kept, and drawn when the range comes round to them.
         if (parentType === 'calendar') {
-            const seen = this.getParameterValue(childNode, '_in_view')
+            const view = this.calendarViewOf(parentNode)
+            const seen = this.getParameterValue(childNode, view ? `_in_view@${view.at}` : '_in_view')
             if (!(seen === true || String(seen).toLowerCase() === 'true')) return false
         }
 
@@ -2983,7 +2984,8 @@ export class OverseerRenderer {
                     }
                 }
 
-                if (node.children && Array.isArray(node.children)) {
+                // A view holds no days of its own, and draws those of the calendar it shows.
+                if ((node.children && Array.isArray(node.children)) || (nodeTypeLower === 'calendar' && this.calendarViewOf(node))) {
                     // For list nodes, render in UI-sorted order using _ui_sort_key
                     const renderChildren = () => {
                         // A tree draws every row of itself, at every depth - see `treeOf`.
@@ -2993,13 +2995,21 @@ export class OverseerRenderer {
                         }
                         let children = node.children
                         if (nodeTypeLower === 'list') children = this.inDisplayOrder(node)
+                        // A view draws the days of the calendar it shows, at their own paths, so
+                        // that what is done in one is done to that day - see `calendarViewOf`.
+                        const view = nodeTypeLower === 'calendar' ? this.calendarViewOf(node) : null
+                        if (view) {
+                            children = view.days
+                            element.dataset.calendarView = view.at
+                            element.dataset.calendarViewOf = view.path.join('/')
+                        }
                         // A folded div draws its header and nothing under it.
                         const foldedAway = this.isFoldable(node) && this.isFolded(node, path)
                         const filteredChildren = foldedAway ? [] : children.filter(ch => this.shouldRenderChild(node, ch))
                         if (DEBUG_MODE) console.log('Rendering', filteredChildren.length, 'children for node:', node)
                         for (const child of filteredChildren) {
                             const seg = (child.name || child.node_type || child.type || 'child')
-                            const childPath = this.childPathFor(node, child, path)
+                            const childPath = view ? [...view.path, child.name] : this.childPathFor(node, child, path)
                             if (DEBUG_MODE) {
                                 try {
                                     const dbgParent = node.name || node.node_type || node.type || 'unknown'
@@ -3007,7 +3017,7 @@ export class OverseerRenderer {
                                     if (DEBUG_MODE) console.log(`[BG] pass to child parent=${dbgParent} child=${dbgChild} inheritedBg=${nextInherited.backgroundColor ?? 'null'}`)
                                 } catch (_) { /* no-op */ }
                             }
-                            this.renderNode(child, element, nextInherited, childPath)
+                            this.renderNode(view ? this.dayAsViewed(node, child) : child, element, nextInherited, childPath)
                         }
                     }
                     renderChildren()
@@ -3798,6 +3808,84 @@ export class OverseerRenderer {
     /// As in a grid, every day is placed by the order it is drawn in, never by a place of its
     /// own: a day drawn again after an edit replaces its element, and would lose one. So the
     /// days are put in order here, with blanks for the days of a week that are not in view.
+    /// A calendar with `of=` is a view of another: the server marks it with that calendar's
+    /// address and its own, and each day of that calendar with whether it is in the view's range.
+    /// The view draws those days where they are, `Days/2026-11-04`, so an edit or a press in one
+    /// writes the day itself. Null for any other calendar, and for a view of nothing.
+    calendarViewOf(node) {
+        const of = this.getParameterValue(node, '_view_of')
+        const at = this.getParameterValue(node, '_view_at')
+        if (typeof of !== 'string' || !of || typeof at !== 'string') return null
+        const path = of.split('/')
+        const target = this.findNodeByPath(this.app.currentDocument, path)
+        return { at, path, days: Array.isArray(target?.children) ? target.children : [] }
+    }
+
+    /// A day as a view draws it: with what the view's own `entry=` gives it over its own
+    /// parameters - `_view@<view>@background-color`, worked out at the day on the server. The day
+    /// itself when the view gives nothing.
+    dayAsViewed(view, day) {
+        const at = this.getParameterValue(view, '_view_at')
+        const prefix = `_view@${at}@`
+        const own = day?.parameters || {}
+        const given = Object.keys(own).filter(key => key.startsWith(prefix))
+        if (!at || !given.length) return day
+        const parameters = { ...own }
+        for (const key of given) {
+            const name = key.slice(prefix.length)
+            parameters[name] = own[key]
+            if (own[`_computed_${key}`] !== undefined) parameters[`_computed_${name}`] = own[`_computed_${key}`]
+            else delete parameters[`_computed_${name}`]
+        }
+        return { ...day, parameters }
+    }
+
+    /// Draws again the days a view shows of what was just drawn at `pathArray` elsewhere: every
+    /// view of the calendar there, or the same day in every view showing it. A day is in the page
+    /// once for each calendar showing it, and a repaint finds only one of them by its path.
+    repaintCalendarViews(documentArray, pathArray, except) {
+        const key = pathArray.join('/')
+        const wanted = JSON.stringify(pathArray)
+        for (const viewEl of Array.from(this.scopedAll('[data-calendar-view]'))) {
+            if (except && (viewEl === except || except.contains(viewEl))) continue
+            let viewPath = null
+            try { viewPath = JSON.parse(viewEl.dataset.path || 'null') } catch (_) { viewPath = null }
+            if (!Array.isArray(viewPath)) continue
+            if (viewEl.dataset.calendarViewOf === key) {
+                this._rerenderSubtree(documentArray, viewPath)
+                continue
+            }
+            const view = this.findNodeByPath(documentArray, viewPath)
+            const day = view && this.findNodeByPath(documentArray, pathArray)
+            if (!day) continue
+            for (const cell of Array.from(viewEl.children)) {
+                if (cell.getAttribute('data-path') !== wanted) continue
+                const wrapper = document.createElement('div')
+                this.renderNode(this.dayAsViewed(view, day), wrapper, { backgroundColor: this.colourHandedAt(viewEl) }, pathArray)
+                if (wrapper.firstElementChild) viewEl.replaceChild(wrapper.firstElementChild, cell)
+            }
+        }
+    }
+
+    /// Lays each view's own styles over the days it shows again, from the document as it is now:
+    /// a value edited elsewhere moves a heatmap's colour without the day being drawn again.
+    restyleCalendarViews(documentArray) {
+        for (const viewEl of Array.from(this.scopedAll('[data-calendar-view]'))) {
+            let view = null
+            try { view = this.findNodeByPath(documentArray, JSON.parse(viewEl.dataset.path || '[]')) } catch (_) { view = null }
+            if (!view) continue
+            for (const cell of Array.from(viewEl.children)) {
+                if (!cell.dataset || !cell.dataset.path) continue
+                let day = null
+                try { day = this.findNodeByPath(documentArray, JSON.parse(cell.dataset.path)) } catch (_) { day = null }
+                const viewed = day && this.dayAsViewed(view, day)
+                if (!viewed || viewed === day) continue
+                cell.style.backgroundColor = ''
+                this.applyNodeStyles(cell, viewed)
+            }
+        }
+    }
+
     setUpCalendar(element, node) {
         const header = this.getParameterValue(node, 'header')
         const headed = !(header === false || String(header).toLowerCase() === 'false')
@@ -13154,6 +13242,15 @@ export class OverseerRenderer {
                         const targetEl = candidates[0].el
                         const elementPath = JSON.parse(targetEl.dataset.path || '[]')
                         const newNode = this.findNodeByPath(newDocument, elementPath)
+                        // The same field drawn again in a view of its calendar - see
+                        // `calendarViewOf` - is updated too.
+                        if (newNode) {
+                            for (const { el: copy } of candidates.slice(1)) {
+                                if (copy.contains(targetEl) || targetEl.contains(copy) || !copy.closest('[data-calendar-view]')) continue
+                                if (candidates.some(({ el }) => el !== copy && copy.contains(el))) continue
+                                this.updateSingleElement(copy, newNode, elementPath)
+                            }
+                        }
                         if (newNode) {
                             if (DEBUG_MODE) console.log('📝 Updating deepest element for changed field:', newNode.name)
                             if (this.updateSingleElement(targetEl, newNode, elementPath)) {
@@ -13249,6 +13346,7 @@ export class OverseerRenderer {
             try { this.arrangeBoards() } catch (_) { /* never break a repaint over a view */ }
             try { this.arrangeTrees() } catch (_) { /* never break a repaint over a view */ }
             try { this.arrangeGrips() } catch (_) { /* never break a repaint over a view */ }
+            try { this.restyleCalendarViews(newDocument) } catch (_) { /* never break a repaint over a view */ }
             if (DEBUG_MODE) console.log(`✅ Selective update completed: ${updateCount} elements updated`)
             return updateCount > 0
             
@@ -13333,6 +13431,7 @@ export class OverseerRenderer {
             const fresh = wrapper.firstElementChild
             if (fresh) {
                 parent.replaceChild(fresh, parent.children[idx])
+                try { this.repaintCalendarViews(documentArray, pathArray, fresh) } catch (_) { /* never break a repaint over a view */ }
                 // What was just put on the page is new elements, which know nothing about any
                 // filter over them, or about the table they landed in. Without this a filtered
                 // list quietly refills the moment anything else nearby changes - the same shape

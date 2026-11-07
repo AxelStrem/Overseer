@@ -819,6 +819,33 @@ calendar Steps (entry=int, span="month") {
   A day of the heatmap takes its colour from its template's own style, worked out from its value:
   `div Day (background-color=$(commits > 3 ? "#30a14e" : "")) { int commits = 0 }`.
   `header=false` leaves the dates and names out.
+- **A view** is a calendar with `of=`, naming another calendar by path as a formula would: it
+  keeps no days of its own and draws that calendar's days with its own range, `layout=` and
+  `header=`. The same days can so be drawn several ways at once - the day picked in full, the last
+  week as an agenda, the year as a heatmap:
+
+  ```overseer
+  div (hidden=true) {
+      div Day { int kcal = 0 }
+      <Day> HeatDay (background-color=$(kcal > ../../target ? "#e5534b" : "#30a14e")) { }
+  }
+
+  calendar Days (entry=<Day>, span="day", at=$(../selected), layout="day") { }
+  calendar Recent (of="../Days", from=$(date_add_days(today(), -6)), to=$(today()), layout="agenda")
+  calendar Year (of="../Days", entry=<HeatDay>, from=$(date_add_days(today(), -364)), to=$(today()), layout="year")
+  ```
+
+  A day in a view is the calendar's own: its address is `Days/2026-11-04`, an edit or a press in
+  it writes there, and `date()` and its paths read as in the calendar. The calendar holds a day
+  for its own range and for every view's. `Recent.cells()` gives the days in the view's range,
+  and `Recent.at(date)` any day of the calendar; the days have no address under the view.
+
+  A view's own `entry=`, a template made from the days' and adding no fields, styles the days in
+  that view alone: only the parameters it sets differently are read, worked out at each day as
+  the day's own are. Without it, a view draws the days as the calendar does.
+
+  Said as a problem on the view: an `of=` that names no calendar, or names another view; days
+  written in its own block; an `entry=` that is not a template made from the days'.
 
 ## Advanced Features
 
