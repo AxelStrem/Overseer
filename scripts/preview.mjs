@@ -285,11 +285,13 @@ window.__preview = {
         // found too. A formula that fails is worked out as this text, in a value or a parameter.
         const failed = 'invalid formula error'
         // A template's own formulas have no entry to read from, and fail there by design. A
-        // template is known by its instances, which carry its name as their type.
+        // template is known by its instances, which carry its name as their type, or by the
+        // entry= naming it - which arrives as a bare { Template: "Day" }, and is the only
+        // sign of a template a calendar view alone uses, since a view has no cells of its own.
         const kinds = new Set()
         const gather = (node) => {
             kinds.add(node.node_type)
-            const entry = String(this.bare((node.parameters || {}).entry) ?? '').match(/<(?:[^>]*\/)?([^>/]+)>/)
+            const entry = String(this.bare((node.parameters || {}).entry) ?? '').match(/^<?(?:[^<>]*\/)?([^<>/]+)>?$/)
             if (entry) kinds.add(entry[1])
             for (const c of node.children || []) gather(c)
         }
