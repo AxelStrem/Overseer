@@ -785,7 +785,8 @@ calendar Steps (entry=int, span="month") {
 - **A day's address** is a step like any other: `log/Days/2026-11-04/commits`. An action may also
   name a day by a date in brackets, written or worked out where the action is:
   `set (path="../Days[$(today())]/commits") = 1`. A day out of view is set like any other, and
-  kept. A calendar has no entries to `append`, `remove` or `move`.
+  kept; so is one the server reads or writes (see [API.md](API.md)), and a day nobody wrote reads
+  as the calendar's `entry=` has it. A calendar has no entries to `append`, `remove` or `move`.
 - **A formula** reaches the days through the calendar's methods:
 
   | method | |
@@ -2129,7 +2130,8 @@ editing the field opens on the value, not on the text.
 
 `freeze=true` keeps what a formula gave at the moment its entry was made: in a new entry the field
 is written with the value its formula works out, and from then on it states that value rather than
-following the formula. A day's target that starts as yesterday's, and stays what it was once
+following the formula. A calendar's day is made when something is first written in it, and its
+fields marked `freeze=true` are written then. A day's target that starts as yesterday's, and stays what it was once
 yesterday changes, is a formula with `freeze=true`.
 
 #### Icons

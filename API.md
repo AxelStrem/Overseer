@@ -200,6 +200,10 @@ entry to its part, so `project/History/[stages]` means the same wherever the ent
 list with a `window` holds only its newest parts in the document as a whole; a read of the list, or
 of anything in it, and a write to an entry, are answered with every part read.
 
+A calendar's day is named by its date, `tracker/Days/2026-10-20/intake`, whether or not it is in
+view or was ever written: a day nobody wrote reads as the calendar's template has it, and a write
+to it is kept in the document, among the days in date order.
+
 Both the document and the address go in the query string, not the path - both contain slashes.
 `curl --url-query` (curl 7.87 and later) or `-G --data-urlencode` encodes them.
 

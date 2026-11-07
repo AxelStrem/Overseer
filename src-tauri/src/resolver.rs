@@ -936,6 +936,20 @@ impl Drop for KeptInView {
     }
 }
 
+/// The days of the calendar at `calendar` that an address this interaction is about names, as
+/// the step right after it: `t/Days/2026-10-20/intake` names 2026-10-20 of `t/Days`.
+fn days_wanted_of(calendar: &str) -> Vec<chrono::NaiveDate> {
+    let within = format!("{}/", calendar);
+    WANTED.with(|wanted| {
+        wanted
+            .borrow()
+            .iter()
+            .filter_map(|address| address.strip_prefix(&within))
+            .filter_map(|rest| crate::addressing::date_of(rest.split('/').next().unwrap_or("")))
+            .collect()
+    })
+}
+
 /// Whether this interaction is holding anything in view.
 ///
 /// A document resolved while something is held in view is not the document anyone else would have
@@ -2184,6 +2198,18 @@ fn freeze_if_it_was_asked_for(node: &mut OverseerNode, asked_where_it_is_new: bo
     );
     node.parameters.remove("_computed_value");
     node.source_fingerprint = None;
+}
+
+/// Freezes, at once, each field under a node just created that asks to be frozen and has its
+/// value worked out already - a calendar's day, made by the template and worked out with the
+/// rest, which a write is the first to reach. A settle that works out only what the write
+/// reached would never come back to those fields. One not worked out yet is left to the mark.
+pub fn freeze_what_asks_in(node: &mut OverseerNode) {
+    for child in node.children.iter_mut() {
+        let asks = matches!(child.parameters.get("freeze"), Some(OverseerValue::Boolean(true)));
+        freeze_if_it_was_asked_for(child, asks);
+        freeze_what_asks_in(child);
+    }
 }
 
 /// Whether a field asks to be frozen and sits inside an entry just created - the half of
@@ -3848,6 +3874,10 @@ fn make_calendar_cells(
             wanted.extend(days_of(view_range));
         }
     }
+    // And a day an interaction is about - the server reading or writing a day nobody wrote, out
+    // of view - made as an action's `add_calendar_day` would, so that it can be reached at all.
+    // It is kept and not drawn: the range below says it is out of view.
+    wanted.extend(days_wanted_of(&address));
     let in_view: Vec<chrono::NaiveDate> = wanted.into_iter().collect();
     if made {
         let held: std::collections::HashSet<chrono::NaiveDate> = node

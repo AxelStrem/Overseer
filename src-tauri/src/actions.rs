@@ -2603,11 +2603,20 @@ impl ActionExecutor {
     }
 
     /// Makes the cell of each day an action's path names in a calendar that has none for it - a
-    /// day out of view nobody wrote - so that the action can set it like any other. The calendar
-    /// is found as the path itself will be; a path that names no calendar is left for the action
-    /// to refuse.
+    /// day out of view nobody wrote - so that the action can set it like any other, and marks a
+    /// day nothing is written in yet as new, since this write is what makes it - see
+    /// `mark_the_entry_as_new`. The calendar is found as the path itself will be; a path that
+    /// names no calendar is left for the action to refuse.
     fn make_days_named(nodes: &mut Vec<OverseerNode>, owner_path: &[String], action: &OverseerNode) {
-        let Some(OverseerValue::String(target)) = action.parameters.get("path") else { return };
+        for param in ["path", "list"] {
+            if let Some(OverseerValue::String(target)) = action.parameters.get(param) {
+                Self::make_days_written(nodes, owner_path, target);
+            }
+        }
+    }
+
+    /// The same for one path.
+    fn make_days_written(nodes: &mut Vec<OverseerNode>, owner_path: &[String], target: &str) {
         if !target.contains('[') && !target.split('/').any(|s| crate::addressing::date_of(s.trim()).is_some()) {
             return;
         }
@@ -2629,10 +2638,26 @@ impl ActionExecutor {
             if !is_calendar {
                 continue;
             }
-            let snapshot = nodes.clone();
+            let held = Self::node_by_indices(nodes, &indices).is_some_and(|n| n.children.iter().any(|c| c.name == day));
+            if !held {
+                let snapshot = nodes.clone();
+                let Some(calendar) = Self::get_node_mut_by_indices(nodes, &indices) else { continue };
+                if crate::resolver::add_calendar_day(calendar, &day, &snapshot) {
+                    note_structural();
+                }
+            }
             let Some(calendar) = Self::get_node_mut_by_indices(nodes, &indices) else { continue };
-            if crate::resolver::add_calendar_day(calendar, &day, &snapshot) {
-                note_structural();
+            // A day the block wrote is named among the calendar's overrides when it is read; any
+            // other is a cell the template gave, which this write is the first to reach.
+            let written = matches!(
+                calendar.parameters.get("_explicit_overrides"),
+                Some(OverseerValue::String(names)) if names.split(',').any(|n| n == day)
+            );
+            if !written {
+                if let Some(cell) = calendar.children.iter_mut().find(|c| c.name == day) {
+                    Self::mark_the_entry_as_new(cell);
+                    crate::resolver::freeze_what_asks_in(cell);
+                }
             }
         }
     }
@@ -4404,6 +4429,7 @@ impl ActionExecutor {
         overrides: &Vec<OverseerNode>,
     ) -> Result<(), OverseerError> {
         note_acted();
+        Self::make_days_written(nodes, &[], list_path);
         Self::append_to_list(nodes, &[], list_path, None, None, overrides)
     }
 
@@ -4793,6 +4819,7 @@ impl ActionExecutor {
         value: OverseerValue,
     ) -> Result<(), OverseerError> {
         note_acted();
+        Self::make_days_written(nodes, &[], target);
         Self::set_value(nodes, &[], &[], target, value)
     }
 
