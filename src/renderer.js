@@ -2458,6 +2458,7 @@ export class OverseerRenderer {
 
             // Before the children, so it is the first thing in the div - see `drawFoldHeader`.
             try { this.drawFoldHeader(element, node, path) } catch (_) { /* it still shows, unfoldable */ }
+            try { this.markFloating(element, node, path) } catch (_) { /* drawn in the flow */ }
 
             // After the fold header, so the header stays first - see `drawInheritError`.
             try { this.drawInheritError(element, node, container) } catch (_) { /* drawn as written */ }
@@ -11526,7 +11527,7 @@ export class OverseerRenderer {
     /// press folds every div that reads the flag, and each can still be opened by hand after.
     isFolded(node, path) {
         const said = this.foldedAsSaid(node)
-        const folds = this.foldsHere()
+        const folds = this.isFloating(node) ? this.floatsHere() : this.foldsHere()
         const key = this.foldKeyFor(path)
         const state = folds.get(key)
         if (!state) return said
@@ -11539,12 +11540,14 @@ export class OverseerRenderer {
     /// Fold a div, or bring it back, and draw what that changes.
     setFolded(node, path, folded) {
         const said = this.foldedAsSaid(node)
-        const folds = this.foldsHere()
+        const floating = this.isFloating(node)
+        const folds = floating ? this.floatsHere() : this.foldsHere()
         const key = this.foldKeyFor(path)
         // Back to what the document says is the document's again.
         if (folded === said) folds.delete(key)
         else folds.set(key, { folded, said })
-        this.keepFolds()
+        if (floating) this.noteFloatOpener(path, folded)
+        else this.keepFolds()
         const doc = this.app && this.app.currentDocument
         // Drawn again from the div, or from the nearest drawn ancestor when it was folded away.
         let drawn = false
@@ -11554,6 +11557,164 @@ export class OverseerRenderer {
         if (!drawn) this.renderDocument(doc)
         // A button that opens this div may be outside what was drawn again.
         this.scopedAll('.overseer-fold-button').forEach((button) => this.showFoldPressed(button))
+        if (floating) this.placeFloats()
+    }
+
+    /// Whether a foldable div is drawn over the page while it is open - `float=true`.
+    isFloating(node) {
+        if (!this.isFoldable(node)) return false
+        const said = this.getParameterValue(node, 'float')
+        return said === true || String(said).toLowerCase() === 'true'
+    }
+
+    /// The folds of floating divs: held while the page is looking at this document, and never kept
+    /// past a reload. A floating div is short-lived - a menu, a picker - and one that came back
+    /// open after a reload would sit over whatever is under it.
+    floatsHere() {
+        const file = (this.app && this.app.currentFile) || ''
+        if (!this._floats || this._floatsFile !== file) {
+            this._floatsFile = file
+            this._floats = new Map()
+            this._floatOpeners = new Map()
+        }
+        return this._floats
+    }
+
+    /// Remember what opened a floating div - the element pressed last, by its drawn path, so that
+    /// it is found again after a redraw - and in what order the open ones were opened, for Escape.
+    noteFloatOpener(path, folded) {
+        this.floatsHere()
+        const key = JSON.stringify(path)
+        this._floatOpeners.delete(key)
+        if (folded) return
+        const pressed = this._lastPressed
+        const drawn = pressed && typeof pressed.closest === 'function' ? pressed.closest('[data-path]') : null
+        this._floatOpeners.set(key, pressed ? { element: pressed, path: drawn ? drawn.dataset.path : null } : null)
+    }
+
+    /// An open floating div is drawn where it is in the document, and lifted out of the flow by
+    /// its class - see `placeFloats`.
+    markFloating(element, node, path) {
+        if (!this.isFloating(node) || this.isFolded(node, path)) return
+        element.classList.add('overseer-floating')
+        this.listenForFloats()
+        this.placeFloatsSoon()
+    }
+
+    /// Placed once the frame is laid out, however many floating divs were drawn in it.
+    placeFloatsSoon() {
+        if (this._floatsPlacing) return
+        this._floatsPlacing = true
+        const place = () => { this._floatsPlacing = false; this.placeFloats() }
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(place)
+        else setTimeout(place, 0)
+    }
+
+    /// What a floating div is anchored to: the element that opened it, else a button that opens
+    /// it, else - opened by a formula, or its opener drawn away - the place it would have taken.
+    floatAnchor(element) {
+        const key = element.dataset && element.dataset.path
+        if (!key) return null
+        const by = this._floatOpeners && this._floatOpeners.get(key)
+        if (by && by.element && by.element.isConnected) return by.element
+        if (by && by.path) {
+            const found = Array.from(this.scopedAll('[data-path]')).find((el) => el.dataset.path === by.path)
+            if (found) return found.querySelector('button') || found
+        }
+        const button = Array.from(this.scopedAll('.overseer-fold-button')).find((b) =>
+            JSON.stringify(b.__overseerFoldTarget) === key)
+        if (button) return button
+        return null
+    }
+
+    /// Put every open floating div by what it is anchored to: below it and from its left edge,
+    /// from its right edge when that would run off the window, above it when there is no room
+    /// below, and always inside the window.
+    placeFloats() {
+        if (typeof window === 'undefined') return
+        const width = window.innerWidth || document.documentElement.clientWidth || 0
+        const height = window.innerHeight || document.documentElement.clientHeight || 0
+        const margin = 4
+        for (const element of this.scopedAll('.overseer-floating')) {
+            try {
+                // A div that carries on its parent's colour paints nothing, and over the page it
+                // would let what is beneath show through; the class gives it the surface instead.
+                if (element.style.backgroundColor === 'transparent') element.style.backgroundColor = ''
+                // Fixed is measured from the window unless an ancestor is transformed, which makes
+                // that ancestor the origin instead: measured at 0,0, it says where the origin is.
+                element.style.left = '0px'
+                element.style.top = '0px'
+                const origin = element.getBoundingClientRect()
+                const anchor = this.floatAnchor(element)
+                // With nothing that opened it, it stays where it would have been drawn.
+                const at = anchor ? anchor.getBoundingClientRect() : this.floatSpot(element)
+                if (!at) continue
+                const w = origin.width
+                const h = origin.height
+                let left = at.left
+                if (left + w > width - margin) left = at.right - w
+                left = Math.max(margin, Math.min(left, width - margin - w))
+                let top = at.bottom + 2
+                if (top + h > height - margin && at.top - 2 - h >= margin) top = at.top - 2 - h
+                top = Math.max(margin, Math.min(top, height - margin - h))
+                element.style.left = `${left - origin.left}px`
+                element.style.top = `${top - origin.top}px`
+            } catch (_) { /* left where it was */ }
+        }
+    }
+
+    /// Where a floating div with no opener would have been drawn: just under what comes before it,
+    /// or at the top of what holds it.
+    floatSpot(element) {
+        const before = element.previousElementSibling
+        if (before) {
+            const r = before.getBoundingClientRect()
+            return { left: r.left, right: r.left, top: r.bottom, bottom: r.bottom }
+        }
+        const holder = element.parentElement
+        if (!holder) return null
+        const r = holder.getBoundingClientRect()
+        return { left: r.left, right: r.left, top: r.top, bottom: r.top }
+    }
+
+    /// Fold the open floating divs a press landed outside of - outside the div, and outside what
+    /// opened it, whose own press folds it - and the one opened last on Escape. Listened for once
+    /// a floating div is drawn, by each document for its own.
+    listenForFloats() {
+        if (this._floatsListening || typeof document === 'undefined') return
+        this._floatsListening = true
+        const close = (element) => {
+            const path = JSON.parse(element.dataset.path)
+            const doc = this.app && this.app.currentDocument
+            const node = Array.isArray(doc) ? this.findNodeByPath(doc, path) : null
+            if (node && this.isFloating(node) && !this.isFolded(node, path)) this.setFolded(node, path, true)
+        }
+        document.addEventListener('pointerdown', (e) => {
+            for (const element of Array.from(this.scopedAll('.overseer-floating'))) {
+                if (!element.isConnected || element.contains(e.target)) continue
+                const anchor = this.floatAnchor(element)
+                if (anchor && anchor.contains(e.target)) continue
+                try { close(element) } catch (_) { /* stays open */ }
+            }
+        }, true)
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape' || !this._floatOpeners || this._floatOpeners.size === 0) return
+            const open = Array.from(this.scopedAll('.overseer-floating'))
+            const keys = [...this._floatOpeners.keys()]
+            for (let i = keys.length - 1; i >= 0; i--) {
+                const element = open.find((el) => el.dataset.path === keys[i])
+                if (!element) continue
+                try { close(element) } catch (_) { /* stays open */ }
+                return
+            }
+        })
+        if (typeof window !== 'undefined') {
+            const again = () => {
+                if (this.scopedAll('.overseer-floating').length > 0) this.placeFloatsSoon()
+            }
+            window.addEventListener('scroll', again, true)
+            window.addEventListener('resize', again)
+        }
     }
 
     /// The header of a foldable div with a label: pressed anywhere, it folds the div or unfolds it.
@@ -12678,6 +12839,8 @@ export class OverseerRenderer {
      */
     async emitEvent(node, element, eventName, withValue) {
         if (!this.app || !this.app.currentDocument) return
+        // What a floating div this press opens is anchored to - see `noteFloatOpener`.
+        if (element && (eventName === 'click' || eventName === 'hold')) this._lastPressed = element
         const path = (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])

@@ -2005,6 +2005,33 @@ div Notes (foldable=true, folded=$(/project/fold_all), label="Notes") { ... }
 
 `hidden=true` wins over any fold.
 
+A foldable div that also says `float=true` is drawn over the page while it is open, instead of
+in its place: nothing around it moves to make room. It is put just below what opened it - the
+button whose press unfolded it - or above it when there is no room below, and always inside the
+window; opened by anything else, it floats where it would have been drawn. A press anywhere
+outside it folds it again, and so does Escape, so opening a second one folds the first. A press
+inside it leaves it open, as a picker needs; a menu folds itself by ending its buttons' actions
+with `fold`. Its fold is the viewer's like any other, but it is not kept past a reload.
+
+```overseer
+div Item (layout="horizontal") {
+    string title = ""
+    button more (label="…") {
+        on click {
+            toggle_fold (path="../menu")
+        }
+    }
+    div menu (foldable=true, folded=true, float=true) {
+        button rename (label="Rename") {
+            on click {
+                start_editing (path="../../title")
+                fold (path="..")
+            }
+        }
+    }
+}
+```
+
 #### Asking the host for an operation
 
 `call` asks whoever shows the document - the page in a browser, or the desktop app - for one
@@ -3022,7 +3049,7 @@ div Tasks {
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `ease`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
-- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`; `secret`, on a `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `limit` (on a `textbox` that picks), `foldable`, `folded` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
+- **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`; `secret`, on a `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `limit` (on a `textbox` that picks), `foldable`, `folded`, `float` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`; `select` and `segments`, on an `enum`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`

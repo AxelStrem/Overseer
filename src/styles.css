@@ -507,6 +507,22 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     padding: 0;
 }
 
+/* An open floating div - `float=true` - is lifted out of the flow and drawn over the page, by
+   what opened it; the renderer puts it there (`placeFloats`). */
+.overseer-div.overseer-floating {
+    position: fixed;
+    z-index: 900;
+    max-width: calc(100vw - 8px);
+    max-height: calc(100vh - 8px);
+    overflow: auto;
+    margin: 0;
+    padding: 4px;
+    background-color: var(--ov-theme-surface, var(--ov-surface));
+    border: 1px solid var(--ov-theme-line, var(--ov-line));
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
 /* The header a foldable div is pressed by. It spans the div, so in a row it sits above the rest. */
 .overseer-div.foldable.layout-horizontal {
     flex-wrap: wrap;
