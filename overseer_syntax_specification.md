@@ -766,7 +766,12 @@ calendar Steps (entry=int, span="month") {
   `span=` - `"day"`, `"week"` (seven days from the `week_start`, see "The day a week starts on"),
   `"month"` or `"year"` - names the one that holds `at=`, today when it says nothing; a `from=` or `to=` beside it wins over what the span gives.
   A day written outside the range stays in the file and is kept with nothing said - it is history
-  - and comes into view when the range does. A name in the block that is no date is said as a
+  - and comes into view when the range does. Until then it costs nothing: a written day that
+  neither the range nor any view's range holds is not worked out, as an entry out of a list's
+  window is not. Anything that reaches it - `at(date)`, a read or a write of it by its address, a
+  button setting it - finds it worked out, with its template and its formulas, and only what is
+  reached is worked out. A day a view holds is worked out in full, as one in the calendar's own
+  range is. A name in the block that is no date is said as a
   problem on the calendar, as is a range that is not one, or one longer than ten years.
 - **Moving the range** needs nothing more: the range reads a date the document keeps, and its
   buttons step it. A guarded date steps for whoever pressed, and the file stays as it was.

@@ -1092,10 +1092,12 @@ fn is_held(list: &str, entry: &str) -> bool {
 
 /// Whether any list in the document shows only part of itself - or may, once a template from
 /// another file is copied in: a project's `History` comes with its window from the project
-/// template, and is not in the document as it is parsed.
+/// template, and is not in the document as it is parsed. A calendar with written days may keep
+/// some of them as written - see `make_calendar_cells`.
 pub fn has_a_window(nodes: &[OverseerNode]) -> bool {
     nodes.iter().any(|node| {
         (node.node_type == "list" && is_windowed(node))
+            || (node.node_type == "calendar" && !node.children.is_empty())
             || node.template.as_deref().is_some_and(|t| crate::bases::reference(t).file.is_some())
             || has_a_window(&node.children)
     })
@@ -1109,6 +1111,7 @@ pub fn leaves_anything_unworked(nodes: &[OverseerNode]) -> bool {
             && matches!(node.parameters.get(LEFT_OUT), Some(OverseerValue::Integer(n)) if *n > 0)
             && node.children.iter().any(not_worked_out)
             || node.node_type == "list" && crate::parts::leaves_parts_unread(node)
+            || node.node_type == "calendar" && node.children.iter().any(not_worked_out)
             || !not_worked_out(node) && leaves_anything_unworked(&node.children)
     })
 }
@@ -3835,7 +3838,10 @@ fn make_calendar_cells(
     let range = calendar_range(node, &path, all_nodes);
     let said = calendar_said(node, &address, &path, all_nodes);
     let made = node.parameters.contains_key(GRID_MADE);
-    if made && matches!(node.parameters.get(CALENDAR_RANGE), Some(OverseerValue::String(s)) if *s == said) {
+    if made
+        && matches!(node.parameters.get(CALENDAR_RANGE), Some(OverseerValue::String(s)) if *s == said)
+        && !wakes_a_day(node, &address)
+    {
         return false;
     }
     let cell = match cell_of_entry(node, all_nodes, missed) {
@@ -3878,23 +3884,55 @@ fn make_calendar_cells(
     // of view - made as an action's `add_calendar_day` would, so that it can be reached at all.
     // It is kept and not drawn: the range below says it is out of view.
     wanted.extend(days_wanted_of(&address));
-    let in_view: Vec<chrono::NaiveDate> = wanted.into_iter().collect();
+    // A written day that no range holds, and that nothing reaches, is kept as it was written: no
+    // template copied onto it and no formula of it worked out, as an entry out of a list's window.
+    // A history grows a day at a time and is read a few days at a time, and working out every day
+    // ever written on every read made the food tracker's reads grow with its history. A formula
+    // that reads such a day - `at(date)`, a total over the days - reaches it, and the document is
+    // worked out again with it made - see `note_reached`.
+    let kept_as_written = |child: &OverseerNode| {
+        crate::addressing::date_of(&child.name).is_some_and(|day| !wanted.contains(&day))
+            && !is_held(&address, &child.name)
+    };
+    let in_view: Vec<chrono::NaiveDate> = wanted.iter().copied().collect();
     if made {
+        // A day kept as written that is now in view, or reached, is made a cell like any other.
+        let (woken, kept): (Vec<OverseerNode>, Vec<OverseerNode>) = std::mem::take(&mut node.children)
+            .into_iter()
+            .partition(|c| not_worked_out(c) && !kept_as_written(c));
+        node.children = kept;
         let held: std::collections::HashSet<chrono::NaiveDate> = node
             .children
             .iter()
             .filter_map(|c| crate::addressing::date_of(&c.name))
             .collect();
         for day in &in_view {
-            if !held.contains(day) {
+            if !held.contains(day) && !woken.iter().any(|w| w.name == crate::addressing::date_name(*day)) {
                 let one = one_cell(node, &cell, crate::addressing::date_name(*day));
                 node.children.push(one);
             }
         }
+        // Merged where the block wrote it, as the first make would have - the writer gives the
+        // block back by those places.
+        for mut written in woken {
+            written.parameters.remove(NOT_WORKED_OUT);
+            written.parameters.remove(IN_VIEW);
+            written.parameters.retain(|key, _| !key.starts_with(IN_VIEW_OF));
+            let place = written_here(&written).unwrap_or(0);
+            let mut one = one_cell(node, &cell, written.name.clone());
+            merge_into_field(&mut one, &written, all_nodes);
+            mark_written(&mut one, place, 0);
+            node.children.push(one);
+        }
     } else {
         let written = std::mem::take(&mut node.children);
         let mut days: std::collections::BTreeSet<chrono::NaiveDate> = in_view.iter().copied().collect();
-        days.extend(written.iter().filter_map(|w| crate::addressing::date_of(&w.name)));
+        days.extend(
+            written
+                .iter()
+                .filter(|w| !kept_as_written(w))
+                .filter_map(|w| crate::addressing::date_of(&w.name)),
+        );
         node.children = days
             .into_iter()
             .map(|day| one_cell(node, &cell, crate::addressing::date_name(day)))
@@ -3907,7 +3945,14 @@ fn make_calendar_cells(
                 "_explicit_overrides".to_string(),
                 OverseerValue::String(names.join(",")),
             );
+            // A day kept as written has no cell to merge into, and is kept as the block wrote it.
             merge_node(node, &written, all_nodes);
+            for day in node.children.iter_mut() {
+                if !day.parameters.contains_key("_template_node") && kept_as_written(day) {
+                    day.parameters
+                        .insert(NOT_WORKED_OUT.to_string(), OverseerValue::String(address.clone()));
+                }
+            }
         }
     }
     // Days in date order; what is no day, kept from the block, after them as it was written.
@@ -3973,6 +4018,20 @@ fn make_calendar_cells(
     true
 }
 
+/// Whether a calendar keeps as written a day that is held or wanted now, and so has to be made
+/// again for it - see `make_calendar_cells`.
+fn wakes_a_day(node: &OverseerNode, address: &str) -> bool {
+    if !node.children.iter().any(not_worked_out) {
+        return false;
+    }
+    let wanted = days_wanted_of(address);
+    node.children.iter().any(|c| {
+        not_worked_out(c)
+            && (is_held(address, &c.name)
+                || crate::addressing::date_of(&c.name).is_some_and(|day| wanted.contains(&day)))
+    })
+}
+
 /// Gives a calendar the cell of a day it has none for - one out of view nobody wrote, which an
 /// action names to set - in its place among the days. Returns whether it made one.
 pub fn add_calendar_day(calendar: &mut OverseerNode, day: &str, root: &[OverseerNode]) -> bool {
@@ -4025,6 +4084,7 @@ pub fn calendars_moved(nodes: &[OverseerNode]) -> bool {
                     .unwrap_or_else(|| trail.clone());
                 let said = calendar_said(node, &address, &path, root);
                 !matches!(node.parameters.get(CALENDAR_RANGE), Some(OverseerValue::String(s)) if *s == said)
+                    || wakes_a_day(node, &address)
             } else if wrapper {
                 walk(&node.children, root, trail, level)
             } else {

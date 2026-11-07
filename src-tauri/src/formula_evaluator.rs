@@ -4881,6 +4881,9 @@ impl FormulaEvaluator {
                 };
                 let name = crate::addressing::date_name(day);
                 if let Some(cell) = calendar.children.iter().find(|c| c.name == name) {
+                    // A written day out of every range is kept as written until reached - see
+                    // `resolver::make_calendar_cells`.
+                    crate::resolver::note_reached(cell);
                     return Some(Ok(vec![cell]));
                 }
                 let template = match calendar.parameters.get("entry") {

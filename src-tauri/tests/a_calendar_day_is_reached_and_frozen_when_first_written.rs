@@ -83,9 +83,12 @@ fn reads(node: &OverseerNode) -> Option<OverseerValue> {
     }
 }
 
+/// A day out of view is worked out only when something reaches it - here, the address read.
 fn target_of(text: &str, day: &str) -> Option<OverseerValue> {
+    let address = format!("t/Days/{}/targets/target", day);
+    let _reached = overseer::resolver::keeping_in_view(&address);
     let nodes = overseer::app_api::load_document(text.to_string()).expect("resolve");
-    let node = overseer::addressing::find(&nodes, &format!("t/Days/{}/targets/target", day))?;
+    let node = overseer::addressing::find(&nodes, &address)?;
     reads(node)
 }
 
@@ -102,9 +105,8 @@ fn the_server_appends_to_a_day_out_of_view_nobody_wrote() {
     let new = text.find("- 2026-10-25").unwrap_or_else(|| panic!("the day was not written:\n{}", text));
     assert!(october < new, "the day is out of date order:\n{}", text);
     assert!(text.contains("- name = \"dinner\""), "the meal was not written:\n{}", text);
-    let nodes = overseer::app_api::load_document(text.clone()).expect("resolve");
-    let eaten = overseer::addressing::find(&nodes, "t/Days/2026-10-25/eaten").expect("the day");
-    assert_eq!(reads(eaten), Some(OverseerValue::Integer(700)));
+    let eaten = service.read_at("t.os", "t/Days/2026-10-25/eaten").expect("the day");
+    assert_eq!(reads(&eaten.node), Some(OverseerValue::Integer(700)));
 }
 
 #[test]
