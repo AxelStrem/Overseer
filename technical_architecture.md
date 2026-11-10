@@ -162,6 +162,9 @@ knowing about because each has a cost:
   any other change of shape: the window is decided again for that list alone, an entry that
   leaves view keeps what was worked out for it, and one that comes into view is made from the
   template then.
+  A calendar's range is its window: a written day that neither its range nor any view's holds
+  is not worked out until something reaches it. A day a view holds is the calendar's, worked out
+  in full, so a year heatmap of a heavy day costs a year of those days on a cold open.
 - **An equality index** for `filter`, built per pass and keyed by the field compared. Strings
   only: `compare_values` falls back to text, so `5 == "5"` while `5.0 != "5.0"`, and an index
   over a comparison that is not transitive would answer differently from the scan it replaces.

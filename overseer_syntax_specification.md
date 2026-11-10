@@ -850,6 +850,10 @@ calendar Steps (entry=int, span="month") {
   that view alone: only the parameters it sets differently are read, worked out at each day as
   the day's own are. Without it, a view draws the days as the calendar does.
 
+  A view's days are the calendar's, each worked out in full, so a view over a long range costs
+  what its days cost. A document whose day is heavy keeps what the view's style reads cheap: a
+  total written on the day, say, rather than a formula over its meals.
+
   Said as a problem on the view: an `of=` that names no calendar, or names another view; days
   written in its own block; an `entry=` that is not a template made from the days'.
 
