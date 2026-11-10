@@ -822,10 +822,17 @@ impl FileOperations {
                     Self::rewrite_written(node, &indent, fallback_indent_unit)?
                 };
                 if let Some(rewritten) = rewritten {
-                    let emitted = !snap.leading_trivia.is_empty()
+                    // An entry dragged here from another depth of a tree is given back at the
+                    // depth of the entries around it.
+                    let moved = Self::moved_from(snap, in_list_body, list_indent_hint);
+                    let leading = match &moved {
+                        Some((was, now)) => Self::shift_lines(&snap.leading_trivia, was, now),
+                        None => snap.leading_trivia.clone(),
+                    };
+                    let emitted = !leading.is_empty()
                         && Self::emit_leading_trivia(
                             output,
-                            &snap.leading_trivia,
+                            &leading,
                             node,
                             allow_snapshot_trivia,
                             indent_level,
@@ -855,7 +862,10 @@ impl FileOperations {
                     }
                     let text = rewritten
                         .unwrap_or_else(|| snap.full_text.replace("\r\n", "\n"));
-                    output.push_str(&text);
+                    match moved {
+                        Some((_, now)) => output.push_str(&Self::at_indent(&text, now)),
+                        None => output.push_str(&text),
+                    }
                     return Ok(());
                 }
             }
@@ -910,6 +920,20 @@ impl FileOperations {
         if let (Some(snap), Some(fingerprint)) = (snapshot.as_ref(), node.source_fingerprint) {
             if matches!(snap.origin, SnapshotOrigin::Parsed) && fingerprint == snap.fingerprint {
                 if Self::children_match_snapshots(node) {
+                    // An entry dragged here from another depth of a tree reads the same, and
+                    // is given back at the depth of the entries around it.
+                    if let Some((was, now)) = Self::moved_from(snap, in_list_body, list_indent_hint) {
+                        Self::emit_leading_trivia(
+                            output,
+                            &Self::shift_lines(&snap.leading_trivia, &was, now),
+                            node,
+                            allow_snapshot_trivia,
+                            indent_level,
+                            in_list_body,
+                        );
+                        output.push_str(&Self::at_indent(&snap.full_text.replace("\r\n", "\n"), now));
+                        return Ok(());
+                    }
                     Self::emit_leading_trivia(
                         output,
                         &snap.leading_trivia,
@@ -2224,6 +2248,75 @@ impl FileOperations {
         }
     }
 
+    /// An entry's text, its first line already placed, with the lines after it moved in or out
+    /// to stand under `indent`. Its closing brace says where it was written: an entry dragged to
+    /// another depth of a tree keeps its old lines, and would otherwise land with only its first
+    /// line at the new depth. A line that begins inside a string is part of the string's value
+    /// and stays as it is, as does any line not as deep as the entry was.
+    fn at_indent(text: &str, indent: &str) -> String {
+        // What follows the closing brace - the layout up to the next node - stays as it is.
+        let (text, tail) = text.split_at(text.trim_end().len());
+        let Some((_, last)) = text.rsplit_once('\n') else {
+            return format!("{}{}", text, tail);
+        };
+        let was = &last[..last.len() - last.trim_start().len()];
+        if !last[was.len()..].starts_with('}') || was == indent {
+            return format!("{}{}", text, tail);
+        }
+        let mut out = String::with_capacity(text.len() + tail.len());
+        let mut in_string = false;
+        for (i, line) in text.split('\n').enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            match line.strip_prefix(was) {
+                Some(rest) if i > 0 && !in_string => {
+                    out.push_str(indent);
+                    out.push_str(rest);
+                }
+                _ => out.push_str(line),
+            }
+            let mut chars = line.chars().peekable();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' if in_string => {
+                        chars.next();
+                    }
+                    '"' => in_string = !in_string,
+                    '/' if !in_string && chars.peek() == Some(&'/') => break,
+                    _ => {}
+                }
+            }
+        }
+        out.push_str(tail);
+        out
+    }
+
+    /// The indent an entry was read at and the one the entries of the list it now stands in
+    /// have, when the two differ: an entry dragged to another depth of a tree.
+    fn moved_from<'a>(
+        snap: &NodeSourceSnapshot,
+        in_list_body: bool,
+        list_indent_hint: Option<&'a str>,
+    ) -> Option<(String, &'a str)> {
+        let now = list_indent_hint.filter(|_| in_list_body)?;
+        let (_, was) = snap.leading_trivia.rsplit_once('\n')?;
+        let was = was.trim_end_matches('\r');
+        (was.trim().is_empty() && was != now).then(|| (was.to_string(), now))
+    }
+
+    /// Every line after the first that starts with `was` starting with `now` instead.
+    fn shift_lines(text: &str, was: &str, now: &str) -> String {
+        text.split('\n')
+            .enumerate()
+            .map(|(i, line)| match line.strip_prefix(was) {
+                Some(rest) if i > 0 => format!("{}{}", now, rest),
+                _ => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn line_indent_at(text: &str, at: usize) -> String {
         let line_start = text[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
         text[line_start..]
@@ -2586,8 +2679,8 @@ impl FileOperations {
             match span {
                 Some((s, e)) => Ok(match Self::rewrite_written(child, &entry_indent, unit)? {
                     None => None,
-                    Some(None) => Some(full[s..e].trim_end().to_string()),
-                    Some(Some(text)) => Some(text.trim_end().to_string()),
+                    Some(None) => Some(Self::at_indent(full[s..e].trim_end(), &entry_indent)),
+                    Some(Some(text)) => Some(Self::at_indent(text.trim_end(), &entry_indent)),
                 }),
                 None => {
                     let mut text = String::from("\n");
@@ -2602,7 +2695,7 @@ impl FileOperations {
                         Some(&entry_indent),
                         false,
                     )?;
-                    Ok(Some(text.trim().to_string()))
+                    Ok(Some(Self::at_indent(text.trim(), &entry_indent)))
                 }
             }
         };
