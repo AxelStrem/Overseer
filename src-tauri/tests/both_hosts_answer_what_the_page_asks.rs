@@ -83,11 +83,12 @@ fn the_server_offers() -> BTreeSet<String> {
             let Some(end) = rest.find('"') else { break };
             let name = &rest[..end];
             // The command names the page uses, rather than every string an arm happens to hold -
-            // the drawer's `drawer_*` and `settings_*` among them.
+            // the drawer's `drawer_*`, `settings_*` and `document_*` among them.
             if name.contains("overseer")
                 || name.starts_with("find_")
                 || name.starts_with("drawer_")
                 || name.starts_with("settings_")
+                || name.starts_with("document_")
                 || name == "report_color_scheme"
             {
                 found.insert(name.to_string());

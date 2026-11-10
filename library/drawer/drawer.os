@@ -26,21 +26,42 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
                    hover-text=$(path),
                    background-color=$(here ? theme/background : "transparent"),
                    border-left=$(here ? "solid 3px " + theme/accent : "solid 3px transparent")) {
-            string name (mutable=$(/drawer/editing), width=1fr, padding="4px 8px",
-                         font-size=$(path == "" ? "13px" : "14px"),
-                         font-weight=$(here || path == "" ? 600 : "normal"),
-                         font-color=$(path == "" ? theme/muted : "inherit")) = ""
-            string path (hidden=$(!/drawer/editing), width=1fr, font-size=12px, font-color=$(theme/muted)) = ""
+            mark (type="grip", font-color=$(theme/muted))
+            string name (hidden=true, width=1fr, padding="0px 8px") = ""
+            string shown (mutable=false, width=1fr, padding="0px 8px",
+                          font-size=$(path == "" ? "13px" : "14px"),
+                          font-weight=$(here || path == "" ? 600 : "normal"),
+                          font-color=$(path == "" ? theme/muted : "inherit")) = $(name)
+            string path (hidden=true, width=1fr, font-size=12px, font-color=$(theme/muted)) = ""
             bool here (hidden=true) = $(path != "" && path == host/open/path)
-            button drop (icon="x", hidden=$(!/drawer/editing), hover-text="Take off this list") {
+            button more (label="…", padding="0px 8px", font-color=$(theme/muted), hover-text="Rename, move or take off") {
                 on click {
-                    remove (from="../..", keyField="name", keyValue=$(../name))
+                    toggle_fold (path="../menu")
+                }
+            }
+            div menu (foldable=true, folded=true, float=true, layout="vertical", alignment="near", spacing=0) {
+                button rename (label="Rename") {
+                    on click {
+                        start_editing (path="../../name")
+                        fold (path="..")
+                    }
+                }
+                button repath (label="Edit path") {
+                    on click {
+                        start_editing (path="../../path")
+                        fold (path="..")
+                    }
+                }
+                button drop (label="Remove") {
+                    on click {
+                        remove (from="../../..", keyField="name", keyValue=$(../../name))
+                    }
                 }
             }
             list Places (entry=<Place>, key="name") { }
 
             on click {
-                if (cond=$(./path != "" && !/drawer/editing)) {
+                if (cond=$(./path != "")) {
                     call (name="open") {
                         - path = $(./path)
                     }
@@ -175,14 +196,13 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
         }
     }
 
-    bool editing (hidden=true, mutable="guarded") = false
     bool stranger (hidden=true) = $(host/accounts && me/handle == "")
     bool kept (hidden=true) = $(Places.filter(|x| x/path == host/open/path).count() + Places.map(|x| x/Places.filter(|y| y/path == host/open/path).count()).sum() > 0)
 
     text (font-size=11px, font-weight=600, font-color=$(theme/muted), padding="10px 8px 2px") = "DOCUMENTS"
     div (layout="vertical", alignment="near", hidden=$(stranger), spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
         text (hidden=$(Places.count() > 0), font-size=13px, font-color=$(theme/muted)) = "Nothing kept here yet."
-        list Places (entry=<Place>, key="name", tree="Places", movable=$(editing ? "anywhere" : false), width=100%,
+        list Places (entry=<Place>, key="name", tree="Places", movable="anywhere", width=100%,
                      padding=0, margin=0, border-style="none", shadow="none", background-color="transparent") { }
 
         button keep (label="+ Keep this document here", hidden=$(host/open/path == "" || kept)) {
@@ -193,16 +213,29 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
                 }
             }
         }
-        button folder (label="+ New folder", hidden=$(!editing)) {
-            on click {
-                append (list="../Places") {
-                    - name = $("Folder " + (../Places.count() + 1))
+        div Adding (layout="vertical", alignment="near", mutable="guarded", spacing=2, padding="4px 8px", margin=0, border-style="none", shadow="none") {
+            textbox name (placeholder=$(described != "" ? described : "name"), width=100%) = ""
+            textbox path (placeholder="document path", width=100%) = "" {
+                on change {
+                    call (name="describe", into="../described") {
+                        - path = $(../path)
+                    }
                 }
             }
-        }
-        button edit (label=$(editing ? "Done" : "Edit this list"), font-color=$(theme/muted), font-size=13px) {
-            on click {
-                toggle (path="../editing")
+            string described (hidden=true) = ""
+            button add (label="+ Add") {
+                on click {
+                    if (cond=$(../name == "" && ../described == "" && ../path == "")) {
+                        refuse = "Give it a name, or the path of a document."
+                    }
+                    if (cond=$(/drawer/Places.filter(|x| x/name == (../name != "" ? ../name : (../described != "" ? ../described : ../path))).count() > 0)) {
+                        refuse = "There is one by that name here already."
+                    }
+                    append (list="../../Places", from="..") {
+                        - name = $(../name != "" ? ../name : (../described != "" ? ../described : ../path))
+                    }
+                    set (path="../described") = ""
+                }
             }
         }
     }

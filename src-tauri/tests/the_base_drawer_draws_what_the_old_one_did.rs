@@ -1,5 +1,6 @@
 //! The drawer Overseer ships, `library/drawer/drawer.os`, draws everything the page's own drawer
-//! drew: the documents kept to hand, with folders; keeping the open one and editing the list; the
+//! drew: the documents kept to hand, with folders; keeping the open one, adding one by its path and
+//! taking one off; the
 //! open document's path and Undo; the look; and for a person signed in, their chip, profile,
 //! password, keys and sharing, and for an admin the links that let others in. Each part shows to
 //! whoever it is for, and keeping a document writes one entry into the person's own drawer.
@@ -94,7 +95,7 @@ fn a_person_sees_every_part_of_the_drawer_and_an_admin_the_people_too() {
     let (documents, _) = served("person");
     let nodes = drawn(&documents, person(), true, Some("tasks.os"));
     for part in [
-        "Places", "edit", "all", "undo", "look", "shade", "week", "who", "sharing", "Profile", "save", "current",
+        "Places", "add", "all", "undo", "look", "shade", "week", "who", "sharing", "Profile", "save", "current",
         "password", "change", "Keys", "make", "People", "invite", "reset", "sign_out",
     ] {
         assert!(is_shown(&nodes, part), "{} is drawn", part);
@@ -148,7 +149,7 @@ fn the_open_document_is_marked_in_the_list() {
 fn a_stranger_sees_the_open_document_and_none_of_what_is_a_persons() {
     let (documents, _) = served("stranger");
     let nodes = drawn(&documents, Asker::Stranger, false, None);
-    for part in ["Places", "edit", "all", "look", "shade", "week", "keep", "sharing", "Profile", "sign_out"] {
+    for part in ["Places", "add", "all", "look", "shade", "week", "keep", "sharing", "Profile", "sign_out"] {
         assert!(!is_shown(&nodes, part), "{} is not offered a stranger", part);
     }
 }
@@ -158,7 +159,7 @@ fn a_server_without_accounts_offers_the_list_and_the_look_and_no_account() {
     let (documents, root) = served("token");
     write(&root, drawer::FILE, MINE);
     let nodes = drawn(&documents, Asker::Anyone, false, Some("ap31/food.os"));
-    for part in ["Places", "keep", "edit", "all", "undo", "look", "shade", "week"] {
+    for part in ["Places", "keep", "add", "all", "undo", "look", "shade", "week"] {
         assert!(is_shown(&nodes, part), "{} is drawn", part);
     }
     for part in ["sharing", "Profile", "Keys", "sign_out"] {
@@ -185,4 +186,45 @@ fn keeping_the_open_document_writes_one_entry_into_the_persons_drawer() {
     );
     let nodes = drawn(&documents, person(), false, Some("food.os"));
     assert!(!is_shown(&nodes, "keep"), "kept now");
+}
+
+#[test]
+fn removing_an_entry_from_its_menu_takes_it_off_wherever_it_is() {
+    let (documents, root) = served("remove");
+    documents.as_asker(person(), || {
+        documents.run_event("drawer.os", "drawer/Places/[Projects]/Places/[Spores]/menu/drop", "click").expect("the press");
+    });
+    let text = std::fs::read_to_string(root.join("ap31/drawer.os")).unwrap();
+    assert!(!text.contains("Spores") && text.contains("Projects") && text.contains("Tasks"), "{}", text);
+    documents.as_asker(person(), || {
+        documents.run_event("drawer.os", "drawer/Places/[Tasks]/menu/drop", "click").expect("the press");
+    });
+    let text = std::fs::read_to_string(root.join("ap31/drawer.os")).unwrap();
+    assert!(!text.contains("Tasks") && text.contains("Projects"), "{}", text);
+}
+
+#[test]
+fn adding_with_neither_a_name_nor_a_path_is_refused() {
+    let (documents, root) = served("add-nothing");
+    let refused = documents.as_asker(person(), || documents.run_event("drawer.os", "drawer/Adding/add", "click"));
+    assert!(refused.is_err(), "nothing to add");
+    assert_eq!(std::fs::read_to_string(root.join("ap31/drawer.os")).unwrap(), MINE);
+}
+
+#[test]
+fn a_document_is_described_by_its_label_only_to_whoever_may_read_it() {
+    let (documents, root) = served("describe");
+    write(&root, "bob/secret.os", "tab secret (label=\"Bob's secret\") {
+}
+");
+    let documents = documents.with_accounts(|name| name == "ap31" || name == "bob");
+    let label = |name: &str| {
+        documents.as_asker(person(), || {
+            documents.command(None, "document_label", &serde_json::json!({ "path": name })).unwrap()
+        })
+    };
+    assert_eq!(label("food.os"), serde_json::json!("Food log"));
+    assert_eq!(label("projects/spores.os"), serde_json::json!("Spores"));
+    assert_eq!(label("nowhere.os"), serde_json::json!(""));
+    assert_eq!(label("bob/secret.os"), serde_json::json!(""));
 }

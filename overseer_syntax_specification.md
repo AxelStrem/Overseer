@@ -1703,6 +1703,20 @@ What is typed belongs to whoever is typing, and is never written to the file - t
 value or a formula, and that is all it ever says. A press sends the text along, so actions can
 read it; nothing else does.
 
+A textbox that says `on change` is pressed by its own text: once what is typed is committed -
+Enter, or leaving the box - its actions run with the text sent along, as a button's would. A
+drawer's path box looks up the document's title that way, before anything is added:
+
+```overseer
+textbox path (placeholder="document path") = "" {
+    on change {
+        call (name="describe", into="../described") {
+            - path = $(../path)
+        }
+    }
+}
+```
+
 `from` on `append` or `prepend` fills the new entry from another node instead of naming each
 field in the block:
 
@@ -2093,6 +2107,7 @@ the desktop, a file from the disk in a browser - answers that it is not availabl
 | `sign_out` | | | browser |
 | `copy` | `text`: put on the clipboard | `Copied.` | both |
 | `fold_drawer` | `folded`, turned over if left out | | both |
+| `describe` | `path`, a document as `open` names it | what it is called, as `host/open/label` says of an open one; nothing for one the viewer may not read, or one with no label | both |
 | `open_file`, `new_file` | | | desktop |
 
 A secret textbox (see "A form that fills an entry") is handed to an operation by naming it,

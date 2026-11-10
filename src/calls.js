@@ -116,6 +116,13 @@ export const OPERATIONS = {
         if (!app.drawer) return
         app.drawer.fold(folded === undefined || folded === null ? !app.drawer.isFolded() : !!folded)
     },
+    // What a document calls itself, its first tab's label: nothing for one the viewer may not
+    // read, or that names none, so a drawer can fall back to what it has.
+    async describe({ path }) {
+        const place = text(path).trim()
+        if (!place) return ''
+        return text(await invoke('document_label', { path: place }))
+    },
     open_file: desktop(async (_, app) => { await app.openFile() }),
     new_file: desktop(async (_, app) => { await app.newFile() }),
 }

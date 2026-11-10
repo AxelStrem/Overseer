@@ -1018,6 +1018,14 @@ impl DocumentRoot {
                 });
                 Ok(serde_json::json!({ "asker": asker, "can": can }))
             }
+            // What a document calls itself - its first tab's label - for a drawer naming an entry
+            // it is given only the path of. Only a document the asker may read tells them; any
+            // other answers nothing, as one that is not there does.
+            "document_label" => {
+                let name = arg_str(args, &["path"])
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                as_json(self.resolve(&name).ok().as_deref().and_then(crate::menu::label_in).unwrap_or_default())
+            }
             // The drawer whoever is asking draws - see `drawer`: a person's own beside their
             // settings, the server's at its root, and for anyone with neither the base itself.
             "drawer_location" => match self.menu_file() {

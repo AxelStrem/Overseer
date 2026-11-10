@@ -7401,6 +7401,15 @@ export class OverseerRenderer {
             if (input.type === 'color') input.disabled = true
         } else {
             input.addEventListener('input', () => { this._typed.set(key, input.value); this.sayRefused(null, null) })
+            // What is typed is sent with a press, so a box that says `on change` is its own press
+            // once the text is committed - Enter, or leaving the box - and its actions read it.
+            if (!secret && this.declaresEvent(node, 'change')) {
+                input.addEventListener('change', () => {
+                    this._typed.set(key, input.value)
+                    this.emitEvent(node, container, 'change')
+                        .catch((err) => console.warn('Action execution failed:', err))
+                })
+            }
         }
         container.appendChild(input)
 

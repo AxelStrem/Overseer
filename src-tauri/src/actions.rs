@@ -317,7 +317,7 @@ pub struct Changed {
 /// desktop has no accounts, the browser opens no files from the disk.
 pub const OPERATIONS: &[&str] = &[
     "open", "undo", "look", "save_profile", "change_password", "make_key", "drop_key", "invite",
-    "reset_password", "sharing", "sign_out", "copy", "fold_drawer", "open_file", "new_file",
+    "reset_password", "sharing", "sign_out", "copy", "fold_drawer", "open_file", "new_file", "describe",
 ];
 
 /// One operation asked of the host: which, with what, and the guarded field, by address, that

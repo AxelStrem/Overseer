@@ -47,6 +47,13 @@ fn settings_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf> {
     Ok(file)
 }
 
+/// What a document calls itself - its first tab's label - or nothing, for a file that is not
+/// there or names no label. The desktop opens any file, so any file may be described.
+#[command]
+async fn document_label(path: String) -> Result<String> {
+    Ok(overseer::menu::label_in(std::path::Path::new(&path)).unwrap_or_default())
+}
+
 #[command]
 async fn settings_read(app: tauri::AppHandle) -> Result<app_api::Settings> {
     Ok(app_api::settings_in(&settings_file(&app)?))
@@ -590,6 +597,7 @@ fn main() {
             move_overseer_entry,
             ensure_overseer_entry,
             drawer_location,
+            document_label,
             settings_read,
             settings_choose,
             report_color_scheme
