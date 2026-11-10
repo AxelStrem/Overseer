@@ -3028,6 +3028,22 @@ refused, and neither file changes. A new entry of a mounted list is made from th
 template. Undo in the host takes the write back, unless the mounted file has been written to since,
 in which case that file is left as it is.
 
+What a mount brings in is worked out in the file it comes from. A formula there reads that file:
+its absolute paths start from the file's own top, a name looked for above the mounted node is
+looked for in the file, and the file's own mounts are its own, their `source` relative to it. So
+a weight document can mount the food tracker's history and read a day's calories, which are a sum
+over its meals, each looked up in the catalogue the tracker mounts:
+
+```overseer
+mount FOOD (source="tracker_v2.os/tracker_v2/History", lazy=false, mutable=false, hidden=true) { }
+float calories = $(FOOD/History.find(../date)/totals/calories)
+```
+
+Only the contexts come from the host: a mounted document sees those of the place it is mounted at.
+Nothing of the host is read from inside a mount but them. An entry a window of the mounted file
+leaves out is worked out there once the host reads it, as an entry of the host's own would be. Two
+files that mount each other open, the mount that comes round refused.
+
 A lazy mount brings in what it names once something asks for it; `load_mount` brings it in from a
 press and `unload_mount` lets it go again (see "Actions and Events").
 

@@ -70,7 +70,15 @@ reported. The server scopes each request to the settings beside its documents an
 and first weekday the page sent; the desktop app keeps them for the process. A calendar's
 `span="week"` reads the `week_start` as it makes its cells, before the copies are put in, so it
 looks for a declaration on its way up and takes the environment's where it meets none.
-A mount is worked out without the environment, and sees it through its host. A worked-out document
+A mounted file is worked out on its own, without the environment, with its own mounts read from
+its folder; a file that comes round to one already being read has that mount refused. In its host,
+a formula of anything the mount brought in is worked out in the file's frame: its worked-out
+document, with the contexts the host has at the mount after its top, at the node's place there -
+so its absolute paths, the names above it and its mounts are the file's own, and it sees the
+environment through its host. The frame is made the first time a pass asks for it and kept until
+the file changes; a mount keeps how the files its file's own mounts read stood, so a host is as
+current as all of them. A read that reaches past a window of a mounted list is held in the file
+too, at its place there, and the file read again with it before the host's next round. A worked-out document
 is held under its text, its folder, and the mode it came to, and is let go once `settings.os` or a
 theme it is based on changes, as for the files its mounts and bases read.
 

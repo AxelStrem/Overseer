@@ -112,6 +112,47 @@ struct PassRoot {
     names: Option<std::collections::HashSet<String>>,
     /// The same, for what is under each node a bare name was looked for below, by its pointer.
     below: std::collections::HashMap<usize, std::collections::HashSet<String>>,
+    /// Where the nodes mounts brought in are - see `Boundary`.
+    boundaries: Option<Vec<Boundary>>,
+}
+
+/// A node a mount brought in from another file, as the pass's document has it.
+///
+/// Its formulas are that file's, and are worked out in it: `/tracker_v2/standing`, a name above
+/// the mounted node, the file's own mount of the food catalogue - none of them is in the host. So
+/// a formula of anything at or under `at` is worked out in the `Frame` of the file instead, at
+/// the same place there. Only the contexts come from the host, the frame having the host's
+/// copies of them at the mount after its own top.
+struct Boundary {
+    /// The host's path to the node: the mount's, and the node's name.
+    at: Vec<String>,
+    /// Where the node is in its own file.
+    source: Vec<String>,
+    /// The file, by the name the mount keeps for it.
+    file: String,
+    /// How it and the files its own mounts read stood when the mount read it.
+    stamp: String,
+    /// The contexts the host has at the mount, the nearest of each name.
+    copies: Vec<OverseerNode>,
+    /// The frame, once a formula has asked for it - or `None` within, when there is none.
+    frame: Option<Option<&'static [OverseerNode]>>,
+}
+
+/// A mounted file's document as worked out on its own, and after its top the contexts its host
+/// has at the mount - what a mounted node's formulas are worked out in. See `Boundary`.
+struct Frame {
+    file: String,
+    stamp: String,
+    copies: Vec<OverseerNode>,
+    roots: std::sync::Arc<Vec<OverseerNode>>,
+}
+
+thread_local! {
+    /// See `FormulaEvaluator::with_pass_root`.
+    static PASS_ROOT: RefCell<Option<PassRoot>> = const { RefCell::new(None) };
+    /// Every frame made, kept until its file changes: a reference into one may be held by any
+    /// context made while a pass runs, so none is let go of then - see `FormulaEvaluator::frame`.
+    static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The name an entry of a part not read is bound to while a field's formula is worked out for it
@@ -888,10 +929,7 @@ impl FormulaEvaluator {
     /// nodes, far from any context that knows the document. Set by the resolver around a pass,
     /// for exactly as long as the snapshot it points into lives, and nowhere else.
     fn with_pass_root<R>(f: impl FnOnce(&mut Option<PassRoot>) -> R) -> R {
-        thread_local! {
-            static ROOT: std::cell::RefCell<Option<PassRoot>> = const { std::cell::RefCell::new(None) };
-        }
-        ROOT.with(|cell| f(&mut cell.borrow_mut()))
+        PASS_ROOT.with(|cell| f(&mut cell.borrow_mut()))
     }
 
     /// Say which document the pass about to run reads from. `end_pass_memo` forgets it.
@@ -907,6 +945,204 @@ impl FormulaEvaluator {
                 paths: None,
                 names: None,
                 below: Default::default(),
+                boundaries: None,
+            })
+        });
+        Self::let_go_of_stale_frames();
+    }
+
+    /// Where a formula at `path` in `root` is to be worked out: in the frame of the mounted file
+    /// it is in, at its place there - see `Boundary`. `None` when it is the pass's document's own,
+    /// or the root is not the pass's document.
+    fn in_its_own_document(path: &[String], root: &[OverseerNode]) -> Option<(&'static [OverseerNode], Vec<String>)> {
+        Self::with_pass_root_if_free(|slot| {
+            let held = slot.as_mut()?;
+            if held.root != root.as_ptr() || held.len != root.len() {
+                return None;
+            }
+            // SAFETY: as in `path_in_pass` - the pass's document, read while nothing writes it.
+            let whole: &[OverseerNode] = unsafe { std::slice::from_raw_parts(held.root, held.len) };
+            let boundaries = held.boundaries.get_or_insert_with(|| Self::boundaries_in(whole));
+            let boundary = boundaries
+                .iter_mut()
+                .filter(|b| path.len() >= b.at.len() && path[..b.at.len()] == b.at[..])
+                .max_by_key(|b| b.at.len())?;
+            let frame = *boundary
+                .frame
+                .get_or_insert_with(|| Self::frame(&boundary.file, &boundary.stamp, boundary.copies.clone()));
+            let mut own = boundary.source.clone();
+            own.extend_from_slice(&path[boundary.at.len()..]);
+            Some((frame?, own))
+        })?
+    }
+
+    /// Whether `root` is the document the pass reads - false outside a pass.
+    fn is_the_pass_root(root: &[OverseerNode]) -> bool {
+        Self::with_pass_root_if_free(|slot| {
+            slot.as_ref().is_some_and(|held| held.root == root.as_ptr() && held.len == root.len())
+        })
+        .unwrap_or(false)
+    }
+
+    /// The same as `with_pass_root`, or `None` while something further up the stack holds it.
+    fn with_pass_root_if_free<R>(f: impl FnOnce(&mut Option<PassRoot>) -> R) -> Option<R> {
+        PASS_ROOT.with(|cell| cell.try_borrow_mut().ok().map(|mut slot| f(&mut slot)))
+    }
+
+    /// Every node a mount brought in from a file, named as the resolver names it.
+    fn boundaries_in(root: &[OverseerNode]) -> Vec<Boundary> {
+        fn text(node: &OverseerNode, key: &str) -> Option<String> {
+            match node.parameters.get(key) {
+                Some(OverseerValue::String(s)) => Some(s.clone()),
+                _ => None,
+            }
+        }
+        fn walk(
+            nodes: &[OverseerNode],
+            trail: &mut Vec<String>,
+            level: &mut crate::addressing::Level,
+            copies: &[OverseerNode],
+            top: bool,
+            out: &mut Vec<Boundary>,
+        ) {
+            for n in nodes {
+                if crate::resolver::not_worked_out(n) || crate::contexts::is_context(n) {
+                    continue;
+                }
+                if !top && crate::addressing::is_wrapper(n) {
+                    walk(&n.children, trail, level, copies, false, out);
+                    continue;
+                }
+                let step = if top { n.name.clone() } else { level.segment(&n.name) };
+                // Named all the same, for the numbering of the names after it.
+                if !mounts_any(std::slice::from_ref(n)) {
+                    continue;
+                }
+                trail.push(step);
+                let mut seen = copies.to_vec();
+                for copy in n.children.iter().filter(|c| crate::contexts::is_copy(c)) {
+                    seen.retain(|c| c.name != copy.name);
+                    seen.push(copy.clone());
+                }
+                if n.node_type == "mount" {
+                    if let (Some(file), Some(stamp), Some(brought)) = (
+                        text(n, crate::actions::MOUNT_FILE),
+                        text(n, crate::actions::MOUNT_STAMP),
+                        n.children.first(),
+                    ) {
+                        let mut at = trail.clone();
+                        at.push(brought.name.clone());
+                        let source = match text(n, crate::actions::MOUNT_PATH) {
+                            Some(p) if !p.is_empty() => p.split('/').map(str::to_string).collect(),
+                            _ => vec![brought.name.clone()],
+                        };
+                        let reading = crate::actions::ActionExecutor::mounted_reading(&file).map_or(0, |(r, _)| r);
+                        let stamp = format!(
+                            "{}|{}|{}",
+                            stamp,
+                            text(n, crate::actions::MOUNT_WITHIN).unwrap_or_default(),
+                            reading
+                        );
+                        out.push(Boundary { at, source, file, stamp, copies: seen, frame: None });
+                    }
+                    // What it brought in is that file's, whose own mounts are worked out in it.
+                } else {
+                    walk(&n.children, trail, &mut crate::addressing::Level::default(), &seen, false, out);
+                }
+                trail.pop();
+            }
+        }
+        // Only what holds a mount of a file is walked into: the walk names what it walks.
+        fn mounts_any(nodes: &[OverseerNode]) -> bool {
+            nodes.iter().any(|n| {
+                (n.node_type == "mount" && n.parameters.contains_key(crate::actions::MOUNT_FILE)) || mounts_any(&n.children)
+            })
+        }
+        let mut out = Vec::new();
+        if mounts_any(root) {
+            let top: Vec<OverseerNode> = root.iter().filter(|n| crate::contexts::is_copy(n)).cloned().collect();
+            walk(root, &mut Vec::new(), &mut crate::addressing::Level::default(), &top, true, &mut out);
+        }
+        out
+    }
+
+    /// Of the entries a document's reads reached past a window, those of lists mounts brought in:
+    /// each as its list is named in its own file, and the files to read again for them.
+    pub fn reached_in_mounts(
+        nodes: &[OverseerNode],
+        reached: &[(String, String)],
+    ) -> (Vec<(String, String)>, Vec<String>) {
+        let boundaries = Self::boundaries_in(nodes);
+        let mut theirs = Vec::new();
+        let mut files: Vec<String> = Vec::new();
+        for (list, entry) in reached {
+            let steps: Vec<String> = list.split('/').map(str::to_string).collect();
+            let Some(boundary) = boundaries
+                .iter()
+                .filter(|b| steps.len() >= b.at.len() && steps[..b.at.len()] == b.at[..])
+                .max_by_key(|b| b.at.len())
+            else {
+                continue;
+            };
+            let mut own = boundary.source.clone();
+            own.extend_from_slice(&steps[boundary.at.len()..]);
+            theirs.push((own.join("/"), entry.clone()));
+            if !files.contains(&boundary.file) {
+                files.push(boundary.file.clone());
+            }
+        }
+        (theirs, files)
+    }
+
+    /// The frame of a mounted file as the mount read it, with these contexts of the host's - made
+    /// the first time it is asked for, and kept. `None` when the file is no longer held as it was
+    /// read, as when it changed since: the formula is worked out in the host then, as it always
+    /// was, and the next reading of the host reads the file again.
+    fn frame(file: &str, stamp: &str, copies: Vec<OverseerNode>) -> Option<&'static [OverseerNode]> {
+        let held = FRAMES.with(|frames| {
+            frames
+                .borrow()
+                .iter()
+                .find(|f| f.file == file && f.stamp == stamp && f.copies == copies)
+                .map(|f| f.roots.clone())
+        });
+        let roots = match held {
+            Some(roots) => roots,
+            None => {
+                let (reading, own) = crate::actions::ActionExecutor::mounted_reading(file)?;
+                // Made from the reading the mount was made from, or not at all.
+                if stamp.rsplit('|').next() != Some(reading.to_string().as_str()) {
+                    return None;
+                }
+                let mut roots = own.as_ref().clone();
+                // After the file's own top, so a context it declares there is found first.
+                roots.extend(copies.iter().cloned());
+                let roots = std::sync::Arc::new(roots);
+                FRAMES.with(|frames| {
+                    frames.borrow_mut().push(Frame {
+                        file: file.to_string(),
+                        stamp: stamp.to_string(),
+                        copies,
+                        roots: roots.clone(),
+                    })
+                });
+                roots
+            }
+        };
+        // SAFETY: the document is held in `FRAMES`, behind an `Arc` that is only let go of by
+        // `let_go_of_stale_frames`, which runs as a pass begins - when no context made during a
+        // pass is left - and never for a frame whose file still stands as it was read.
+        let roots: &'static [OverseerNode] = unsafe { std::slice::from_raw_parts(roots.as_ptr(), roots.len()) };
+        Some(roots)
+    }
+
+    /// Lets go of the frames of files that have changed since they were read, which nothing will
+    /// ask for again.
+    fn let_go_of_stale_frames() {
+        FRAMES.with(|frames| {
+            frames.borrow_mut().retain(|f| {
+                let own = f.stamp.split('|').next().unwrap_or_default();
+                crate::actions::mount_stamp(&f.file) == own
             })
         });
     }
@@ -1140,7 +1376,13 @@ impl FormulaEvaluator {
         // means something different for each item, and the key would have to capture that.
         // The expensive formulas are the top-level aggregates, which have no bindings.
         let memo_key = if context.var_bindings.is_empty() {
-            Some((context.node_path.join("/"), formula.to_string()))
+            let mut at = context.node_path.join("/");
+            // A mounted node's formula is worked out at its path in its own document, which may
+            // be the path of something else in the host.
+            if !Self::is_the_pass_root(context.document_root) {
+                at.insert_str(0, &format!("{:p}|", context.document_root.as_ptr()));
+            }
+            Some((at, formula.to_string()))
         } else {
             None
         };
@@ -3257,6 +3499,7 @@ impl<'a> EvaluationContext<'a> {
     /// Note: current_node defaults to the first root node; parent_node is None.
     /// Resolver sets the correct current/parent when recursing.
     pub fn new(node_path: Vec<String>, document_root: &'a [OverseerNode]) -> Self {
+        let (document_root, node_path) = Self::in_its_own_document(document_root, node_path);
         let current = document_root
             .first()
             .expect("document_root must not be empty when building EvaluationContext");
@@ -3279,6 +3522,7 @@ impl<'a> EvaluationContext<'a> {
         node_path: Vec<String>,
         document_root: &'a [OverseerNode],
     ) -> Self {
+        let (document_root, node_path) = Self::in_its_own_document(document_root, node_path);
         Self {
             current_node,
             parent_node: None,
@@ -3295,12 +3539,25 @@ impl<'a> EvaluationContext<'a> {
         node_path: Vec<String>,
         document_root: &'a [OverseerNode],
     ) -> Self {
+        let (document_root, node_path) = Self::in_its_own_document(document_root, node_path);
         Self {
             current_node,
             parent_node,
             document_root,
             node_path,
             var_bindings: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Where a formula of the node at `node_path` is worked out: in its own document when a mount
+    /// brought it in - see `Boundary` - and otherwise where it is.
+    fn in_its_own_document(
+        document_root: &'a [OverseerNode],
+        node_path: Vec<String>,
+    ) -> (&'a [OverseerNode], Vec<String>) {
+        match FormulaEvaluator::in_its_own_document(&node_path, document_root) {
+            Some((frame, own)) => (frame, own),
+            None => (document_root, node_path),
         }
     }
 

@@ -32,12 +32,13 @@ thread_local! {
     static RESOLVE_AFTER_MOUNT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
-/// Restores the setting when it goes out of scope, including on the way out of an error.
-struct MountResolveSuspended;
+/// Restores the setting when it goes out of scope, including on the way out of an error - to what
+/// it was, since a mounted file's own mounts are preloaded while its host's are.
+struct MountResolveSuspended(bool);
 
 impl Drop for MountResolveSuspended {
     fn drop(&mut self) {
-        RESOLVE_AFTER_MOUNT.with(|flag| flag.set(true));
+        RESOLVE_AFTER_MOUNT.with(|flag| flag.set(self.0));
     }
 }
 
@@ -46,12 +47,69 @@ pub const MOUNT_FILE: &str = "_mount_file";
 /// How that file stood when it was read - see `mount_stamp`.
 pub const MOUNT_STAMP: &str = "_mount_stamp";
 
-/// Each mounted file as it was last parsed and resolved, and how it stood then - see
-/// `ActionExecutor::load_mounted_document`.
+/// The files a mounted file's own mounts were read from, and how each stood then, on the mount
+/// that brought it in - see `mounts_held`. Each as `file`, a unit separator, `stamp`, and a
+/// record separator between them, characters no path or stamp holds.
+pub const MOUNT_WITHIN: &str = "_mount_within";
+/// Where the node a mount brought in is in its own file, its steps joined by `/` - see
+/// `formula_evaluator`'s `Frame`.
+pub const MOUNT_PATH: &str = "_mount_path";
+
+/// Each mounted file as it was last parsed and resolved: how it stood then, how the files its own
+/// mounts read stood, and the document - see `ActionExecutor::load_mounted_document`.
 type FileStamp = (std::time::SystemTime, u64);
-static MOUNTED: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, (FileStamp, Vec<OverseerNode>)>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+struct Mounted {
+    stamp: FileStamp,
+    within: Vec<(String, String)>,
+    /// The entries its windows leave out that it was worked out with all the same, because a
+    /// host read them - see `resolver::holding`.
+    held: Vec<(String, String)>,
+    /// Which reading of the file this is, so a frame made from an earlier one is not taken for it.
+    reading: u64,
+    nodes: std::sync::Arc<Vec<OverseerNode>>,
+}
+
+static READINGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl Mounted {
+    /// Whether it still says what the files say: its own, and every file its mounts read.
+    fn current(&self, stamp: FileStamp) -> bool {
+        self.stamp == stamp && self.within.iter().all(|(file, was)| mount_stamp(file) == *was)
+    }
+}
+
+static MOUNTED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Mounted>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+thread_local! {
+    /// The mounted files being read, the outermost first - see `load_mounted_document`.
+    static READING: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Whether a mount was refused for coming round to a file already being read.
+    static CIRCLE_MET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Lets go of the file being read, on the way out of an error too.
+struct ReadingFile;
+
+impl Drop for ReadingFile {
+    fn drop(&mut self) {
+        READING.with(|reading| reading.borrow_mut().pop());
+    }
+}
+
+fn within_text(within: &[(String, String)]) -> String {
+    within
+        .iter()
+        .map(|(file, stamp)| format!("{}\u{1f}{}", file, stamp))
+        .collect::<Vec<_>>()
+        .join("\u{1e}")
+}
+
+fn within_of(text: &str) -> impl Iterator<Item = (String, String)> + '_ {
+    text.split('\u{1e}')
+        .filter_map(|pair| pair.split_once('\u{1f}'))
+        .map(|(file, stamp)| (file.to_string(), stamp.to_string()))
+}
 
 /// When a file was last written and how long it is: what decides whether something read from it
 /// is still what it says. Anything that changes the file changes at least one of them.
@@ -95,8 +153,15 @@ pub fn mounts_held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
                         out.push((file.clone(), stamp.clone()));
                     }
                 }
-                // What a mount brought in is a document of its own, whose mounts it held when
-                // it was read - not this one's to answer for.
+                // What a mount brought in is a document of its own, whose mounts are worked out
+                // in it - so what this one holds is only as current as the files they read too.
+                if let Some(OverseerValue::String(within)) = node.parameters.get(MOUNT_WITHIN) {
+                    for (file, stamp) in within_of(within) {
+                        if !out.iter().any(|(f, s)| *f == file && *s == stamp) {
+                            out.push((file, stamp));
+                        }
+                    }
+                }
                 continue;
             }
             // And the files a list keeps its entries in - see `parts`.
@@ -3180,8 +3245,7 @@ impl ActionExecutor {
         let mut targets = Vec::new();
         collect(nodes, &mut Vec::new(), &mut targets);
         let loaded_any = !targets.is_empty();
-        RESOLVE_AFTER_MOUNT.with(|flag| flag.set(false));
-        let _restore_when_done = MountResolveSuspended;
+        let _restore_when_done = MountResolveSuspended(RESOLVE_AFTER_MOUNT.with(|flag| flag.replace(false)));
         for path in targets {
             // Errors are already surfaced on the node itself by the load routine.
             let _ = Self::execute_event(nodes, &path, "load");
@@ -3270,10 +3334,58 @@ impl ActionExecutor {
     /// Look at a mounted file as it was last read, without a copy of it - `None` when it is not
     /// held as it stands now. A copy of the food catalog is most of what reading one costs.
     fn with_mounted_document<T>(path: &str, look: impl FnOnce(&[OverseerNode]) -> T) -> Option<T> {
+        Self::mounted_as_held(path).map(|nodes| look(&nodes))
+    }
+
+    /// A mounted file's document as it was last read - by the name its mount keeps for it - when
+    /// that is still what the files say, without a copy of it.
+    pub(crate) fn mounted_as_held(path: &str) -> Option<std::sync::Arc<Vec<OverseerNode>>> {
         let stamp = file_stamp(path)?;
         let cache = MOUNTED.lock().ok()?;
-        let (held, nodes) = cache.get(path)?;
-        (*held == stamp).then(|| look(nodes))
+        let held = cache.get(path)?;
+        held.current(stamp).then(|| held.nodes.clone())
+    }
+
+    /// A mounted file's document as it was last read, and which reading that was - without asking
+    /// whether the file has changed since, which the mount that read it answers for.
+    pub(crate) fn mounted_reading(path: &str) -> Option<(u64, std::sync::Arc<Vec<OverseerNode>>)> {
+        let cache = MOUNTED.lock().ok()?;
+        cache.get(path).map(|held| (held.reading, held.nodes.clone()))
+    }
+
+    /// Reads again the mounts in `nodes` of these files, as they stand with what is held now - for
+    /// a host that reached past a window of one of them. See `resolver::resolve_document`.
+    pub fn read_mounts_again(nodes: &mut Vec<OverseerNode>, files: &[String]) {
+        fn collect(nodes: &[OverseerNode], files: &[String], trail: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+            for (at, n) in nodes.iter().enumerate() {
+                trail.push(at);
+                if n.node_type == "mount" {
+                    if let Some(OverseerValue::String(file)) = n.parameters.get(MOUNT_FILE) {
+                        if files.contains(file) {
+                            out.push(trail.clone());
+                        }
+                    }
+                } else {
+                    collect(&n.children, files, trail, out);
+                }
+                trail.pop();
+            }
+        }
+        let mut mounts = Vec::new();
+        collect(nodes, files, &mut Vec::new(), &mut mounts);
+        let _restore_when_done = MountResolveSuspended(RESOLVE_AFTER_MOUNT.with(|flag| flag.replace(false)));
+        for indices in mounts {
+            let _ = Self::perform_load_mount_on_owner(nodes, std::ptr::null_mut(), &indices, &[]);
+        }
+    }
+
+    /// The files a mounted file's own mounts read, as it was last read.
+    fn mounted_within(path: &str) -> Vec<(String, String)> {
+        MOUNTED
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(path).map(|held| held.within.clone()))
+            .unwrap_or_default()
     }
 
     /// Parse and resolve a mounted document, reusing the last result while the file on disk
@@ -3303,15 +3415,42 @@ impl ActionExecutor {
         // `with_mounted_document`.
         let key = std::fs::canonicalize(path).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| path.to_string());
 
+        // Entries a host reached past a window of this file's - see `resolver::resolve_document`.
+        // Those of lists it has not are the host's own, or another file's.
+        let mut wanted = crate::resolver::held_now();
+        let mut held_before: Vec<(String, String)> = Vec::new();
         if let Some(stamp) = stamp {
             if let Ok(cache) = cache.lock() {
-                if let Some((cached_stamp, nodes)) = cache.get(&key) {
-                    if *cached_stamp == stamp {
-                        return Ok(nodes.clone());
+                if let Some(held) = cache.get(&key) {
+                    if held.current(stamp) {
+                        wanted.retain(|(list, _)| {
+                            crate::addressing::find(&held.nodes, list).is_some_and(crate::resolver::is_windowed)
+                        });
+                        if wanted.iter().all(|entry| held.held.contains(entry)) {
+                            return Ok(held.nodes.as_ref().clone());
+                        }
+                        held_before = held.held.clone();
                     }
                 }
             }
         }
+        // Read again with what it held before as well, so a host reading a day each time does not
+        // read the file again for each.
+        let also: Vec<(String, String)> =
+            held_before.iter().filter(|entry| !wanted.contains(entry)).cloned().collect();
+        let mut held_now = wanted.clone();
+        held_now.extend(also.iter().cloned());
+        let _holding = crate::resolver::holding(also);
+
+        // A file that mounts, through others, a file already being read would be read for ever.
+        // The mount that comes round is refused, as a missing file is, and the rest opens.
+        if READING.with(|reading| reading.borrow().contains(&key)) {
+            CIRCLE_MET.with(|met| met.set(true));
+            return Err(format!("Mount comes round to '{}', which is already being read", path));
+        }
+        READING.with(|reading| reading.borrow_mut().push(key.clone()));
+        let _reading = ReadingFile;
+        let outer_circle = CIRCLE_MET.with(|met| met.replace(false));
 
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read mount file '{}': {}", path, e))?;
@@ -3319,15 +3458,30 @@ impl ActionExecutor {
             .map_err(|e| format!("Failed to parse mount file '{}': {:?}", path, e))?;
         // Without the environment: what a mount brings in sits inside its host, and sees the
         // contexts of the place it is mounted at - the environment among them, through the host.
+        // Its own mounts are its own, read from its folder: its formulas are worked out here, in
+        // its own document, and reach the host only for the contexts - see `formula_evaluator`'s
+        // `Frame`.
+        let folder = std::path::Path::new(path).parent().map(|dir| dir.to_path_buf());
         crate::environment::without(|| {
-            crate::docmgr::manager::DocumentManager::without_document_file(|| {
-                crate::resolver::resolve_document(&mut ext_nodes)
+            crate::docmgr::manager::DocumentManager::with_document(folder, || {
+                crate::docmgr::manager::DocumentManager::without_document_file(|| {
+                    Self::preload_mounts(&mut ext_nodes);
+                    crate::resolver::resolve_document(&mut ext_nodes)
+                })
             })
         });
+        let within = mounts_held(&ext_nodes);
 
-        if let Some(stamp) = stamp {
+        // Not kept when a mount inside it was refused for a circle: read from elsewhere, the same
+        // file may well open whole.
+        let circle_met = CIRCLE_MET.with(|met| met.replace(outer_circle || met.get()));
+        if let (Some(stamp), false) = (stamp, circle_met) {
             if let Ok(mut cache) = cache.lock() {
-                cache.insert(key, (stamp, ext_nodes.clone()));
+                let reading = READINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                cache.insert(
+                    key,
+                    Mounted { stamp, within, held: held_now, reading, nodes: std::sync::Arc::new(ext_nodes.clone()) },
+                );
             }
         }
         Ok(ext_nodes)
@@ -3489,10 +3643,19 @@ impl ActionExecutor {
             Some((file, stamp)) => {
                 mount_node.parameters.insert(MOUNT_FILE.to_string(), OverseerValue::String(file.clone()));
                 mount_node.parameters.insert(MOUNT_STAMP.to_string(), OverseerValue::String(stamp.clone()));
+                let within = Self::mounted_within(file);
+                if within.is_empty() {
+                    mount_node.parameters.remove(MOUNT_WITHIN);
+                } else {
+                    mount_node.parameters.insert(MOUNT_WITHIN.to_string(), OverseerValue::String(within_text(&within)));
+                }
+                mount_node.parameters.insert(MOUNT_PATH.to_string(), OverseerValue::String(internal_path.join("/")));
             }
             None => {
                 mount_node.parameters.remove(MOUNT_FILE);
                 mount_node.parameters.remove(MOUNT_STAMP);
+                mount_node.parameters.remove(MOUNT_WITHIN);
+                mount_node.parameters.remove(MOUNT_PATH);
             }
         }
         if let Some(err) = load_error {

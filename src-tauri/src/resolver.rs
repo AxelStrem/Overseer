@@ -1086,6 +1086,11 @@ impl Drop for Holding {
     }
 }
 
+/// Every entry held now - see `holding`.
+pub fn held_now() -> Vec<(String, String)> {
+    HELD.with(|held| held.borrow().clone())
+}
+
 fn is_held(list: &str, entry: &str) -> bool {
     HELD.with(|held| held.borrow().iter().any(|(l, e)| l == list && e == entry))
 }
@@ -1416,7 +1421,7 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
     if calendars_moved(nodes) {
         resolve_document_once(nodes);
     }
-    let Some(before) = before else {
+    let Some(mut before) = before else {
         return;
     };
     let mut held = Vec::new();
@@ -1432,7 +1437,16 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
             let said: Vec<String> = reached.iter().take(8).map(|(list, entry)| format!("{}/{}", list, entry)).collect();
             eprintln!("[REACHED] {} past a window, worked out again: {}", reached.len(), said.join(", "));
         }
+        // An entry of a list a mount brought in is worked out in the file it came from, so that
+        // file is read again holding it too, at its place there - see `formula_evaluator`'s
+        // `Boundary`.
+        let (theirs, files) = crate::formula_evaluator::FormulaEvaluator::reached_in_mounts(&before, &reached);
+        let mut reached = reached;
+        reached.extend(theirs);
         held.push(holding(reached));
+        if !files.is_empty() {
+            crate::actions::ActionExecutor::read_mounts_again(&mut before, &files);
+        }
         *nodes = before.clone();
         resolve_document_once(nodes);
     }
