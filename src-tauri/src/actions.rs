@@ -2682,10 +2682,11 @@ impl ActionExecutor {
 
     /// The same for one path.
     fn make_days_written(nodes: &mut Vec<OverseerNode>, owner_path: &[String], target: &str) {
+        let (segments, _param, anchored) = Self::split_path_and_param(target);
         if !target.contains('[') && !target.split('/').any(|s| crate::addressing::date_of(s.trim()).is_some()) {
+            Self::make_owners_day_written(nodes, owner_path, anchored, &segments);
             return;
         }
-        let (segments, _param, anchored) = Self::split_path_and_param(target);
         for (at, seg) in segments.iter().enumerate() {
             let mut calendar_segments = segments[..at].to_vec();
             let day = if let Some((calendar, day)) = Self::split_day(seg, owner_path, nodes) {
@@ -2711,18 +2712,46 @@ impl ActionExecutor {
                     note_structural();
                 }
             }
-            let Some(calendar) = Self::get_node_mut_by_indices(nodes, &indices) else { continue };
-            // A day the block wrote is named among the calendar's overrides when it is read; any
-            // other is a cell the template gave, which this write is the first to reach.
-            let written = matches!(
-                calendar.parameters.get("_explicit_overrides"),
-                Some(OverseerValue::String(names)) if names.split(',').any(|n| n == day)
-            );
-            if !written {
-                if let Some(cell) = calendar.children.iter_mut().find(|c| c.name == day) {
-                    Self::mark_the_entry_as_new(cell);
-                    crate::resolver::freeze_what_asks_in(cell);
-                }
+            Self::make_day_new(nodes, &indices, &day);
+        }
+    }
+
+    /// A day reached by a path that names none: an action of a button inside the day's cell, as
+    /// `append (list="../intake")`, whose day is in the button's own path. Each calendar cell the
+    /// owner sits in is made new when the target lies inside it - a press in a day that sets a
+    /// field outside the day writes nothing in the day, and so does not make it.
+    fn make_owners_day_written(nodes: &mut Vec<OverseerNode>, owner_path: &[String], anchored: bool, segments: &[String]) {
+        let Some(owner) = Self::find_indices_by_name_path(nodes, owner_path) else { return };
+        let calendars: Vec<usize> = (0..owner.len())
+            .filter(|&at| Self::node_by_indices(nodes, &owner[..=at]).is_some_and(|n| n.node_type == "calendar"))
+            .collect();
+        if calendars.is_empty() {
+            return;
+        }
+        let Some(target) = Self::resolve_target_indices(nodes, owner_path, anchored, segments) else { return };
+        for at in calendars.into_iter().rev() {
+            let Some(cell) = owner.get(..at + 2) else { continue };
+            if !target.starts_with(cell) {
+                continue;
+            }
+            let Some(day) = Self::node_by_indices(nodes, cell).map(|n| n.name.clone()) else { continue };
+            Self::make_day_new(nodes, &owner[..=at], &day);
+        }
+    }
+
+    /// Marks a calendar's day as new and freezes its fields, unless the day was written already.
+    fn make_day_new(nodes: &mut Vec<OverseerNode>, calendar: &[usize], day: &str) {
+        let Some(calendar) = Self::get_node_mut_by_indices(nodes, calendar) else { return };
+        // A day the block wrote is named among the calendar's overrides when it is read; any
+        // other is a cell the template gave, which this write is the first to reach.
+        let written = matches!(
+            calendar.parameters.get("_explicit_overrides"),
+            Some(OverseerValue::String(names)) if names.split(',').any(|n| n == day)
+        );
+        if !written {
+            if let Some(cell) = calendar.children.iter_mut().find(|c| c.name == day) {
+                Self::mark_the_entry_as_new(cell);
+                crate::resolver::freeze_what_asks_in(cell);
             }
         }
     }

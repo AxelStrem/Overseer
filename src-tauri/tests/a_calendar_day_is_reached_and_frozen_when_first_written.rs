@@ -22,6 +22,19 @@ const DOC: &str = r#"tab t (label="T", mutable=true) {
             div targets {
                 int target (freeze=true, fallback=$(/t/standing)) = null
             }
+            button add (label="add") {
+                on click {
+                    append (list="../intake") {
+                        - name = "apple"
+                        - calories = 80
+                    }
+                }
+            }
+            button raise (label="raise") {
+                on click {
+                    set (path="/t/standing") = 2000
+                }
+            }
         }
     }
 
@@ -190,4 +203,68 @@ fn a_day_the_server_makes_freezes_its_fields_and_keeps_them() {
     assert_eq!(text.matches("- target =").count(), 2, "a day froze twice, or one never did:\n{}", text);
     assert_eq!(target_of(&text, "2026-11-04"), Some(OverseerValue::Integer(2200)), "the newer day did not take the figure as it stood:\n{}", text);
     assert_eq!(target_of(&text, "2026-11-03"), Some(OverseerValue::Integer(2200)), "an unwritten day stopped following");
+}
+
+/// The text from a written day's line to the button after the calendar.
+fn the_day<'a>(text: &'a str, day: &str) -> &'a str {
+    let from = text.find(&format!("- {}", day)).unwrap_or_else(|| panic!("the day was not written:
+{}", text));
+    let rest = &text[from..];
+    &rest[..rest.find("button log").unwrap_or(rest.len())]
+}
+
+fn press(service: &DocumentRoot, address: &str) {
+    let nodes = service.open("t.os").expect("open");
+    let path = overseer::addressing::name_path(&nodes, address).expect("the button");
+    service
+        .command(Some("t.os"), "run_overseer_event", &json!({ "node_path": path, "event_name": "click" }))
+        .expect("the press was refused");
+}
+
+#[test]
+fn a_day_a_press_inside_it_makes_freezes_its_fields() {
+    let _guard = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    let root = a_root("inside");
+    let service = DocumentRoot::new(&root).expect("open the root");
+    press(&service, "t/Days/2026-11-04/add");
+    let text = on_disk(&root);
+    assert!(text.contains("- 2026-11-04"), "the day was not written:
+{}", text);
+    assert!(text.contains("- target = 1800"), "the day did not freeze its target:
+{}", text);
+    assert!(the_day(&text, "2026-11-04").contains("- name = \"apple\""), "the meal was not written:
+{}", text);
+    let nodes = overseer::app_api::load_document(text.clone()).expect("resolve");
+    let again = overseer::file_ops::OverseerFileHandler::serialize_nodes(&nodes).expect("serialize");
+    assert_eq!(again, text, "the document moved when nothing changed");
+}
+
+#[test]
+fn a_day_pressed_in_again_keeps_what_it_froze() {
+    let _guard = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    let root = a_root("inside_again");
+    let service = DocumentRoot::new(&root).expect("open the root");
+    press(&service, "t/Days/2026-11-04/add");
+    service.set_at("t.os", "t/standing", OverseerValue::Integer(2200)).expect("raise the standing figure");
+    press(&service, "t/Days/2026-11-04/add");
+    let text = on_disk(&root);
+    assert_eq!(text.matches("- target =").count(), 1, "the day froze twice, or never did:
+{}", text);
+    assert_eq!(the_day(&text, "2026-11-04").matches("- name = \"apple\"").count(), 2, "a meal was not written:
+{}", text);
+    assert_eq!(target_of(&text, "2026-11-04"), Some(OverseerValue::Integer(1800)), "the day followed the standing figure:
+{}", text);
+}
+
+#[test]
+fn a_press_in_a_day_that_writes_outside_it_makes_no_day() {
+    let _guard = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    let root = a_root("outside");
+    let service = DocumentRoot::new(&root).expect("open the root");
+    press(&service, "t/Days/2026-11-04/raise");
+    let text = on_disk(&root);
+    assert!(text.contains("int standing = 2000"), "the standing figure was not set:
+{}", text);
+    assert!(!text.contains("- 2026-11-04"), "a day was written:
+{}", text);
 }
