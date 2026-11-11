@@ -243,6 +243,7 @@ pub enum BinaryOperator {
 #[derive(Debug, Clone)]
 pub enum UnaryOperator {
     Not,
+    Negate,
 }
 
 /// Formula evaluator - handles parsing and evaluation of $(expression) formulas
@@ -1569,6 +1570,17 @@ impl FormulaEvaluator {
                     let b = Self::value_to_bool(&val)?;
                     Ok(OverseerValue::Boolean(!b))
                 }
+                UnaryOperator::Negate => match Self::evaluate_expression(expr, context)? {
+                    OverseerValue::Null => Ok(OverseerValue::Null),
+                    OverseerValue::Integer(i) => Ok(i
+                        .checked_neg()
+                        .map(OverseerValue::Integer)
+                        .unwrap_or(OverseerValue::Float(-(i as f64)))),
+                    OverseerValue::Float(f) => Ok(OverseerValue::Float(-f)),
+                    other => Self::value_to_number(&other)
+                        .map(|n| OverseerValue::Float(-n))
+                        .map_err(|_| OverseerError::FormulaError("Cannot negate a value that is not a number".to_string())),
+                },
             },
             FormulaExpression::BinaryOp {
                 left,
@@ -4004,9 +4016,23 @@ fn multiplicative_expression(input: &str) -> IResult<&str, FormulaExpression> {
     ))
 }
 
-/// Parse unary expressions like !expr
+/// A `-` before a value negates it, unless the value is a number literal, which carries its
+/// own sign.
+fn negation(input: &str) -> IResult<&str, UnaryOperator> {
+    let (rest, _) = delimited(multispace0, char('-'), multispace0)(input)?;
+    let (after_space, _) = multispace0(input)?;
+    if number(after_space).is_ok() {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Not)));
+    }
+    Ok((rest, UnaryOperator::Negate))
+}
+
+/// Parse unary expressions like !expr and -expr
 fn unary_expression(input: &str) -> IResult<&str, FormulaExpression> {
-    let (input, bangs) = many0(delimited(multispace0, char('!'), multispace0))(input)?;
+    let (input, prefixes) = many0(alt((
+        map(delimited(multispace0, char('!'), multispace0), |_| UnaryOperator::Not),
+        negation,
+    )))(input)?;
     let (input, mut expr) = primary_expression(input)?;
     // Parse zero or more method calls for chaining
     let (input, calls) = many0(method_call)(input)?;
@@ -4047,9 +4073,10 @@ fn unary_expression(input: &str) -> IResult<&str, FormulaExpression> {
             segments: segs,
         };
     }
-    for _ in 0..bangs.len() {
+    // The one written last sits next to the value, so it is applied first.
+    for operator in prefixes.into_iter().rev() {
         expr = FormulaExpression::UnaryOp {
-            operator: UnaryOperator::Not,
+            operator,
             expr: Box::new(expr),
         };
     }

@@ -246,7 +246,7 @@ A formula can stand wherever a value can - a field's value, a parameter, an acti
 and is worked out again whenever what it reads changes.
 
 #### Operators:
-- Arithmetic: `+`, `-`, `*`, `/`, `%`
+- Arithmetic: `+`, `-`, `*`, `/`, `%`; a `-` before a value negates it (`-day_of_month(showing)`, `-(a + b)`, `-Items.count()`), and an empty value stays empty
 - Comparison: `>`, `<`, `>=`, `<=`, `==`, `!=`
 - Logic: `&&`, `||`, `!`
 - Conditional: `condition ? value_if_true : value_if_false`

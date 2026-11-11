@@ -16,7 +16,9 @@
 //   shot(name, { of, full })   a screenshot, its path printed: the whole document, one node
 //                              (of: address), or only what the window shows (full: false)
 //   press(at), type(text), key('Enter')
-//                              a click (a tap with --mobile), typing, a key - as a person's;
+//                              a click (a tap with --mobile), typing, a key - as a person's; a
+//                              field's editor opens on press(at, { double: true }), and type
+//                              throws while no input has the focus;
 //                              press(at, { hold: 2 }) holds it down two seconds before letting go,
 //                              and press(at, { right: true }) is a right-click
 //   drag(at, { by: [dx, dy], grab: [x, y] })
@@ -564,7 +566,14 @@ async function main() {
                 }
                 await settle()
             },
+            /// Typing goes where the focus is. A field's editor opens on a double press, so a
+            /// single press leaves the focus on the body, where the text would vanish unseen.
             async type(text) {
+                const editable = await evaluate(() => {
+                    const el = document.activeElement
+                    return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+                })
+                if (!editable) throw new Error("type: nothing is focused that takes text - a field's editor opens on press(at, { double: true })")
                 await page.send('Input.insertText', { text })
                 await settle(200)
             },
