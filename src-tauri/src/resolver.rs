@@ -1155,6 +1155,10 @@ fn reach_links_under<'a>(
             note_reached(entry);
         }
     }
+    // A square's own link is drawn, and nothing under it - see `DRAWN_BY_STYLE`.
+    if drawn_by_style(node) {
+        return;
+    }
     let named = !crate::addressing::is_wrapper(node);
     if named {
         ancestors.push(node);
@@ -2002,6 +2006,10 @@ unsafe fn recursively_compute_chart_series(
         }
     }
 
+    // Not into a day drawn as a square, whose charts nobody sees - see `DRAWN_BY_STYLE`.
+    if drawn_by_style(&*node_ptr) {
+        return;
+    }
     // Recurse - a wrapper is no step of the path, see `addressing::Level`.
     for idx in 0..(*node_ptr).children.len() {
         let child_ptr: *mut OverseerNode = (*node_ptr).children.as_mut_ptr().add(idx);
@@ -3444,6 +3452,24 @@ pub const CALENDAR_RANGE: &str = "_calendar_range";
 /// and not among `cells()`.
 pub const IN_VIEW: &str = "_in_view";
 
+/// On a cell of a calendar: that its day is drawn by a `layout="year"` alone - a square coloured
+/// by its style - and nowhere in full. Only its own formulas are worked out then, the style among
+/// them, and nothing under it: a heatmap of a year of days cost a full day's formulas, charts and
+/// all, for each square. A formula reading a field of such a day works that field out where it
+/// reads it, as it does any formula nobody has worked out yet. Not on a day held or wanted, which
+/// is worked out in full - see `make_calendar_cells`.
+pub const DRAWN_BY_STYLE: &str = "_drawn_by_style";
+
+/// Whether this is a day drawn by its style alone - see `DRAWN_BY_STYLE`.
+pub fn drawn_by_style(node: &OverseerNode) -> bool {
+    matches!(node.parameters.get(DRAWN_BY_STYLE), Some(OverseerValue::Boolean(true)))
+}
+
+/// Whether a calendar draws its days as a year, each a square of its style.
+fn draws_a_year(calendar: &OverseerNode) -> bool {
+    matches!(calendar.parameters.get("layout"), Some(OverseerValue::String(s)) if s.trim().eq_ignore_ascii_case("year"))
+}
+
 /// The most days a calendar shows at once: ten years. A range wider than that is a mistake, and
 /// would make a cell for every one of its days.
 const LONGEST_RANGE: i64 = 3660;
@@ -3872,15 +3898,15 @@ fn make_calendar_cells(
         Ok(Some(cell)) => cell,
     };
     // Each view's days, with what its own `entry=` gives them - see `make_calendar_view`.
-    let views: Vec<(String, Option<(chrono::NaiveDate, chrono::NaiveDate)>, Vec<(String, OverseerValue)>)> =
-        views_of(&address, all_nodes)
-            .into_iter()
-            .map(|(at, view)| {
-                let range = view_range(view, &at, all_nodes).ok();
-                let given = view_parameters(view, node, all_nodes).unwrap_or_default();
-                (at, range, given)
-            })
-            .collect();
+    type View = (String, Option<(chrono::NaiveDate, chrono::NaiveDate)>, Vec<(String, OverseerValue)>, bool);
+    let views: Vec<View> = views_of(&address, all_nodes)
+        .into_iter()
+        .map(|(at, view)| {
+            let range = view_range(view, &at, all_nodes).ok();
+            let given = view_parameters(view, node, all_nodes).unwrap_or_default();
+            (at, range, given, draws_a_year(view))
+        })
+        .collect();
     let days_of = |range: &(chrono::NaiveDate, chrono::NaiveDate)| {
         let (from, to) = *range;
         from.iter_days().take_while(move |day| *day <= to)
@@ -3889,7 +3915,7 @@ fn make_calendar_cells(
     if let Ok(own) = &range {
         wanted.extend(days_of(own));
     }
-    for (_, view_range, _) in &views {
+    for (_, view_range, _, _) in &views {
         if let Some(view_range) = view_range {
             wanted.extend(days_of(view_range));
         }
@@ -3897,7 +3923,8 @@ fn make_calendar_cells(
     // And a day an interaction is about - the server reading or writing a day nobody wrote, out
     // of view - made as an action's `add_calendar_day` would, so that it can be reached at all.
     // It is kept and not drawn: the range below says it is out of view.
-    wanted.extend(days_wanted_of(&address));
+    let asked_for = days_wanted_of(&address);
+    wanted.extend(asked_for.iter().copied());
     // A written day that no range holds, and that nothing reaches, is kept as it was written: no
     // template copied onto it and no formula of it worked out, as an entry out of a list's window.
     // A history grows a day at a time and is read a few days at a time, and working out every day
@@ -3976,6 +4003,7 @@ fn make_calendar_cells(
         Ok((from, to)) => (Some(*from), Some(*to)),
         Err(_) => (None, None),
     };
+    let own_year = draws_a_year(node);
     for child in node.children.iter_mut() {
         if let Some(day) = crate::addressing::date_of(&child.name) {
             let seen = first.is_some_and(|f| f <= day) && last.is_some_and(|l| day <= l);
@@ -3985,18 +4013,27 @@ fn make_calendar_cells(
                     && !key.starts_with(VIEW_PARAMETER)
                     && !key.strip_prefix("_computed_").is_some_and(|k| k.starts_with(VIEW_PARAMETER))
             });
-            for (at, view_range, given) in &views {
+            // Whether a year draws the day as a square, and whether anything draws it in full.
+            let (mut as_square, mut in_full) = (seen && own_year, seen && !own_year);
+            for (at, view_range, given, year) in &views {
                 let seen = view_range.is_some_and(|(f, l)| f <= day && day <= l);
                 child
                     .parameters
                     .insert(format!("{}{}", IN_VIEW_OF, at), OverseerValue::Boolean(seen));
                 if seen {
+                    as_square |= *year;
+                    in_full |= !*year;
                     for (key, value) in given {
                         child
                             .parameters
                             .insert(format!("{}{}@{}", VIEW_PARAMETER, at, key), value.clone());
                     }
                 }
+            }
+            if as_square && !in_full && !asked_for.contains(&day) && !is_held(&address, &child.name) {
+                child.parameters.insert(DRAWN_BY_STYLE.to_string(), OverseerValue::Boolean(true));
+            } else {
+                child.parameters.remove(DRAWN_BY_STYLE);
             }
         }
     }
@@ -4032,15 +4069,15 @@ fn make_calendar_cells(
     true
 }
 
-/// Whether a calendar keeps as written a day that is held or wanted now, and so has to be made
-/// again for it - see `make_calendar_cells`.
+/// Whether a calendar keeps as written, or draws by its style alone, a day that is held or wanted
+/// now, and so has to be made again for it - see `make_calendar_cells`.
 fn wakes_a_day(node: &OverseerNode, address: &str) -> bool {
-    if !node.children.iter().any(not_worked_out) {
+    if !node.children.iter().any(|c| not_worked_out(c) || drawn_by_style(c)) {
         return false;
     }
     let wanted = days_wanted_of(address);
     node.children.iter().any(|c| {
-        not_worked_out(c)
+        (not_worked_out(c) || drawn_by_style(c))
             && (is_held(address, &c.name)
                 || crate::addressing::date_of(&c.name).is_some_and(|day| wanted.contains(&day)))
     })
@@ -5956,6 +5993,12 @@ unsafe fn recursively_evaluate_node_formulas_selective(
         }
     }
 
+    // A day a year draws as a square: its own formulas, its style among them, and nothing under
+    // it - see `DRAWN_BY_STYLE`.
+    if drawn_by_style(&*node_ptr) {
+        return subtree_changed;
+    }
+
     // Always recurse into children to check their paths. A wrapper is no step of the path - its
     // children are named as its parent's, see `addressing::Level`.
     let child_len = (*node_ptr).children.len();
@@ -6037,7 +6080,8 @@ fn collect_sort_keys(
 ) {
     use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
 
-    if not_worked_out(node) {
+    // Nor in a day drawn as a square, whose lists are not drawn - see `DRAWN_BY_STYLE`.
+    if not_worked_out(node) || drawn_by_style(node) {
         return;
     }
 

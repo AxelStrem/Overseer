@@ -2386,6 +2386,14 @@ export class OverseerRenderer {
         // them: it is read, never drawn.
         if ((node.node_type || node.type) === 'context') return
 
+        // A day only a year draws, as a square of its style: the server worked out nothing under
+        // it, so nothing under it is drawn - see `_drawn_by_style`. Its hover gives its date, and
+        // a field's value.
+        if (Array.isArray(node.children) && node.children.length && node.parameters && '_drawn_by_style' in node.parameters) {
+            const square = this.getParameterValue(node, '_drawn_by_style')
+            if (square === true || String(square).toLowerCase() === 'true') node = { ...node, children: [] }
+        }
+
         // The children of an entry of a tree are drawn as rows of the tree - see `treeOf`.
         try { if (this.isTreeBranch(node, path)) return } catch (_) { /* drawn as a list */ }
 

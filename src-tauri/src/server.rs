@@ -496,7 +496,7 @@ fn wholly_in_view(nodes: &[OverseerNode], address: &str) -> bool {
     let parts: Vec<&str> = address.split('/').collect();
     (1..=parts.len()).all(|reach| {
         crate::addressing::find(nodes, &parts[..reach].join("/"))
-            .is_some_and(|node| !crate::resolver::not_worked_out(node))
+            .is_some_and(|node| !crate::resolver::not_worked_out(node) && !crate::resolver::drawn_by_style(node))
     })
 }
 

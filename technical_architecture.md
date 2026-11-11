@@ -171,8 +171,14 @@ knowing about because each has a cost:
   leaves view keeps what was worked out for it, and one that comes into view is made from the
   template then.
   A calendar's range is its window: a written day that neither its range nor any view's holds
-  is not worked out until something reaches it. A day a view holds is the calendar's, worked out
-  in full, so a year heatmap of a heavy day costs a year of those days on a cold open.
+  is not worked out until something reaches it. A day that only a `layout="year"` draws is
+  marked `_drawn_by_style`: the formulas pass works out its own parameters - the view's style as
+  `_view@<view>@<name>`, a field's value - and walks nothing under it, nor do the charts, sort
+  keys and links; a read into it works out what it reaches on demand. A day held, wanted by an
+  interaction, or in a range that draws it in full loses the mark, and the calendar is made again
+  for it (`wakes_a_day`); the server takes such a read or write the long way, so the day comes
+  back worked out. Its template is still copied, so the page is sent the day whole and draws the
+  square alone.
 - **An equality index** for `filter`, built per pass and keyed by the field compared. Strings
   only: `compare_values` falls back to text, so `5 == "5"` while `5.0 != "5.0"`, and an index
   over a comparison that is not transitive would answer differently from the scan it replaces.

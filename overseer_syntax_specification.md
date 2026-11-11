@@ -770,8 +770,8 @@ calendar Steps (entry=int, span="month") {
   neither the range nor any view's range holds is not worked out, as an entry out of a list's
   window is not. Anything that reaches it - `at(date)`, a read or a write of it by its address, a
   button setting it - finds it worked out, with its template and its formulas, and only what is
-  reached is worked out. A day a view holds is worked out in full, as one in the calendar's own
-  range is. A name in the block that is no date is said as a
+  reached is worked out. A day in view is worked out as it is drawn - see "A view".
+  A name in the block that is no date is said as a
   problem on the calendar, as is a range that is not one, or one longer than ten years.
 - **Moving the range** needs nothing more: the range reads a date the document keeps, and its
   buttons step it. A guarded date steps for whoever pressed, and the file stays as it was.
@@ -820,7 +820,7 @@ calendar Steps (entry=int, span="month") {
   | `day` | the first day in view, headed by its date |
   | `week` | seven columns, the `week_start` first, each day headed by its weekday and date |
   | `month` | weeks as rows of seven columns, the `week_start` first, the weekdays named above and each day's date over it; the days of the neighbouring months that fill a week are left blank |
-  | `year` | a heatmap: weeks as columns and weekdays as rows, each day a small square, the months named above the week each begins in; a day shows its value on hover, and scrolls sideways where the page is narrower |
+  | `year` | a heatmap: weeks as columns and weekdays as rows, each day a small square, the months named above the week each begins in; a day shows its date on hover, and a field its value too, and scrolls sideways where the page is narrower |
 
   A day of the heatmap takes its colour from its template's own style, worked out from its value:
   `div Day (background-color=$(commits > 3 ? "#30a14e" : "")) { int commits = 0 }`.
@@ -850,9 +850,14 @@ calendar Steps (entry=int, span="month") {
   that view alone: only the parameters it sets differently are read, worked out at each day as
   the day's own are. Without it, a view draws the days as the calendar does.
 
-  A view's days are the calendar's, each worked out in full, so a view over a long range costs
-  what its days cost. A document whose day is heavy keeps what the view's style reads cheap: a
-  total written on the day, say, rather than a formula over its meals.
+  A day is worked out as it is drawn. One in the calendar's own range, or in the range of a
+  view drawing it as an agenda, a day, a week or a month, is worked out in full. One that only a
+  `layout="year"` draws - the calendar's own or a view's - is a square of its style, and only its
+  own formulas are worked out: its style, and a field's value. A formula reading a field of such
+  a day still finds it worked out, and a day read, written or picked into a range that draws it
+  in full is worked out in full. So a heatmap over a long range costs what its style reads, and a
+  document whose day is heavy keeps that cheap: a total written on the day, say, rather than a
+  formula over its meals.
 
   Said as a problem on the view: an `of=` that names no calendar, or names another view; days
   written in its own block; an `entry=` that is not a template made from the days'.
