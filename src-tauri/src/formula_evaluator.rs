@@ -976,6 +976,15 @@ impl FormulaEvaluator {
         })?
     }
 
+    /// The document a node of `root` is in: for one a mount brought in, the frame of the file it
+    /// came from - see `Boundary` - and otherwise `root` itself, as it is outside a pass too.
+    fn document_of<'a>(node: &OverseerNode, root: &'a [OverseerNode]) -> &'a [OverseerNode] {
+        Self::path_in_pass(node)
+            .filter(|(pass_root, _)| pass_root.as_ptr() == root.as_ptr())
+            .and_then(|(pass_root, path)| Self::in_its_own_document(&path, pass_root))
+            .map_or(root, |(frame, _)| frame)
+    }
+
     /// Whether `root` is the document the pass reads - false outside a pass.
     fn is_the_pass_root(root: &[OverseerNode]) -> bool {
         Self::with_pass_root_if_free(|slot| {
@@ -5093,10 +5102,22 @@ impl FormulaEvaluator {
         call: &MethodCall,
         context: &EvaluationContext<'a>,
     ) -> Option<Result<Vec<&'a OverseerNode>, OverseerError>> {
+        Self::calendar_pick_in(calendar, call, context, context.document_root)
+    }
+
+    /// `calendar_pick`, for a calendar of the document `root`. A mounted calendar's template and
+    /// a mounted view's `of=` are named in the calendar's own file, and looked for there.
+    fn calendar_pick_in<'a>(
+        calendar: &'a OverseerNode,
+        call: &MethodCall,
+        context: &EvaluationContext<'a>,
+        root: &'a [OverseerNode],
+    ) -> Option<Result<Vec<&'a OverseerNode>, OverseerError>> {
+        let root = Self::document_of(calendar, root);
         // A view reads the days of the calendar it shows: `cells()` those in its own range,
         // `at()` any of them - see `resolver::make_calendar_view`.
         if let Some(OverseerValue::String(of)) = calendar.parameters.get(crate::resolver::VIEW_OF) {
-            let target = crate::addressing::find(context.document_root, of)?;
+            let target = crate::addressing::find(root, of)?;
             if call.name == "cells" && call.args.is_empty() {
                 let mark = match calendar.parameters.get(crate::resolver::VIEW_AT) {
                     Some(OverseerValue::String(at)) => format!("{}{}", crate::resolver::IN_VIEW_OF, at),
@@ -5108,7 +5129,7 @@ impl FormulaEvaluator {
                     .filter(|cell| matches!(cell.parameters.get(&mark), Some(OverseerValue::Boolean(true))))
                     .collect()));
             }
-            return Self::calendar_pick(target, call, context);
+            return Self::calendar_pick_in(target, call, context, root);
         }
         let in_view = |cell: &&OverseerNode| {
             matches!(cell.parameters.get(crate::resolver::IN_VIEW), Some(OverseerValue::Boolean(true)))
@@ -5144,9 +5165,7 @@ impl FormulaEvaluator {
                     return Some(Ok(vec![cell]));
                 }
                 let template = match calendar.parameters.get("entry") {
-                    Some(OverseerValue::Template(path)) => {
-                        crate::bases::in_document(context.document_root, path)
-                    }
+                    Some(OverseerValue::Template(path)) => crate::bases::in_document(root, path),
                     _ => None,
                 };
                 Some(Ok(template.into_iter().collect()))
@@ -5165,7 +5184,7 @@ impl FormulaEvaluator {
         let calendar = calendar.filter(|c| c.node_type == "calendar" && call.name == "at")?;
         // A view's days are the calendar's it shows.
         let calendar = match calendar.parameters.get(crate::resolver::VIEW_OF) {
-            Some(OverseerValue::String(of)) => crate::addressing::find(root, of)?,
+            Some(OverseerValue::String(of)) => crate::addressing::find(Self::document_of(calendar, root), of)?,
             _ => calendar,
         };
         match calendar.parameters.get("entry") {

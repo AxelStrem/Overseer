@@ -3041,7 +3041,9 @@ float calories = $(FOOD/History.find(../date)/totals/calories)
 
 Only the contexts come from the host: a mounted document sees those of the place it is mounted at.
 Nothing of the host is read from inside a mount but them. An entry a window of the mounted file
-leaves out is worked out there once the host reads it, as an entry of the host's own would be. Two
+leaves out is worked out there once the host reads it, as an entry of the host's own would be. A
+mounted calendar's day nobody wrote reads as the template in its own file, and a mounted view's
+`of=` names a calendar of that file, so `FOOD/Days.at(date)` reads every day as the file does. Two
 files that mount each other open, the mount that comes round refused.
 
 A lazy mount brings in what it names once something asks for it; `load_mount` brings it in from a
