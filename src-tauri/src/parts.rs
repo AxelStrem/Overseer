@@ -578,16 +578,28 @@ pub fn written(nodes: &mut Vec<OverseerNode>, report: Option<&crate::actions::Ch
                 }
                 continue;
             }
+            let mut out_of_place = false;
             let entries: Vec<OverseerNode> = members
                 .iter()
                 .map(|(at, from)| {
-                    let mut entry = list.children[*at].clone();
-                    entry.parameters.remove(PART);
                     // An entry that comes from another file - the document, or another part - is
                     // written as a new one. Where it was read is that file's text, and means
-                    // nothing in this one.
+                    // nothing in this one. It is forgotten in the list as well as in what is
+                    // written: the next write of this part takes the entry for one read from it,
+                    // and would give back the other file's text, at that file's depth, and take
+                    // the indent it was read at for the part's unit.
                     if from.as_deref() != Some(key.as_str()) {
+                        forget_where_it_was_read(&mut list.children[*at]);
+                    }
+                    let mut entry = list.children[*at].clone();
+                    entry.parameters.remove(PART);
+                    // One read from this part with its lines out of place - written there by a
+                    // server that still did the above wrong - is written afresh, so that the part
+                    // comes right the next time it is written, and its indent is not taken for
+                    // the unit of the entries written beside it.
+                    if !at_its_depth(&entry) {
                         forget_where_it_was_read(&mut entry);
+                        out_of_place = true;
                     }
                     entry
                 })
@@ -608,6 +620,12 @@ pub fn written(nodes: &mut Vec<OverseerNode>, report: Option<&crate::actions::Ch
             // The list is written again unless it holds exactly the entries it was read with: the
             // writer gives a list back as it read it while each entry left says what it did.
             if !same_entries {
+                held.source_fingerprint = None;
+            }
+            // So is the list around it, which would put the entries where the ones it read stood.
+            if out_of_place {
+                held.source_snapshot = None;
+                held.source_id = None;
                 held.source_fingerprint = None;
             }
             held.children = entries;
@@ -750,6 +768,45 @@ fn forget_where_it_was_read(node: &mut OverseerNode) {
     for child in node.children.iter_mut() {
         forget_where_it_was_read(child);
     }
+}
+
+/// Whether an entry stands as a part's writer would put it: each line inside it one indent deeper,
+/// for each block it stands in, than its first, which is one in from the list's. Its first line's
+/// indent is taken for the unit. Only text read from a file is looked at: an entry with no text
+/// of its own is written from what it holds, and stands where it should.
+fn at_its_depth(entry: &OverseerNode) -> bool {
+    let Some(snapshot) = entry.source_snapshot.as_deref() else { return true };
+    if snapshot.origin != crate::types::SnapshotOrigin::Parsed {
+        return true;
+    }
+    let Some(unit) = snapshot.indent_unit.as_deref().filter(|u| !u.is_empty()) else { return false };
+    // The braces open in the entry's text so far: its first line opens the entry itself.
+    let mut depth: usize = 0;
+    let mut in_string = false;
+    for (n, line) in snapshot.full_text.split('\n').enumerate() {
+        let line = line.trim_end_matches('\r');
+        let body = line.trim_start();
+        if n > 0 && !in_string && !body.is_empty() {
+            let wanted = if body.starts_with('}') { depth } else { depth + 1 };
+            if line.len() - body.len() != unit.len() * wanted || !line.starts_with(&unit.repeat(wanted)) {
+                return false;
+            }
+        }
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' if in_string => {
+                    chars.next();
+                }
+                '"' => in_string = !in_string,
+                '/' if !in_string && chars.peek() == Some(&'/') => break,
+                '{' if !in_string => depth += 1,
+                '}' if !in_string => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    true
 }
 
 /// Whether a part about to be made holds nothing, and so need not be made.
