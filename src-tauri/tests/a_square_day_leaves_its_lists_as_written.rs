@@ -17,6 +17,7 @@ const DOC: &str = r##"tab t (label="T", mutable=true) {
         div Day {
             int logged = 0
             int eaten = $(meals.map(|x| x/kcal).sum())
+            int twice = $(logged * 2)
             list meals (entry=<Meal>)
         }
         <Day> HeatDay (background-color=$(logged > 1000 ? "#e5534b" : "#30a14e")) { }
@@ -159,6 +160,25 @@ fn a_press_reading_a_squares_list_gets_what_it_works_out_to() {
     press(&service, "t/copy");
     let written = std::fs::read_to_string(root.join("d.os")).unwrap();
     assert_eq!(written, DOC.replace("    int copied = 0\n", "    int copied = 600\n"));
+}
+
+#[test]
+fn a_press_reading_a_squares_field_through_at_gets_what_it_works_out_to() {
+    let _guard = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    let doc = DOC.replace(
+        "$(../Days/2026-10-27/meals.map(|x| x/kcal).sum())",
+        r#"$(../Days.at("2026-10-27")/twice)"#,
+    );
+    let root = a_root("twice", &doc);
+    let service = DocumentRoot::new(&root).expect("open the root");
+    press(&service, "t/copy");
+    let written = std::fs::read_to_string(root.join("d.os")).unwrap();
+    assert_eq!(written, doc.replace("    int copied = 0
+", "    int copied = 3000
+"));
+    let nodes = service.open_for("someone", "d.os").expect("open");
+    assert!(overseer::resolver::drawn_by_style(overseer::addressing::find(&nodes, "t/Days/2026-10-27").unwrap()));
+    assert!(overseer::resolver::drawn_by_style(overseer::addressing::find(&nodes, "t/Days/2026-10-29").unwrap()));
 }
 
 #[test]

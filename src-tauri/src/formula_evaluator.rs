@@ -952,6 +952,41 @@ impl FormulaEvaluator {
         Self::let_go_of_stale_frames();
     }
 
+    /// Work out `read` with `root` as the document a node reached without its path is found in,
+    /// when no pass has one: an action's formulas, read between its writes.
+    ///
+    /// Without it a field nobody had worked out yet read as nothing when reached that way - a
+    /// square's own fields are worked out only where they are read, and a press writing
+    /// `$(Days.at("2026-10-27")/twice)` wrote 0 where a formula of the document had 3000. `root`
+    /// is borrowed for as long as `read` runs, so nothing writes it while the pointer is held,
+    /// and the pointer is let go of before the borrow ends, a panic included. Only the root is
+    /// set, not the memo: what an action reads changes between its steps.
+    pub fn reading<R>(root: &[OverseerNode], read: impl FnOnce() -> R) -> R {
+        struct LetGo;
+        impl Drop for LetGo {
+            fn drop(&mut self) {
+                FormulaEvaluator::with_pass_root(|slot| *slot = None);
+            }
+        }
+        let set = Self::with_pass_root_if_free(|slot| {
+            if slot.is_some() {
+                return false;
+            }
+            *slot = Some(PassRoot {
+                root: root.as_ptr(),
+                len: root.len(),
+                paths: None,
+                names: None,
+                below: Default::default(),
+                boundaries: None,
+            });
+            true
+        })
+        .unwrap_or(false);
+        let _let_go = set.then_some(LetGo);
+        read()
+    }
+
     /// Where a formula at `path` in `root` is to be worked out: in the frame of the mounted file
     /// it is in, at its place there - see `Boundary`. `None` when it is the pass's document's own,
     /// or the root is not the pass's document.

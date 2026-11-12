@@ -1414,6 +1414,12 @@ impl ActionExecutor {
         ctx
     }
 
+    /// An action's formula, worked out with the document it reads known to it - see
+    /// `FormulaEvaluator::reading`.
+    fn evaluate(formula: &str, ctx: &EvaluationContext) -> Result<OverseerValue, OverseerError> {
+        FormulaEvaluator::reading(ctx.document_root, || FormulaEvaluator::evaluate_formula(formula, ctx))
+    }
+
     fn add_bindings<'a>(ctx: &mut EvaluationContext<'a>, nodes: &'a [OverseerNode]) {
         let bound = BOUND.with(|b| b.borrow().clone());
         for Bound { name, item } in bound {
@@ -1469,7 +1475,7 @@ impl ActionExecutor {
         use crate::formula_evaluator::ListItem;
         use std::collections::{HashMap, HashSet};
         let ctx = Self::action_context(owner_path, nodes);
-        let listed = FormulaEvaluator::evaluate_items(formula, &ctx)?;
+        let listed = FormulaEvaluator::reading(nodes, || FormulaEvaluator::evaluate_items(formula, &ctx))?;
         // Found by identity: the formula hands back the document's own nodes, and a name can be
         // shared by entries of a list without a key.
         let wanted: HashSet<usize> = listed
@@ -1782,7 +1788,7 @@ impl ActionExecutor {
                 let value = match action.parameters.get("value") {
                     Some(OverseerValue::Formula(expr)) => {
                         let ctx = Self::action_context(owner_path, nodes);
-                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                        Self::evaluate(expr, &ctx)?
                     }
                     Some(value) => value.clone(),
                     None => OverseerValue::String(String::new()),
@@ -2083,7 +2089,7 @@ impl ActionExecutor {
                         // of the whole document to read one value from was over twenty
                         // milliseconds - `done` on a task paid it for the key of its `remove`.
                         let ctx = Self::action_context(owner_path, nodes);
-                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                        Self::evaluate(expr, &ctx)?
                     } else if let Some(v) = action.parameters.get("value") {
                         v.clone()
                     } else if let Some(v) = Self::get_effective(&action.parameters, "value") {
@@ -2240,7 +2246,7 @@ impl ActionExecutor {
                         // of the whole document to read one value from was over twenty
                         // milliseconds - `done` on a task paid it for the key of its `remove`.
                         let ctx = Self::action_context(owner_path, nodes);
-                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                        Self::evaluate(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
                     Some(OverseerValue::Integer(i)) => OverseerValue::Integer(*i),
@@ -2306,7 +2312,7 @@ impl ActionExecutor {
                         // of the whole document to read one value from was over twenty
                         // milliseconds - `done` on a task paid it for the key of its `remove`.
                         let ctx = Self::action_context(owner_path, nodes);
-                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                        Self::evaluate(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
                     Some(OverseerValue::Integer(i)) => OverseerValue::Integer(*i),
@@ -2464,7 +2470,7 @@ impl ActionExecutor {
                         // of the whole document to read one value from was over twenty
                         // milliseconds - `done` on a task paid it for the key of its `remove`.
                         let ctx = Self::action_context(owner_path, nodes);
-                        FormulaEvaluator::evaluate_formula(expr, &ctx)?
+                        Self::evaluate(expr, &ctx)?
                     }
                     Some(OverseerValue::String(s)) => OverseerValue::String(s.clone()),
                     Some(OverseerValue::Integer(i)) => OverseerValue::Integer(*i),
@@ -2655,7 +2661,7 @@ impl ActionExecutor {
         let day = match inside.strip_prefix("$(").and_then(|rest| rest.strip_suffix(')')) {
             Some(formula) => {
                 let ctx = Self::action_context(owner_path, nodes);
-                match FormulaEvaluator::evaluate_formula(formula, &ctx).ok()? {
+                match Self::evaluate(formula, &ctx).ok()? {
                     OverseerValue::Date(s) | OverseerValue::Timestamp(s) | OverseerValue::String(s) => {
                         crate::addressing::date_of(s.trim().get(..10)?)?
                     }
@@ -5944,7 +5950,7 @@ impl ActionExecutor {
         match val {
             OverseerValue::Formula(expr) => {
                 let ctx = Self::action_context(owner_path, snapshot);
-                let evaluated = FormulaEvaluator::evaluate_formula(expr, &ctx)?;
+                let evaluated = Self::evaluate(expr, &ctx)?;
                 Ok(evaluated)
             }
             other => Ok(other.clone()),
@@ -6128,25 +6134,28 @@ impl ActionExecutor {
         // out of an entry reads as its template's default, so a failure means the expression is
         // not a path in the language or the list holds entries of different shapes - a mistake
         // in the document that would otherwise answer ok and sort nothing.
-        let mut keys: Vec<OverseerValue> = Vec::with_capacity(cur.children.len());
-        for (i, child) in cur.children.iter().enumerate() {
-            let mut base_ctx = EvaluationContext {
-                current_node: cur,
-                parent_node: None,
-                document_root: &snapshot,
-                node_path: owner_path.to_vec(),
-                var_bindings: std::collections::HashMap::new(),
-            };
-            Self::add_bindings(&mut base_ctx, &snapshot);
-            let ctx = base_ctx.with_var("x", BoundValue::Node(child, None));
-            let key = FormulaEvaluator::evaluate_formula(by_expr, &ctx).map_err(|e| {
-                OverseerError::ValidationError(format!(
-                    "sort.by could not be worked out for entry {}: {}",
-                    i, e
-                ))
-            })?;
-            keys.push(key);
-        }
+        let keys: Vec<OverseerValue> = FormulaEvaluator::reading(&snapshot, || {
+            let mut keys = Vec::with_capacity(cur.children.len());
+            for (i, child) in cur.children.iter().enumerate() {
+                let mut base_ctx = EvaluationContext {
+                    current_node: cur,
+                    parent_node: None,
+                    document_root: &snapshot,
+                    node_path: owner_path.to_vec(),
+                    var_bindings: std::collections::HashMap::new(),
+                };
+                Self::add_bindings(&mut base_ctx, &snapshot);
+                let ctx = base_ctx.with_var("x", BoundValue::Node(child, None));
+                let key = FormulaEvaluator::evaluate_formula(by_expr, &ctx).map_err(|e| {
+                    OverseerError::ValidationError(format!(
+                        "sort.by could not be worked out for entry {}: {}",
+                        i, e
+                    ))
+                })?;
+                keys.push(key);
+            }
+            Ok::<_, OverseerError>(keys)
+        })?;
 
         // What the template gave stays first, in its own order: only the instance's are sorted.
         let given = crate::resolver::given_entries(list_node);
