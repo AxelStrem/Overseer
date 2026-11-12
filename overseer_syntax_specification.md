@@ -317,10 +317,12 @@ An entry of a list is named in one of three ways, and which one depends on who i
 Two siblings of one name are `name` and `name#1`, in an address as in a path.
 
 A formula does not index a list. It reaches entries through the list's methods: `find` for an
-entry by its key, `filter` for those that match, `first` for the first of what is left.
+entry by its key, `filter` for those that match, `first` for the first of what is left. A path
+can go on from what a method gives, and end in a method again, read left to right.
 
 ```overseer
 int points = $(/project/Items.find("parser")/points)
+int subtasks = $(/project/Items.find("parser")/parts.count())
 string first_open = $(Items.filter(|x| x/stage != "done").map(|x| x/title).first(""))
 ```
 

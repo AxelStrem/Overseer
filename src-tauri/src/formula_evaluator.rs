@@ -4094,19 +4094,37 @@ fn unary_expression(input: &str) -> IResult<&str, FormulaExpression> {
         };
     }
     // Parse zero or more path tail segments like /child/grand after a method chain or any expr
-    let (input, tail_segments) = many0(preceded(
+    let (mut input, tail_segments) = many0(preceded(
         char('/'),
         take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-'),
     ))(input)?;
-    if !tail_segments.is_empty() {
-        let segs = tail_segments
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>();
+    let mut followed = !tail_segments.is_empty();
+    if followed {
         expr = FormulaExpression::PathFollow {
             base: Box::new(expr),
-            segments: segs,
+            segments: tail_segments.into_iter().map(|s| s.to_string()).collect(),
         };
+    }
+    // What a tail names can be read on, as any list can - `Days.at(day)/meals.count()` - and a
+    // further tail after that, left to right.
+    while followed {
+        let (rest, calls) = many0(method_call)(input)?;
+        if calls.is_empty() {
+            break;
+        }
+        expr = FormulaExpression::MethodChain { base: Box::new(expr), calls };
+        let (rest, tail_segments) = many0(preceded(
+            char('/'),
+            take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-'),
+        ))(rest)?;
+        input = rest;
+        followed = !tail_segments.is_empty();
+        if followed {
+            expr = FormulaExpression::PathFollow {
+                base: Box::new(expr),
+                segments: tail_segments.into_iter().map(|s| s.to_string()).collect(),
+            };
+        }
     }
     // The one written last sits next to the value, so it is applied first.
     for operator in prefixes.into_iter().rev() {
@@ -4469,9 +4487,9 @@ impl FormulaEvaluator {
             }
         } else {
             let found = match base {
-                FormulaExpression::PathReference(_) | FormulaExpression::FieldReference(_) => {
-                    Self::named_node(base, context)
-                }
+                FormulaExpression::PathReference(_)
+                | FormulaExpression::FieldReference(_)
+                | FormulaExpression::PathFollow { .. } => Self::named_node(base, context),
                 _ => Self::eval_expr_to_node(base, context).map(|node| (Vec::new(), node)),
             };
             let (mut walked, node) = match found {
@@ -5443,6 +5461,21 @@ impl FormulaEvaluator {
                 }
                 None
             }
+            // `Days.at(day)/meals`: the one node the base names, and a step down from it for each
+            // segment. The path is where the node really is, so a read of it is recorded there -
+            // the day's own read is recorded by the `at` it went through. Outside a pass there is
+            // no map of real paths, and nothing to record.
+            FormulaExpression::PathFollow { base, segments } => {
+                let found = Self::eval_expr_to_nodes(base, context, true)?;
+                let [mut cur] = found.as_slice() else {
+                    return None;
+                };
+                for seg in segments {
+                    cur = cur.get_accessible_children().into_iter().find(|c| &c.name == seg)?;
+                }
+                let walked = Self::path_in_pass(cur).map(|(_, real)| real).unwrap_or_default();
+                Some((walked, cur))
+            }
             _ => None,
         }
     }
@@ -5465,7 +5498,9 @@ impl FormulaEvaluator {
         followed: bool,
     ) -> Option<Vec<&'a OverseerNode>> {
         match expr {
-            FormulaExpression::PathReference(_) | FormulaExpression::FieldReference(_) => {
+            FormulaExpression::PathReference(_)
+            | FormulaExpression::FieldReference(_)
+            | FormulaExpression::PathFollow { .. } => {
                 let (walked, node) = Self::named_node(expr, context)?;
                 // The list an aggregate runs over is reached through here. Recording it is what
                 // makes a change to one entry reach whatever adds them up.
