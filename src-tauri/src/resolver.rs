@@ -95,6 +95,11 @@ pub const OUT_OF_VIEW: &str = "_out_of_view";
 /// holds the name its list is reached by - see `note_reached`.
 pub const NOT_WORKED_OUT: &str = "_not_worked_out";
 
+/// On a node nothing works out that is no entry of its own: the entry of the list `NOT_WORKED_OUT`
+/// names that a read of it brings in - the day of a calendar a list in a square is in, see
+/// `set_lists_aside`.
+pub const BROUGHT_IN_WITH: &str = "_brought_in_with";
+
 /// How many of a list's entries were left out of view.
 pub const LEFT_OUT: &str = "_left_out_of_view";
 
@@ -1014,8 +1019,12 @@ pub fn note_reached(node: &OverseerNode) {
         return;
     }
     if let Some(OverseerValue::String(list)) = node.parameters.get(NOT_WORKED_OUT) {
+        let entry = match node.parameters.get(BROUGHT_IN_WITH) {
+            Some(OverseerValue::String(entry)) => entry.clone(),
+            _ => node.name.clone(),
+        };
         REACHED.with(|reached| {
-            reached.borrow_mut().insert((list.clone(), node.name.clone()));
+            reached.borrow_mut().insert((list.clone(), entry));
         });
     }
 }
@@ -1116,7 +1125,7 @@ pub fn leaves_anything_unworked(nodes: &[OverseerNode]) -> bool {
             && matches!(node.parameters.get(LEFT_OUT), Some(OverseerValue::Integer(n)) if *n > 0)
             && node.children.iter().any(not_worked_out)
             || node.node_type == "list" && crate::parts::leaves_parts_unread(node)
-            || node.node_type == "calendar" && node.children.iter().any(not_worked_out)
+            || node.node_type == "calendar" && node.children.iter().any(|day| not_worked_out(day) || drawn_by_style(day))
             || !not_worked_out(node) && leaves_anything_unworked(&node.children)
     })
 }
@@ -3323,7 +3332,7 @@ fn make_grid_cells(
     let cell = match cell_of_entry(node, all_nodes, missed) {
         Err(why) => return refuse(node, why),
         Ok(None) => return false,
-        Ok(Some(cell)) => cell,
+        Ok(Some(cell)) => cell_made_ready(node, &cell),
     };
     let mut cells = Vec::with_capacity(columns * rows);
     for row in 0..rows {
@@ -3333,7 +3342,7 @@ fn make_grid_cells(
             } else {
                 crate::addressing::cell_name(column, row)
             };
-            cells.push(one_cell(node, &cell, name));
+            cells.push(named(&cell, name));
         }
     }
 
@@ -3426,13 +3435,26 @@ fn cell_of_entry(
 /// One cell of `node`, named `name`, made from `cell` as `cell_of_entry` gave it: something the
 /// template gave, and so not saved until something is set in it.
 fn one_cell(node: &OverseerNode, cell: &OverseerNode, name: String) -> OverseerNode {
+    named(&cell_made_ready(node, cell), name)
+}
+
+/// A copy of a cell made ready by `cell_made_ready`, named `name`.
+fn named(ready: &OverseerNode, name: String) -> OverseerNode {
+    let mut one = ready.clone();
+    one.name = name;
+    one
+}
+
+/// A cell of `node` as `one_cell` makes it, but for its name - made once for all the cells of a
+/// grid or a calendar, each then a copy of it, rather than marked through again for each: a year
+/// of days cost a walk of the whole template per day.
+fn cell_made_ready(node: &OverseerNode, cell: &OverseerNode) -> OverseerNode {
     let (indent_unit, newline) = node
         .source_snapshot
         .as_ref()
         .map(|snap| (snap.indent_unit.clone(), snap.newline.clone()))
         .unwrap_or((None, None));
     let mut one = cell.clone();
-    one.name = name;
     one.is_hierarchy_transparent = false;
     mark_template_child_recursive(&mut one);
     one.parameters.remove("_explicit_child_override");
@@ -3457,12 +3479,47 @@ pub const IN_VIEW: &str = "_in_view";
 /// them, and nothing under it: a heatmap of a year of days cost a full day's formulas, charts and
 /// all, for each square. A formula reading a field of such a day works that field out where it
 /// reads it, as it does any formula nobody has worked out yet. Not on a day held or wanted, which
-/// is worked out in full - see `make_calendar_cells`.
+/// is worked out in full - see `make_calendar_cells`. Its lists are not made at all - see
+/// `set_lists_aside`.
 pub const DRAWN_BY_STYLE: &str = "_drawn_by_style";
 
 /// Whether this is a day drawn by its style alone - see `DRAWN_BY_STYLE`.
 pub fn drawn_by_style(node: &OverseerNode) -> bool {
     matches!(node.parameters.get(DRAWN_BY_STYLE), Some(OverseerValue::Boolean(true)))
+}
+
+/// Sets the lists of a day drawn as a square aside as written, `day` being its calendar's address
+/// and its own name - or, without one, takes them back for making as any other day's.
+///
+/// A square is coloured by a few fields of its day, and a day's lists - the meals of a food
+/// tracker - were most of what making a year of squares cost: an entry made from its template for
+/// each, and a document grown by all of them to be kept and sent. A list set aside is left as the
+/// day wrote it, as a day out of view is, and walked past by everything that walks the document. A
+/// read going into one brings the day in, and the document is worked out again with the day made
+/// whole - see `note_reached`; one by address, from the server, wants the day, and so never finds
+/// it a square.
+fn set_lists_aside(children: &mut [OverseerNode], day: Option<(&str, &str)>) {
+    for child in children.iter_mut() {
+        if child.node_type == "list" {
+            match day {
+                Some((calendar, name)) => {
+                    child
+                        .parameters
+                        .insert(NOT_WORKED_OUT.to_string(), OverseerValue::String(calendar.to_string()));
+                    child
+                        .parameters
+                        .insert(BROUGHT_IN_WITH.to_string(), OverseerValue::String(name.to_string()));
+                }
+                None => {
+                    if child.parameters.remove(BROUGHT_IN_WITH).is_some() {
+                        child.parameters.remove(NOT_WORKED_OUT);
+                    }
+                }
+            }
+        } else {
+            set_lists_aside(&mut child.children, day);
+        }
+    }
 }
 
 /// Whether a calendar draws its days as a year, each a square of its style.
@@ -3895,7 +3952,7 @@ fn make_calendar_cells(
             return true;
         }
         Ok(None) => return false,
-        Ok(Some(cell)) => cell,
+        Ok(Some(cell)) => cell_made_ready(node, &cell),
     };
     // Each view's days, with what its own `entry=` gives them - see `make_calendar_view`.
     type View = (String, Option<(chrono::NaiveDate, chrono::NaiveDate)>, Vec<(String, OverseerValue)>, bool);
@@ -3949,7 +4006,7 @@ fn make_calendar_cells(
             .collect();
         for day in &in_view {
             if !held.contains(day) && !woken.iter().any(|w| w.name == crate::addressing::date_name(*day)) {
-                let one = one_cell(node, &cell, crate::addressing::date_name(*day));
+                let one = named(&cell, crate::addressing::date_name(*day));
                 node.children.push(one);
             }
         }
@@ -3960,7 +4017,7 @@ fn make_calendar_cells(
             written.parameters.remove(IN_VIEW);
             written.parameters.retain(|key, _| !key.starts_with(IN_VIEW_OF));
             let place = written_here(&written).unwrap_or(0);
-            let mut one = one_cell(node, &cell, written.name.clone());
+            let mut one = named(&cell, written.name.clone());
             merge_into_field(&mut one, &written, all_nodes);
             mark_written(&mut one, place, 0);
             node.children.push(one);
@@ -3976,7 +4033,7 @@ fn make_calendar_cells(
         );
         node.children = days
             .into_iter()
-            .map(|day| one_cell(node, &cell, crate::addressing::date_name(day)))
+            .map(|day| named(&cell, crate::addressing::date_name(day)))
             .collect();
         node.parameters
             .insert("_from_template".to_string(), OverseerValue::Boolean(true));
@@ -4032,8 +4089,11 @@ fn make_calendar_cells(
             }
             if as_square && !in_full && !asked_for.contains(&day) && !is_held(&address, &child.name) {
                 child.parameters.insert(DRAWN_BY_STYLE.to_string(), OverseerValue::Boolean(true));
+                let name = child.name.clone();
+                set_lists_aside(&mut child.children, Some((&address, &name)));
             } else {
                 child.parameters.remove(DRAWN_BY_STYLE);
+                set_lists_aside(&mut child.children, None);
             }
         }
     }

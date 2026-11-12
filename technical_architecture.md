@@ -177,8 +177,12 @@ knowing about because each has a cost:
   keys and links; a read into it works out what it reaches on demand. A day held, wanted by an
   interaction, or in a range that draws it in full loses the mark, and the calendar is made again
   for it (`wakes_a_day`); the server takes such a read or write the long way, so the day comes
-  back worked out. Its template is still copied, and the tree the server keeps holds the day
-  whole; only what the page is sent leaves out what is under it (`ForThePage`, whose writing of a
+  back worked out. Its template is still copied, once for all the calendar's cells and each a
+  copy of that, but its lists are set aside as written (`set_lists_aside`): marked
+  `_not_worked_out`, with `_brought_in_with` naming the day, so nothing makes their entries or
+  walks into them, and a read reaching one brings the day in and the document is worked out
+  again with it held, as for a day out of view. The tree the server keeps holds the rest of the
+  day; only what the page is sent leaves out what is under it (`ForThePage`, whose writing of a
   node's children skips a marked child's own), since the page draws the square and reads nothing
   more. A change reported under such a day finds no node in the page and is passed over.
 - **An equality index** for `filter`, built per pass and keyed by the field compared. Strings

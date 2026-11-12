@@ -853,9 +853,10 @@ calendar Steps (entry=int, span="month") {
   A day is worked out as it is drawn. One in the calendar's own range, or in the range of a
   view drawing it as an agenda, a day, a week or a month, is worked out in full. One that only a
   `layout="year"` draws - the calendar's own or a view's - is a square of its style, and only its
-  own formulas are worked out: its style, and a field's value. A formula reading a field of such
-  a day still finds it worked out, and a day read, written or picked into a range that draws it
-  in full is worked out in full. So a heatmap over a long range costs what its style reads, and a
+  own formulas are worked out: its style, and a field's value. Its lists are kept as the day
+  wrote them, and no entry of them is made. A formula reading a field of such a day still finds
+  it worked out; one reading into its lists has the day worked out in full first. A day read,
+  written or picked into a range that draws it in full is worked out in full. So a heatmap over a long range costs what its style reads, and a
   document whose day is heavy keeps that cheap: a total written on the day, say, rather than a
   formula over its meals.
 
