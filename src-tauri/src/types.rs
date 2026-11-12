@@ -18,7 +18,7 @@ pub struct OverseerNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>, // Path to a template node, e.g., "../TaskTemplate"
     pub parameters: Params,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "no_children_or_a_square", serialize_with = "children_out")]
     pub children: Vec<OverseerNode>,
     // If true, children are accessible as if they belong to parent
     #[serde(default, skip_serializing_if = "not_so")]
@@ -308,6 +308,44 @@ thread_local! {
 
 fn writing_for_the_page() -> bool {
     FOR_THE_PAGE.with(|on| on.get())
+}
+
+thread_local! {
+    static WRITING_A_SQUARE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A day only a `layout="year"` draws goes to the page without what is under it - see
+/// `resolver::DRAWN_BY_STYLE`. The page draws it as a square of its style and reads nothing
+/// under it, and a year of such days, each with its charts and meals, was most of an open.
+///
+/// Only in what the page is sent: the tree the server keeps, and the disk cache, hold the day
+/// whole, a write goes into it, and a read by address answers it worked out in full.
+fn no_children_or_a_square(children: &Vec<OverseerNode>) -> bool {
+    children.is_empty() || WRITING_A_SQUARE.with(|on| on.get())
+}
+
+/// A node's children, each marked as a square or not while it is written. The mark is on the
+/// child, and what decides whether its children are written is the child's own field, so the
+/// parent says which it is writing; nothing is written under a square to reach the mark after it.
+fn children_out<S: serde::Serializer>(children: &Vec<OverseerNode>, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    if !writing_for_the_page() {
+        return children.serialize(serializer);
+    }
+    struct Child<'a>(&'a OverseerNode);
+    impl Serialize for Child<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+            struct Restore(bool);
+            impl Drop for Restore {
+                fn drop(&mut self) {
+                    WRITING_A_SQUARE.with(|on| on.set(self.0));
+                }
+            }
+            let square = crate::resolver::drawn_by_style(self.0);
+            let _restore = Restore(WRITING_A_SQUARE.with(|on| on.replace(square)));
+            self.0.serialize(serializer)
+        }
+    }
+    serializer.collect_seq(children.iter().map(Child))
 }
 
 /// A value written for the page, without what only writing the document back needs.

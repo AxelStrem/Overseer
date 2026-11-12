@@ -90,3 +90,42 @@ describe('a day only a year draws', () => {
     expect(cell.title).toBe('2026-03-04: 7')
   })
 })
+
+// Such a day comes from the server without its children, and a change after a write can still
+// name something under it - a press setting `Days/<date>/total`. The page holds nothing there to
+// change, so it passes over it, rather than taking it for a misfit and reading the document whole.
+describe('a change under a square sent without its children', () => {
+  beforeEach(() => setupCalendarDOM())
+
+  const sentBare = () => {
+    const doc = documentOfDivs()
+    for (const day of doc[0].children[0].children) {
+      if (day.parameters._drawn_by_style) delete day.children
+    }
+    return doc
+  }
+
+  it('is passed over, whatever kind it is', () => {
+    const app = render(sentBare())
+    app.readWholeAfterAMisfit = vi.fn()
+    const square = app.currentDocument[0].children[0].children[1]
+    const touched = app.applyDocumentChanges(app.currentDocument, [
+      { kind: 'parameters', address: 't/Days/2026-11-03/total', path: [0, 0, 1, 0], parameters: { value: { Integer: 9 } } },
+      { kind: 'subtree', address: 't/Days/2026-11-03/total', path: [0, 0, 1, 0], node: field('total', { value: { Integer: 9 } }) },
+      { kind: 'subtree', address: 't/Days/2026-11-03/meals/breakfast', path: [0, 0, 1, 2, 0], node: field('breakfast', {}) },
+      { kind: 'entries', address: 't/Days/2026-11-03/meals', path: [0, 0, 1, 2], entries: [] },
+    ])
+    expect(touched.misfit).toBeFalsy()
+    expect(touched).toHaveLength(0)
+    expect(app.readWholeAfterAMisfit).not.toHaveBeenCalled()
+    expect(square.children).toBeUndefined()
+  })
+
+  it('leaves the square drawn as it was', () => {
+    const app = render(sentBare())
+    app.applyDocumentChanges(app.currentDocument, [
+      { kind: 'parameters', address: 't/Days/2026-11-03/total', path: [0, 0, 1, 0], parameters: { value: { Integer: 9 } } },
+    ])
+    expect(square('[data-calendar-view="t/Heat"]', '2026-11-03').style.backgroundColor).toBe('red')
+  })
+})

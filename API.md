@@ -181,8 +181,9 @@ For a person, `documents` is everything they can reach, by full name, and the sa
 `mine`, `shared` (by owner: `{"alice": ["alice/shopping.os"]}`) and `public`, what is shared with
 everyone. Nobody signed in has no list.
 
-`GET /doc/<name>` gives the whole resolved document as `{"nodes": [...]}`; the routes below work
-on one part of it.
+`GET /doc/<name>` gives the whole resolved document as `{"nodes": [...]}`, as the page draws it:
+a calendar day that only a `layout="year"` draws, marked `_drawn_by_style`, comes without its
+children, which a read of it by address gives. The routes below work on one part of it.
 
 A node is named by its **address**: the names from the document's top node down, joined by `/`.
 It is the logical path of [the specification](overseer_syntax_specification.md#5-path-references):

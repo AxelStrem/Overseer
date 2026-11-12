@@ -177,8 +177,10 @@ knowing about because each has a cost:
   keys and links; a read into it works out what it reaches on demand. A day held, wanted by an
   interaction, or in a range that draws it in full loses the mark, and the calendar is made again
   for it (`wakes_a_day`); the server takes such a read or write the long way, so the day comes
-  back worked out. Its template is still copied, so the page is sent the day whole and draws the
-  square alone.
+  back worked out. Its template is still copied, and the tree the server keeps holds the day
+  whole; only what the page is sent leaves out what is under it (`ForThePage`, whose writing of a
+  node's children skips a marked child's own), since the page draws the square and reads nothing
+  more. A change reported under such a day finds no node in the page and is passed over.
 - **An equality index** for `filter`, built per pass and keyed by the field compared. Strings
   only: `compare_values` falls back to text, so `5 == "5"` while `5.0 != "5.0"`, and an index
   over a comparison that is not transitive would answer differently from the scan it replaces.
