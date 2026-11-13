@@ -1376,7 +1376,7 @@ fn change_or_look(
     // What belongs in a part goes there, worked out from what the write left - see `parts`.
     if writing {
         let through_parts = crate::parts::written(&mut nodes, report.as_ref());
-        refuse_writing_through(&through_parts).map_err(OverseerError::ValidationError)?;
+        refuse_writing_parts(std::path::Path::new(path), &through_parts).map_err(OverseerError::ValidationError)?;
         through_mounts.extend(through_parts);
     }
     phase("settle");
@@ -1398,7 +1398,7 @@ fn change_or_look(
     for (address, value) in settled.viewers {
         crate::viewstate::set(session, document, &address, value);
     }
-    let along = write_through_mounts(through_mounts)
+    let along = write_through_mounts(std::path::Path::new(path), through_mounts)
         .map_err(|e| OverseerError::IoError(format!("could not write what it mounts: {}", e)))?;
     crate::parts::restamp(&mut nodes, &along);
     if wrote {
@@ -2629,7 +2629,12 @@ pub fn write_file_keeping_a_step_back(path: &str, text: &str) -> std::io::Result
     let at = std::path::Path::new(path);
     // Every write the page's instructions make comes through here, on a server for someone it
     // may not let change this document - see `access`.
-    if !crate::access::may(at, crate::access::Need::Edit) {
+    write_keeping_a_step_back(at, text, crate::access::may(at, crate::access::Need::Edit))
+}
+
+/// The same, once whoever is asking has been asked about the file - `allowed` is the answer.
+fn write_keeping_a_step_back(at: &std::path::Path, text: &str, allowed: bool) -> std::io::Result<()> {
+    if !allowed {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             crate::access::READ_ONLY,
@@ -2728,8 +2733,29 @@ pub fn refuse_writing_through(writes: &[crate::actions::MountWrite]) -> std::res
     Ok(())
 }
 
+/// Refuse a write that would reach into a part of the document it may not change.
+///
+/// A part is written through its document, so whoever may change the document may write its parts
+/// - see `access::may_write_part`. Asked of every part before any file is written, as
+/// `refuse_writing_through` is.
+pub fn refuse_writing_parts(
+    document: &std::path::Path,
+    writes: &[crate::actions::MountWrite],
+) -> std::result::Result<(), String> {
+    for write in writes {
+        if !crate::access::may_write_part(std::path::Path::new(&write.file), document) {
+            return Err(crate::access::READ_ONLY.into());
+        }
+    }
+    Ok(())
+}
+
 /// Write what a write left in mounts to the files they were read from, each keeping its own step.
+///
+/// `document` is the document the write was made to: a part of it is written by whoever may change
+/// it - see `access::may_write_part`.
 pub fn write_through_mounts(
+    document: &std::path::Path,
     writes: Vec<crate::actions::MountWrite>,
 ) -> std::io::Result<Vec<crate::undo::Along>> {
     let mut along = Vec::new();
@@ -2737,7 +2763,8 @@ pub fn write_through_mounts(
         // A file this makes - a list's new part - has nothing to be put back to, and taking the
         // write back takes the file away. Its step says so by being empty.
         let at = std::path::Path::new(&write.file);
-        if !at.exists() {
+        let allowed = crate::access::may_write_part(at, document);
+        if allowed && !at.exists() {
             if let Some(folder) = at.parent() {
                 std::fs::create_dir_all(folder)?;
             }
@@ -2745,7 +2772,7 @@ pub fn write_through_mounts(
                 crate::undo::remember(&beside, &named, "");
             }
         }
-        write_file_keeping_a_step_back(&write.file, &write.text)?;
+        write_keeping_a_step_back(at, &write.text, allowed)?;
         along.push(crate::undo::Along { file: write.file, wrote: write.text });
     }
     Ok(along)
@@ -2771,14 +2798,16 @@ pub fn one_step_with(path: &std::path::Path, wrote_itself: bool, text_now: &str,
 /// written there. Answers with the files left alone.
 ///
 /// A mounted file is often somebody else's - a shopping list two people share - and putting back
-/// what it said before would throw away whatever they have written since.
-pub fn take_back_along(along: Vec<crate::undo::Along>) -> Vec<String> {
+/// what it said before would throw away whatever they have written since. A part of `document`,
+/// the document being taken back, goes back for whoever may change the document, as it was
+/// written - see `access::may_write_part`.
+pub fn take_back_along(document: &std::path::Path, along: Vec<crate::undo::Along>) -> Vec<String> {
     let mut left_alone = Vec::new();
     for went in along {
         let at = std::path::Path::new(&went.file);
         let named = at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let still = std::fs::read_to_string(at).is_ok_and(|now| now == went.wrote);
-        let taken = still && crate::access::may(at, crate::access::Need::Edit) && {
+        let taken = still && crate::access::may_write_part(at, document) && {
             match crate::undo::beside(at).and_then(|(beside, file)| crate::undo::take(&beside, &file)) {
                 Some(previous) if previous.is_empty() => std::fs::remove_file(at)
                     .inspect(|_| crate::watch::wrote(at))
@@ -2821,7 +2850,7 @@ pub fn undo_document(path: &str) -> Result<(usize, Vec<String>)> {
         .and_then(|_| std::fs::rename(&temporary, at))
         .map_err(|e| OverseerError::IoError(format!("could not write '{}': {}", named, e)))?;
     crate::watch::wrote(at);
-    let left_alone = take_back_along(along);
+    let left_alone = take_back_along(at, along);
     Ok((crate::undo::depth(&beside, &named), left_alone))
 }
 

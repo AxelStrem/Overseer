@@ -118,7 +118,9 @@ would, and the rest of the document is drawn. A write needs `edit` on the docume
 press that only moves what the viewer is looking at needs only `read`. A write that lands inside a
 mount is written to the mounted file, and needs `edit` on that file: with `edit` on
 `bob/weight.os` and `read` on `ap31/foods.os`, Bob records meals of the foods there, and adding
-a food through the mount is `403`.
+a food through the mount is `403`. A list's parts - the files beside a document its entries are
+kept in - go with the document: whoever may read it reads them, and whoever may edit it writes
+them through it, though by their own names they are only ever the owner's to change.
 
 Nobody signed in reaches only what is shared with everyone; anything else, there or not, is `401
 {"error":"sign in"}`. Someone signed in is told `404 {"error":"no document '<name>'"}` of anything

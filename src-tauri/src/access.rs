@@ -133,6 +133,34 @@ pub fn may(file: &Path, need: Need) -> bool {
     allowed
 }
 
+/// Whether whoever is asking may write `part` through `document`: a file of the document's own
+/// parts folder, `<doc>.parts/<list>/<part>.os` beside it, is written by whoever may change the
+/// document. Anything else is asked of the file itself.
+///
+/// The part's own file is not opened up by this - `allows` still refuses it by its name to all but
+/// its owner, so a part is only ever changed as its document says.
+pub fn may_write_part(part: &Path, document: &Path) -> bool {
+    let through = (|| {
+        let list = part.parent()?;
+        let parts = list.parent()?;
+        let stem = document.file_stem()?.to_string_lossy();
+        // `file_name` is none for `..`, so neither step can climb out of the parts folder.
+        part.file_name()?;
+        list.file_name()?;
+        if parts.file_name()? != std::ffi::OsStr::new(&format!("{}.parts", stem)) {
+            return None;
+        }
+        let beside = parts.parent()?.canonicalize().ok()?;
+        Some(beside == document.parent()?.canonicalize().ok()?)
+    })()
+    .unwrap_or(false);
+    if through {
+        may(document, Need::Edit)
+    } else {
+        may(part, Need::Edit)
+    }
+}
+
 /// The same, for a path as the engine keeps it.
 pub fn may_read(file: &str) -> bool {
     may(Path::new(file), Need::Read)
@@ -164,7 +192,8 @@ pub fn allows(root: &Path, asker: &Asker, relative: &Path, need: Need) -> bool {
         return false;
     }
     // A part a list keeps its entries in is read by whoever may read its document - a reader of
-    // the text is sent its name with the document's. Only read: it is written through its document.
+    // the text is sent its name with the document's. Only read: it is written through its document,
+    // by whoever may change that - see `may_write_part`.
     let host = part_of(&inside).filter(|_| need == Need::Read);
     shared_by(&root.join(&owner)).iter().any(|share| {
         (share.document == document

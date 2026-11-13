@@ -1744,7 +1744,7 @@ impl DocumentRoot {
             phase("edit settle", &mut since);
             // What belongs in a part goes there, worked out from what the write left - see `parts`.
             let through_parts = crate::parts::written(&mut nodes, report.as_ref());
-            app_api::refuse_writing_through(&through_parts).map_err(RequestError::ReadOnly)?;
+            app_api::refuse_writing_parts(&path, &through_parts).map_err(RequestError::ReadOnly)?;
             through_mounts.extend(through_parts);
             phase("edit parts", &mut since);
             let serialized = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
@@ -1785,7 +1785,7 @@ impl DocumentRoot {
             crate::viewstate::set(session, name, &address, value);
         }
         phase("edit viewers", &mut since);
-        let along = app_api::write_through_mounts(through_mounts).map_err(|e| match e.kind() {
+        let along = app_api::write_through_mounts(&path, through_mounts).map_err(|e| match e.kind() {
             std::io::ErrorKind::PermissionDenied => RequestError::ReadOnly(crate::access::READ_ONLY.into()),
             _ => RequestError::Failed(format!("could not write what '{}' mounts: {}", name, e)),
         })?;
@@ -1890,7 +1890,7 @@ impl DocumentRoot {
         })?;
         crate::watch::wrote(&path);
         // What the step wrote through the document's mounts goes back with it.
-        let left_alone = app_api::take_back_along(along);
+        let left_alone = app_api::take_back_along(&path, along);
         self.journal(serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
             "document": name,
