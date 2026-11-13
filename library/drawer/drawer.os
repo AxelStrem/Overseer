@@ -26,7 +26,7 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
                    hover-text=$(path),
                    background-color=$(here ? theme/background : "transparent"),
                    border-left=$(here ? "solid 3px " + theme/accent : "solid 3px transparent")) {
-            mark (type="grip", font-color=$(theme/muted))
+            mark (type="grip", padding="4px 8px", margin=0, font-color=$(theme/muted))
             string name (hidden=true, width=1fr, padding="0px 8px") = ""
             string shown (mutable=false, width=1fr, padding="0px 8px",
                           font-size=$(path == "" ? "13px" : "14px"),
