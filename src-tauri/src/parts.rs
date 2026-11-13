@@ -578,32 +578,53 @@ pub fn written(nodes: &mut Vec<OverseerNode>, report: Option<&crate::actions::Ch
                 }
                 continue;
             }
-            let mut out_of_place = false;
-            let entries: Vec<OverseerNode> = members
-                .iter()
-                .map(|(at, from)| {
-                    // An entry that comes from another file - the document, or another part - is
-                    // written as a new one. Where it was read is that file's text, and means
-                    // nothing in this one. It is forgotten in the list as well as in what is
-                    // written: the next write of this part takes the entry for one read from it,
-                    // and would give back the other file's text, at that file's depth, and take
-                    // the indent it was read at for the part's unit.
-                    if from.as_deref() != Some(key.as_str()) {
-                        forget_where_it_was_read(&mut list.children[*at]);
-                    }
-                    let mut entry = list.children[*at].clone();
-                    entry.parameters.remove(PART);
-                    // One read from this part with its lines out of place - written there by a
-                    // server that still did the above wrong - is written afresh, so that the part
-                    // comes right the next time it is written, and its indent is not taken for
-                    // the unit of the entries written beside it.
-                    if !at_its_depth(&entry) {
-                        forget_where_it_was_read(&mut entry);
-                        out_of_place = true;
-                    }
-                    entry
-                })
-                .collect();
+            // An entry that comes from another file - the document, or another part - is written
+            // as a new one. Where it was read is that file's text, and means nothing in this one.
+            // It is forgotten in the list as well as in what is written: the next write of this
+            // part takes the entry for one read from it, and would give back the other file's
+            // text, at that file's depth, and take the indent it was read at for the part's unit.
+            for (at, from) in &members {
+                if from.as_deref() != Some(key.as_str()) {
+                    forget_where_it_was_read(&mut list.children[*at]);
+                }
+            }
+            let any_out_of_place = members.iter().any(|(at, _)| !at_its_depth(&list.children[*at]));
+            let emptied = members.is_empty();
+            // The part's text with these entries. `afresh` writes the ones whose lines are out of
+            // place - written there by a server that still did the above wrong - from the tree, and
+            // the list around them, which would put the entries where the ones it read stood, so
+            // their indent is not taken for the unit of the entries written beside them.
+            let text_of = |part: &mut Vec<OverseerNode>, afresh: bool| -> Option<String> {
+                let entries: Vec<OverseerNode> = members
+                    .iter()
+                    .map(|(at, _)| {
+                        let mut entry = list.children[*at].clone();
+                        entry.parameters.remove(PART);
+                        if afresh && !at_its_depth(&entry) {
+                            forget_where_it_was_read(&mut entry);
+                        }
+                        entry
+                    })
+                    .collect();
+                let held = list_in(part)?;
+                // The list is written again unless it holds exactly the entries it was read with:
+                // the writer gives a list back as it read it while each entry left says what it did.
+                if !same_entries {
+                    held.source_fingerprint = None;
+                }
+                if afresh {
+                    held.source_snapshot = None;
+                    held.source_id = None;
+                    held.source_fingerprint = None;
+                }
+                held.children = entries;
+                // A list emptied is written as one made empty: the writer, given a list it read
+                // with entries and no entries left, puts back the text it read.
+                if emptied {
+                    return Some(format!("list {} {{\n}}\n", name));
+                }
+                crate::file_ops::OverseerFileHandler::serialize_nodes(part).ok()
+            };
             let (was, mut part) = match read(&file) {
                 Some((text, nodes)) => (text, nodes),
                 None => {
@@ -615,30 +636,18 @@ pub fn written(nodes: &mut Vec<OverseerNode>, report: Option<&crate::actions::Ch
                     (String::new(), nodes)
                 }
             };
-            let Some(held) = list_in(&mut part) else { continue };
-            let emptied = entries.is_empty();
-            // The list is written again unless it holds exactly the entries it was read with: the
-            // writer gives a list back as it read it while each entry left says what it did.
-            if !same_entries {
-                held.source_fingerprint = None;
-            }
-            // So is the list around it, which would put the entries where the ones it read stood.
-            if out_of_place {
-                held.source_snapshot = None;
-                held.source_id = None;
-                held.source_fingerprint = None;
-            }
-            held.children = entries;
-            // A list emptied is written as one made empty: the writer, given a list it read with
-            // entries and no entries left, puts back the text it read.
-            let text = if emptied {
-                format!("list {} {{\n}}\n", name)
+            // As its entries were read first: a part the write changed nothing in is left as it
+            // is, out of place or not. It comes right when there is something to write into it -
+            // tidying it on any write that happens to look at it would be a write of a file whoever
+            // the document is only shared with may not make, and every write of theirs refused.
+            let mut as_read = part.clone();
+            let Some(mut text) = text_of(&mut as_read, false) else { continue };
+            if text != was && any_out_of_place {
+                let Some(afresh) = text_of(&mut part, true) else { continue };
+                text = afresh;
             } else {
-                match crate::file_ops::OverseerFileHandler::serialize_nodes(&part) {
-                    Ok(text) => text,
-                    Err(_) => continue,
-                }
-            };
+                part = as_read;
+            }
             if text == was || (was.is_empty() && held_nothing(&part)) {
                 continue;
             }
