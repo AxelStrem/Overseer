@@ -2565,6 +2565,15 @@ theme's `muted` and `line`.
 `step`. A smooth line never bends past the points it joins. Said on the chart it is every plot's,
 and a plot can say its own.
 
+`curve="trend"` joins nothing: the points are drawn as dots, and a smooth line is fitted to them,
+following where they tend rather than each of them. `smoothing`, from `0` to `1` and `0.5` unless
+said, is the share of the plot's points each place of the line is fitted to: the more, the calmer
+the line. It is said where `curve` is. A plot of fewer than three points is drawn straight.
+
+`x-scale="even"` on the chart gives every x its plots have one equal step, in order, so a month
+without a point takes no more room than a day between two. The axis still says the real values,
+and a trend is fitted to the points as they are drawn.
+
 `domain-x-min`, `domain-x-max`, `domain-y-min` and `domain-y-max` fix the axes; without them the
 axes fit the points. A time on the x axis is drawn as a date.
 
@@ -3110,7 +3119,7 @@ div Tasks {
 - **Content**: `label`, `markdown`, `hidden`, `mutable` (`true`, `false`, `guarded`), `placeholder`, `kind` (`color`, on a `string` or `textbox`; `secret`, on a `textbox`), `narrows`, `by` and `branch` (on a `textbox`), `limit` (on a `textbox` that picks), `foldable`, `folded`, `float` (on a `div`), `icon` (on a `button`), `freeze`, `hold` (how long a press is held for `on hold`), `tick` (how often `on tick` runs)
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`; `select` and `segments`, on an `enum`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
-- **Charts**: `kind` (`line`, `pie`, `bar`), `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
+- **Charts**: `kind` (`line`, `pie`, `bar`), `curve`, `smoothing`, `x-scale`, `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
 - **Lists**: `entry`, `key`, `window`, `parts`, `sort_by`, `view` (`table`, `board`), `by`, `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
 - **Grids**: `entry`, `columns`, `rows`, `header`
 - **Arrays**: `entry`, `length`, `header`, `layout`

@@ -8781,7 +8781,84 @@ export class OverseerRenderer {
         // How a line goes from one point to the next: `straight`, `smooth` or `step`, said by
         // the chart for all its plots or by a plot for itself. Smooth is monotone, so a curve
         // never bulges past the points it joins - a week of the same figure stays flat.
+        // `trend` is the one that joins nothing: the points are dots, and a line is fitted to them.
         const chartCurve = this.getParameterValue(node, 'curve')
+        const chartSmoothing = this.getParameterValue(node, 'smoothing')
+
+        // What each plot has to draw, read once: the x axis below is laid out from all of them.
+        const plotted = []
+        for (const plot of plotsAll) {
+            const seriesJson = this.getParameterValue(plot, '_computed_series')
+            if (!seriesJson) continue
+            let series
+            try {
+                series = JSON.parse(seriesJson)
+            } catch (_) {
+                continue
+            }
+            if (!Array.isArray(series) || series.length === 0) continue
+            plotted.push({ plot, points: series.map(([x, y]) => ({ x: Number(x), y: Number(y) })) })
+        }
+
+        // `x-scale="even"` gives every x the chart has, across its plots, one equal step, so
+        // months without a point take no more room than a day between two. The axis Chart.js
+        // draws is then one of ranks, and everything that reads it - ticks, tooltips, the
+        // domain - goes through these two to get from a real x to its place and back.
+        const evenX = (this.getParameterValue(node, 'x-scale') || '').toString().toLowerCase() === 'even'
+        const xsInOrder = evenX
+            ? [...new Set(plotted.flatMap(p => p.points.map(q => q.x)).filter(Number.isFinite))].sort((a, b) => a - b)
+            : []
+        const between = (from, to, value) => {
+            // Where `value` stands in `from`, which is in order, said in the terms of `to`:
+            // in proportion between two neighbours, and past either end at the end's own pace.
+            const n = from.length
+            if (n === 0) return value
+            if (n === 1) return to[0]
+            let i = 1
+            while (i < n - 1 && from[i] < value) i++
+            const span = from[i] - from[i - 1]
+            if (span === 0) return to[i - 1]
+            return to[i - 1] + (value - from[i - 1]) / span * (to[i] - to[i - 1])
+        }
+        const ranks = xsInOrder.map((_, i) => i)
+        const toAxis = (x) => evenX ? between(xsInOrder, ranks, x) : x
+        const fromAxis = (at) => evenX ? between(ranks, xsInOrder, at) : at
+
+        // A line fitted to the points rather than drawn through them: at each place along the
+        // plot, a straight line fitted to the nearest `share` of its points, the nearer weighing
+        // more (LOESS). One odd day moves it a little; a run of them moves it all the way.
+        const trendOf = (points, share) => {
+            const sorted = points.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y))
+                .sort((a, b) => a.x - b.x)
+            const n = sorted.length
+            if (n < 3) return []
+            const first = sorted[0].x
+            const last = sorted[n - 1].x
+            if (last === first) return []
+            const near = Math.min(n, Math.max(3, Math.ceil(share * n)))
+            const places = 80
+            const line = []
+            for (let i = 0; i <= places; i++) {
+                const x0 = first + (last - first) * i / places
+                const reach = sorted.map(p => Math.abs(p.x - x0)).sort((a, b) => a - b)[near - 1] * 1.001
+                let sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0
+                for (const p of sorted) {
+                    const d = reach > 0 ? Math.abs(p.x - x0) / reach : 0
+                    if (d >= 1) continue
+                    const w = (1 - d ** 3) ** 3
+                    const dx = p.x - x0
+                    sw += w; swx += w * dx; swy += w * p.y; swxx += w * dx * dx; swxy += w * dx * p.y
+                }
+                if (sw === 0) continue
+                const spread = sw * swxx - swx * swx
+                // Points all at one x have no slope to fit: their weighted mean is the answer.
+                const y = spread > 1e-9 * sw * swxx
+                    ? (swy * swxx - swx * swxy) / spread
+                    : swy / sw
+                line.push({ x: x0, y })
+            }
+            return line
+        }
         const curveOptions = (curve) => {
             switch ((curve || 'straight').toString().toLowerCase()) {
                 case 'smooth': return { tension: 0.4, cubicInterpolationMode: 'monotone', stepped: false }
@@ -8790,27 +8867,27 @@ export class OverseerRenderer {
             }
         }
 
-        for (const plot of plotsAll) {
-            const seriesJson = this.getParameterValue(plot, '_computed_series')
-            if (!seriesJson) continue
-            
-            let series
-            try {
-                series = JSON.parse(seriesJson)
-            } catch (_) {
-                continue
-            }
-            
-            if (!Array.isArray(series) || series.length === 0) continue
-            
-            // Convert series data to Chart.js format
-            const data = series.map(([x, y]) => ({ x: Number(x), y: Number(y) }))
-            allDataPoints.push(...data)
-            
+        for (const { plot, points } of plotted) {
+            // Convert series data to Chart.js format. On an even axis a point stands at its
+            // rank and keeps its real x in `at`, for the tooltip.
+            const data = evenX
+                ? points.map(p => ({ x: toAxis(p.x), y: p.y, at: p.x }))
+                : points
+            allDataPoints.push(...points)
+
             // Get plot styling
             const color = this.convertColorValue(this.getParameterValue(plot, 'color') || '#4A90E2')
             const label = this.getParameterValue(plot, 'label') || plot.name || 'Series'
-            
+            const curve = (this.getParameterValue(plot, 'curve') ?? chartCurve ?? '').toString().toLowerCase()
+
+            // A trend is fitted where the points are drawn, so on an even axis to their ranks.
+            // Under three points there is nothing to be the trend of, and the plot is straight.
+            let trend = []
+            if (curve === 'trend') {
+                const said = parseFloat(this.getParameterValue(plot, 'smoothing') ?? chartSmoothing)
+                trend = trendOf(data, isNaN(said) ? 0.5 : Math.min(1, Math.max(0, said)))
+            }
+
             datasets.push({
                 label: label,
                 data: data,
@@ -8818,10 +8895,30 @@ export class OverseerRenderer {
                 backgroundColor: color + '20', // Add transparency for fill
                 borderWidth: 2,
                 fill: false,
-                ...curveOptions(this.getParameterValue(plot, 'curve') ?? chartCurve),
+                ...curveOptions(curve),
+                ...(trend.length ? { showLine: false } : {}),
                 pointRadius: 3,
                 pointHoverRadius: 5
             })
+            if (trend.length) {
+                // The fitted line is a dataset of its own, since Chart.js draws one line per
+                // dataset; `trendOf` names the dots it belongs to, so that the legend and the
+                // tooltips below take the two as the one plot they are.
+                datasets.push({
+                    label: label,
+                    data: trend,
+                    trendOf: datasets.length - 1,
+                    borderColor: color,
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.4,
+                    cubicInterpolationMode: 'monotone',
+                    stepped: false,
+                    pointRadius: 0,
+                    pointHoverRadius: 0,
+                    pointHitRadius: 0
+                })
+            }
         }
         
         // Determine if X axis looks like time data
@@ -8839,6 +8936,10 @@ export class OverseerRenderer {
         if (isNaN(xmax)) xmax = parseFloat(this.getParameterValue(node, '_computed_x_max'))
         if (isNaN(ymin)) ymin = parseFloat(this.getParameterValue(node, '_computed_y_min'))
         if (isNaN(ymax)) ymax = parseFloat(this.getParameterValue(node, '_computed_y_max'))
+        if (evenX) {
+            if (!isNaN(xmin)) xmin = toAxis(xmin)
+            if (!isNaN(xmax)) xmax = toAxis(xmax)
+        }
         
         // Chart.js configuration
         const config = {
@@ -8860,7 +8961,20 @@ export class OverseerRenderer {
                         labels: {
                             usePointStyle: true,
                             padding: 20,
-                            color: '#cccccc'
+                            color: '#cccccc',
+                            // A plot drawn as a trend is listed once, by its dots.
+                            filter: (item, data) => data.datasets[item.datasetIndex].trendOf === undefined
+                        },
+                        // And a click on it hides or shows its fitted line with it.
+                        onClick: (_event, item, legend) => {
+                            const chart = legend.chart
+                            const shown = chart.isDatasetVisible(item.datasetIndex)
+                            chart.data.datasets.forEach((dataset, i) => {
+                                if (i === item.datasetIndex || dataset.trendOf === item.datasetIndex) {
+                                    chart.setDatasetVisibility(i, !shown)
+                                }
+                            })
+                            chart.update()
                         }
                     },
                     tooltip: {
@@ -8869,14 +8983,18 @@ export class OverseerRenderer {
                         bodyColor: '#ffffff',
                         borderColor: '#333333',
                         borderWidth: 1,
+                        // A fitted line has no points of its own to say anything about.
+                        filter: (item) => item.dataset.trendOf === undefined,
                         callbacks: {
                             title: function(tooltipItems) {
                                 const item = tooltipItems[0]
+                                if (!item) return ''
+                                const x = item.raw && item.raw.at !== undefined ? item.raw.at : item.parsed.x
                                 if (xLooksLikeTime) {
                                     // Format timestamp as readable date
-                                    return new Date(item.parsed.x).toLocaleString()
+                                    return new Date(x).toLocaleString()
                                 }
-                                return item.label || item.parsed.x
+                                return evenX ? x : (item.label || x)
                             }
                         }
                     }
@@ -8893,12 +9011,15 @@ export class OverseerRenderer {
                         },
                         ticks: {
                             color: '#cccccc',
+                            // On an even axis a tick stands on a point, and says that point's x.
+                            ...(evenX ? { precision: 0 } : {}),
                             callback: function(value) {
+                                const x = fromAxis(value)
                                 if (xLooksLikeTime) {
                                     // Format timestamp ticks as dates
-                                    return new Date(value).toLocaleDateString()
+                                    return new Date(x).toLocaleDateString()
                                 }
-                                return value
+                                return x
                             }
                         }
                     },
