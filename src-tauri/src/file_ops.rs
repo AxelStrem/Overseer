@@ -202,6 +202,18 @@ impl FileOperations {
         key.starts_with("_template_")
     }
 
+    /// A list its template gave, named by an instance with a dash: `- Items (base=none)`. It
+    /// resolves to a `list`, and it is still the instance's override of one, so its line keeps
+    /// the dash when it is written from the node rather than from its own text.
+    fn is_a_list_override(node: &OverseerNode) -> bool {
+        node.node_type == "list"
+            && node.authored_dash
+            && matches!(
+                node.parameters.get("_template_node"),
+                Some(OverseerValue::Boolean(true))
+            )
+    }
+
     fn push_trivia(output: &mut String, trivia: &str) {
         if trivia.is_empty() {
             return;
@@ -1425,6 +1437,8 @@ impl FileOperations {
                     node.parameters.get("_template_origin")
                 {
                     output.push_str(&format!("<{}>", tpl));
+                } else if Self::is_a_list_override(node) {
+                    output.push('-');
                 } else if node.authored_plus {
                     // `+` stands where the type does, and alone when the type is inferred.
                     output.push('+');
@@ -3324,6 +3338,8 @@ impl FileOperations {
         } else if let Some(OverseerValue::Template(tpl)) = node.parameters.get("_template_origin")
         {
             out.push_str(&format!("<{}>", tpl));
+        } else if Self::is_a_list_override(node) {
+            out.push('-');
         } else if let Some(OverseerValue::String(original_type)) =
             node.parameters.get("_original_type")
         {

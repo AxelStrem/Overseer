@@ -972,6 +972,19 @@ template's entries are the template's to change: they are not written into the i
 and in the instance they cannot be edited, moved or removed. An entry added in the instance -
 appended, prepended, moved or sorted - always stays after them.
 
+A list that wants none of the template's entries says `base=none`, as any element does: it holds
+only the entries its own block writes, and they are the instance's own.
+
+```overseer
+<Project> mine {
+    - Stages (base=none) {
+        - {
+            - name = "idea"
+        }
+    }
+}
+```
+
 Saving gives an instance back as it was written, with only what changed since: a value edited
 where the instance wrote it is changed there, and one edited on something only the template gave
 becomes an override in the nearest block the instance wrote around it - inside the unnamed step
