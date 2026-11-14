@@ -531,6 +531,12 @@ fn supersede(mut entry: Entry) {
     kept.drain(..over);
 }
 
+/// How many superseded trees are kept, and about how many bytes - for the server's memory report.
+pub fn superseded_held() -> (usize, usize) {
+    let kept = SUPERSEDED.lock().unwrap_or_else(|e| e.into_inner());
+    (kept.len(), kept.iter().filter_map(|e| e.nodes.as_deref()).map(footprint).sum())
+}
+
 /// A copy of the tree this text produced in this folder from its mounts as they stood when
 /// `reads` named them - see `app_api::reads_version` - held or superseded, if it is still kept.
 pub fn worked_out_from(text: &str, reads: &str) -> Option<Vec<OverseerNode>> {

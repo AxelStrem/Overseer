@@ -145,7 +145,9 @@ knowing about because each has a cost:
   and makes the second one almost free. On by default; `OVERSEER_DEPENDENCY_GRAPH=0` turns it
   off, for measuring against it or when a graph is suspected of holding a stale answer.
 - **A document cache**, byte-budgeted and least-recently-used, holding text, nodes and graph
-  together. `OVERSEER_CACHE_MB` overrides the budget. A document resolved with part of a list
+  together. `OVERSEER_CACHE_MB` overrides the budget. The caches beside it - parsed parts,
+  mounted files worked out, parsed bases - are bounded by bytes too, each up to a quarter of the
+  budget with a floor, and let go of what was used least lately (`bounded`). A document resolved with part of a list
   out of view is never cached, because a write needs the whole thing.
   A document is drawn through whoever is looking - their theme, their scheme, `me` - but most
   documents read none of that outside the copies of their contexts. The graph says whether one

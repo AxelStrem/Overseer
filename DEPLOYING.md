@@ -72,6 +72,9 @@ these are the settings to turn:
 
 - `OVERSEER_CACHE_MB` - how much worked-out documents may take in memory. 64 for the server,
   512 for the desktop app; `0` keeps nothing, and every request works its document out afresh.
+  Beside it the server keeps the parsed parts of lists, the mounted files worked out and the
+  parsed bases, each up to a quarter of this budget and never less than 16 MB; past that, what
+  was used least lately is read from its file again when next asked for.
 - `OVERSEER_DISK_CACHE` - the folder for what is let go, by default `overseer-cache` in the
   system's temporary folder. Set it empty to keep nothing on disk. It holds the summaries of a
   list's parts too, in `sums/`, which spare a server that has just started reading old parts.
@@ -81,6 +84,16 @@ these are the settings to turn:
   can sit on gigabytes. Without it, set it yourself when running the binary on Linux.
 
 The server also hands free memory back to the system after every request.
+
+To see where the memory goes, read the server's log. Every 15 minutes, and after a request that
+took more than five seconds, it prints a `memory` line:
+- what the server holds now and the most it has held;
+- on Linux, what the container holds in all, and how much of that is the programs' own memory
+  (`anon`) and how much file cache (`file`), which the kernel takes back when it needs the room;
+- what the other processes in the container hold, by name;
+- what each of the server's caches is keeping.
+
+`OVERSEER_MEMORY_LOG` sets how many minutes apart the lines are, and `0` stops them.
 
 Stopping the whole service when nobody uses it - Railway's serverless mode, Fly's auto-stop,
 Render's free tier - is a setting of the host, not of Overseer, and it is safe to turn on: the
@@ -106,6 +119,7 @@ A flag wins over its variable.
 | | `OVERSEER_CACHE_MB` | `64` | see above |
 | | `OVERSEER_DISK_CACHE` | system temp folder | see above |
 | | `OVERSEER_DISK_CACHE_MB` | `512` | see above |
+| | `OVERSEER_MEMORY_LOG` | `15` | minutes between the `memory` lines in the log; `0` for none |
 | | `OVERSEER_DEPENDENCY_GRAPH` | on | `0` stops recording what each value was worked out from: a first open is a little quicker, every later one much slower |
 | | `TZ` | `UTC` | the time zone a document's dates are read in |
 

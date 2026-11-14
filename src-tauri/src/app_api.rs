@@ -2543,6 +2543,12 @@ static HANDED_OUT: std::sync::Mutex<Vec<(String, std::sync::Arc<str>)>> =
     std::sync::Mutex::new(Vec::new());
 const HANDED_OUT_KEPT: usize = 12;
 
+/// How many texts are kept for handing back, and how many bytes - for the server's memory report.
+pub fn handed_out_held() -> (usize, usize) {
+    let kept = HANDED_OUT.lock().unwrap_or_else(|e| e.into_inner());
+    (kept.len(), kept.iter().map(|(_, text)| text.len()).sum())
+}
+
 fn hand_out(text: String) -> String {
     let version = version_of(&text);
     let mut kept = HANDED_OUT.lock().unwrap_or_else(|e| e.into_inner());

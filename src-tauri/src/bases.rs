@@ -306,8 +306,14 @@ fn stamp(path: &str) -> Option<Stamp> {
         .and_then(|m| m.modified().ok().map(|t| (t, m.len())))
 }
 
-static CACHE: LazyLock<Mutex<std::collections::HashMap<String, (Stamp, Arc<Vec<OverseerNode>>)>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+/// Bounded, so a base read once is not held for good - see `crate::bounded`.
+static CACHE: LazyLock<Mutex<crate::bounded::Bounded<String, (Stamp, Arc<Vec<OverseerNode>>)>>> =
+    LazyLock::new(|| Mutex::new(crate::bounded::Bounded::new()));
+
+/// How many bases are held parsed, and about how many bytes - for the server's memory report.
+pub fn parsed_held() -> (usize, usize) {
+    CACHE.lock().map_or((0, 0), |cache| (cache.len(), cache.bytes()))
+}
 
 /// A base's nodes as parsed, with its own references settled in its scope. Read again only once
 /// the file on disk has changed: a document is worked out again after every edit, and each time
@@ -320,7 +326,7 @@ pub fn load(file: &str) -> Result<Arc<Vec<OverseerNode>>, String> {
     }
     let now = stamp(&key);
     if let Some(now) = now {
-        if let Ok(cache) = CACHE.lock() {
+        if let Ok(mut cache) = CACHE.lock() {
             if let Some((then, nodes)) = cache.get(&key) {
                 if *then == now {
                     return Ok(nodes.clone());
@@ -333,7 +339,8 @@ pub fn load(file: &str) -> Result<Arc<Vec<OverseerNode>>, String> {
     let nodes = Arc::new(parse_as_at(&text, &key)?);
     if let Some(now) = now {
         if let Ok(mut cache) = CACHE.lock() {
-            cache.insert(key, (now, nodes.clone()));
+            let bytes = crate::document_cache::footprint(&nodes);
+            cache.insert(key, (now, nodes.clone()), bytes, crate::bounded::limit());
         }
     }
     Ok(nodes)

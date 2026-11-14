@@ -1278,13 +1278,53 @@ fn release_free_memory() {
 #[cfg(not(target_env = "gnu"))]
 fn release_free_memory() {}
 
+/// Print where the memory is after a request that took long enough to have needed a lot of it -
+/// see `overseer::memory_report`. Once a minute at most, so a run of slow writes is not a flood,
+/// and on a thread of its own, since measuring the caches walks the trees they hold.
+fn report_after_slow(path: &str, took: std::time::Duration) {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    const SLOW: Duration = Duration::from_secs(5);
+    const NOT_MORE_OFTEN_THAN: Duration = Duration::from_secs(60);
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+
+    if took < SLOW || overseer::memory_report::every().is_none() {
+        return;
+    }
+    if let Ok(mut last) = LAST.lock() {
+        let now = Instant::now();
+        if last.is_some_and(|then| now.duration_since(then) < NOT_MORE_OFTEN_THAN) {
+            return;
+        }
+        *last = Some(now);
+    } else {
+        return;
+    }
+    let said = format!("memory after {} took {:.1} s:", path, took.as_secs_f64());
+    std::thread::spawn(move || eprintln!("{} {}", said, overseer::memory_report::line()));
+}
+
+/// Print where the memory is every so often, for as long as the server runs - see
+/// `overseer::memory_report`.
+fn report_memory_regularly() {
+    let Some(every) = overseer::memory_report::every() else { return };
+    std::thread::spawn(move || loop {
+        std::thread::sleep(every);
+        eprintln!("memory: {}", overseer::memory_report::line());
+    });
+}
+
 /// Runs after every response, so nothing has to remember to ask.
 async fn give_back_memory(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    let path = request.uri().path().to_string();
+    let started = std::time::Instant::now();
     let response = next.run(request).await;
     release_free_memory();
+    report_after_slow(&path, started.elapsed());
     response
 }
 
@@ -1639,6 +1679,7 @@ async fn serve() {
         }
     };
     println!("listening on http://{}", addr);
+    report_memory_regularly();
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("server stopped: {}", e);
         std::process::exit(1);

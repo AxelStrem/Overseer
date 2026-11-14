@@ -78,8 +78,17 @@ impl Mounted {
     }
 }
 
-static MOUNTED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Mounted>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+/// Bounded, so every file ever mounted is not held for good - see `bounded`. One let go is read
+/// again when next mounted; a frame asked of it meanwhile is worked out in the host, as for a file
+/// that changed - see `formula_evaluator`'s `frame`.
+static MOUNTED: std::sync::LazyLock<std::sync::Mutex<crate::bounded::Bounded<String, Mounted>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(crate::bounded::Bounded::new()));
+
+/// How many mounted files are held worked out, and about how many bytes - for the server's
+/// memory report.
+pub fn mounted_held() -> (usize, usize) {
+    MOUNTED.lock().map_or((0, 0), |held| (held.len(), held.bytes()))
+}
 
 thread_local! {
     /// The mounted files being read, the outermost first - see `load_mounted_document`.
@@ -3376,16 +3385,16 @@ impl ActionExecutor {
     /// that is still what the files say, without a copy of it.
     pub(crate) fn mounted_as_held(path: &str) -> Option<std::sync::Arc<Vec<OverseerNode>>> {
         let stamp = file_stamp(path)?;
-        let cache = MOUNTED.lock().ok()?;
-        let held = cache.get(path)?;
+        let mut cache = MOUNTED.lock().ok()?;
+        let held = cache.get(&path.to_string())?;
         held.current(stamp).then(|| held.nodes.clone())
     }
 
     /// A mounted file's document as it was last read, and which reading that was - without asking
     /// whether the file has changed since, which the mount that read it answers for.
     pub(crate) fn mounted_reading(path: &str) -> Option<(u64, std::sync::Arc<Vec<OverseerNode>>)> {
-        let cache = MOUNTED.lock().ok()?;
-        cache.get(path).map(|held| (held.reading, held.nodes.clone()))
+        let mut cache = MOUNTED.lock().ok()?;
+        cache.get(&path.to_string()).map(|held| (held.reading, held.nodes.clone()))
     }
 
     /// Reads again the mounts in `nodes` of these files, as they stand with what is held now - for
@@ -3419,7 +3428,7 @@ impl ActionExecutor {
         MOUNTED
             .lock()
             .ok()
-            .and_then(|cache| cache.get(path).map(|held| held.within.clone()))
+            .and_then(|cache| cache.peek(&path.to_string()).map(|held| held.within.clone()))
             .unwrap_or_default()
     }
 
@@ -3455,7 +3464,7 @@ impl ActionExecutor {
         let mut wanted = crate::resolver::held_now();
         let mut held_before: Vec<(String, String)> = Vec::new();
         if let Some(stamp) = stamp {
-            if let Ok(cache) = cache.lock() {
+            if let Ok(mut cache) = cache.lock() {
                 if let Some(held) = cache.get(&key) {
                     if held.current(stamp) {
                         wanted.retain(|(list, _)| {
@@ -3513,9 +3522,12 @@ impl ActionExecutor {
         if let (Some(stamp), false) = (stamp, circle_met) {
             if let Ok(mut cache) = cache.lock() {
                 let reading = READINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                let bytes = crate::document_cache::footprint(&ext_nodes);
                 cache.insert(
                     key,
                     Mounted { stamp, within, held: held_now, reading, nodes: std::sync::Arc::new(ext_nodes.clone()) },
+                    bytes,
+                    crate::bounded::limit(),
                 );
             }
         }

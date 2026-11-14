@@ -15,7 +15,6 @@
 //! template's. Nothing works a part out on its own; it is only ever read into its document.
 
 use crate::types::{OverseerNode, OverseerValue};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
@@ -79,17 +78,23 @@ pub fn usable(key: &str) -> bool {
 /// A part's text as it was last read, parsed and not worked out, under how the file stood.
 ///
 /// Parsed once for as long as the file stands as it did. Every write reads its document again, and
-/// a history in weekly parts is otherwise parsed in full for each.
-static READ_PARTS: LazyLock<Mutex<HashMap<PathBuf, (String, String, Vec<OverseerNode>)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// a history in weekly parts is otherwise parsed in full for each. Bounded, so a history read
+/// whole once - a total over all of it, a closed item looked up - is not held for good.
+static READ_PARTS: LazyLock<Mutex<crate::bounded::Bounded<PathBuf, (String, String, Vec<OverseerNode>)>>> =
+    LazyLock::new(|| Mutex::new(crate::bounded::Bounded::new()));
+
+/// How many parts are held parsed, and about how many bytes - for the server's memory report.
+pub fn read_parts_held() -> (usize, usize) {
+    READ_PARTS.lock().map_or((0, 0), |held| (held.len(), held.bytes()))
+}
 
 /// The text of a part and its nodes, parsed. `None` when it is not there, or does not parse as
 /// a whole: the parser passes over what it cannot read and the document's writer keeps that text,
 /// but a part is written from its entries, and what was passed over would be lost.
 fn read(file: &Path) -> Option<(String, Vec<OverseerNode>)> {
     let stamp = crate::actions::mount_stamp(&file.to_string_lossy());
-    if let Ok(held) = READ_PARTS.lock() {
-        if let Some((was, text, nodes)) = held.get(file) {
+    if let Ok(mut held) = READ_PARTS.lock() {
+        if let Some((was, text, nodes)) = held.get(&file.to_path_buf()) {
             if *was == stamp {
                 return Some((text.clone(), nodes.clone()));
             }
@@ -101,7 +106,8 @@ fn read(file: &Path) -> Option<(String, Vec<OverseerNode>)> {
         return None;
     }
     if let Ok(mut held) = READ_PARTS.lock() {
-        held.insert(file.to_path_buf(), (stamp, text.clone(), nodes.clone()));
+        let bytes = text.len() + crate::document_cache::footprint(&nodes);
+        held.insert(file.to_path_buf(), (stamp, text.clone(), nodes.clone()), bytes, crate::bounded::limit());
     }
     Some((text, nodes))
 }
@@ -760,7 +766,7 @@ fn entries_read(file: &Path) -> Option<usize> {
     let stamp = crate::actions::mount_stamp(&file.to_string_lossy());
     let count = |nodes: &[OverseerNode]| nodes.iter().find(|n| n.node_type == "list").map(|l| l.children.len());
     if let Ok(held) = READ_PARTS.lock() {
-        if let Some((was, _text, nodes)) = held.get(file) {
+        if let Some((was, _text, nodes)) = held.peek(&file.to_path_buf()) {
             if *was == stamp {
                 return count(nodes);
             }
