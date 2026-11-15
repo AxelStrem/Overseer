@@ -24,30 +24,108 @@ pub const ERROR: &str = "_inherit_error";
 /// know which files it was made from - see `held`.
 pub const FROM: &str = "_inherit_from";
 
+/// The parameter a list entry keeps what was stacked on its list's template in, as written:
+/// `- <Catalog/[apple]> { }` keeps `Catalog/[apple]`. An instance keeps its whole reference,
+/// `<Card, Fancy>`, where it always kept the one.
+pub const STACKED: &str = "_stacked";
+
 /// A template reference, split into the file it names, if any, and the node's name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference {
     pub file: Option<String>,
     pub name: String,
+    /// The key of the list entry it names, when it ends in `[key]`: `<Catalog/[apple]>`. `name`
+    /// is then the list's.
+    pub entry: Option<String>,
+    /// Its segments after the file, the key left out: where the node is, for one found by its
+    /// place rather than by its name alone.
+    pub path: Vec<String>,
 }
 
-/// Split a reference as written - `<Task>`, `<../Task>`, `<base.os/Task>` - into its parts. The
-/// node is named by the last segment, as it always has been; what comes before it only matters
-/// when it names a file.
-pub fn reference(path: &str) -> Reference {
+/// The references of a template as written, one or several: `<Card, Fancy>` is `Card` and
+/// `Fancy`. A comma inside `[...]` belongs to the key it is in.
+pub fn references(path: &str) -> Vec<String> {
     let path = path.trim();
     let path = path
         .strip_prefix('<')
         .and_then(|p| p.strip_suffix('>'))
-        .unwrap_or(path)
-        .trim();
-    let segments: Vec<&str> = path.split('/').collect();
+        .unwrap_or(path);
+    split_outside_brackets(path, ',')
+        .into_iter()
+        .map(|one| one.trim().to_string())
+        .filter(|one| !one.is_empty())
+        .collect()
+}
+
+/// The first reference of a template as written, and those stacked after it.
+pub fn first_and_stacked(path: &str) -> (String, Vec<String>) {
+    let mut all = references(path);
+    if all.is_empty() {
+        return (String::new(), all);
+    }
+    let first = all.remove(0);
+    (first, all)
+}
+
+fn split_outside_brackets(text: &str, at: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, c) in text.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth = depth.saturating_sub(1),
+            _ if c == at && depth == 0 => {
+                parts.push(&text[start..index]);
+                start = index + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// Split a reference as written - `<Task>`, `<../Task>`, `<base.os/Task>`,
+/// `<base.os/Foods/[apple]>` - into its parts. The node is named by the last segment, as it always
+/// has been; what comes before it only matters when it names a file, or when the reference names
+/// an entry of a list. Of several, `<Card, Fancy>`, this is the first: the template the node is
+/// made from, before anything is stacked on it.
+pub fn reference(path: &str) -> Reference {
+    let first = references(path).into_iter().next().unwrap_or_default();
+    let mut segments: Vec<&str> = split_outside_brackets(&first, '/');
+    let entry = segments
+        .last()
+        .map(|last| last.trim())
+        .filter(|last| last.len() >= 2 && last.starts_with('[') && last.ends_with(']'))
+        .map(|last| last[1..last.len() - 1].trim().to_string());
+    if entry.is_some() {
+        segments.pop();
+    }
     let name = segments.last().copied().unwrap_or("").trim().to_string();
     let file_end = segments[..segments.len().saturating_sub(1)]
         .iter()
         .rposition(|segment| segment.trim().ends_with(".os"));
     let file = file_end.map(|end| segments[..=end].join("/"));
-    Reference { file, name }
+    let path = segments[file_end.map_or(0, |end| end + 1)..]
+        .iter()
+        .map(|segment| segment.trim().to_string())
+        .filter(|segment| !segment.is_empty() && segment != ".." && segment != ".")
+        .collect();
+    Reference { file, name, entry, path }
+}
+
+/// A reference written again from its parts, to mean the same from wherever it is read: the file
+/// in full, then the node by its name - or, for an entry, the list by its place and the key.
+fn rewritten(file: Option<&str>, found: &Reference) -> String {
+    let node = match &found.entry {
+        Some(key) => format!("{}/[{}]", found.path.join("/"), key),
+        None => found.name.clone(),
+    };
+    match file {
+        Some(file) => format!("{}/{}", file, node),
+        None => node,
+    }
 }
 
 /// The reference cut to what finding its node needs: the name, with the file in front when it
@@ -100,6 +178,12 @@ pub fn find_or_why(document: &[OverseerNode], path: &str) -> Result<Option<Overs
             found.name
         ));
     }
+    if let Some(key) = &found.entry {
+        return Err(format!(
+            "'{}/[{}]' is an entry of a list, and can only follow a template: <Template, {}/[{}]>",
+            found.name, key, found.name, key
+        ));
+    }
     match &found.file {
         None => Ok(by_name(document, &found.name).cloned()),
         Some(file) => {
@@ -120,6 +204,142 @@ pub fn in_document<'a>(document: &'a [OverseerNode], path: &str) -> Option<&'a O
         return None;
     }
     by_name(document, &found.name)
+}
+
+/// An entry of a list a reference names, `<Catalog/[apple]>` or `<foods.os/Catalog/[apple]>`,
+/// as it stands in the document or as its file writes it, and the template that list makes its
+/// entries from, as the list names it. `Ok(None)` for a list of the document's own that is not
+/// there, which may yet be made.
+///
+/// The list is found by its place when the reference gives one from the top of the document -
+/// unnamed containers being no step, as in an address - and otherwise by its name, as a template
+/// is. The entry is the one whose key field, the list's `key=`, is written with that value.
+pub fn find_entry_or_why(
+    document: &[OverseerNode],
+    found: &Reference,
+) -> Result<Option<(OverseerNode, Option<String>)>, String> {
+    let key = found.entry.as_deref().unwrap_or_default();
+    let look = |nodes: &[OverseerNode], held: Option<&Arc<Vec<OverseerNode>>>| {
+        let Some(list) = by_place(nodes, &found.path)
+            .or_else(|| by_name(nodes, &found.name))
+            .filter(|node| node.node_type == "list")
+        else {
+            return Err(format!("no list '{}'", found.name));
+        };
+        let Some(OverseerValue::String(key_field)) = list.parameters.get("key") else {
+            return Err(format!(
+                "list '{}' has no key=, and its entries cannot be named",
+                found.name
+            ));
+        };
+        let entry_template = match list.parameters.get("entry") {
+            Some(OverseerValue::Template(path)) => Some(path.clone()),
+            _ => None,
+        };
+        let entry = match held {
+            Some(held) => entry_indexed(held, list, &found.path.join("/"), key_field, key),
+            None => list
+                .children
+                .iter()
+                .find(|entry| key_of(entry, key_field).as_deref() == Some(key)),
+        };
+        match entry {
+            Some(entry) => Ok((entry.clone(), entry_template)),
+            None => Err(format!("no '{}' in '{}'", key, found.name)),
+        }
+    };
+    match &found.file {
+        None => match look(document, None) {
+            Ok(entry) => Ok(Some(entry)),
+            Err(_) if by_name(document, &found.name).is_none() => Ok(None),
+            Err(why) => Err(why),
+        },
+        Some(file) => {
+            let base = load(file)?;
+            look(&base, Some(&base))
+                .map(Some)
+                .map_err(|why| format!("{} of {}", why, file_name(file)))
+        }
+    }
+}
+
+/// What an entry's key field holds, as text: the value it writes, in the entry as parsed or as
+/// worked out.
+fn key_of(entry: &OverseerNode, key_field: &str) -> Option<String> {
+    let field = entry.children.iter().find(|child| child.name == key_field)?;
+    Some(match field.parameters.get("value")? {
+        OverseerValue::String(text) => text.clone(),
+        OverseerValue::Integer(n) => n.to_string(),
+        OverseerValue::Float(f) => f.to_string(),
+        OverseerValue::Boolean(b) => b.to_string(),
+        _ => return None,
+    })
+}
+
+/// Where each key of one list of one file is.
+type EntryIndex = (Arc<Vec<OverseerNode>>, String, std::collections::HashMap<String, usize>);
+
+thread_local! {
+    /// Where each key of a list is, for the files entries were last taken from: a document of
+    /// some hundreds of records made from a catalogue's entries would otherwise read down the
+    /// catalogue once for each. Each is kept with the reading of the file it was made from,
+    /// which is what tells one reading from the next.
+    static ENTRIES: std::cell::RefCell<Vec<EntryIndex>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn entry_indexed<'a>(
+    held: &Arc<Vec<OverseerNode>>,
+    list: &'a OverseerNode,
+    place: &str,
+    key_field: &str,
+    key: &str,
+) -> Option<&'a OverseerNode> {
+    ENTRIES.with(|kept| {
+        let mut kept = kept.borrow_mut();
+        let at = kept
+            .iter()
+            .position(|(file, list_at, _)| Arc::ptr_eq(file, held) && list_at == place);
+        let at = match at {
+            Some(at) => at,
+            None => {
+                let mut index = std::collections::HashMap::new();
+                for (position, entry) in list.children.iter().enumerate() {
+                    if let Some(key) = key_of(entry, key_field) {
+                        index.entry(key).or_insert(position);
+                    }
+                }
+                if kept.len() >= 8 {
+                    kept.remove(0);
+                }
+                kept.push((held.clone(), place.to_string(), index));
+                kept.len() - 1
+            }
+        };
+        kept[at].2.get(key).and_then(|position| list.children.get(*position))
+    })
+}
+
+/// The node at a place given from the top: each step a name, unnamed containers looked through.
+fn by_place<'a>(nodes: &'a [OverseerNode], path: &[String]) -> Option<&'a OverseerNode> {
+    fn step<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+        for node in nodes {
+            if node.name == name {
+                return Some(node);
+            }
+            if crate::addressing::is_wrapper(node) || node.name.is_empty() {
+                if let Some(found) = step(&node.children, name) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    let (first, rest) = path.split_first()?;
+    let mut node = step(nodes, first)?;
+    for name in rest {
+        node = step(&node.children, name)?;
+    }
+    Some(node)
 }
 
 fn by_name<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
@@ -375,6 +595,13 @@ pub fn path_of(file: &str) -> String {
 /// its mounts read, see `actions::mounts_held`.
 pub fn held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
     fn named(path: &str, out: &mut Vec<String>) {
+        let each = references(path);
+        if each.len() > 1 {
+            for one in each {
+                named(&one, out);
+            }
+            return;
+        }
         if let Some(file) = reference(path).file {
             let found = path_of(&file);
             // A base taken from a library gives way to a file of that name put beside the
@@ -395,9 +622,12 @@ pub fn held(nodes: &[OverseerNode]) -> Vec<(String, String)> {
             if node.node_type == "mount" {
                 continue;
             }
-            if let Some(OverseerValue::String(file)) = node.parameters.get(FROM) {
-                if !out.contains(file) {
-                    out.push(file.clone());
+            // Several, one to a line, when what was stacked on it came from other files.
+            if let Some(OverseerValue::String(from)) = node.parameters.get(FROM) {
+                for file in from.lines() {
+                    if !out.iter().any(|known| known == file) {
+                        out.push(file.to_string());
+                    }
                 }
             }
             if let Some(path) = &node.template {
@@ -454,13 +684,32 @@ fn settle(
     beside: Option<&Path>,
     own: &std::collections::HashSet<String>,
 ) {
-    let rewrite = |path: &str| -> Option<String> {
+    let one = |path: &str| -> Option<String> {
         let found = reference(path);
-        match found.file {
-            Some(file) => Some(format!("{}/{}", as_key(&locate(&file, beside)), found.name)),
-            None if own.contains(&found.name) => Some(format!("{}/{}", base, found.name)),
+        match &found.file {
+            Some(file) => Some(rewritten(Some(&as_key(&locate(file, beside))), &found)),
+            None if own.contains(&found.name) => Some(rewritten(Some(base), &found)),
             None => None,
         }
+    };
+    // Each reference of a stack by itself, the ones left as they are kept as written.
+    let rewrite = |path: &str| -> Option<String> {
+        let each = references(path);
+        if each.len() < 2 {
+            return one(path);
+        }
+        let settled: Vec<Option<String>> = each.iter().map(|path| one(path)).collect();
+        if settled.iter().all(|new| new.is_none()) {
+            return None;
+        }
+        Some(
+            settled
+                .into_iter()
+                .zip(each)
+                .map(|(new, old)| new.unwrap_or(old))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
     };
     if let Some(path) = &node.template {
         if let Some(settled) = rewrite(path) {
@@ -484,17 +733,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_reference_may_be_several_and_may_name_an_entry() {
+        assert_eq!(references("<Card, Fancy>"), vec!["Card", "Fancy"]);
+        assert_eq!(references("Card"), vec!["Card"]);
+        assert_eq!(references("A, L/[x, y], B"), vec!["A", "L/[x, y]", "B"]);
+        assert_eq!(reference("<Card, Fancy>").name, "Card");
+        let entry = reference("foods.os/food_catalog/Catalog/[a/b]");
+        assert_eq!(entry.file.as_deref(), Some("foods.os"));
+        assert_eq!(entry.name, "Catalog");
+        assert_eq!(entry.entry.as_deref(), Some("a/b"));
+        assert_eq!(entry.path, vec!["food_catalog", "Catalog"]);
+        assert_eq!(reference("Task").entry, None);
+    }
+
+    #[test]
     fn a_reference_names_its_file_only_when_a_segment_ends_in_os() {
-        assert_eq!(reference("Task"), Reference { file: None, name: "Task".into() });
-        assert_eq!(reference("../Task"), Reference { file: None, name: "Task".into() });
-        assert_eq!(reference("<Root/Task>"), Reference { file: None, name: "Task".into() });
+        let parts = |path: &str| {
+            let found = reference(path);
+            (found.file, found.name)
+        };
+        assert_eq!(parts("Task"), (None, "Task".into()));
+        assert_eq!(parts("../Task"), (None, "Task".into()));
+        assert_eq!(parts("<Root/Task>"), (None, "Task".into()));
+        assert_eq!(parts("base.os/Task"), (Some("base.os".into()), "Task".into()));
         assert_eq!(
-            reference("base.os/Task"),
-            Reference { file: Some("base.os".into()), name: "Task".into() }
-        );
-        assert_eq!(
-            reference("E:/docs/lib/base.os/Task"),
-            Reference { file: Some("E:/docs/lib/base.os".into()), name: "Task".into() }
+            parts("E:/docs/lib/base.os/Task"),
+            (Some("E:/docs/lib/base.os".into()), "Task".into())
         );
         assert_eq!(short("<../Task>"), "Task");
         assert_eq!(short("lib/base.os/Task"), "lib/base.os/Task");

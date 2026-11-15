@@ -282,6 +282,18 @@ value and is not written. A nested field is named with a slash: `"per_100g/calor
 the list. A field the template does not have, or a key already in the list, is a 400 that says
 which.
 
+`"with"` beside `"fields"` stacks more on the template for this entry, as a document writes it
+after the dash (`- <FOODS/Catalog/[apple]> { }`, see "Stacking templates" in the specification):
+
+```bash
+curl -H "$A" -H "$J" $B/v1/append --url-query document=$D --url-query address=day/Meals \
+     -d '{"with": "FOODS/Catalog/[apple]", "fields": {"portions": {"Float": 2}}}'
+```
+
+The entry then has what that reference gives under the fields it was sent, and only the
+reference and those fields are written. The fields are checked against the two together, and a
+reference that names nothing is a 400 that says so.
+
 ## Removing an entry: `POST /v1/remove`
 
 ```bash

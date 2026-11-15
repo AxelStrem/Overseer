@@ -992,6 +992,113 @@ that reached it (`div (background-color=#eee) { - links = "..." }`), inside a na
 (`- Deep (x=2) { - inner = "..." }`), or on the instance itself, after the element written before
 it. A parameter set on a named node the template gave is written as `- Deep (x=3)`.
 
+#### Stacking templates
+
+An instance can be made from more than one template. The references stand in the one pair of
+brackets, separated by commas, and are applied left to right: the first is what the instance is,
+each one after it is merged onto what came before, and the instance's own block comes last.
+
+```overseer
+div (hidden=true) {
+    div Card {
+        string title (label="Title") = ""
+        string note = "plain"
+        int size = 1
+    }
+    div Fancy (background="#eee") {
+        string note (font-weight="bold") = "fancy"
+        string ribbon = "gold"
+    }
+    div Big {
+        int size = 3
+    }
+}
+
+<Card, Fancy> one {
+    - title = "One"
+}
+<Card, Fancy, Big> two {
+    - note = "mine"
+}
+```
+
+`one` is a `Card` whose `note` reads "fancy" in bold, with a `ribbon` and Fancy's background;
+`two` has all that, a `size` of 3, and its own `note`. A template after the first is merged
+exactly as an instance's block is (see "How an instance is matched onto its template"): an
+element finds the field of its name and gives it its value and the parameters it states, and one
+that matches nothing is added. So each gives what it writes - a plain template everything it
+holds, and a template made from another what the two come to.
+
+In a list the dash already stands for the list's template, and what is stacked on it for one
+entry follows the dash: `- <Fancy, Big> { - title = "in a list" }`. An entry made from the list's
+template alone stays `- { ... }`, and `<Other> { ... }` in a list is still an entry made from
+`Other` instead of the list's template. A stacked entry always has a block, empty or not -
+`- <Fancy> { }` - since a dash with a bracketed name and nothing after it is an entry whose value
+is that name.
+
+A reference after the first can also name an entry of a keyed list, `List/[key]`. An entry gives
+only its own lines - the values it writes - and nothing of its list's template, so what is made
+from it keeps its own look:
+
+```overseer
+div (hidden=true) {
+    div Food (layout="horizontal") {
+        string handle (label="Handle", width=15%) = ""
+        string name (label="Name", width=25%) = ""
+        float kcal (label="kcal per 100 g") = 100
+    }
+    div Meal {
+        string name (label="") = ""
+        float kcal (hidden=true) = 0
+        float grams = 100
+        float eaten = $(grams * kcal * 0.01)
+    }
+}
+
+list Catalog (entry=<Food>, key="handle") {
+    - {
+        - handle = "apple"
+        - name = "Apple"
+        - kcal = 52
+    }
+}
+
+list Meals (entry=<Meal>) {
+    - <Catalog/[apple]> {
+        - grams = 180
+    }
+    - {
+        - name = "Soup"
+        - kcal = 40
+    }
+}
+```
+
+The first meal is a `Meal` named "Apple" with 52 kcal and its own 180 g; `name` keeps the empty
+label `Meal` gave it, and `handle`, which `Meal` has no field for, is added as the string the
+catalogue declares. A value the catalogue entry leaves to its own template is not brought along:
+the meal has `Meal`'s value there, so defaults the two should share belong in a template both are
+made from. The list is found by its place when the reference gives one from the top of the
+document or file (`food_catalog/Catalog/[apple]`), and otherwise by its name, as a template is.
+An entry can only follow a template: `<Catalog/[apple]> x { }` is refused.
+
+The list can be in another file, `<Meal, foods.os/food_catalog/Catalog/[apple]>`, and where the
+document mounts it (see "Mounting another document") the reference can go through the mount:
+with `mount FOODS (source="foods.os/food_catalog/Catalog")`, `- <FOODS/Catalog/[apple]> { }` names
+the same entry. The mount's `source` says where to look - it has to be written out, not a
+formula - and the file is read as written, whether or not the mount is loaded. A catalogue kept in
+parts is not looked through.
+
+Nothing a stack gave is the instance's own. Saving gives the instance back as it was written,
+`- <FOODS/Catalog/[apple]> {` and all, and a value edited on something the stack gave becomes an
+override in the instance's block, as with a single template. A reference that names nothing is
+said on the instance as a missing template is, and the rest of the stack is still applied. A
+document is worked out again when a file something was stacked from changes; within one document,
+what was made from an entry follows a change to it when the document is next read, as an instance
+follows a change to its template.
+
+`append` and `prepend` take what to stack as `with=` (see "Actions").
+
 #### A template from another file
 
 A template reference can start with a file: `<project_base.os/project>` names the node `project`
@@ -1557,7 +1664,7 @@ can be a formula.
 | `clear (path)` | removes what the field holds, so its template's or type's value stands |
 | `set_now (path, clock)` | today's date, by the `local` clock or `utc` |
 | `set_now_ts (path, offset)` | the moment now, `offset` seconds later |
-| `append (list, template, value, from) { ... }`, `prepend (...)` | a new entry at the end or the front, made from the list's template (or `template=`), its fields set by the block - `- field = value` - or by `from`, which can also name a list to copy every entry of (see "A form that fills an entry"); a list of plain values takes `value=` |
+| `append (list, template, with, value, from) { ... }`, `prepend (...)` | a new entry at the end or the front, made from the list's template (or `template=`), its fields set by the block - `- field = value` - or by `from`, which can also name a list to copy every entry of (see "A form that fills an entry"); `with=` stacks more on the template for this entry, `with=<Catalog/[apple]>` or a formula that gives the reference as text, `with=$("Catalog/[" + ../picked + "]")` (see "Stacking templates") - empty text stacks nothing, and a reference that names nothing refuses the press; a list of plain values takes `value=` |
 | `ensure_in_list (list, keyField, keyValue, template, position)` | the entry holding that key, made if there is none - at the end, or the front with `position="first"` |
 | `set_in_list (list, keyField, keyValue, field) = value` | writes one field of the entry holding that key |
 | `remove (from, keyField, keyValue)` | takes away the entry holding that key; `remove_from_list` and `list=` say the same |

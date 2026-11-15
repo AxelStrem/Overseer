@@ -2025,6 +2025,20 @@ impl DocumentRoot {
         address: &str,
         fields: &std::collections::HashMap<String, OverseerValue>,
     ) -> std::result::Result<WriteOutcome, RequestError> {
+        self.append_at_with(name, address, fields, None)
+    }
+
+    /// As `append_at`, the entry made from the list's template with more stacked on it: `with`
+    /// as a document writes it after the dash of `- <Catalog/[apple]> { }`, one reference or
+    /// several. The fields are then checked against the two together.
+    pub fn append_at_with(
+        &self,
+        name: &str,
+        address: &str,
+        fields: &std::collections::HashMap<String, OverseerValue>,
+        with: Option<&str>,
+    ) -> std::result::Result<WriteOutcome, RequestError> {
+        let stack = with.map(crate::bases::references).unwrap_or_default();
         let overrides = crate::app_api::entry_overrides(fields);
 
         let (_, node) = self.edit(name, address, |nodes| {
@@ -2053,11 +2067,22 @@ impl DocumentRoot {
                 })
             {
                 if let Some(template) = crate::bases::find(nodes, &template_name) {
-                    reject_unknown_fields(&template, fields)?;
+                    if stack.is_empty() {
+                        reject_unknown_fields(&template, fields)?;
+                    } else {
+                        let made = crate::resolver::with_stacked(&template, &stack, nodes, &mut Vec::new());
+                        if let Some(why) = made.errors.first() {
+                            return Err(RequestError::Rejected(format!(
+                                "nothing to make the entry with: {}",
+                                why
+                            )));
+                        }
+                        reject_unknown_fields(&made.template, fields)?;
+                    }
                 }
             }
             reject_duplicate_key(target, fields)?;
-            ActionExecutor::append_entry(nodes, &format!("/{}", path.join("/")), &overrides)
+            ActionExecutor::append_entry_with(nodes, &format!("/{}", path.join("/")), &overrides, with)
                 .map_err(|e| RequestError::Failed(format!("could not append: {:?}", e)))
         }, |nodes| crate::addressing::find(nodes, address).map(answered))?;
 
@@ -2067,6 +2092,7 @@ impl DocumentRoot {
             "operation": "append",
             "address": address,
             "fields": fields,
+            "with": with,
         }));
 
         let node = node

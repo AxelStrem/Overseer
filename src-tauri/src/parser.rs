@@ -722,6 +722,22 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
             return Err(e);
         }
     };
+    let mut next = next;
+    // `- <Other> { ... }` in a list: the dash is the list's own template, and what follows it in
+    // brackets is stacked on that before the entry's block. Only before a block or parameters -
+    // a dash with a bracketed name and nothing after it is an entry whose value is that name.
+    let mut stacked_on_the_dash: Option<String> = None;
+    if node_type_opt.as_deref() == Some("-") && !authored_plus {
+        if let Ok((after_gap, _)) = nom::character::complete::space0::<&str, nom::error::Error<&str>>(next) {
+            if let Ok((after_stack, OverseerValue::Template(stack))) = parse_template_value(after_gap) {
+                let then = after_stack.trim_start();
+                if then.starts_with('{') || then.starts_with('(') {
+                    stacked_on_the_dash = Some(stack);
+                    next = after_stack;
+                }
+            }
+        }
+    }
     let token_end_ptr = next.as_ptr() as usize;
     let mut template_value: Option<OverseerValue> = None;
     let mut node_type_value: Option<String> = None;
@@ -894,11 +910,12 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     } else if let Some(t) = &template_path {
         // A template named after a field type is refused by the resolver; until then, and after,
         // its instance is not to be taken for that field, so it stands as a div.
-        let name = t.split('/').last().unwrap_or_default();
-        if crate::bases::is_type(name) {
+        // Of several, `<Card, Fancy>`, the first is what the node is made from.
+        let name = crate::bases::reference(t).name;
+        if crate::bases::is_type(&name) {
             "div".to_string()
         } else {
-            name.to_string()
+            name
         }
     } else {
         "".to_string()
@@ -915,6 +932,10 @@ fn parse_node_with_meta(input: &str) -> IResult<&str, ParsedNode> {
     if let Some((param_map, order)) = parameters_with_order {
         node.param_order = order;
         node.parameters = param_map;
+    }
+    if let Some(stack) = stacked_on_the_dash {
+        node.parameters
+            .insert(crate::bases::STACKED.to_string(), OverseerValue::Template(stack));
     }
     node.children = children;
     for why in unread_in_body {

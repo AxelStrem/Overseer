@@ -201,7 +201,7 @@ pub struct MountWrite {
 }
 
 /// The file a mount's `source` names, if any, and the path to the node inside it.
-fn split_mount_source(source: &str) -> (Option<String>, Vec<String>) {
+pub(crate) fn split_mount_source(source: &str) -> (Option<String>, Vec<String>) {
     let segments = |rest: &str| -> Vec<String> {
         rest.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
     };
@@ -2424,6 +2424,8 @@ impl ActionExecutor {
                     }
                     _ => None,
                 };
+                let template_name_opt =
+                    Self::with_what_is_stacked(template_name_opt, action, owner_path, nodes)?;
                 let value_opt = action.parameters.get("value").cloned();
                 // Pass action block overrides to append semantics
                 let overrides = action.children.clone();
@@ -2450,6 +2452,8 @@ impl ActionExecutor {
                     }
                     _ => None,
                 };
+                let template_name_opt =
+                    Self::with_what_is_stacked(template_name_opt, action, owner_path, nodes)?;
                 let value_opt = action.parameters.get("value").cloned();
                 let overrides = action.children.clone();
                 Self::prepend_to_list(
@@ -4627,6 +4631,56 @@ impl ActionExecutor {
         Ok(())
     }
 
+    /// The template an `append` or `prepend` names, with what its `with=` stacks on it: written as
+    /// a document writes a stack, `Template, Other`, the list's own template standing as `-` when
+    /// the action names none - as the dash of `- <Other> { }` does.
+    fn with_what_is_stacked(
+        template: Option<String>,
+        action: &OverseerNode,
+        owner_path: &[String],
+        nodes: &Vec<OverseerNode>,
+    ) -> Result<Option<String>, OverseerError> {
+        let Some(with) = action.parameters.get("with") else {
+            return Ok(template);
+        };
+        let with = match Self::evaluate_in_context(with, owner_path, nodes)? {
+            OverseerValue::Template(with) | OverseerValue::String(with) => with,
+            other => {
+                return Err(OverseerError::ValidationError(format!(
+                    "with= takes a template, and was given {:?}",
+                    other
+                )))
+            }
+        };
+        let stack = crate::bases::references(&with);
+        // Nothing to stack - a form whose choice was left empty - is an entry of the template alone.
+        if stack.is_empty() {
+            return Ok(template);
+        }
+        Ok(Some(format!(
+            "{}, {}",
+            template.as_deref().unwrap_or("-"),
+            stack.join(", ")
+        )))
+    }
+
+    /// As `append_entry`, with more stacked on the list's template for the new entry: `with` as a
+    /// document writes it after the dash, `Catalog/[apple]`.
+    pub fn append_entry_with(
+        nodes: &mut Vec<OverseerNode>,
+        list_path: &str,
+        overrides: &Vec<OverseerNode>,
+        with: Option<&str>,
+    ) -> Result<(), OverseerError> {
+        note_acted();
+        Self::make_days_written(nodes, &[], list_path);
+        let template = with
+            .map(crate::bases::references)
+            .filter(|stack| !stack.is_empty())
+            .map(|stack| format!("-, {}", stack.join(", ")));
+        Self::append_to_list(nodes, &[], list_path, template.as_deref(), None, overrides)
+    }
+
     /// Append an entry to a list, as an `append` action in a document would.
     ///
     /// Exposed for callers that are not documents - the API a bot writes through - so that a
@@ -5344,11 +5398,19 @@ impl ActionExecutor {
             let ordinal = list_node.children.len() + 1;
             let mut new_item = match list_node.parameters.get("entry") {
                 Some(OverseerValue::Template(t)) => {
-                    // Choose template: explicit override or list entry template
-                    let chosen_template_name = if let Some(name) = template_name {
-                        name.to_string()
-                    } else {
+                    // Choose template: explicit override or list entry template. What follows
+                    // it, `Template, Other`, is stacked on it, and `-` in its place is the
+                    // list's own - see `with_what_is_stacked`.
+                    let (first, stack) = match template_name {
+                        Some(name) => crate::bases::first_and_stacked(name),
+                        None => (String::new(), Vec::new()),
+                    };
+                    let chosen_template_name = if first.is_empty() || first == "-" {
                         crate::bases::short(t)
+                    } else if stack.is_empty() {
+                        first
+                    } else {
+                        crate::bases::short(&first)
                     };
                     let template_def = Self::template_for(document, &indices, &chosen_template_name)
                         .ok_or_else(|| {
@@ -5357,8 +5419,28 @@ impl ActionExecutor {
                                 chosen_template_name
                             ))
                         })?;
+                    let mut stacked_from = Vec::new();
+                    let template_def = if stack.is_empty() {
+                        template_def
+                    } else {
+                        let made = crate::resolver::with_stacked(&template_def, &stack, document, &mut Vec::new());
+                        // An entry made from something that is not there would be written, and
+                        // read back as a broken one from then on.
+                        if let Some(why) = made.errors.first() {
+                            return Err(OverseerError::ValidationError(format!("{}: {}", verb, why)));
+                        }
+                        stacked_from = made.files;
+                        made.template
+                    };
                     let template_def = &template_def;
                     let mut new_item = Self::clone_from_template(template_def);
+                    if !stack.is_empty() {
+                        new_item.parameters.insert(
+                            crate::bases::STACKED.to_string(),
+                            OverseerValue::Template(stack.join(", ")),
+                        );
+                        crate::resolver::note_the_stack(&mut new_item, &[], &stacked_from);
+                    }
                     // New item should adopt opposite of parent list effective layout
                     if let Some(OverseerValue::String(parent_eff)) =
                         list_node.parameters.get("_effective_layout")

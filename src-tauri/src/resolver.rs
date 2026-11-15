@@ -2500,6 +2500,308 @@ fn step_out(stepped: bool) {
     }
 }
 
+/// What one reference stacked on a template gives: the parameters and the elements the node it
+/// names writes, and the file it was read from, if another.
+struct Stacked {
+    parameters: Vec<(String, OverseerValue)>,
+    children: Vec<OverseerNode>,
+    file: Option<String>,
+}
+
+/// A template with more stacked on it, and what went wrong on the way: `<Card, Fancy>` is `Card`
+/// with what `Fancy` writes merged onto it, and an entry written `- <Catalog/[apple]> { }` is made
+/// from its list's template with what that entry writes merged onto it.
+pub(crate) struct StackedTemplate {
+    pub(crate) template: OverseerNode,
+    pub(crate) errors: Vec<String>,
+    pub(crate) files: Vec<String>,
+}
+
+/// A reference that goes through a mount of the document, written as the place it names in the
+/// mount's file: with `mount FOODS (source="foods.os/food_catalog/Catalog")`, `FOODS/Catalog/[apple]`
+/// is `foods.os/food_catalog/Catalog/[apple]`. Read from the mount's `source` alone, and never from
+/// what the mount holds, which is brought in only after the templates are worked out.
+fn through_a_mount(all_nodes: &[OverseerNode], reference: &str) -> Result<String, String> {
+    fn mount_named<'a>(nodes: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
+        for node in nodes {
+            if node.node_type == "mount" {
+                if node.name == name {
+                    return Some(node);
+                }
+                continue;
+            }
+            if let Some(found) = mount_named(&node.children, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    let parsed = crate::bases::reference(reference);
+    if parsed.file.is_some() || parsed.path.len() < 2 {
+        return Ok(reference.to_string());
+    }
+    let Some(mount) = mount_named(all_nodes, &parsed.path[0]) else {
+        return Ok(reference.to_string());
+    };
+    let Some(OverseerValue::String(source)) = mount.parameters.get("source") else {
+        return Err(format!(
+            "mount '{}' gives its source by a formula, and a template cannot be named through it",
+            mount.name
+        ));
+    };
+    let (file, mut place) = crate::actions::split_mount_source(source);
+    // The mount holds the node its source names, so the mount's name stands for what holds that
+    // node in its file.
+    place.pop();
+    place.extend(parsed.path[1..].iter().cloned());
+    let mut node = place.join("/");
+    if let Some(key) = &parsed.entry {
+        node = format!("{}/[{}]", node, key);
+    }
+    Ok(match file {
+        Some(file) => format!("{}/{}", file, node),
+        None => node,
+    })
+}
+
+/// What a list entry writes, as the elements of a block: its own lines, and nothing its list's
+/// template gave it. An entry not worked out yet holds exactly that; one that is has it picked
+/// out again, each element by what marks it as the entry's own.
+fn what_an_entry_writes(entry: &OverseerNode) -> Vec<OverseerNode> {
+    fn written(children: &[OverseerNode]) -> Vec<OverseerNode> {
+        let mut out = Vec::new();
+        for child in children {
+            if !child.parameters.contains_key("_template_node") {
+                out.push(child.clone());
+                continue;
+            }
+            // A named element finds its field through unnamed nodes, so what is written inside
+            // one is given as though it stood beside it.
+            if child.node_type != "list" && is_unnamed(child) {
+                out.extend(written(&child.children));
+                continue;
+            }
+            let value = match child.parameters.get("value") {
+                Some(value)
+                    if matches!(
+                        child.parameters.get("_explicit_child_override"),
+                        Some(OverseerValue::Boolean(true))
+                    ) && child.parameters.get("_template_value") != Some(value) =>
+                {
+                    Some(value.clone())
+                }
+                _ => None,
+            };
+            let parameters: Vec<(String, OverseerValue)> = child
+                .parameters
+                .iter()
+                .filter(|(key, value)| {
+                    key.as_str() != "value"
+                        && !key.starts_with('_')
+                        && child.parameters.get(&format!("_template_{}", key)) != Some(*value)
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            let inside = if child.node_type == "list" {
+                child
+                    .children
+                    .iter()
+                    .filter(|entry| !is_a_given_entry(entry))
+                    .cloned()
+                    .collect()
+            } else {
+                written(&child.children)
+            };
+            if value.is_none() && parameters.is_empty() && inside.is_empty() {
+                continue;
+            }
+            let mut one = OverseerNode::new_with_type("-".to_string(), Some(child.name.clone()));
+            for (key, value) in parameters {
+                one.parameters.insert(key, value);
+            }
+            if let Some(value) = value {
+                one.parameters.insert("value".to_string(), value);
+                one.raw_value_literal = child.raw_value_literal.clone();
+            }
+            one.children = inside;
+            out.push(one);
+        }
+        out
+    }
+    if entry.node_type == "-" || entry.node_type == "list_item" {
+        entry.children.clone()
+    } else {
+        written(&entry.children)
+    }
+}
+
+/// What a stacked reference gives. `Ok(None)` when it names a node of the document that is not
+/// there.
+fn what_is_stacked(
+    reference: &str,
+    all_nodes: &[OverseerNode],
+    missed: &mut Vec<String>,
+) -> Result<Option<Stacked>, String> {
+    let reference = through_a_mount(all_nodes, reference)?;
+    let parsed = crate::bases::reference(&reference);
+    let file = parsed.file.as_deref().map(crate::bases::path_of);
+    let own = |parameters: &crate::types::Params, with_value: bool| -> Vec<(String, OverseerValue)> {
+        parameters
+            .iter()
+            .filter(|(key, _)| !key.starts_with('_') && (with_value || key.as_str() != "value"))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    };
+    if parsed.entry.is_some() {
+        let Some((entry, entry_template)) = crate::bases::find_entry_or_why(all_nodes, &parsed)? else {
+            return Ok(None);
+        };
+        let mut holder = OverseerNode::new_with_type("-".to_string(), None);
+        holder.children = what_an_entry_writes(&entry);
+        // An element the entry writes with a dash has the type its own list's template gives
+        // it, which matters for one the template it is stacked on has no field for.
+        if let Some(path) = entry_template {
+            if let Some(template) = crate::bases::find(all_nodes, &path) {
+                let template = as_a_template(template, &path, all_nodes, missed);
+                infer_dash_types_from_template(&mut holder, &template);
+            }
+        }
+        return Ok(Some(Stacked {
+            parameters: own(&entry.parameters, false),
+            children: holder.children,
+            file,
+        }));
+    }
+    let Some(template) = crate::bases::find_or_why(all_nodes, &reference)? else {
+        return Ok(None);
+    };
+    let template = as_a_template(template, &reference, all_nodes, missed);
+    Ok(Some(Stacked {
+        parameters: own(&template.parameters, true),
+        children: template.children,
+        file,
+    }))
+}
+
+/// A template with each of `stack` merged onto it in turn, as an instance's own block is merged:
+/// a named element finds the field of its name and gives it its value and the parameters it
+/// states, and one that matches nothing is added. What comes out is one template, and an
+/// instance of it tells what it inherited from what it wrote exactly as with any other: nothing
+/// the stack gave is the instance's own, so none of it is written back with the instance.
+///
+/// A reference that cannot be had is said in `errors`, and the rest are still applied.
+pub(crate) fn with_stacked(
+    template: &OverseerNode,
+    stack: &[String],
+    all_nodes: &[OverseerNode],
+    missed: &mut Vec<String>,
+) -> StackedTemplate {
+    fn as_read_nowhere(node: &mut OverseerNode) {
+        node.source_snapshot = None;
+        node.source_id = None;
+        node.source_fingerprint = None;
+        node.leading_blank_lines = 0;
+        node.param_order.clear();
+        node.authored_dash = false;
+        node.child_original_index = None;
+        for child in node.children.iter_mut() {
+            as_read_nowhere(child);
+        }
+    }
+    fn as_given(children: &mut [OverseerNode]) {
+        for (position, child) in children.iter_mut().enumerate() {
+            for mark in [
+                "_written_at",
+                "_written_up",
+                "_override_present",
+                "_explicit_child_override",
+            ] {
+                child.parameters.remove(mark);
+            }
+            child.child_original_index = Some(position);
+            as_given(&mut child.children);
+        }
+    }
+    let mut made = StackedTemplate {
+        template: template.clone(),
+        errors: Vec::new(),
+        files: Vec::new(),
+    };
+    for reference in stack {
+        let stacked = match what_is_stacked(reference, all_nodes, missed) {
+            Ok(Some(stacked)) => stacked,
+            Ok(None) => {
+                made.errors.push(format!("no '{}' to stack", reference));
+                continue;
+            }
+            Err(why) => {
+                // The file is kept all the same: one missing now is read once it is there.
+                if let Ok(through) = through_a_mount(all_nodes, reference) {
+                    if let Some(file) = crate::bases::reference(&through).file {
+                        made.files.push(crate::bases::path_of(&file));
+                    }
+                }
+                made.errors.push(why);
+                continue;
+            }
+        };
+        if let Some(file) = stacked.file {
+            if !made.files.contains(&file) {
+                made.files.push(file);
+            }
+        }
+        for (key, value) in stacked.parameters {
+            made.template.parameters.insert(key, value);
+        }
+        let mut children = stacked.children;
+        // Merged without where they were read from: the fields stay the template's, text and
+        // all, and only what they hold changes.
+        for child in children.iter_mut() {
+            as_read_nowhere(child);
+        }
+        merge_node(&mut made.template, &children, all_nodes);
+    }
+    as_given(&mut made.template.children);
+    made
+}
+
+/// What is stacked on the list's template for one entry, `- <Catalog/[apple]> { }`, as written.
+pub(crate) fn stack_of_entry(entry: &OverseerNode) -> Option<Vec<String>> {
+    match entry.parameters.get(crate::bases::STACKED) {
+        Some(OverseerValue::Template(stack)) | Some(OverseerValue::String(stack)) => {
+            Some(crate::bases::references(stack)).filter(|stack| !stack.is_empty())
+        }
+        _ => None,
+    }
+}
+
+/// Says on a node made from a stack what could not be had of it, and which files it was read
+/// from - for `bases::held`, which works the document out again when one of them changes.
+pub(crate) fn note_the_stack(node: &mut OverseerNode, errors: &[String], files: &[String]) {
+    if !errors.is_empty() {
+        node.parameters.insert(
+            crate::bases::ERROR.to_string(),
+            OverseerValue::String(errors.join("; ")),
+        );
+    }
+    if files.is_empty() {
+        return;
+    }
+    let mut from: Vec<String> = match node.parameters.get(crate::bases::FROM) {
+        Some(OverseerValue::String(from)) => from.lines().map(str::to_string).collect(),
+        _ => Vec::new(),
+    };
+    for file in files {
+        if !from.contains(file) {
+            from.push(file.clone());
+        }
+    }
+    node.parameters.insert(
+        crate::bases::FROM.to_string(),
+        OverseerValue::String(from.join("\n")),
+    );
+}
+
 /// Resolves templates for a single node and its children.
 /// Returns true if any progress was made in this pass, and adds to `missed` the name of each
 /// template it was asked for and could not find.
@@ -2613,6 +2915,23 @@ fn resolve_node_templates(
                             );
                             // Handle both old "list_item" type and new "-" type (after parse_list_item removal)
                             if list_item.node_type == "list_item" || list_item.node_type == "-" {
+                                // An entry with more stacked on the list's template is made
+                                // from the two together - see `with_stacked`.
+                                let stacked = stack_of_entry(list_item)
+                                    .map(|stack| with_stacked(&template_node, &stack, all_nodes, missed));
+                                let template_node: &OverseerNode = match &stacked {
+                                    Some(stacked) => &stacked.template,
+                                    None => &template_node,
+                                };
+                                let note = |made: &mut OverseerNode| {
+                                    if let Some(stacked) = &stacked {
+                                        note_the_stack(made, &stacked.errors, &stacked.files);
+                                        if let Some(stack) = list_item.parameters.get(crate::bases::STACKED) {
+                                            made.parameters
+                                                .insert(crate::bases::STACKED.to_string(), stack.clone());
+                                        }
+                                    }
+                                };
                                 if !list_item.children.is_empty() {
                                     debug_resolver!(
                                         "[RESOLVER]     Complex list item with {} children",
@@ -2811,8 +3130,9 @@ fn resolve_node_templates(
                                     // Recursively infer '-' types based on template structure
                                     infer_dash_types_from_template(
                                         &mut resolved_item,
-                                        &template_node,
+                                        template_node,
                                     );
+                                    note(&mut resolved_item);
                                     resolved_children.push(resolved_item);
                                 } else if let Some(val) = list_item.parameters.get("value") {
                                     debug_resolver!(
@@ -2956,8 +3276,9 @@ fn resolve_node_templates(
                                         // Recursively infer '-' types based on template structure
                                         infer_dash_types_from_template(
                                             &mut resolved_item,
-                                            &template_node,
+                                            template_node,
                                         );
+                                        note(&mut resolved_item);
                                         resolved_children.push(resolved_item);
                                     } else {
                                         debug_resolver!(
@@ -3120,6 +3441,19 @@ fn resolve_node_templates(
             .ok()
             .flatten()
             .map(|template_node| as_a_template(template_node, template_path, all_nodes, missed));
+        // `<Card, Fancy>`: what follows the first is stacked on it - see `with_stacked`.
+        let (_, stack) = crate::bases::first_and_stacked(template_path);
+        let mut stack_errors = Vec::new();
+        let mut stack_files = Vec::new();
+        let found = found.map(|template_node| {
+            if stack.is_empty() {
+                return template_node;
+            }
+            let made = with_stacked(&template_node, &stack, all_nodes, missed);
+            stack_errors = made.errors;
+            stack_files = made.files;
+            made.template
+        });
         if found.is_some() {
             instantiating = Some(key);
         }
@@ -3240,6 +3574,7 @@ fn resolve_node_templates(
                 OverseerValue::String(crate::bases::path_of(file)),
             );
         }
+        note_the_stack(node, &stack_errors, &stack_files);
     }
 
     // Recursively process children

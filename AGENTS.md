@@ -23,6 +23,9 @@ type name (param=value, ...) = value { children }
   template is an ordinary node, usually in a hidden div. Each entry, `- { ... }`, writes only the
   fields that differ from the template - anything it leaves out has the template's value. `key=`
   names the field an entry is known by.
+- **Templates stack**: `<Card, Fancy> c { ... }` is `Card` with what `Fancy` writes merged onto
+  it, then the block. In a list the dash is the list's template, so `- <Catalog/[apple]> { ... }`
+  is an entry made from it and then from the values the catalogue's `apple` entry writes.
 - **Formulas**, `$(...)`, stand wherever a value can: `$(pages - read)`,
   `$(Books.filter(|x| x/left > 0).count())`. Paths are like a file system's: `../read` is a
   sibling of the node the formula belongs to, `/reading/Books` starts from `reading` wherever the

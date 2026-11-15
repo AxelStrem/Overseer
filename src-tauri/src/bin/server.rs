@@ -927,6 +927,10 @@ struct WriteBody {
     /// Fields to set on the new entry, for an append.
     #[serde(default)]
     fields: std::collections::HashMap<String, overseer::types::OverseerValue>,
+    /// What the new entry is made from on top of its list's template, for an append: a
+    /// reference as a document writes it, `Catalog/[apple]`.
+    #[serde(default)]
+    with: Option<String>,
     /// The value, for a set.
     #[serde(default)]
     value: Option<overseer::types::OverseerValue>,
@@ -1002,7 +1006,7 @@ async fn append_at(
     let documents = service.documents.clone();
     let outcome = tokio::task::spawn_blocking(move || {
         documents.as_asker(caller.asker(), || {
-            documents.append_at(&target.document, &target.address, &body.fields)
+            documents.append_at_with(&target.document, &target.address, &body.fields, body.with.as_deref())
         })
     })
         .await

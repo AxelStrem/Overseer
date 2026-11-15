@@ -1089,6 +1089,13 @@ impl FileOperations {
                 }
                 // Complex/template-based item: emit as "- name { ... }" (name optional) and use the standard child emission (with concise override rules)
                 output.push_str("- ");
+                // What was stacked on the list's template for this entry, as it was written:
+                // `- <Catalog/[apple]> {`.
+                if let Some(OverseerValue::Template(stack)) | Some(OverseerValue::String(stack)) =
+                    node.parameters.get(crate::bases::STACKED)
+                {
+                    output.push_str(&format!("<{}> ", stack));
+                }
                 let entry_name = node.name.trim();
                 let has_displayable_name = !entry_name.is_empty()
                     && entry_name != "-"
