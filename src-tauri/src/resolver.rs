@@ -512,6 +512,116 @@ pub fn paths_within(node: &OverseerNode, path: &str) -> std::collections::HashSe
     paths
 }
 
+/// Whether a change landed inside something copies are made from: a template an instance or a
+/// list names, or an entry of a list that something stacks - `<Card, Things/[small]>`.
+///
+/// A copy is no reader of what it was made from, so the dependency graph does not lead from the
+/// change to it, and a document already worked out has its copies made: working it out again
+/// leaves them as they are. Such a change is read from the document's text instead - see
+/// `app_api::read_again_from_its_text`.
+///
+/// Asked by name, of every step of each address the change names: a template is found by its name
+/// wherever it is, and an entry by its list's name and its key. So a node that only shares a
+/// template's name answers yes as well, which costs a slower settle and is never wrong. What is
+/// made from another file's template is not asked about: no change to this document reaches it.
+pub fn lands_in_what_copies_are_made_from(nodes: &[OverseerNode], changed: &crate::actions::Changed) -> bool {
+    use std::collections::{HashMap, HashSet};
+    let mut reached = changed.moved();
+    for shape in changed.every_shape() {
+        match shape {
+            crate::actions::Shape::Added { list, entry } | crate::actions::Shape::Removed { list, entry } => {
+                reached.push(format!("{}/{}", list, entry))
+            }
+        }
+    }
+    if reached.is_empty() {
+        return false;
+    }
+    fn gather<'a>(nodes: &'a [OverseerNode], written: &mut HashSet<&'a str>) {
+        for node in nodes {
+            for (name, value) in node.parameters.iter() {
+                match value {
+                    OverseerValue::Template(reference) => {
+                        written.insert(reference.as_str());
+                    }
+                    OverseerValue::String(reference)
+                        if name == crate::bases::STACKED || name == "_template_origin" =>
+                    {
+                        written.insert(reference.as_str());
+                    }
+                    _ => {}
+                }
+            }
+            gather(&node.children, written);
+        }
+    }
+    let mut written = HashSet::new();
+    gather(nodes, &mut written);
+    let mut templates: HashSet<String> = HashSet::new();
+    let mut entries: HashMap<String, HashSet<String>> = HashMap::new();
+    for one in written.into_iter().flat_map(crate::bases::references) {
+        let found = crate::bases::reference(&one);
+        if found.file.is_some() || found.name.is_empty() {
+            continue;
+        }
+        match found.entry {
+            Some(key) => {
+                entries.entry(found.name).or_default().insert(key);
+            }
+            None => {
+                templates.insert(found.name);
+            }
+        }
+    }
+    if templates.is_empty() && entries.is_empty() {
+        return false;
+    }
+    // A step as a report writes it, `name#2` for the second of a name, read as the name.
+    let plain = |step: &str| step.split('#').next().unwrap_or(step).to_string();
+    // Whether the entry a change went into is one a stack names. A report names an entry as the
+    // tree does, `Thing__2`, and a stack by its key, so the key is read off the entry. One that
+    // is gone, or whose key is what changed, may be one a stack named until now.
+    let stacked_from = |list_at: &str, entry: &str, rest: &[&str], keys: &HashSet<String>| -> bool {
+        let Some(list) = crate::addressing::node_at_path(nodes, list_at) else { return true };
+        let Some(OverseerValue::String(key)) = list.parameters.get("key") else { return true };
+        if rest.first().is_some_and(|field| plain(field) == *key) {
+            return true;
+        }
+        fn field<'a>(node: &'a OverseerNode, name: &str) -> Option<&'a OverseerNode> {
+            node.children.iter().find_map(|child| {
+                if child.name == name {
+                    Some(child)
+                } else if crate::addressing::is_wrapper(child) {
+                    field(child, name)
+                } else {
+                    None
+                }
+            })
+        }
+        let said = crate::addressing::node_at_path(nodes, &format!("{}/{}", list_at, entry))
+            .and_then(|entry| field(entry, key))
+            .and_then(|field| field.parameters.get("_computed_value").or_else(|| field.parameters.get("value")))
+            .and_then(plain_key);
+        match said {
+            Some(said) => keys.contains(&said),
+            None => true,
+        }
+    };
+    reached.iter().any(|address| {
+        let steps: Vec<&str> = address.split('/').filter(|step| !step.is_empty()).collect();
+        steps.iter().enumerate().any(|(at, step)| {
+            if templates.contains(*step) || templates.contains(&plain(step)) {
+                return true;
+            }
+            let Some(keys) = entries.get(*step).or_else(|| entries.get(&plain(step))) else { return false };
+            match steps.get(at + 1) {
+                Some(entry) => stacked_from(&steps[..=at].join("/"), entry, &steps[at + 2..], keys),
+                None => false,
+            }
+        })
+    })
+}
+
 /// Work out what a change of shape reaches, and nothing else - the targets the graph named, and
 /// every node of an entry just made.
 ///

@@ -1738,7 +1738,11 @@ impl DocumentRoot {
             let settled_quickly = if quick_way {
                 Some(app_api::settle_after_change(&mut nodes, &held_as, report.as_ref()))
             } else {
-                crate::resolver::resolve_document(&mut nodes);
+                // Read again from its text when a template changed, so that what was made from
+                // it is in the answer - see `app_api::read_again_from_its_text`.
+                if app_api::read_again_from_its_text(&mut nodes, report.as_ref()).is_none() {
+                    crate::resolver::resolve_document(&mut nodes);
+                }
                 None
             };
             phase("edit settle", &mut since);

@@ -1094,8 +1094,9 @@ Nothing a stack gave is the instance's own. Saving gives the instance back as it
 override in the instance's block, as with a single template. A reference that names nothing is
 said on the instance as a missing template is, and the rest of the stack is still applied. A
 document is worked out again when a file something was stacked from changes; within one document,
-what was made from an entry follows a change to it when the document is next read, as an instance
-follows a change to its template.
+what was made from an entry follows a change to it at once, as an instance follows a change to
+its template: a value set on a template is the value of everything made from it that does not
+write its own, in the same change.
 
 `append` and `prepend` take what to stack as `with=` (see "Actions").
 

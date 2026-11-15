@@ -869,8 +869,13 @@ pub fn execute_event_update(
     let folds_asked = report.as_ref().map(|changed| changed.folds.clone()).unwrap_or_default();
     let narrowings_asked = report.as_ref().map(|changed| changed.narrowings.clone()).unwrap_or_default();
     let calls_asked = report.as_ref().map(|changed| changed.calls.clone()).unwrap_or_default();
+    // A change inside a template takes the long way, which reads the text again: the graph does
+    // not lead from a template to what was made from it - see `read_again_from_its_text`.
+    let in_a_template = report
+        .as_ref()
+        .is_some_and(|changed| resolver::lands_in_what_copies_are_made_from(&nodes, changed));
     let quick = report
-        .filter(|changed| !changed.structural && !changed.moved().is_empty())
+        .filter(|changed| !in_a_template && !changed.structural && !changed.moved().is_empty())
         .and_then(|changed| {
             crate::document_cache::with_graph(&was, |graph| graph.nodes_to_work_out_again(&changed.moved()))
                 .map(|to_redo| (changed, to_redo))
@@ -1565,6 +1570,11 @@ pub(crate) fn settle_after_change(
     if ran_nothing {
         return None;
     }
+    // A change inside a template, or an entry something is stacked from, is read from the text:
+    // the graph does not lead to the copies, and nothing below makes them again.
+    if let Some(whole) = read_again_from_its_text(nodes, report) {
+        return Some(whole);
+    }
     // Entries made or taken out, carried through the graph - see `follow_the_shape`. The graph is
     // the one a settle between two actions already carried, or the one held for the text.
     //
@@ -1633,6 +1643,98 @@ pub(crate) fn settle_after_change(
     }
     crate::resolver::resolve_document(nodes);
     Some(record.then(crate::dependencies::take_recording))
+}
+
+/// The document read again from its text and worked out whole, when the change landed inside
+/// something copies are made from - see `resolver::lands_in_what_copies_are_made_from`. The graph
+/// recorded while it was, or none, as `settle_after_change` hands one back; `None` when the change
+/// landed nowhere of the kind, and the document is left for the caller to settle.
+///
+/// From the text, because a document worked out has its copies made already: the instance holds
+/// the template's value as its own, and working the tree out again copies nothing. Setting a
+/// template's field wrote the file and left every instance, every entry of its lists and whatever
+/// read them as they were, in the answer and in the document held for the new text, until
+/// something read the file afresh. What the text says is what the caller is about to be shown, a
+/// viewer's own values included: they are written into the tree, and so into the text, until the
+/// write takes them back out.
+///
+/// Not when the same change reached a file the text does not hold - what a mount brought in, an
+/// entry kept in a part. Those are written after the settle, from the tree, and reading the text
+/// again would bring them back as their files still say. Such a change is settled as it always
+/// was, and its copies follow when the document is next read.
+pub(crate) fn read_again_from_its_text(
+    nodes: &mut Vec<OverseerNode>,
+    report: Option<&crate::actions::Changed>,
+) -> Option<Option<crate::dependencies::Graph>> {
+    let changed = report?;
+    if !resolver::lands_in_what_copies_are_made_from(nodes, changed) {
+        return None;
+    }
+    if reaches_what_its_text_leaves_out(nodes, changed) {
+        if resolver::profile_enabled() {
+            eprintln!("[PHASE]   a template changed with a mount or a part: not read again");
+        }
+        return None;
+    }
+    let started = std::time::Instant::now();
+    let text = OverseerFileHandler::serialize_nodes(nodes).ok()?;
+    let (_rest, mut fresh) = parse_document(&text).ok()?;
+    ActionExecutor::preload_mounts(&mut fresh);
+    let record = recording_is_on() && !resolver::is_keeping_anything_in_view();
+    if record {
+        crate::dependencies::start_recording();
+    }
+    resolver::resolve_document(&mut fresh);
+    let graph = record.then(crate::dependencies::take_recording);
+    *nodes = fresh;
+    if resolver::profile_enabled() {
+        eprintln!(
+            "[PHASE]   a template changed: read again from the text in {:.1} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    Some(graph)
+}
+
+/// Whether a change reached what a document's text does not hold: under a mount that has brought
+/// its file in, or in a list that keeps its entries in parts.
+#[allow(clippy::ptr_arg)]
+fn reaches_what_its_text_leaves_out(nodes: &Vec<OverseerNode>, changed: &crate::actions::Changed) -> bool {
+    fn walk(nodes: &[OverseerNode], trail: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        for (at, node) in nodes.iter().enumerate() {
+            trail.push(at);
+            if node.node_type == "mount" {
+                if node.parameters.contains_key(crate::actions::MOUNT_FILE) && !node.children.is_empty() {
+                    out.push(trail.clone());
+                }
+            } else {
+                if node.parameters.contains_key(crate::parts::FOLDER) && crate::parts::key_of(node).is_some() {
+                    out.push(trail.clone());
+                }
+                walk(&node.children, trail, out);
+            }
+            trail.pop();
+        }
+    }
+    let mut elsewhere = Vec::new();
+    walk(nodes, &mut Vec::new(), &mut elsewhere);
+    if elsewhere.is_empty() {
+        return false;
+    }
+    // Moved in a way the report does not say: any of them may have been reached.
+    if changed.shape_unknown {
+        return true;
+    }
+    let reached: Vec<String> = changed
+        .moved()
+        .into_iter()
+        .chain(changed.every_shape().map(|shape| shape.list().to_string()))
+        .collect();
+    elsewhere.iter().any(|indices| {
+        let address = ActionExecutor::address_of(nodes, indices);
+        let inside = format!("{}/", address);
+        reached.iter().any(|at| *at == address || at.starts_with(&inside))
+    })
 }
 
 /// Settle what the actions of a press have changed so far, for the actions still to come to read.
@@ -2956,7 +3058,13 @@ pub fn execute_event_on_text(
     outcome?;
     // The value stays where the action put it: this caller's view *is* the document it holds,
     // and the day it is showing has to move.
-    drop(report);
+    //
+    // What was made from a template the press changed is made again, from the text - see
+    // `read_again_from_its_text`.
+    if report.is_some_and(|changed| resolver::lands_in_what_copies_are_made_from(&nodes, &changed)) {
+        let (text, nodes) = as_its_text_reads(&nodes)?;
+        return Ok(ResolvedDocument { nodes, text });
+    }
     with_text(nodes)
 }
 
