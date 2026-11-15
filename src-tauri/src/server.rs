@@ -1664,7 +1664,7 @@ impl DocumentRoot {
             }
             *since = std::time::Instant::now();
         }
-        let (outcome, mut nodes, serialized, report, settled_quickly, through_mounts, before) = self.within(dir.clone(), || {
+        let (outcome, mut nodes, serialized, report, mut settled_quickly, through_mounts, before, owed_a_reading) = self.within(dir.clone(), || {
             // The quick way, taken whenever it can be: the document as it was last worked out for
             // this very text, when what the write is about is in view there. A write then works
             // out what it reaches and no more, as the page's writes do - see
@@ -1733,6 +1733,9 @@ impl DocumentRoot {
             // before anything is written anywhere.
             let mut through_mounts = crate::actions::mounts_written(&nodes, report.as_ref());
             app_api::refuse_writing_through(&through_mounts).map_err(RequestError::ReadOnly)?;
+            // A template changed along with a mount or a part: read again once those are written
+            // - see `app_api::read_again_once_written`.
+            let owed_a_reading = app_api::owes_a_reading_once_written(&nodes, report.as_ref());
             // What was written changes what derives from it, and the caller is about to be shown
             // the result.
             let settled_quickly = if quick_way {
@@ -1754,7 +1757,7 @@ impl DocumentRoot {
             let serialized = crate::file_ops::OverseerFileHandler::serialize_nodes(&nodes)
                 .map_err(|e| RequestError::Failed(format!("could not serialize: {}", e)))?;
             phase("edit serialize", &mut since);
-            Ok::<_, RequestError>((outcome, nodes, serialized, report, settled_quickly, through_mounts, before))
+            Ok::<_, RequestError>((outcome, nodes, serialized, report, settled_quickly, through_mounts, before, owed_a_reading))
         })?;
 
         // Whatever the work said belongs to the viewer is kept against this session, and taken
@@ -1802,6 +1805,14 @@ impl DocumentRoot {
             self.within(dir.clone(), || app_api::keep_for_catching_up(&text_before, before));
         }
         phase("edit write", &mut since);
+        if owed_a_reading {
+            let read = self.within(dir.clone(), || app_api::read_again_once_written(&mut nodes, &serialized));
+            // Held afterwards only where it was held before: the long way keeps nothing.
+            if let (Some(whole), true) = (read, settled_quickly.is_some()) {
+                settled_quickly = Some(Some(whole));
+            }
+            phase("edit read again", &mut since);
+        }
         // Kept for the text the file now holds, so the next write - the bot's, or the page
         // reopening what the bot just changed - starts from it rather than from nothing. Only when
         // that text is the document as worked out: a field that is the viewer's is taken back

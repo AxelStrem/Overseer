@@ -1377,7 +1377,9 @@ fn change_or_look(
         Vec::new()
     };
     refuse_writing_through(&through_mounts).map_err(OverseerError::ValidationError)?;
-    let worked_out_whole = settle_after_change(&mut nodes, held_as, report.as_ref());
+    // A template changed along with a mount or a part: read again once those are written.
+    let owed_a_reading = writing && owes_a_reading_once_written(&nodes, report.as_ref());
+    let mut worked_out_whole = settle_after_change(&mut nodes, held_as, report.as_ref());
     // What belongs in a part goes there, worked out from what the write left - see `parts`.
     if writing {
         let through_parts = crate::parts::written(&mut nodes, report.as_ref());
@@ -1412,6 +1414,12 @@ fn change_or_look(
     }
     one_step_with(std::path::Path::new(path), wrote, &as_it_stood, &along);
     phase("write");
+    if owed_a_reading {
+        if let Some(whole) = read_again_once_written(&mut nodes, &serialized) {
+            worked_out_whole = Some(whole);
+        }
+        phase("read again");
+    }
 
     // The caller is shown what it asked for, viewer's values and all. Only the file goes
     // without - and it is told so, because it holds the baseline a later save is checked
@@ -1658,10 +1666,10 @@ pub(crate) fn settle_after_change(
 /// viewer's own values included: they are written into the tree, and so into the text, until the
 /// write takes them back out.
 ///
-/// Not when the same change reached a file the text does not hold - what a mount brought in, an
-/// entry kept in a part. Those are written after the settle, from the tree, and reading the text
-/// again would bring them back as their files still say. Such a change is settled as it always
-/// was, and its copies follow when the document is next read.
+/// Not yet when the same change reached a file the text does not hold - what a mount brought in,
+/// an entry kept in a part. Those are written after the settle, from the tree, and reading the
+/// text again would bring them back as their files still say. Such a change is settled here as it
+/// always was, and read again once those files are written - see `read_again_once_written`.
 pub(crate) fn read_again_from_its_text(
     nodes: &mut Vec<OverseerNode>,
     report: Option<&crate::actions::Changed>,
@@ -1672,7 +1680,7 @@ pub(crate) fn read_again_from_its_text(
     }
     if reaches_what_its_text_leaves_out(nodes, changed) {
         if resolver::profile_enabled() {
-            eprintln!("[PHASE]   a template changed with a mount or a part: not read again");
+            eprintln!("[PHASE]   a template changed with a mount or a part: read again once written");
         }
         return None;
     }
@@ -1690,6 +1698,55 @@ pub(crate) fn read_again_from_its_text(
     if resolver::profile_enabled() {
         eprintln!(
             "[PHASE]   a template changed: read again from the text in {:.1} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    Some(graph)
+}
+
+/// Whether a change is still owed a reading from the text once its mounts and parts are written:
+/// it landed inside something copies are made from, and reached what the text does not hold, so
+/// `read_again_from_its_text` left it. Asked before the change is settled, of the tree as the work
+/// left it, which is what that asks.
+#[allow(clippy::ptr_arg)]
+pub(crate) fn owes_a_reading_once_written(
+    nodes: &Vec<OverseerNode>,
+    report: Option<&crate::actions::Changed>,
+) -> bool {
+    report.is_some_and(|changed| {
+        resolver::lands_in_what_copies_are_made_from(nodes, changed)
+            && reaches_what_its_text_leaves_out(nodes, changed)
+    })
+}
+
+/// The document read again from `text` - what the tree says of itself, a viewer's values included
+/// - and worked out whole, after a change that `owes_a_reading_once_written` has had its mounts
+/// and parts written. The files now say what the tree did, so what a mount brings in and what a
+/// list reads of its parts come back as the change left them, and what was made from the template
+/// is made again. The graph recorded while it was, or none; `None` when the text does not read,
+/// and the tree is left as it was settled.
+///
+/// A mount the text does not say is open - a lazy one a press opened - is brought in again where
+/// the tree held it.
+pub(crate) fn read_again_once_written(
+    nodes: &mut Vec<OverseerNode>,
+    text: &str,
+) -> Option<Option<crate::dependencies::Graph>> {
+    let started = std::time::Instant::now();
+    let (_rest, mut fresh) = parse_document(text).ok()?;
+    let were_open = ActionExecutor::mounts_brought_in(nodes);
+    ActionExecutor::preload_mounts(&mut fresh);
+    ActionExecutor::bring_in_mounts_at(&mut fresh, &were_open);
+    let record = recording_is_on() && !resolver::is_keeping_anything_in_view();
+    if record {
+        crate::dependencies::start_recording();
+    }
+    resolver::resolve_document(&mut fresh);
+    let graph = record.then(crate::dependencies::take_recording);
+    *nodes = fresh;
+    if resolver::profile_enabled() {
+        eprintln!(
+            "[PHASE]   a template changed with a mount or a part: read again in {:.1} ms",
             started.elapsed().as_secs_f64() * 1000.0
         );
     }

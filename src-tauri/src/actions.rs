@@ -3427,6 +3427,46 @@ impl ActionExecutor {
         }
     }
 
+    /// Where each mount that has brought its file in stands in `nodes`, by child indices.
+    pub(crate) fn mounts_brought_in(nodes: &[OverseerNode]) -> Vec<Vec<usize>> {
+        fn collect(nodes: &[OverseerNode], trail: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+            for (at, n) in nodes.iter().enumerate() {
+                trail.push(at);
+                if n.node_type == "mount" {
+                    if n.parameters.contains_key(MOUNT_FILE) && !n.children.is_empty() {
+                        out.push(trail.clone());
+                    }
+                } else {
+                    collect(&n.children, trail, out);
+                }
+                trail.pop();
+            }
+        }
+        let mut out = Vec::new();
+        collect(nodes, &mut Vec::new(), &mut out);
+        out
+    }
+
+    /// Brings in the mounts at these places that hold nothing yet - the ones a press opened, in a
+    /// document read again from its text, which says of none of them that it was open.
+    pub(crate) fn bring_in_mounts_at(nodes: &mut Vec<OverseerNode>, places: &[Vec<usize>]) {
+        let _restore_when_done = MountResolveSuspended(RESOLVE_AFTER_MOUNT.with(|flag| flag.replace(false)));
+        for indices in places {
+            let mut at: &[OverseerNode] = nodes;
+            let mut found = None;
+            for (depth, index) in indices.iter().enumerate() {
+                let Some(node) = at.get(*index) else { break };
+                if depth + 1 == indices.len() {
+                    found = Some(node);
+                }
+                at = &node.children;
+            }
+            if found.is_some_and(|node| node.node_type == "mount" && node.children.is_empty()) {
+                let _ = Self::perform_load_mount_on_owner(nodes, std::ptr::null_mut(), indices, &[]);
+            }
+        }
+    }
+
     /// The files a mounted file's own mounts read, as it was last read.
     fn mounted_within(path: &str) -> Vec<(String, String)> {
         MOUNTED
