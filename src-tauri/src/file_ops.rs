@@ -1305,6 +1305,23 @@ impl FileOperations {
                         }
                         continue;
                     }
+                    // An instance of another template that the entry's template gave, with something
+                    // set inside it: the override an edit writes, `- per_100g { - calories = 45 }`,
+                    // holding only what was set here. Written whole, it repeated the template's
+                    // reference in every such entry, with the template's own overrides beside it.
+                    if suppress_template_children
+                        && is_template_child
+                        && Self::is_a_nested_instance(child)
+                        && Self::written_mark(child).is_none()
+                        && Self::holds_a_marked_edit(child)
+                    {
+                        Self::drop_trailing_whitespace_line(output);
+                        if !output.ends_with('\n') {
+                            output.push('\n');
+                        }
+                        Self::write_added(child, output, &child_indent, fallback_indent_unit, false)?;
+                        continue;
+                    }
                     if suppress_template_children {
                         let has_value = child.parameters.contains_key("value");
                         let non_internal_non_value_params = child
@@ -2184,7 +2201,11 @@ impl FileOperations {
         pieces: &mut Vec<BlockPiece<'a>>,
     ) {
         for child in children {
-            let mark = Self::written_mark(child);
+            // A mark on a copy of a template's node was put there by the template's own block -
+            // the `- fibre = 1` of a `<Nutrients> per_100g { ... }` an entry's template holds,
+            // merged with the entry's `- per_100g { ... }` before the two were resolved as one.
+            // It has no place in this block's text, and is read as anything else the template gave.
+            let mark = Self::written_mark(child).filter(|_| !Self::is_a_templates_copy(child));
             if let (true, Some((at, child_up))) = (marks, mark) {
                 if child_up == up {
                     pieces.push(BlockPiece::Written(at, child));
@@ -2212,6 +2233,16 @@ impl FileOperations {
                 pieces.push(BlockPiece::Added(*anchor, child));
             }
         }
+    }
+
+    /// Whether a node's text is a template's, copied with it, rather than this document's own.
+    fn is_a_templates_copy(node: &OverseerNode) -> bool {
+        Self::snapshot_for(node).is_some_and(|snap| {
+            matches!(
+                snap.origin,
+                SnapshotOrigin::Synthetic(SyntheticSnapshotKind::TemplateClone)
+            )
+        })
     }
 
     /// Whether a node no block wrote holds something that has to be written now: an edit of its

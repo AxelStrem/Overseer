@@ -5894,6 +5894,12 @@ impl ActionExecutor {
                         OverseerValue::Boolean(true),
                     );
                     child.parameters.remove("_template_value");
+                    // Written here, not given by a template: inside an instance the entry's
+                    // template holds, this is the one mark the template's own overrides lack.
+                    child.parameters.insert(
+                        crate::file_ops::EDITED_HERE.to_string(),
+                        OverseerValue::Boolean(true),
+                    );
                     // Treat explicit runtime override as dash-authored for serializer stylistic reproduction
                     child.authored_dash = true;
                     // Track at parent level
