@@ -179,15 +179,22 @@ fn a_stranger_reads_the_base_and_writes_nothing_to_it() {
 }
 
 #[test]
-fn no_request_writes_to_the_library_and_no_other_library_file_is_opened_by_name() {
+fn no_request_writes_to_the_library_and_no_library_name_climbs_out_of_it() {
     let root = a_root("library");
     let documents = served(&root);
     let base = drawer::base_file().expect("the base ships");
     documents.as_asker(Asker::Person("ap31".into()), || {
         assert!(overseer::access::may(&base, Need::Read));
         assert!(!overseer::access::may(&base, Need::Edit));
-        assert!(documents.resolve("library:projects/project_template.os").is_err());
+        // A template a document may be made from is read by its library name, as `/v1/source`
+        // names a document's bases - and never written.
+        assert!(documents.resolve("library:projects/project_template.os").is_ok());
+        assert!(matches!(
+            documents.resolve_for("library:projects/project_template.os", Need::Edit),
+            Err(RequestError::ReadOnly(_))
+        ));
         assert!(documents.resolve("library:drawer/../projects/project_template.os").is_err());
+        assert!(documents.resolve("library:../library/projects/project_template.os").is_err());
     });
     documents.as_asker(Asker::Anyone, || assert!(!overseer::access::may(&base, Need::Edit)));
 }

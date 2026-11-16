@@ -1,5 +1,7 @@
 tab project (label="Project", mutable=true) {
     context vocabulary = "/project/Items, /project/History"
+    // Raised whenever Stages, Complexities, Flags or the fields of an item change, so a program that reads projects can tell it was written against another.
+    int template_version (hidden=true) = 1
     string name (label="", font-size=22px) = "Untitled project"
     text description (markdown=true, font-size=14px, hidden=$(../description == "")) = ""
 

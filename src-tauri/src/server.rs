@@ -11,6 +11,10 @@ use crate::docmgr::manager::DocumentManager;
 use crate::types::*;
 use std::path::{Component, Path, PathBuf};
 
+/// What a document of the libraries bases are found in is named by, before its path there:
+/// `library:projects/project_template.os` - see `Documents::library_file`.
+pub const LIBRARY: &str = "library:";
+
 /// The directory documents are served from. Nothing outside it is reachable.
 #[derive(Clone)]
 pub struct DocumentRoot {
@@ -233,6 +237,9 @@ impl DocumentRoot {
             };
         }
         let asker = crate::access::asker();
+        if let Some(rest) = name.strip_prefix(LIBRARY) {
+            return self.library_file(rest, need);
+        }
         let hidden = || match asker {
             crate::access::Asker::Stranger => RequestError::SignIn,
             crate::access::Asker::Visitor => RequestError::NotFound(format!("no example '{}'", name)),
@@ -249,6 +256,58 @@ impl DocumentRoot {
             return Err(RequestError::ReadOnly(crate::access::READ_ONLY.into()));
         }
         Err(hidden())
+    }
+
+    /// A document of the libraries bases are found in, named as `/v1/source` names a document's
+    /// bases: `library:projects/project_template.os`. Only to read.
+    ///
+    /// Anyone signed in may read one, whether or not a document of theirs is made from it: any
+    /// document may be made from any of them, and the templates that ship with Overseer are
+    /// published with it. A library in someone's folder is read on the terms of that folder, as a
+    /// base is - see `access`.
+    fn library_file(&self, rest: &str, need: crate::access::Need) -> std::result::Result<PathBuf, RequestError> {
+        let missing = || RequestError::NotFound(format!("no document '{}{}'", LIBRARY, rest));
+        if crate::access::asker() == crate::access::Asker::Stranger {
+            return Err(RequestError::SignIn);
+        }
+        let file = crate::environment::with_file(self.settings_file(), || {
+            if !crate::bases::is_document(Path::new(rest)) {
+                return Err(RequestError::Rejected(format!("'{}{}' is not an Overseer document", LIBRARY, rest)));
+            }
+            crate::bases::library_file(rest).ok_or_else(missing)
+        })?;
+        if !crate::access::may(&file, crate::access::Need::Read) {
+            return Err(missing());
+        }
+        match need {
+            crate::access::Need::Read => Ok(file),
+            crate::access::Need::Edit => Err(RequestError::ReadOnly(crate::access::READ_ONLY.into())),
+        }
+    }
+
+    /// The names a document's bases are read by: `library:<path>` for one found in a library,
+    /// the document's own name for one under the root that whoever is asking may read. A base
+    /// anywhere else is not named.
+    fn base_names(&self, path: &Path, text: &str) -> Vec<String> {
+        let Ok((_, nodes)) = crate::parser::parse_document(text) else {
+            return Vec::new();
+        };
+        let beside = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        self.within(Some(path.to_path_buf()), || {
+            crate::bases::files_of(&nodes, &beside)
+                .into_iter()
+                .filter_map(|file| {
+                    if let Ok(relative) = file.strip_prefix(&self.root) {
+                        if !crate::access::may(&file, crate::access::Need::Read) {
+                            return None;
+                        }
+                        let name = relative.to_string_lossy().replace('\\', "/");
+                        return Some(name);
+                    }
+                    crate::bases::library_name(&file).map(|name| format!("{}{}", LIBRARY, name))
+                })
+                .collect()
+        })
     }
 
     fn resolve_name(&self, name: &str) -> std::result::Result<PathBuf, RequestError> {
@@ -1485,6 +1544,8 @@ pub struct Source {
     pub version: String,
     pub text: String,
     pub parts: std::collections::BTreeMap<String, Vec<String>>,
+    /// The documents it inherits from, each by the name it is read by here - see `base_names`.
+    pub bases: Vec<String>,
     /// What a reader names to be answered "unchanged": the version, and which parts there are -
     /// a new part changes it while the document's text stands as it was.
     #[serde(skip)]
@@ -2010,8 +2071,10 @@ impl DocumentRoot {
         let path = self.resolve(name)?;
         let text = std::fs::read_to_string(&path)
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
-        let document = self.named(name);
+        // A library's document is named as it was asked for, not in the asker's folder.
+        let document = if name.starts_with(LIBRARY) { name.to_string() } else { self.named(name) };
         let version = crate::app_api::version_of(&text);
+        let bases = self.base_names(&path, &text);
         let beside = match document.rsplit_once('/') {
             Some((folder, _)) => format!("{}/", folder),
             None => String::new(),
@@ -2030,7 +2093,7 @@ impl DocumentRoot {
             let listing: Vec<&str> = parts.values().flatten().map(String::as_str).collect();
             format!("{}+{}", version, crate::app_api::version_of(&listing.join("\n")))
         };
-        Ok(Source { document, version, text, parts, tag })
+        Ok(Source { document, version, text, parts, bases, tag })
     }
 
     /// Append an entry to the list at an address, with the given fields.

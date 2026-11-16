@@ -250,6 +250,24 @@ such list, its parts in the order of their keys, under the names `/v1/source` re
 none of the document's text. Each is read as a document of its own, with its own version, and
 whoever may read the document may read its parts.
 
+`bases` names the documents its text leaves to, `[]` when it has none: the files its templates
+come from, and those these come from in turn, in the order they are first named. One under the
+root is named as any document is. One found in a library - the templates that ship with Overseer,
+or a folder `libraries.txt` names - is named `library:` and then its path in that library, and
+`/v1/source` reads it by that name, as text, with its version and `ETag`:
+
+```bash
+curl -H "$A" -G $B/v1/source --data-urlencode document=library:projects/project_template.os
+# {"document":"library:projects/project_template.os","version":"...","text":"tab project (...) {\r\n ...","parts":{},"bases":[]}
+```
+
+Anyone signed in may read a library's document, whether or not any document of theirs is made
+from it; it is never written. A name that climbs out of the library, or leads out of it, is
+answered as one that is not there. The project template says which of its versions it is in
+`/project/template_version`, an `int` raised whenever its stages, complexities, flags or the
+fields of an item change, so that a program reading projects can tell its template from the one
+it was written against.
+
 The version comes as the answer's `ETag` too. A program that reads the same document again names
 the `ETag` it holds, as `--url-query since=<tag>` or `If-None-Match: "<tag>"`, and while the text
 is still that version it is answered `304 Not Modified`, with no body; once it changed, it gets

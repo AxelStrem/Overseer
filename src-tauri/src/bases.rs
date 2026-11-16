@@ -394,6 +394,84 @@ fn in_libraries(file: &str) -> Vec<PathBuf> {
     libraries().into_iter().map(|dir| dir.join(path)).collect()
 }
 
+/// The file a library name names - `projects/project_template.os` for the server's
+/// `library:projects/project_template.os` - in the first library that has it, if one does.
+/// Nothing for a path that climbs out or is written in full, nor for one that leads out of its
+/// library once links are followed: a library holds only what is in its folder.
+pub fn library_file(name: &str) -> Option<PathBuf> {
+    let path = Path::new(name);
+    if name.is_empty() || path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return None;
+    }
+    libraries().into_iter().find_map(|dir| {
+        let file = dir.join(path).canonicalize().ok()?;
+        let dir = dir.canonicalize().ok()?;
+        file.starts_with(&dir).then_some(file)
+    })
+}
+
+/// A file's name in the libraries, as `library_file` reads it: its path in the first library that
+/// holds it, with forward slashes. Nothing for a file in none of them.
+pub fn library_name(file: &Path) -> Option<String> {
+    let file = file.canonicalize().ok()?;
+    libraries().into_iter().find_map(|dir| {
+        let dir = dir.canonicalize().ok()?;
+        let relative = file.strip_prefix(&dir).ok()?;
+        let parts: Vec<String> = relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        (!parts.is_empty()).then(|| parts.join("/"))
+    })
+}
+
+/// Every file a document inherits from, as its text names them: the bases its instances and lists
+/// name, found as the resolver finds them from the document's folder, and those each of these
+/// names in turn. Only files that are there, each once, in the order they are first named.
+///
+/// Unlike `held`, it reads the document as written rather than worked out, and gives no file a
+/// base would be found in were it put there.
+pub fn files_of(nodes: &[OverseerNode], beside: &Path) -> Vec<PathBuf> {
+    fn named(path: &str, beside: &Path, out: &mut Vec<PathBuf>) {
+        for one in references(path) {
+            if let Some(file) = reference(&one).file {
+                let found = locate(&file, Some(beside));
+                let Ok(found) = found.canonicalize() else { continue };
+                if found.is_file() && !out.contains(&found) {
+                    out.push(found);
+                }
+            }
+        }
+    }
+    fn walk(nodes: &[OverseerNode], beside: &Path, out: &mut Vec<PathBuf>) {
+        for node in nodes {
+            // A mount's own bases are its document's, read with it.
+            if node.node_type == "mount" {
+                continue;
+            }
+            if let Some(path) = &node.template {
+                named(path, beside, out);
+            }
+            for value in node.parameters.values() {
+                if let OverseerValue::Template(path) = value {
+                    named(path, beside, out);
+                }
+            }
+            walk(&node.children, beside, out);
+        }
+    }
+    let mut files = Vec::new();
+    walk(nodes, beside, &mut files);
+    // A base's references were settled to full paths when it was read; each file is read once,
+    // which also ends a cycle.
+    let mut next = 0;
+    while next < files.len() {
+        let file = files[next].clone();
+        if let (Ok(base), Some(dir)) = (load(&as_key(&file)), file.parent()) {
+            walk(&base, dir, &mut files);
+        }
+        next += 1;
+    }
+    files
+}
+
 /// The folders bases are looked for in, a line each. A document held worked out is checked
 /// against this as well as against its bases' files: a library put somewhere else changes where a
 /// base is found, and none of the files it was found in before has changed - see `document_cache`.
