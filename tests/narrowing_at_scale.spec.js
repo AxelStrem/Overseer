@@ -82,9 +82,15 @@ it('narrows 120 items, quickly and without touching the document', () => {
 
   // What it costs to type one character over a hundred and twenty rows. The document-side
   // alternative was a parse and resolve per keystroke, measured at 289ms on a smaller document.
+  // The DOM queries the keystroke makes are counted as well as timed: a count is the same on
+  // every machine, where jsdom's time on a shared two-core CI runner is not.
+  const queried = [Document.prototype, Element.prototype].flatMap((owner) =>
+    ['querySelectorAll', 'querySelector'].map((method) => vi.spyOn(owner, method)))
   const started = performance.now()
   type('brace')
   const took = performance.now() - started
+  const queries = queried.reduce((sum, spy) => sum + spy.mock.calls.length, 0)
+  for (const spy of queried) spy.mockRestore()
 
   const showing = 120 - hidden()
   const expected = items.filter((entry) => {
@@ -109,10 +115,12 @@ it('narrows 120 items, quickly and without touching the document', () => {
   expect(showing).toBeGreaterThan(0)
   expect(showing).toBeLessThan(120)
   // 338ms before the element lookup was gathered once instead of per row, which is what the
-  // document-side filter would have cost. Bounded generously because jsdom is far slower at
-  // this than a browser - the point of the number is to catch a return to per-row scanning.
-  console.warn(`  one keystroke over 120 rows: ${took.toFixed(0)}ms`)
-  expect(took, `a keystroke took ${took.toFixed(0)}ms over 120 rows`).toBeLessThan(120)
+  // document-side filter would have cost. What is guarded is that cause, not the time: a
+  // return to querying the page for each row makes at least one query per row, however fast
+  // the machine. The time is shown, not bounded, because jsdom's speed varies too much between
+  // machines for a bound loose enough for CI to still catch anything.
+  console.warn(`  one keystroke over 120 rows: ${took.toFixed(0)}ms, ${queries} DOM queries`)
+  expect(queries, `a keystroke made ${queries} DOM queries over 120 rows`).toBeLessThan(20)
 
   // And clearing it brings everything back rather than leaving rows stranded.
   type('')
