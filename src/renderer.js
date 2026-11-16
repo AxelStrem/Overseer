@@ -3403,6 +3403,18 @@ export class OverseerRenderer {
         const container = document.createElement('div')
         container.className = 'overseer-div overseer-mount'
 
+        // A mount brought in on open and there now has nothing to load and nothing to report:
+        // it draws what it holds and no more, as a project's definition does in its tracker.
+        const lazy = this.getParameterValue(node, 'lazy')
+        const notLazy = lazy === false || String(lazy).trim().toLowerCase() === 'false'
+        if (notLazy && this.getParameterValue(node, '_mount_status') === 'loaded'
+            && !this.getParameterValue(node, '_mount_error')) {
+            container.classList.add('mount-in-place')
+            this.applyLayoutStyles(container, node)
+            this.applyNodeStyles(container, node)
+            return container
+        }
+
         // Header/title from placeholder or source
         const placeholder = this.getParameterValue(node, 'placeholder') || ''
         const source = this.getParameterValue(node, 'source') || ''

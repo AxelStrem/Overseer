@@ -1443,6 +1443,11 @@ pub fn resolve_structure(nodes: &mut Vec<OverseerNode>) {
     if profiling {
         eprintln!("[PHASE]   templates {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
     }
+    // A mount a template declares is only there once the templates are copied, and the mounts
+    // brought in before resolving (see `app_api::load_document_maybe_recording`) are those the
+    // text writes: the project template's `definition`, its source given by each tracker, is one.
+    // Mounts already in are passed over, so for any other document this is a walk and no more.
+    crate::actions::ActionExecutor::preload_mounts(nodes);
     // After the templates, so that an entry's field has the type its template declares.
     hold_numbers_as_declared(nodes);
     // After the templates, so that a context an entry's template declares is in every entry.

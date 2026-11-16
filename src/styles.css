@@ -2427,6 +2427,13 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
   padding: 12px;
   margin-bottom: 12px;
 }
+/* A mount brought in on open draws what it holds where it stands, with no frame of its own. */
+.overseer-mount.mount-in-place {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-bottom: 0;
+}
 .overseer-mount .mount-title {
   font-weight: 600;
   margin-bottom: 6px;

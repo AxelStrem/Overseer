@@ -3005,7 +3005,9 @@ impl ActionExecutor {
             crate::resolver::note_reached(cur);
             let (seg, position) = split_position(seg);
             let (base, ord) = parse_seg(seg);
-            if eff_name(cur) == base && ord.is_none() && position.is_none() {
+            // Not past a mount: what it holds is named under it by the node its source names, which
+            // may share its name - the project template's `definition/definition`.
+            if eff_name(cur) == base && ord.is_none() && position.is_none() && cur.node_type != "mount" {
                 // Segment refers to current node by name; continue
                 continue;
             }
@@ -3275,6 +3277,13 @@ impl ActionExecutor {
 
         fn collect(nodes: &[OverseerNode], trail: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
             for n in nodes {
+                // A wrapper is no step of the path the mount is found by again, as of an address:
+                // a mount in an unnamed tab was looked for under a node called `tab`, and never
+                // brought in.
+                if crate::addressing::is_wrapper(n) {
+                    collect(&n.children, trail, out);
+                    continue;
+                }
                 trail.push(n.name.clone());
                 if n.node_type == "mount" && wants_preload(n) {
                     let already_loaded = matches!(

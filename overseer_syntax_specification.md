@@ -3184,6 +3184,24 @@ mounted calendar's day nobody wrote reads as the template in its own file, and a
 `of=` names a calendar of that file, so `FOOD/Days.at(date)` reads every day as the file does. Two
 files that mount each other open, the mount that comes round refused.
 
+A template can declare a mount, and its `source` is then read from each document made from the
+template, not from the template's file. A template that cannot know the file leaves it to the
+instance, which gives it as any parameter. The shipped project template keeps a tab that draws
+`mount definition (source="definition.os/definition", mutable=false)`, lazy so that a tracker
+without a definition asks for no file, and shown only once the mount holds something. A tracker
+`p.os` says where its own definition is, `p.project.os` beside it, and has it brought in on open:
+
+```overseer
+<projects/project_template.os/project> project {
+    - definition (source="p.project.os/definition", lazy=false)
+}
+```
+
+The definition is made from `<projects/project_definition.os/definition>`: what the project is,
+its repositories and places, the systems it runs on and its settings. Read through the tracker it
+is `project/definition/definition/description`. Mounted read-only, it is written only by its own
+name, by whoever may edit that file; whoever may not read it finds the mount missing.
+
 A lazy mount brings in what it names once something asks for it; `load_mount` brings it in from a
 press and `unload_mount` lets it go again (see "Actions and Events").
 

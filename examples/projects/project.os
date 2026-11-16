@@ -1,4 +1,5 @@
 <projects/project_template.os/project> project {
+    - definition (source="project.project.os/definition", lazy=false)
     - Items {
         - {
             - added = "2026-09-01T09:00:00+04:00"
