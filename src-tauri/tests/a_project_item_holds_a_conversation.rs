@@ -214,10 +214,14 @@ fn a_comment_can_be_removed_and_only_that_one_goes() {
 #[test]
 fn finishing_carries_the_conversation_and_the_work_into_history() {
     serialised(|| {
-        // brace, with a session of work recorded on it the way the loop records one.
+        // brace, with a session of work recorded on it the way the loop records one. Written in
+        // the example's own line endings, which are whatever the checkout gave it: CRLF on a
+        // Windows machine that converts them, LF everywhere else.
+        let nl = if EXAMPLE.contains("\r\n") { "\r\n" } else { "\n" };
         let worked = EXAMPLE.replacen(
-            "            - points = 2\r\n            div Talk {",
-            "            - points = 2\r\n            div Agents {\r\n                list Work {\r\n                    - {\r\n                        - at = \"2026-09-30T12:00:00+00:00\"\r\n                        - kind = \"build\"\r\n                        - model = \"claude-sonnet (high)\"\r\n                        - moved = \"ready > testing\"\r\n                        - cost = 0.75\r\n                        - lines = 12\r\n                    }\r\n                }\r\n            }\r\n            div Talk {",
+            &"            - points = 2\n            div Talk {".replace('\n', nl),
+            &"            - points = 2\n            div Agents {\n                list Work {\n                    - {\n                        - at = \"2026-09-30T12:00:00+00:00\"\n                        - kind = \"build\"\n                        - model = \"claude-sonnet (high)\"\n                        - moved = \"ready > testing\"\n                        - cost = 0.75\n                        - lines = 12\n                    }\n                }\n            }\n            div Talk {"
+                .replace('\n', nl),
             1,
         );
         assert_ne!(worked, EXAMPLE, "the example's brace is not where this expects it");

@@ -97,6 +97,23 @@ The specs draw with jsdom against a fake backend, which has no layout and no rea
 person will see - a layout, a press and what it writes - is checked in the real page as well,
 with `scripts/preview.mjs` (see "Seeing a document" in `DEVELOPMENT.md`).
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `master` and every pull request. It runs both suites
+on Windows, macOS and Linux - `cargo test --features server --no-fail-fast` in `src-tauri`, then
+the page's specs - and checks that the desktop app still compiles on macOS and Linux. Windows is
+left out of that check because its build needs the WebView2 runtime, which isn't in the repository.
+The checkout keeps line endings as committed (`core.autocrlf false`), because the serializer
+tests compare bytes.
+
+The tests need no system packages: the webview stack comes in only with the `desktop` feature.
+On Linux, the desktop app itself needs, on Ubuntu:
+
+```bash
+sudo apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+    librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libxdo-dev libssl-dev build-essential
+```
+
 ## Notes
 
 - Serializer tests assert on exact bytes, including newline style. The golden

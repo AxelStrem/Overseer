@@ -25,6 +25,11 @@ cd src-tauri && cargo build --release --features server --bin overseer-server
 ./target/release/overseer-server --root /srv/documents --frontend ../dist --bind 0.0.0.0 --open
 ```
 
+A tagged release on GitHub carries a prebuilt server for each system
+(`overseer-server-<tag>-<target>`, for Linux x86-64, Windows x86-64 and macOS on both Apple
+silicon and Intel) and the built page (`overseer-page-<tag>.zip`). Unpack the page into a folder
+and give it as `--frontend`, and nothing has to be built.
+
 Every machine on the network can then open `http://<server>:4747/` and read and change the
 documents. `--open` is what allows that: without a token the server refuses to listen anywhere
 but `127.0.0.1` unless it is asked to by name, and it prints a warning when it is. Leave `--open`

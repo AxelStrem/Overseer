@@ -120,6 +120,7 @@ async function startBrowser(profile) {
         'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
         '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/usr/bin/microsoft-edge', '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     ].find((p) => p && existsSync(p))
     if (!chrome) throw new Error('no Chrome or Edge found; set CHROME to a Chromium browser')
     const browser = spawn(chrome, [

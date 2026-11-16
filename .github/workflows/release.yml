@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  server:
+    name: overseer-server (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu, so the binary runs on systems with an older glibc too.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Build
+        working-directory: src-tauri
+        run: cargo build --release --features server --bin overseer-server --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          name="overseer-server-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          bin="src-tauri/target/${{ matrix.target }}/release"
+          mkdir -p out
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "out/$name.zip" "./$bin/overseer-server.exe"
+          else
+            tar -czf "out/$name.tar.gz" -C "$bin" overseer-server
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: out/*
+
+  # The server serves the page from `--frontend`; a deployment should not have to build it either.
+  page:
+    name: The built page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Package
+        run: |
+          mkdir -p out
+          (cd dist && zip -r "../out/overseer-page-${GITHUB_REF_NAME}.zip" .)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: page
+          path: out/*
+
+  # One job publishes everything, so parallel builds never race to create the release.
+  publish:
+    needs: [server, page]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
