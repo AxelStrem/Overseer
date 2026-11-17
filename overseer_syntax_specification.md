@@ -3198,9 +3198,13 @@ without a definition asks for no file, and shown only once the mount holds somet
 ```
 
 The definition is made from `<projects/project_definition.os/definition>`: what the project is,
-its repositories and places, the systems it runs on and its settings. Read through the tracker it
-is `project/definition/definition/description`. Mounted read-only, it is written only by its own
-name, by whoever may edit that file; whoever may not read it finds the mount missing.
+its repositories and places, the systems it runs on, its tools and its settings. Read through the
+tracker it is `project/definition/definition/description`. Mounted read-only, it is written only
+by its own name, by whoever may edit that file; whoever may not read it finds the mount missing.
+`Tools` lists the files a project's sessions run, keyed by `file`, each with its `sha256` and the
+`systems` it is for (every one, when none are picked); the files themselves are kept beside the
+definition in `tools/p.project/`, read and written over the server's `/v1/file` (see
+[API.md](API.md)).
 
 A lazy mount brings in what it names once something asks for it; `load_mount` brings it in from a
 press and `unload_mount` lets it go again (see "Actions and Events").

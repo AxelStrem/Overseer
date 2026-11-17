@@ -996,6 +996,86 @@ async fn read_source(
     Ok(([(header::ETAG, tag)], Json(json!(source))).into_response())
 }
 
+/// Which file beside which document `/v1/file` is asked for.
+#[derive(serde::Deserialize)]
+struct FileQuery {
+    doc: String,
+    path: String,
+}
+
+fn sha256_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// A file kept beside a document, as its bytes, with their sha256 as the version - see
+/// `DocumentRoot::kept_file`. A caller already holding that version is told so and nothing more.
+async fn read_file(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    axum::extract::Query(which): axum::extract::Query<FileQuery>,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let bytes = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.kept_file(&which.doc, &which.path))
+    })
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("reading panicked: {}", e))))?
+        .map_err(respond)?;
+    let sha256 = sha256_of(&bytes);
+    let tag = format!("\"{}\"", sha256);
+    let held = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(',').any(|v| v.trim().trim_start_matches("W/").trim_matches('"') == sha256));
+    if held {
+        return Ok((StatusCode::NOT_MODIFIED, [(header::ETAG, tag)]).into_response());
+    }
+    Ok((
+        [(header::CONTENT_TYPE, "application/octet-stream".to_string()), (header::ETAG, tag)],
+        bytes,
+    )
+        .into_response())
+}
+
+/// Keep the request's body as a file beside a document, at the path named, in place of what was
+/// there - see `DocumentRoot::keep_file`.
+async fn keep_file(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    axum::extract::Query(which): axum::extract::Query<FileQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let path = which.path.clone();
+    let sha256 = sha256_of(&body);
+    tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.keep_file(&which.doc, &which.path, &body))
+    })
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
+        .map_err(respond)?;
+    Ok(Json(json!({ "path": path, "sha256": sha256 })))
+}
+
+/// Remove a file kept beside a document.
+async fn drop_file(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    axum::extract::Query(which): axum::extract::Query<FileQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let documents = service.documents.clone();
+    let path = which.path.clone();
+    tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.drop_file(&which.doc, &which.path))
+    })
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("removing panicked: {}", e))))?
+        .map_err(respond)?;
+    Ok(Json(json!({ "removed": path })))
+}
+
 /// Append an entry to the list at an address.
 async fn append_at(
     State(service): State<Service>,
@@ -1572,6 +1652,14 @@ async fn serve() {
         .route("/v1/undo", post(undo))
         .route("/v1/watch", get(watch))
         .route("/v1/source", get(read_source))
+        // A body over the cap is refused here, as 413, before it is read whole.
+        .route(
+            "/v1/file",
+            get(read_file)
+                .put(keep_file)
+                .delete(drop_file)
+                .layer(axum::extract::DefaultBodyLimit::max(overseer::app_api::FILE_MOST_BYTES as usize)),
+        )
         .route("/account/me", get(me).post(change_me))
         .route("/account/invite", post(invite))
         .route("/account/sharing", post(start_sharing))
@@ -1635,6 +1723,7 @@ async fn serve() {
                 .route("/v1/node", get(read_at))
                 .route("/v1/watch", get(watch))
                 .route("/v1/source", get(read_source))
+                .route("/v1/file", get(read_file))
                 .route("/*name", get(example_or_page))
                 .layer(axum::middleware::from_fn(as_visitor))
                 .with_state(visiting);

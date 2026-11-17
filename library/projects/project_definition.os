@@ -10,6 +10,12 @@ div definition (layout="vertical", mutable=true) {
             string name = ""
         }
 
+        div Tool (layout="horizontal", margin=0, spacing=8, alignment="center") {
+            string file (label="", font-weight="bold", width=180px) = ""
+            tags systems (label="", vocabulary="/definition/Systems", hover-text="Every system, when none is picked") = ""
+            string sha256 (label="", font-size=11px) = ""
+        }
+
         list Systems (entry=<System>, key="tag") {
             - {
                 - tag = "windows"
@@ -33,6 +39,9 @@ div definition (layout="vertical", mutable=true) {
 
     text places_header (markdown=true) = "## Places"
     list Places (entry=<Place>, key="name", layout="vertical", spacing=2) { }
+
+    text tools_header (markdown=true) = "## Tools"
+    list Tools (entry=<Tool>, key="file", layout="vertical", spacing=2) { }
 
     tags systems (label="Runs on", vocabulary="/definition/Systems", hover-text="Every system, when none is picked") = ""
     text settings (label="Settings") = ""

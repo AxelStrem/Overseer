@@ -276,6 +276,35 @@ the parts there are folded in, so a new part gets the answer again even while th
 it was; a past part, asked for by its own version, is answered `304` until it changes. Without
 parts, the `ETag` is the version. A document it may not read is refused all the same.
 
+## Files beside a document: `/v1/file`
+
+```bash
+curl -H "$A" -X PUT --data-binary @drive.py "$B/v1/file?doc=projects/p.project.os&path=tests/drive.py"
+# {"path":"tests/drive.py","sha256":"9f2c..."}
+curl -H "$A" "$B/v1/file?doc=projects/p.project.os&path=tests/drive.py" -o drive.py
+curl -H "$A" -X DELETE "$B/v1/file?doc=projects/p.project.os&path=tests/drive.py"
+# {"removed":"tests/drive.py"}
+```
+
+A document keeps plain files of any kind beside it, in a folder of its own named after it:
+`tools/<name>/` next to the document, so `projects/p.project.os` keeps `tests/drive.py` as
+`projects/tools/p.project/tests/drive.py`. A project's definition lists the scripts its sessions
+run this way, each with its hash, in its `Tools` list.
+
+- `GET` answers with the file's bytes, as `application/octet-stream`, and their sha256 in hex as
+  the `ETag`. Named in `If-None-Match`, a version still current is answered `304 Not Modified`
+  with no body. It is allowed to whoever may read the document, and to anyone else is answered as
+  the document itself would be: `401` to a stranger, `404` to a person it is not shared with.
+- `PUT` keeps the request's body at that path, making the folders on the way and replacing what
+  was there, and answers with the path and the sha256 of what it kept. `DELETE` removes the file.
+  Both need the document shared to edit: a read share is `403`, and anyone it is not shared with
+  `404`, as for any write. A library's document is only read.
+- `path` is relative to the document's folder of files, plain names separated by `/`: no `..`, no
+  root, no drive, and nothing that leads outside the folder once links are followed - `400`, or
+  `404` for a link that points away. A file not there is `404`.
+- A file may weigh 1 MiB at most. A larger body is `413` and nothing is kept; a larger file put
+  there by other means is `400` and is not handed out.
+
 ## Setting a value: `POST /v1/node`
 
 ```bash
@@ -410,6 +439,7 @@ disk:
 | 401 | no token, or the wrong one, and no session - with accounts, `sign in`, for anything not shared with everyone |
 | 403 | not allowed to whoever is asking: an invite by someone who is no admin, `X-Overseer-As` naming no account, a write to a document shared to be read or to an example, which says why in `refused` too |
 | 404 | no such document, or one not shared with whoever is asking, or nothing at that address |
+| 413 | a file kept beside a document over its cap |
 | 422 | the document refused the press, or the write would make it too large (`refused` holds the sentence) |
 | 500 | the write failed |
 

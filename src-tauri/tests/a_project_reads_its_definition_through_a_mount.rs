@@ -11,7 +11,7 @@ use overseer::types::OverseerValue;
 use std::path::PathBuf;
 
 const TRACKER: &str = "<projects/project_template.os/project> project (label=\"P\") {\n    - name = \"P\"\n    - definition (source=\"p.project.os/definition\", lazy=false)\n    - Items {\n        - {\n            - added = \"2026-10-01T10:00:00+00:00\"\n            - handle = \"brace\"\n            - title = \"A brace\"\n        }\n    }\n}\n";
-const DEFINITION: &str = "<projects/project_definition.os/definition> definition {\n    - description = \"What P is.\"\n    - Repos {\n        - {\n            - name = \"p\"\n            - about = \"Where P is built\"\n        }\n    }\n    - systems = \"linux\"\n}\n";
+const DEFINITION: &str = "<projects/project_definition.os/definition> definition {\n    - description = \"What P is.\"\n    - Repos {\n        - {\n            - name = \"p\"\n            - about = \"Where P is built\"\n        }\n    }\n    - Tools {\n        - {\n            - file = \"tests/probe.ps1\"\n            - sha256 = \"ab12\"\n            - systems = \"windows\"\n        }\n    }\n    - systems = \"linux\"\n}\n";
 const SHARED_BOTH: &str = "div (hidden=true) {\n    div Share {\n        string document = \"\"\n        string with = \"\"\n        string can = \"read\"\n    }\n}\n\nlist Shares (entry=<Share>) {\n    - {\n        - document = \"projects/p.os\"\n        - with = \"bob\"\n        - can = \"edit\"\n    }\n    - {\n        - document = \"projects/p.project.os\"\n        - with = \"bob\"\n    }\n}\n";
 const DESCRIPTION: &str = "project/definition/definition/description";
 
@@ -66,8 +66,12 @@ fn the_owner_reads_the_definition_through_the_tracker() {
         Some(OverseerValue::String("What P is.".into()))
     );
     assert_eq!(
-        value_at(&documents, ann, "ann/projects/p.os", "project/definition/definition/Repos/[p]/about"),
+        value_at(&documents, ann.clone(), "ann/projects/p.os", "project/definition/definition/Repos/[p]/about"),
         Some(OverseerValue::String("Where P is built".into()))
+    );
+    assert_eq!(
+        value_at(&documents, ann, "ann/projects/p.os", "project/definition/definition/Tools/[tests\\/probe.ps1]/sha256"),
+        Some(OverseerValue::String("ab12".into()))
     );
 }
 

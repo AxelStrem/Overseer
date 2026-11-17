@@ -571,6 +571,14 @@ fn reaches_unread_parts(nodes: &[OverseerNode], address: &str) -> bool {
 }
 
 /// Pull a string argument, accepting either spelling the frontend might send.
+/// A file beside a document that was refused, as a request answers it.
+fn refused_file(refused: app_api::IconRefused) -> RequestError {
+    match refused {
+        app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),
+        app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
+    }
+}
+
 fn arg_str(args: &serde_json::Value, names: &[&str]) -> Option<String> {
     names
         .iter()
@@ -2094,6 +2102,27 @@ impl DocumentRoot {
             format!("{}+{}", version, crate::app_api::version_of(&listing.join("\n")))
         };
         Ok(Source { document, version, text, parts, bases, tag })
+    }
+
+    /// The bytes of a file kept beside a document - see `app_api::kept_file` - for whoever may
+    /// read the document.
+    pub fn kept_file(&self, name: &str, path: &str) -> std::result::Result<Vec<u8>, RequestError> {
+        let document = self.resolve_for(name, crate::access::Need::Read)?;
+        let found = app_api::kept_file(&document, path).map_err(refused_file)?;
+        std::fs::read(&found).map_err(|_| RequestError::NotFound(format!("no file '{}'", path)))
+    }
+
+    /// Keeps a file beside a document, for whoever may change the document - see
+    /// `app_api::keep_file`.
+    pub fn keep_file(&self, name: &str, path: &str, bytes: &[u8]) -> std::result::Result<(), RequestError> {
+        let document = self.resolve_for(name, crate::access::Need::Edit)?;
+        app_api::keep_file(&document, path, bytes).map_err(refused_file)
+    }
+
+    /// Removes a file kept beside a document, for whoever may change the document.
+    pub fn drop_file(&self, name: &str, path: &str) -> std::result::Result<(), RequestError> {
+        let document = self.resolve_for(name, crate::access::Need::Edit)?;
+        app_api::drop_file(&document, path).map_err(refused_file)
     }
 
     /// Append an entry to the list at an address, with the given fields.

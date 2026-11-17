@@ -3650,9 +3650,101 @@ fn file_beside(
     file_in(folder, name, extensions, most, what)
 }
 
+/// The most a file kept beside a document may weigh. These are a project's scripts and small
+/// assets, fetched whole in one answer.
+pub const FILE_MOST_BYTES: u64 = 1024 * 1024;
+
+/// The folder a document's plain files are kept in: `tools/<document name>/` beside it, as its
+/// pasted images are kept under `images/<document name>/`.
+fn kept_folder(document: &std::path::Path) -> std::result::Result<std::path::PathBuf, IconRefused> {
+    let none = || IconRefused::Missing("no document to keep files beside".into());
+    let stem = document.file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty()).ok_or_else(none)?;
+    Ok(document.parent().ok_or_else(none)?.join("tools").join(stem))
+}
+
+/// Only a path of plain names, relative, as `file_in` takes it - checked before anything is
+/// looked up or made on disk.
+fn plain_relative(name: &str) -> std::result::Result<&std::path::Path, IconRefused> {
+    use std::path::{Component, Path};
+    let relative = Path::new(name);
+    if name.is_empty() || relative.is_absolute() || name.contains(':') {
+        return Err(IconRefused::NotAName(format!("'{}' is not a relative path", name)));
+    }
+    if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
+        return Err(IconRefused::NotAName(format!("'{}' contains a path component that is not a name", name)));
+    }
+    Ok(relative)
+}
+
+/// A file kept beside a document by `keep_file`, by its path inside the document's folder of
+/// files: any extension, checked otherwise as `file_beside` checks what a document names.
+pub fn kept_file(document: &std::path::Path, path: &str) -> std::result::Result<std::path::PathBuf, IconRefused> {
+    plain_relative(path)?;
+    file_in(&kept_folder(document)?, path, &[], FILE_MOST_BYTES, "a file")
+}
+
+/// Keeps these bytes beside a document, at the path the caller names inside its folder of files,
+/// in place of what was there. Unlike an image, the caller picks the name - a project's tools are
+/// fetched by the paths its definition lists - so every folder on the way is confirmed to sit
+/// under that folder once links are followed, before anything is made in it. The bytes go to a
+/// file of their own first and are renamed into place, so a reader never sees half of them.
+pub fn keep_file(document: &std::path::Path, path: &str, bytes: &[u8]) -> std::result::Result<(), IconRefused> {
+    use std::io::Write as _;
+    let relative = plain_relative(path)?;
+    if bytes.len() as u64 > FILE_MOST_BYTES {
+        return Err(IconRefused::NotAName(format!("'{}' is too large to be kept", path)));
+    }
+    let cannot = |e: std::io::Error| IconRefused::Missing(format!("cannot keep '{}': {:?}", path, e.kind()));
+    let folder = kept_folder(document)?;
+    let beside = document
+        .parent()
+        .ok_or_else(|| IconRefused::Missing("no document to keep files beside".into()))?
+        .canonicalize()
+        .map_err(cannot)?;
+    std::fs::create_dir_all(&folder).map_err(cannot)?;
+    let folder = folder.canonicalize().map_err(cannot)?;
+    let outside = || IconRefused::NotAName(format!("'{}' leads outside the document's files", path));
+    if !folder.starts_with(&beside) {
+        return Err(outside());
+    }
+    let mut at = folder.clone();
+    if let Some(parent) = relative.parent() {
+        for part in parent.components() {
+            at.push(part);
+            if !at.exists() {
+                std::fs::create_dir(&at).map_err(cannot)?;
+            }
+            at = at.canonicalize().map_err(cannot)?;
+            if !at.starts_with(&folder) || !at.is_dir() {
+                return Err(outside());
+            }
+        }
+    }
+    let name = relative.file_name().ok_or_else(outside)?;
+    let target = at.join(name);
+    if target.is_dir() {
+        return Err(IconRefused::NotAName(format!("'{}' is a folder", path)));
+    }
+    let temporary = at.join(format!(".{}.keeping", name.to_string_lossy()));
+    let written = std::fs::File::create(&temporary).and_then(|mut file| file.write_all(bytes));
+    if let Err(e) = written.and_then(|_| std::fs::rename(&temporary, &target)) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(cannot(e));
+    }
+    Ok(())
+}
+
+/// Removes a file kept beside a document, found as `kept_file` finds it, whatever its size.
+pub fn drop_file(document: &std::path::Path, path: &str) -> std::result::Result<(), IconRefused> {
+    plain_relative(path)?;
+    let found = file_in(&kept_folder(document)?, path, &[], u64::MAX, "a file")?;
+    std::fs::remove_file(&found)
+        .map_err(|e| IconRefused::Missing(format!("cannot remove '{}': {:?}", path, e.kind())))
+}
+
 /// A file named by a path relative to this folder, checked as `file_beside` says: plain names
-/// only, one of these extensions, under the folder once links are followed, and no heavier than
-/// `most`.
+/// only, one of these extensions (any, when none are given), under the folder once links are
+/// followed, and no heavier than `most`.
 fn file_in(
     folder: &std::path::Path,
     name: &str,
@@ -3669,7 +3761,7 @@ fn file_in(
         return Err(IconRefused::NotAName(format!("'{}' contains a path component that is not a name", name)));
     }
     let extension = relative.extension().and_then(|e| e.to_str()).unwrap_or_default();
-    if !extensions.iter().any(|e| e.eq_ignore_ascii_case(extension)) {
+    if !extensions.is_empty() && !extensions.iter().any(|e| e.eq_ignore_ascii_case(extension)) {
         return Err(IconRefused::NotAName(format!("'{}' is not {} file", name, what)));
     }
     let kind = what.strip_prefix("an ").or_else(|| what.strip_prefix("a ")).unwrap_or(what);
