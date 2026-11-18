@@ -113,9 +113,25 @@ static SUMMARISED_PARTS: LazyLock<Mutex<crate::bounded::Bounded<PathBuf, (String
 /// while the document is worked out. Afterwards nothing reads those entries - the summaries
 /// answer for them - and a history of a dozen weeks would otherwise sit in memory for the two the
 /// window draws.
+///
+/// Their snapshots go too: the source registry would otherwise be the one thing holding them.
+/// Nothing parsed only for a summary is drawn - a summary keeps values, not nodes - so the page
+/// can send back none of their ids. A drawn part of the same text shares their scope, and keeps it.
 pub fn let_go_of_summary_reads() {
-    if let Ok(mut held) = SUMMARISED_PARTS.lock() {
-        held.clear();
+    let gone = match SUMMARISED_PARTS.lock() {
+        Ok(mut held) => held.take_values(),
+        Err(_) => return,
+    };
+    if gone.is_empty() {
+        return;
+    }
+    let texts: Vec<String> = gone.into_iter().map(|(_, text, _)| text).collect();
+    let forget: Vec<&String> = match READ_PARTS.lock() {
+        Ok(held) => texts.iter().filter(|text| !held.values().any(|(_, drawn, _)| drawn == *text)).collect(),
+        Err(_) => return,
+    };
+    for text in forget {
+        crate::source_registry::SourceRegistry::forget_text(text);
     }
 }
 

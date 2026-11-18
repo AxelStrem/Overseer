@@ -197,6 +197,46 @@ impl SourceRegistry {
         }
     }
 
+    /// Forget the snapshots of the last parse of `source`, unless a parse is using them now.
+    ///
+    /// The registry holds snapshots strongly, as a node that comes back from the page carries
+    /// only its id: so a tree let go of leaves its snapshots here until 32 newer parses push them
+    /// out. For a parse nothing was ever drawn from - a part read only to be summarised - the
+    /// page can name none of its ids, and they can go with the tree.
+    pub fn forget_text(source: &str) {
+        let hash = text_hash(source);
+        let Some(id) = SCOPE_BY_TEXT.read().ok().and_then(|m| m.get(&hash).copied()) else {
+            return;
+        };
+        // Taken in the order `evict_old_scopes` takes them.
+        let Ok(mut order) = SCOPE_ORDER.write() else {
+            return;
+        };
+        let Ok(active) = ACTIVE_SCOPES.read() else {
+            return;
+        };
+        if active.contains(&id) {
+            return;
+        }
+        let Ok(mut scopes) = SCOPES.write() else {
+            return;
+        };
+        scopes.remove(&id);
+        order.retain(|x| *x != id);
+        if let Ok(mut by_text) = SCOPE_BY_TEXT.write() {
+            by_text.retain(|_, scope| *scope != id);
+        }
+    }
+
+    /// Whether the snapshots of a parse of `source` are held.
+    pub fn holds_text(source: &str) -> bool {
+        SCOPE_BY_TEXT
+            .read()
+            .ok()
+            .and_then(|m| m.get(&text_hash(source)).copied())
+            .is_some_and(|id| SCOPES.read().map(|s| s.contains_key(&id)).unwrap_or(false))
+    }
+
     fn current_scope() -> Option<u64> {
         CURRENT_SCOPE.with(|s| s.borrow().last().copied())
     }

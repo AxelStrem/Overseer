@@ -135,6 +135,17 @@ impl<K: Eq + Hash + Clone, V> Bounded<K, V> {
         self.held.clear();
         self.bytes = 0;
     }
+
+    /// What is held, without counting it as a use.
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.held.values().map(|held| &held.value)
+    }
+
+    /// Let go of everything held, handing it back.
+    pub fn take_values(&mut self) -> Vec<V> {
+        self.bytes = 0;
+        self.held.drain().map(|(_, held)| held.value).collect()
+    }
 }
 
 impl<K: Eq + Hash + Clone, V> Default for Bounded<K, V> {
