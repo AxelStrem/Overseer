@@ -5070,13 +5070,25 @@ fn merge_into_field(template_field: &mut OverseerNode, override_field: &Overseer
     adopt_source_metadata(template_field, override_field);
 
     // The override's own parameters win over the template's, as an instance's do at its root,
-    // and lose their template marker so that they persist.
+    // and lose their template marker so that they persist - unless the override was itself given
+    // by a template. An instance copied with the template that holds it, `<Nutrients> per_100g`
+    // in a list's entry template, brings that template's block along, and a field the block
+    // restyles keeps the style as the template's: an edit of the field in one entry writes the
+    // value alone, not the style beside it.
+    let given = |key: &str, value: &OverseerValue| {
+        override_field.parameters.get(&format!("_template_{}", key)) == Some(value)
+    };
     for (key, value) in override_field.parameters.iter() {
         if key == "value" || key == "entry" || key.starts_with('_') {
             continue;
         }
         template_field.parameters.insert(key.clone(), value.clone());
-        template_field.parameters.remove(&format!("_template_{}", key));
+        let marker = format!("_template_{}", key);
+        if given(key, value) {
+            template_field.parameters.insert(marker, value.clone());
+        } else {
+            template_field.parameters.remove(&marker);
+        }
     }
 
     // Override a simple value (e.g., name = "...")
