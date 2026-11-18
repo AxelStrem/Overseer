@@ -100,6 +100,19 @@ describe('a list drawn as a tree', () => {
     expect(list().querySelector('.overseer-list'), 'an inner list was drawn as a box').toBeNull()
   })
 
+  it('stands each depth in by its indent, written with a unit or without', () => {
+    const indentOf = (indent) => {
+      const doc = nested()
+      doc[0].children[0].parameters.indent = indent
+      open(doc)
+      return list().style.getPropertyValue('--tree-indent')
+    }
+    expect(indentOf({ CssSize: { Pixels: 12 } })).toBe('12px')
+    expect(indentOf({ Integer: 12 })).toBe('12px')
+    expect(indentOf({ CssSize: { Em: 1.5 } })).toBe('1.5em')
+    expect(indentOf({ String: '14px' })).toBe('14px')
+  })
+
   it('joins each row to its parent, and runs a guide on only past a sibling still to come', () => {
     open(nested())
     expect(lines('Car')).toEqual(['tree-stem@0', 'tree-chevron@0'])

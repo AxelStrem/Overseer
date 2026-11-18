@@ -4693,8 +4693,12 @@ export class OverseerRenderer {
         }
         const indent = this.getParameterValue(list, 'indent')
         if (indent !== null && indent !== undefined && String(indent).trim() !== '') {
-            const size = String(indent).trim()
-            element.style.setProperty('--tree-indent', /^\d+(\.\d+)?$/.test(size) ? `${size}px` : size)
+            // `indent=12px` comes as a size, `{ Pixels: 12 }`, not as text, and `indent=12` as a
+            // number: both are read the way any other size is.
+            let size = this.convertCssSizeValue(indent)
+            if (typeof size === 'string') size = size.trim()
+            if (/^\d+(\.\d+)?$/.test(size)) size = `${size}px`
+            if (typeof size === 'string' && size) element.style.setProperty('--tree-indent', size)
         }
         this.arrangeTree(element, list)
     }
