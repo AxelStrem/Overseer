@@ -1600,6 +1600,9 @@ impl DocumentRoot {
         let name = arg_str(args, &["path"])
             .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
         let path = self.resolve_for(&name, crate::access::Need::Edit)?;
+        // From asking whether the file moved on to writing it, or a write landing in between is
+        // the very thing the question exists to catch, and is lost anyway.
+        let _held = crate::writelock::lock(&path);
 
         let text = match cmd {
             "save_overseer_file_with_original" => {
@@ -1704,6 +1707,9 @@ impl DocumentRoot {
         answer: impl FnOnce(&[OverseerNode]) -> A,
     ) -> std::result::Result<(T, A), RequestError> {
         let path = self.resolve(name)?;
+        // Until the write is done: another write starting from this same text would be written
+        // over by this one, or write over it - see `writelock`.
+        let _held = crate::writelock::lock(&path);
         let text = std::fs::read_to_string(&path)
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
         let text_before = text.clone();
@@ -1956,6 +1962,7 @@ impl DocumentRoot {
     /// otherwise become the newest step, and the history would never move.
     pub fn undo(&self, name: &str) -> std::result::Result<serde_json::Value, RequestError> {
         let path = self.resolve_for(name, crate::access::Need::Edit)?;
+        let _held = crate::writelock::lock(&path);
         // Beside the file, where every writer keeps it - see `undo::beside`.
         let (folder, file) = crate::undo::beside(&path)
             .ok_or_else(|| RequestError::Rejected(format!("'{}' is not a document", name)))?;
@@ -1965,13 +1972,8 @@ impl DocumentRoot {
                 name
             )));
         };
-        let temporary = path.with_extension("os.writing");
-        std::fs::write(&temporary, previous.as_bytes())
-            .map_err(|e| RequestError::Failed(format!("could not write '{}': {}", name, e)))?;
-        std::fs::rename(&temporary, &path).map_err(|e| {
-            let _ = std::fs::remove_file(&temporary);
-            RequestError::Failed(format!("could not replace '{}': {}", name, e))
-        })?;
+        crate::writelock::replace(&path, previous.as_bytes())
+            .map_err(|e| RequestError::Failed(format!("could not replace '{}': {}", name, e)))?;
         crate::watch::wrote(&path);
         // What the step wrote through the document's mounts goes back with it.
         let left_alone = app_api::take_back_along(&path, along);
@@ -2017,13 +2019,8 @@ impl DocumentRoot {
                 crate::undo::remember(&folder, &file, &previous);
             }
         }
-        let temporary = path.with_extension("os.writing");
-        std::fs::write(&temporary, text.as_bytes())
-            .map_err(|e| RequestError::Failed(format!("could not write '{}': {}", name, e)))?;
-        std::fs::rename(&temporary, path).map_err(|e| {
-            let _ = std::fs::remove_file(&temporary);
-            RequestError::Failed(format!("could not replace '{}': {}", name, e))
-        })?;
+        crate::writelock::replace(path, text.as_bytes())
+            .map_err(|e| RequestError::Failed(format!("could not replace '{}': {}", name, e)))?;
         crate::watch::wrote(path);
         Ok(())
     }

@@ -31,6 +31,7 @@ pub mod types;
 pub mod undo;
 pub mod viewstate;
 pub mod watch;
+pub mod writelock;
 
 // Re-export common types for convenience in integration tests
 pub use file_ops::OverseerFileHandler;

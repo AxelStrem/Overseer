@@ -1229,6 +1229,9 @@ fn change_or_look(
         }
         since = std::time::Instant::now();
     };
+    // A change holds the document from this reading to its write - see `writelock`. A look writes
+    // nothing, and waits on nobody.
+    let _held = writing.then(|| crate::writelock::lock(std::path::Path::new(path)));
     let as_it_stood = std::fs::read_to_string(path)
         .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
     // Worked out as this viewer sees it, or a second press on a day button would start from what
@@ -2842,11 +2845,7 @@ fn write_keeping_a_step_back(at: &std::path::Path, text: &str, allowed: bool) ->
             crate::undo::remember(&beside, &named, &previous);
         }
     }
-    let temporary = at.with_extension("os.writing");
-    std::fs::write(&temporary, text.as_bytes())?;
-    std::fs::rename(&temporary, at).inspect_err(|_| {
-        let _ = std::fs::remove_file(&temporary);
-    })?;
+    crate::writelock::replace(at, text.as_bytes())?;
     crate::watch::wrote(at);
     Ok(())
 }
@@ -3000,9 +2999,7 @@ pub fn take_back_along(document: &std::path::Path, along: Vec<crate::undo::Along
                     .inspect(|_| crate::watch::wrote(at))
                     .is_ok(),
                 Some(previous) => {
-                    let temporary = at.with_extension("os.writing");
-                    std::fs::write(&temporary, previous.as_bytes())
-                        .and_then(|_| std::fs::rename(&temporary, at))
+                    crate::writelock::replace(at, previous.as_bytes())
                         .inspect(|_| crate::watch::wrote(at))
                         .is_ok()
                 }
@@ -3023,6 +3020,7 @@ pub fn take_back_along(document: &std::path::Path, along: Vec<crate::undo::Along
 /// swapping between the same two states.
 pub fn undo_document(path: &str) -> Result<(usize, Vec<String>)> {
     let at = std::path::Path::new(path);
+    let _held = crate::writelock::lock(at);
     let Some((beside, named)) = crate::undo::beside(at) else {
         return Err(OverseerError::ValidationError(format!("'{}' has no directory", path)));
     };
@@ -3032,9 +3030,7 @@ pub fn undo_document(path: &str) -> Result<(usize, Vec<String>)> {
             named
         )));
     };
-    let temporary = at.with_extension("os.writing");
-    std::fs::write(&temporary, previous.as_bytes())
-        .and_then(|_| std::fs::rename(&temporary, at))
+    crate::writelock::replace(at, previous.as_bytes())
         .map_err(|e| OverseerError::IoError(format!("could not write '{}': {}", named, e)))?;
     crate::watch::wrote(at);
     let left_alone = take_back_along(at, along);
