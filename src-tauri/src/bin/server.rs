@@ -1407,6 +1407,8 @@ async fn give_back_memory(
     let path = request.uri().path().to_string();
     let started = std::time::Instant::now();
     let response = next.run(request).await;
+    // Should a request have worked a document out without handing it to the document cache.
+    overseer::parts::let_go_of_summary_reads();
     release_free_memory();
     report_after_slow(&path, started.elapsed());
     response

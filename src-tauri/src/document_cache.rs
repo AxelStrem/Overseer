@@ -836,6 +836,9 @@ fn read_from(nodes: &[OverseerNode]) -> (Vec<(String, String)>, Option<String>) 
 }
 
 pub fn put_nodes(text: &str, nodes: &[OverseerNode], worked_out_in: WorkedOutIn) {
+    // A document handed here is worked out, and the parts it read only for their summaries are
+    // read by nothing now.
+    crate::parts::let_go_of_summary_reads();
     // Nothing is kept at all when the budget is nothing, rather than a copy being made and
     // immediately dropped.
     if budget_bytes() == 0 {
@@ -851,6 +854,7 @@ pub fn put_nodes(text: &str, nodes: &[OverseerNode], worked_out_in: WorkedOutIn)
 
 /// The same, when the caller has a document it no longer needs.
 pub fn own_nodes(text: &str, nodes: Vec<OverseerNode>, worked_out_in: WorkedOutIn) {
+    crate::parts::let_go_of_summary_reads();
     if budget_bytes() == 0 {
         return;
     }

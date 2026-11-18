@@ -85,29 +85,77 @@ static READ_PARTS: LazyLock<Mutex<crate::bounded::Bounded<PathBuf, (String, Stri
 
 /// How many parts are held parsed, and about how many bytes - for the server's memory report.
 pub fn read_parts_held() -> (usize, usize) {
-    READ_PARTS.lock().map_or((0, 0), |held| (held.len(), held.bytes()))
+    let (drawn, drawn_bytes) = READ_PARTS.lock().map_or((0, 0), |held| (held.len(), held.bytes()));
+    let (summarised, summarised_bytes) =
+        SUMMARISED_PARTS.lock().map_or((0, 0), |held| (held.len(), held.bytes()));
+    (drawn + summarised, drawn_bytes + summarised_bytes)
+}
+
+/// Parts parsed only to be summarised, held apart from `READ_PARTS` while the document that
+/// reads them is worked out - see `let_go_of_summary_reads`.
+///
+/// Apart, so that parsing a whole history for its summaries does not push out of `READ_PARTS`
+/// the parts the window draws, which every write to the history reads again.
+static SUMMARISED_PARTS: LazyLock<Mutex<crate::bounded::Bounded<PathBuf, (String, String, Vec<OverseerNode>)>>> =
+    LazyLock::new(|| Mutex::new(crate::bounded::Bounded::new()));
+
+/// Let go of the parts read only to be summarised, once the document that read them is worked out.
+///
+/// A server without the summaries on disk parses every part of a history once to make them, and
+/// each chain over the history goes over every part again: the parse is kept for them to share
+/// while the document is worked out. Afterwards nothing reads those entries - the summaries
+/// answer for them - and a history of a dozen weeks would otherwise sit in memory for the two the
+/// window draws.
+pub fn let_go_of_summary_reads() {
+    if let Ok(mut held) = SUMMARISED_PARTS.lock() {
+        held.clear();
+    }
 }
 
 /// The text of a part and its nodes, parsed. `None` when it is not there, or does not parse as
 /// a whole: the parser passes over what it cannot read and the document's writer keeps that text,
 /// but a part is written from its entries, and what was passed over would be lost.
 fn read(file: &Path) -> Option<(String, Vec<OverseerNode>)> {
+    read_for(file, false)
+}
+
+/// The same, saying whether only a summary wants it, which is then held only until the document
+/// is worked out - see `SUMMARISED_PARTS`.
+fn read_for(file: &Path, only_summarised: bool) -> Option<(String, Vec<OverseerNode>)> {
+    let path = file.to_path_buf();
     let stamp = crate::actions::mount_stamp(&file.to_string_lossy());
     if let Ok(mut held) = READ_PARTS.lock() {
-        if let Some((was, text, nodes)) = held.get(&file.to_path_buf()) {
+        if let Some((was, text, nodes)) = held.get(&path) {
             if *was == stamp {
                 return Some((text.clone(), nodes.clone()));
             }
         }
     }
-    let text = std::fs::read_to_string(file).ok()?;
-    let (rest, nodes) = crate::parser::parse_document(&text).ok()?;
-    if !rest.trim().is_empty() || passed_over(&nodes) {
-        return None;
-    }
-    if let Ok(mut held) = READ_PARTS.lock() {
+    let summarised = SUMMARISED_PARTS.lock().ok().and_then(|mut held| {
+        let fresh = matches!(held.peek(&path), Some((was, _, _)) if *was == stamp);
+        match (fresh, only_summarised) {
+            (false, _) => None,
+            (true, true) => held.get(&path).map(|(_, text, nodes)| (text.clone(), nodes.clone())),
+            // Read for drawing or a write now: it moves to where such parts are held.
+            (true, false) => held.remove(&path).map(|(_, text, nodes)| (text, nodes)),
+        }
+    });
+    let (text, nodes) = match summarised {
+        Some(found) if only_summarised => return Some(found),
+        Some(found) => found,
+        None => {
+            let text = std::fs::read_to_string(file).ok()?;
+            let (rest, nodes) = crate::parser::parse_document(&text).ok()?;
+            if !rest.trim().is_empty() || passed_over(&nodes) {
+                return None;
+            }
+            (text, nodes)
+        }
+    };
+    let holder = if only_summarised { &SUMMARISED_PARTS } else { &READ_PARTS };
+    if let Ok(mut held) = holder.lock() {
         let bytes = text.len() + crate::document_cache::footprint(&nodes);
-        held.insert(file.to_path_buf(), (stamp, text.clone(), nodes.clone()), bytes, crate::bounded::limit());
+        held.insert(path, (stamp, text.clone(), nodes.clone()), bytes, crate::bounded::limit());
     }
     Some((text, nodes))
 }
@@ -334,16 +382,16 @@ pub fn unread_stamps(list: &OverseerNode) -> impl Iterator<Item = (&str, &str)> 
     lines.lines().filter_map(|line| line.split_once('\t'))
 }
 
-/// The entries a part holds, parsed and not made from their template. `None` when it cannot be
-/// read, as for `bring_in`.
+/// The entries a part holds, parsed and not made from their template, for a summary of them.
+/// `None` when it cannot be read, as for `bring_in`.
 pub fn entries_in(file: &Path) -> Option<Vec<OverseerNode>> {
-    let (_text, mut nodes) = read(file)?;
+    let (_text, mut nodes) = read_for(file, true)?;
     Some(std::mem::take(&mut list_in(&mut nodes)?.children))
 }
 
 /// The entries a part holds, as `entries_in` gives them, with the text they were parsed from.
 pub fn text_and_entries_in(file: &Path) -> Option<(String, Vec<OverseerNode>)> {
-    let (text, mut nodes) = read(file)?;
+    let (text, mut nodes) = read_for(file, true)?;
     let entries = std::mem::take(&mut list_in(&mut nodes)?.children);
     Some((text, entries))
 }

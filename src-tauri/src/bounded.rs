@@ -91,6 +91,13 @@ impl<K: Eq + Hash + Clone, V> Bounded<K, V> {
         }
     }
 
+    /// Let go of what is held under this key.
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        let gone = self.held.remove(key)?;
+        self.bytes -= gone.bytes;
+        Some(gone.value)
+    }
+
     pub fn len(&self) -> usize {
         self.held.len()
     }

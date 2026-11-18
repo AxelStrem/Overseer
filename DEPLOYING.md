@@ -83,7 +83,15 @@ these are the settings to turn:
 - `OVERSEER_DISK_CACHE` - the folder for what is let go, by default `overseer-cache` in the
   system's temporary folder. Set it empty to keep nothing on disk. It holds the summaries of a
   list's parts too, in `sums/`, which spare a server that has just started reading old parts.
-- `OVERSEER_DISK_CACHE_MB` - how much that folder may hold, 512 by default; `0` turns it off.
+  A container's temporary folder starts empty every time it starts, so on a host with a volume
+  put it there, outside the documents folder - `/data/overseer-cache` beside `/data/documents`.
+  A restart, or a wake-up from sleep, then reads back what it had instead of working it out
+  again. Its files are only ever `.json`. They are named by the build of the server, so a deploy
+  of a new one finds none it can use, and the old ones go as the folder is trimmed to its budget.
+- `OVERSEER_DISK_CACHE_MB` - how much that folder may hold, 512 by default; `0` turns it off. A
+  large worked-out document takes 12-15 MB there, and the summaries up to an eighth of the
+  budget. 256 is room for about fifteen such documents: enough for one person's, and better on
+  a small volume, which the folder shares with the documents and any history of them.
 - `MALLOC_ARENA_MAX` - how many heaps the C allocator keeps. The image sets `2`: by default it
   keeps one per busy thread and never gives them back, and a server that holds little at rest
   can sit on gigabytes. Without it, set it yourself when running the binary on Linux.
@@ -102,8 +110,8 @@ took more than five seconds, it prints a `memory` line:
 
 Stopping the whole service when nobody uses it - Railway's serverless mode, Fly's auto-stop,
 Render's free tier - is a setting of the host, not of Overseer, and it is safe to turn on: the
-documents are on the volume, nothing else is kept between runs, and the first request after a
-wake-up works its documents out again.
+documents are on the volume, and the first request after a wake-up reads its documents back
+from the disk cache if that is on the volume too, or works them out again if not.
 
 ## Every setting
 
