@@ -302,7 +302,7 @@ run this way, each with its hash, in its `Tools` list.
 - `path` is relative to the document's folder of files, plain names separated by `/`: no `..`, no
   root, no drive, and nothing that leads outside the folder once links are followed - `400`, or
   `404` for a link that points away. A file not there is `404`.
-- A file may weigh 1 MiB at most. A larger body is `413` and nothing is kept; a larger file put
+- A file may weigh 8 MiB at most, as an image may. A larger body is `413` and nothing is kept; a larger file put
   there by other means is `400` and is not handed out.
 
 ## Setting a value: `POST /v1/node`

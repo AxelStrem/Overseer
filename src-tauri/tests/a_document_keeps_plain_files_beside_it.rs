@@ -345,7 +345,7 @@ fn a_file_over_the_cap_is_neither_kept_nor_handed_out() {
     let server = start(4894, "cap");
     let port = server.port;
     let (ap31, _) = ap31_and_bob(&server);
-    let most = 1024 * 1024;
+    let most = overseer::app_api::FILE_MOST_BYTES as usize;
     assert_eq!(put(port, &ap31, "p.project.os", "big.bin", &vec![7u8; most]).status, 200);
     let over = put(port, &ap31, "p.project.os", "huge.bin", &vec![7u8; most + 1]);
     assert_eq!(over.status, 413, "{}", over.text());

@@ -3650,9 +3650,10 @@ fn file_beside(
     file_in(folder, name, extensions, most, what)
 }
 
-/// The most a file kept beside a document may weigh. These are a project's scripts and small
-/// assets, fetched whole in one answer.
-pub const FILE_MOST_BYTES: u64 = 1024 * 1024;
+/// The most a file kept beside a document may weigh: the same as an image, since a project's tools
+/// are not only scripts - a reference screenshot a probe compares against is 2.6 MB. Still fetched
+/// whole in one answer.
+pub const FILE_MOST_BYTES: u64 = IMAGE_MOST_BYTES;
 
 /// The folder a document's plain files are kept in: `tools/<document name>/` beside it, as its
 /// pasted images are kept under `images/<document name>/`.
