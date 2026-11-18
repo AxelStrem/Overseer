@@ -192,8 +192,10 @@ struct Entry {
     nodes: Option<Vec<OverseerNode>>,
     graph: Option<crate::dependencies::Graph>,
     bytes: usize,
-    /// When this was last asked for, so the least useful entry is the one that goes.
-    used: u64,
+    /// When this was last asked for, so the least useful entry is the one that goes - and, by the
+    /// clock, so one nobody has asked for in a while goes whatever room there is - see
+    /// `let_go_idle`.
+    used: Used,
     /// The files the tree's mounts were read from and the bases its templates came from, and how
     /// each stood then - see `actions::mounts_held` and `bases::held`. The text is not all a tree
     /// was worked out from.
@@ -312,7 +314,7 @@ impl Entry {
             nodes: None,
             graph: None,
             bytes: 0,
-            used: 0,
+            used: Used { tick: 0, at: std::time::Instant::now() },
             mounts: Vec::new(),
             libraries: None,
             clock_minute: None,
@@ -399,8 +401,19 @@ impl Entry {
 static STORE: std::sync::Mutex<Vec<Entry>> = std::sync::Mutex::new(Vec::new());
 static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-fn now() -> u64 {
-    TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+/// A use: in order, for which entry was asked for least lately, and by the clock, for how long ago.
+/// Ordered by the counter first, which two uses in the same instant still tell apart.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Used {
+    tick: u64,
+    at: std::time::Instant,
+}
+
+fn now() -> Used {
+    Used {
+        tick: TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        at: std::time::Instant::now(),
+    }
 }
 
 /// Bring the store back within budget.
@@ -524,6 +537,9 @@ fn supersede(mut entry: Entry) {
         return;
     }
     entry.graph = None;
+    // Kept from now, for the page that shows it: when the entry was last asked for is not when
+    // that page will ask.
+    entry.used = now();
     let mut kept = SUPERSEDED.lock().unwrap_or_else(|e| e.into_inner());
     kept.retain(|held| !(held.text == entry.text && held.base == entry.base && held.seen == entry.seen));
     kept.push(entry);
@@ -955,6 +971,58 @@ pub fn forget_graphs() {
         }
         store.retain(|entry| entry.nodes.is_some());
     })
+}
+
+/// How long a document may go unused before it leaves memory, from `OVERSEER_IDLE_MINUTES` - half
+/// an hour when it says nothing, and never when it says `0`. Minutes, but read as a fraction too,
+/// so the effect can be watched without waiting half an hour.
+///
+/// A large cache serves whoever is using the server; in the quiet hours nobody is, and what it
+/// holds is billed all the same. Used means asked for - read, pressed, written, caught up by a
+/// page that is shown. A page left open on a document asks nothing, and its watch stream reads
+/// only the files' stamps, so it does not keep the document in memory.
+pub fn idle_limit() -> Option<std::time::Duration> {
+    let minutes = std::env::var("OVERSEER_IDLE_MINUTES")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .unwrap_or(30.0);
+    (minutes.is_finite() && minutes > 0.0).then(|| std::time::Duration::from_secs_f64(minutes * 60.0))
+}
+
+/// Let go of every document nobody has asked for within `limit`: to disk, as one let go for want
+/// of room is, to be read back from there when next asked for - see `document_disk`. The trees
+/// kept for pages to catch up from go the same way, but are not written: a page that catches up
+/// from one that is gone has it worked out again from the text it was handed - see
+/// `app_api::change_or_look`. Says how many went.
+pub fn let_go_idle(limit: std::time::Duration) -> usize {
+    let at = std::time::Instant::now();
+    let idle = |entry: &Entry| at.duration_since(entry.used.at) >= limit;
+    let gone: Vec<Entry> = with(|store| {
+        let (gone, kept) = std::mem::take(store).into_iter().partition(|entry| idle(entry));
+        *store = kept;
+        gone
+    });
+    let mut count = gone.len();
+    // Outside the store's lock: writing them out is handed to threads of its own, but taking the
+    // store's lock for that would hold up every request meanwhile.
+    for entry in gone {
+        let_go(entry);
+    }
+    let mut kept = SUPERSEDED.lock().unwrap_or_else(|e| e.into_inner());
+    let before = kept.len();
+    kept.retain(|entry| !idle(entry));
+    count += before - kept.len();
+    count
+}
+
+/// The same for every cache a document leaves behind it: the document and the trees kept for
+/// pages to catch up from, and the parts, mounted files and bases it read, each of which went
+/// unread within `limit`. Says how many things went.
+pub fn let_go_idle_everywhere(limit: std::time::Duration) -> usize {
+    let_go_idle(limit)
+        + crate::parts::let_go_of_idle_parts(limit)
+        + crate::actions::let_go_of_idle_mounts(limit)
+        + crate::bases::let_go_of_idle_bases(limit)
 }
 
 /// What the cache is holding: how many documents, and how many bytes it believes they are.

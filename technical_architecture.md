@@ -158,6 +158,11 @@ knowing about because each has a cost:
   of what working it out again costs. A file holds the text, the folder and the build it was worked out by,
   and is used only when all three match and the files its mounts read have not changed.
   `OVERSEER_DISK_CACHE_MB` bounds the folder, 512 by default.
+  What nobody has asked for within `OVERSEER_IDLE_MINUTES` (30 by default, `0` never) goes the
+  same way, swept once a minute by the server, with the parts, mounted files and bases nothing
+  read meanwhile and the trees kept for pages to catch up from. A page showing a text whose tree
+  is gone, while it listens, has that tree worked out again from the text it was handed, and is
+  sent what changed rather than the whole document.
   The summaries a total over a list with parts reads of the parts it has not read go in its
   `sums/` folder, an eighth of the budget, each named by the part's text, the entries' template,
   the chain and the build, so a server that has just started reads no part a summary was kept for.

@@ -91,6 +91,13 @@ pub fn read_parts_held() -> (usize, usize) {
     (drawn + summarised, drawn_bytes + summarised_bytes)
 }
 
+/// Let go of the parts nobody has read within `limit` - see `document_cache::let_go_idle`.
+pub fn let_go_of_idle_parts(limit: std::time::Duration) -> usize {
+    let drawn = READ_PARTS.lock().map_or(0, |mut held| held.let_go_idle(limit));
+    let summarised = SUMMARISED_PARTS.lock().map_or(0, |mut held| held.let_go_idle(limit));
+    drawn + summarised
+}
+
 /// Parts parsed only to be summarised, held apart from `READ_PARTS` while the document that
 /// reads them is worked out - see `let_go_of_summary_reads`.
 ///

@@ -90,6 +90,11 @@ pub fn mounted_held() -> (usize, usize) {
     MOUNTED.lock().map_or((0, 0), |held| (held.len(), held.bytes()))
 }
 
+/// Let go of the mounted files nobody has read within `limit` - see `document_cache::let_go_idle`.
+pub fn let_go_of_idle_mounts(limit: std::time::Duration) -> usize {
+    MOUNTED.lock().map_or(0, |mut held| held.let_go_idle(limit))
+}
+
 thread_local! {
     /// The mounted files being read, the outermost first - see `load_mounted_document`.
     static READING: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };

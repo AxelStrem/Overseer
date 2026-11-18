@@ -613,6 +613,11 @@ pub fn parsed_held() -> (usize, usize) {
     CACHE.lock().map_or((0, 0), |cache| (cache.len(), cache.bytes()))
 }
 
+/// Let go of the bases nobody has read within `limit` - see `document_cache::let_go_idle`.
+pub fn let_go_of_idle_bases(limit: std::time::Duration) -> usize {
+    CACHE.lock().map_or(0, |mut cache| cache.let_go_idle(limit))
+}
+
 /// A base's nodes as parsed, with its own references settled in its scope. Read again only once
 /// the file on disk has changed: a document is worked out again after every edit, and each time
 /// it asks for the same base.

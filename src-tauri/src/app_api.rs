@@ -515,6 +515,23 @@ fn baseline_copy(content: &str) -> Option<Vec<OverseerNode>> {
     crate::document_cache::nodes_for(content)
 }
 
+/// The tree a page showing this text holds, worked out again from the text, when nothing kept it:
+/// a document let go for nobody using it takes the trees kept for pages to catch up from with it -
+/// see `document_cache::let_go_idle` - and a page left open on it still holds one. Sent the whole
+/// document instead, that page would be drawn again from scratch for one field another client
+/// wrote.
+///
+/// Only as the file's mounts read when the page was shown, when it said: worked out from them as
+/// they read now, the tree would already hold what moved in them, and the page would never be told.
+/// Not for a viewer with state of their own, which the text alone does not give back, and only
+/// while a page listens for the document: nobody else holds a tree to be described against, and
+/// working the text out again costs what opening it did.
+fn worked_out_again_as_shown(shown: &str, reading: Option<&str>) -> Option<Vec<OverseerNode>> {
+    let nodes = load_document(shown.to_string()).ok()?;
+    let fits = reading.is_none_or(|reading| reads_version(&crate::actions::mounts_held(&nodes)) == reading);
+    fits.then_some(nodes)
+}
+
 /// Copy every worked-out value from one tree onto the other, matching node for node.
 ///
 /// The two are the same document - one parsed afresh, one as it last stood - so they are walked
@@ -1261,14 +1278,19 @@ fn change_or_look(
             text: held_as.to_string(),
         },
         // The document worked out for the caller's text, if it is still held, or kept since the
-        // file moved on from it; if not, there is nothing to describe against, and the caller is
-        // sent the whole document.
+        // file moved on from it, or failing both worked out again from that text - see
+        // `worked_out_again_as_shown`. If none of them will do, there is nothing to describe
+        // against, and the caller is sent the whole document.
         Some(shown) => Baseline {
             put_back: false,
             copy: shown.as_deref().and_then(|shown| {
-                baseline_copy(shown).or_else(|| {
-                    crate::document_cache::superseded_for(shown, shown_reading.as_deref())
-                })
+                baseline_copy(shown)
+                    .or_else(|| crate::document_cache::superseded_for(shown, shown_reading.as_deref()))
+                    .or_else(|| {
+                        (looking_at.is_empty() && crate::watch::listened(std::path::Path::new(path)))
+                            .then(|| worked_out_again_as_shown(shown, shown_reading.as_deref()))
+                            .flatten()
+                    })
             }),
             text: shown.clone().unwrap_or_default(),
         },

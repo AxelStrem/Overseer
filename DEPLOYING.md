@@ -92,6 +92,13 @@ these are the settings to turn:
   large worked-out document takes 12-15 MB there, and the summaries up to an eighth of the
   budget. 256 is room for about fifteen such documents: enough for one person's, and better on
   a small volume, which the folder shares with the documents and any history of them.
+- `OVERSEER_IDLE_MINUTES` - how long a document may go unused before it leaves memory, 30 by
+  default; `0` keeps it for as long as there is room. Used means read, pressed, written, or
+  caught up by a page that is shown: a tab left open on a document asks nothing, and does not
+  keep it. Checked once a minute; what goes - the document, and the parts, mounted files and
+  bases nothing has read meanwhile - is written to the disk folder as above, and the memory is
+  handed back to the system. The first request after a quiet stretch reads the document back
+  from there, and an open page goes on catching up by its changes.
 - `MALLOC_ARENA_MAX` - how many heaps the C allocator keeps. The image sets `2`: by default it
   keeps one per busy thread and never gives them back, and a server that holds little at rest
   can sit on gigabytes. Without it, set it yourself when running the binary on Linux.
@@ -132,6 +139,7 @@ A flag wins over its variable.
 | | `OVERSEER_CACHE_MB` | `64` | see above |
 | | `OVERSEER_DISK_CACHE` | system temp folder | see above |
 | | `OVERSEER_DISK_CACHE_MB` | `512` | see above |
+| | `OVERSEER_IDLE_MINUTES` | `30` | see above |
 | | `OVERSEER_MEMORY_LOG` | `15` | minutes between the `memory` lines in the log; `0` for none |
 | | `OVERSEER_DEPENDENCY_GRAPH` | on | `0` stops recording what each value was worked out from: a first open is a little quicker, every later one much slower |
 | | `TZ` | `UTC` | the time zone a document's dates are read in |

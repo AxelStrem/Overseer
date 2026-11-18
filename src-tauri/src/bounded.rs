@@ -44,6 +44,9 @@ struct Held<V> {
     value: V,
     bytes: usize,
     used: u64,
+    /// When it was last put in or asked for, so what nobody has asked for in a while can go
+    /// whatever room there is - see `let_go_idle`.
+    at: std::time::Instant,
 }
 
 impl<K: Eq + Hash + Clone, V> Bounded<K, V> {
@@ -57,6 +60,7 @@ impl<K: Eq + Hash + Clone, V> Bounded<K, V> {
         let tick = self.tick;
         self.held.get_mut(key).map(|held| {
             held.used = tick;
+            held.at = std::time::Instant::now();
             &held.value
         })
     }
@@ -71,7 +75,7 @@ impl<K: Eq + Hash + Clone, V> Bounded<K, V> {
     /// whoever put it in is about to ask for it again.
     pub fn insert(&mut self, key: K, value: V, bytes: usize, limit: usize) {
         self.tick += 1;
-        if let Some(was) = self.held.insert(key.clone(), Held { value, bytes, used: self.tick }) {
+        if let Some(was) = self.held.insert(key.clone(), Held { value, bytes, used: self.tick, at: std::time::Instant::now() }) {
             self.bytes -= was.bytes;
         }
         self.bytes += bytes;
@@ -111,6 +115,22 @@ impl<K: Eq + Hash + Clone, V> Bounded<K, V> {
         self.bytes
     }
 
+    /// Let go of everything nobody has put in or asked for within `limit`, and say how many went.
+    pub fn let_go_idle(&mut self, limit: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let before = self.held.len();
+        let mut freed = 0;
+        self.held.retain(|_, held| {
+            let keep = now.duration_since(held.at) < limit;
+            if !keep {
+                freed += held.bytes;
+            }
+            keep
+        });
+        self.bytes -= freed;
+        before - self.held.len()
+    }
+
     pub fn clear(&mut self) {
         self.held.clear();
         self.bytes = 0;
@@ -140,5 +160,16 @@ mod tests {
         assert_eq!((held.len(), held.bytes()), (1, 100), "one alone over the limit is still kept");
         held.insert("d", 5, 5, 25);
         assert_eq!((held.peek(&"d"), held.bytes()), (Some(&5), 5), "put in again, it is counted once");
+    }
+
+    #[test]
+    fn what_nobody_asked_for_within_the_limit_goes_and_the_rest_stays() {
+        let mut held: Bounded<&str, u32> = Bounded::new();
+        held.insert("a", 1, 10, 100);
+        held.insert("b", 2, 10, 100);
+        assert_eq!(held.let_go_idle(std::time::Duration::from_secs(3600)), 0);
+        assert_eq!(held.len(), 2);
+        assert_eq!(held.let_go_idle(std::time::Duration::ZERO), 2);
+        assert_eq!((held.len(), held.bytes()), (0, 0));
     }
 }

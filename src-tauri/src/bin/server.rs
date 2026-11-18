@@ -1335,10 +1335,6 @@ fn release_free_memory() {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
-    extern "C" {
-        fn malloc_trim(pad: usize) -> i32;
-    }
-
     static LAST: Mutex<Option<Instant>> = Mutex::new(None);
     const NOT_MORE_OFTEN_THAN: Duration = Duration::from_secs(2);
 
@@ -1352,6 +1348,15 @@ fn release_free_memory() {
         return;
     }
 
+    trim_the_allocator();
+}
+
+/// Hand what the allocator holds free back to the system, now - see `release_free_memory`.
+#[cfg(target_env = "gnu")]
+fn trim_the_allocator() {
+    extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
     // Safety: no arguments to get wrong, no pointers involved, and it is safe to call at any
     // time from any thread - it takes the allocator's own locks.
     unsafe {
@@ -1361,6 +1366,33 @@ fn release_free_memory() {
 
 #[cfg(not(target_env = "gnu"))]
 fn release_free_memory() {}
+
+#[cfg(not(target_env = "gnu"))]
+fn trim_the_allocator() {}
+
+/// Let go of what nobody has used for `OVERSEER_IDLE_MINUTES`, checked once a minute - see
+/// `overseer::document_cache::let_go_idle_everywhere`. A document let go is written to disk and
+/// read back from there when next asked for, so the first request after a quiet stretch pays for
+/// that read and nothing else does.
+///
+/// Trimmed after, once what was let go has been written out: the writes run on threads of their
+/// own, and until they are done the trees they write are still held.
+fn let_go_when_idle() {
+    let Some(limit) = overseer::document_cache::idle_limit() else { return };
+    let every = limit.min(std::time::Duration::from_secs(60));
+    std::thread::spawn(move || loop {
+        std::thread::sleep(every);
+        let gone = overseer::document_cache::let_go_idle_everywhere(limit);
+        if gone == 0 {
+            continue;
+        }
+        overseer::document_disk::settled();
+        trim_the_allocator();
+        if overseer::memory_report::every().is_some() {
+            eprintln!("idle: let go of {} | {}", gone, overseer::memory_report::line());
+        }
+    });
+}
 
 /// Print where the memory is after a request that took long enough to have needed a lot of it -
 /// see `overseer::memory_report`. Once a minute at most, so a run of slow writes is not a flood,
@@ -1775,6 +1807,7 @@ async fn serve() {
     };
     println!("listening on http://{}", addr);
     report_memory_regularly();
+    let_go_when_idle();
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("server stopped: {}", e);
         std::process::exit(1);
