@@ -5,6 +5,11 @@ div definition (layout="vertical", mutable=true) {
             string about (label="") = ""
         }
 
+        <Place> Repo {
+            string url (label="", font-size=11px, hover-text="The address git clone takes, with no credentials in it") = ""
+            string branch (label="", font-size=11px, width=100px, hover-text="The branch to clone; empty for the default") = ""
+        }
+
         div System {
             string tag = ""
             string name = ""
@@ -35,7 +40,7 @@ div definition (layout="vertical", mutable=true) {
     text description (markdown=true, font-size=14px) = "Say what the project is and what it holds to, then where its parts are, how work on it is checked, and what has bitten before."
 
     text repos_header (markdown=true) = "## Repositories"
-    list Repos (entry=<Place>, key="name", layout="vertical", spacing=2) { }
+    list Repos (entry=<Repo>, key="name", layout="vertical", spacing=2) { }
 
     text places_header (markdown=true) = "## Places"
     list Places (entry=<Place>, key="name", layout="vertical", spacing=2) { }

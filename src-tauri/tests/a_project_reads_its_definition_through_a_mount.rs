@@ -11,7 +11,7 @@ use overseer::types::OverseerValue;
 use std::path::PathBuf;
 
 const TRACKER: &str = "<projects/project_template.os/project> project (label=\"P\") {\n    - name = \"P\"\n    - definition (source=\"p.project.os/definition\", lazy=false)\n    - Items {\n        - {\n            - added = \"2026-10-01T10:00:00+00:00\"\n            - handle = \"brace\"\n            - title = \"A brace\"\n        }\n    }\n}\n";
-const DEFINITION: &str = "<projects/project_definition.os/definition> definition {\n    - description = \"What P is.\"\n    - Repos {\n        - {\n            - name = \"p\"\n            - about = \"Where P is built\"\n        }\n    }\n    - Tools {\n        - {\n            - file = \"tests/probe.ps1\"\n            - sha256 = \"ab12\"\n            - systems = \"windows\"\n        }\n    }\n    - systems = \"linux\"\n}\n";
+const DEFINITION: &str = "<projects/project_definition.os/definition> definition {\n    - description = \"What P is.\"\n    - Repos {\n        - {\n            - name = \"p\"\n            - about = \"Where P is built\"\n        }\n        - {\n            - name = \"site\"\n            - url = \"https://example.com/site.git\"\n            - branch = \"pages\"\n        }\n    }\n    - Tools {\n        - {\n            - file = \"tests/probe.ps1\"\n            - sha256 = \"ab12\"\n            - systems = \"windows\"\n        }\n    }\n    - systems = \"linux\"\n}\n";
 const SHARED_BOTH: &str = "div (hidden=true) {\n    div Share {\n        string document = \"\"\n        string with = \"\"\n        string can = \"read\"\n    }\n}\n\nlist Shares (entry=<Share>) {\n    - {\n        - document = \"projects/p.os\"\n        - with = \"bob\"\n        - can = \"edit\"\n    }\n    - {\n        - document = \"projects/p.project.os\"\n        - with = \"bob\"\n    }\n}\n";
 const DESCRIPTION: &str = "project/definition/definition/description";
 
@@ -73,6 +73,20 @@ fn the_owner_reads_the_definition_through_the_tracker() {
         value_at(&documents, ann, "ann/projects/p.os", "project/definition/definition/Tools/[tests\\/probe.ps1]/sha256"),
         Some(OverseerValue::String("ab12".into()))
     );
+}
+
+#[test]
+fn a_repository_says_where_it_is_cloned_from_and_one_that_does_not_reads_empty() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (_sandbox, documents) = anns_project("repo_url", SHARED_BOTH);
+    let ann = Asker::Person("ann".to_string());
+    let repo = |name: &str, field: &str| {
+        value_at(&documents, ann.clone(), "ann/projects/p.os", &format!("project/definition/definition/Repos/[{}]/{}", name, field))
+    };
+    assert_eq!(repo("site", "url"), Some(OverseerValue::String("https://example.com/site.git".into())));
+    assert_eq!(repo("site", "branch"), Some(OverseerValue::String("pages".into())));
+    assert_eq!(repo("p", "url"), Some(OverseerValue::String(String::new())));
+    assert_eq!(repo("p", "branch"), Some(OverseerValue::String(String::new())));
 }
 
 #[test]

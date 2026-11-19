@@ -3201,6 +3201,9 @@ The definition is made from `<projects/project_definition.os/definition>`: what 
 its repositories and places, the systems it runs on, its tools and its settings. Read through the
 tracker it is `project/definition/definition/description`. Mounted read-only, it is written only
 by its own name, by whoever may edit that file; whoever may not read it finds the mount missing.
+Each of `Repos` may say where it is cloned from: `url`, the address `git clone` takes, and
+`branch`, empty for the default. Whoever the definition is shared with reads them, so an address
+holds no credentials and nothing of anyone's machine.
 `Tools` lists the files a project's sessions run, keyed by `file`, each with its `sha256` and the
 `systems` it is for (every one, when none are picked); the files themselves are kept beside the
 definition in `tools/p.project/`, read and written over the server's `/v1/file` (see

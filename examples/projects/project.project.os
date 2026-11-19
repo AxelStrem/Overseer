@@ -4,6 +4,7 @@
         - {
             - name = "editor"
             - about = "The editor and its parser"
+            - url = "https://example.com/editor.git"
         }
         - {
             - name = "website"
