@@ -1,5 +1,5 @@
 tab project (label="Project", mutable=true) {
-    context vocabulary = "/project/Items, /project/History"
+    context vocabulary = "/project/Items, /project/History, /project/Features"
     // Raised whenever Stages, Complexities, Flags or the fields of an item change, so a program that reads projects can tell it was written against another.
     int template_version (hidden=true) = 1
     string name (label="", font-size=22px) = "Untitled project"
@@ -473,6 +473,113 @@ tab project (label="Project", mutable=true) {
             string colour (hidden=true) =
                 $(/project/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())
         }
+
+        list Standings (entry=<Label>, key="tag") {
+            - {
+                - tag = "proposed"
+                - name = "proposed"
+                - title = "Suggested, nothing decided"
+                - colour = "#6b7280"
+            }
+            - {
+                - tag = "wanted"
+                - name = "wanted"
+                - title = "Worth having, not yet taken on"
+                - colour = "#2563eb"
+            }
+            - {
+                - tag = "accepted"
+                - name = "accepted"
+                - title = "Part of the project's plan"
+                - colour = "#16a34a"
+            }
+            - {
+                - tag = "discarded"
+                - name = "discarded"
+                - title = "Decided against"
+                - colour = "#be123c"
+            }
+        }
+
+        div Feature (layout="vertical", width=260px, margin=0, spacing=2, padding=8, border-radius=10px,
+                     background-color=$(colour + "1a"),
+                     shadow=$("inset 0 3px 0 " + colour + ", 0 4px 12px -6px " + colour)) {
+            timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
+            div (layout="horizontal", margin=0, spacing=4, alignment="center") {
+                string handle (label="", font-size=11px, font-weight="bold", font-color=$(colour), padding=0,
+                               width=136px) = ""
+                enum standing (label="", vocabulary="/project/Standings", font-size=11px, width=96px, alignment="center",
+                               hover-text="How close it is to the project: proposed, wanted, accepted or discarded") =
+                    "proposed" {
+                    on change {
+                        set (path="../touched_at", mode="value") = $(now())
+                    }
+                }
+            }
+            text title (label="", font-size=14px, font-weight="bold", margin=0) = ""
+            tags requires (label="needs", vocabulary="/project/Features", font-size=11px, margin=0, padding=0,
+                           hover-text="Features that have to be accepted for this one to make sense",
+                           hidden=$(../requires.count() == 0)) = ""
+            tags incompatible (label="excludes", vocabulary="/project/Features", font-size=11px, margin=0, padding=0,
+                               hover-text="Features it cannot be accepted together with",
+                               hidden=$(../incompatible.count() == 0)) = ""
+            tags synergies (label="goes with", vocabulary="/project/Features", font-size=11px, margin=0, padding=0,
+                            hover-text="Features that work well with it, or gain from it",
+                            hidden=$(../synergies.count() == 0)) = ""
+            timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
+            float x (hidden=true) = 0
+            float y (hidden=true) = 0
+
+            div (layout="horizontal", margin=0, spacing=2, alignment="center") {
+                button detail (icon="file-text", margin=0, width=32px, background-color="transparent", hover-color=#8882,
+                               hover-text="What it is, its pros and its cons",
+                               font-color=$(../Detail/description == "" && ../Detail/pros == "" && ../Detail/cons == "" ? "#6b7280" : "inherit")) {
+                    on click {
+                        toggle_fold (path="../Detail")
+                    }
+                }
+                button talk (icon="message-square", margin=0, width=32px, background-color="transparent", hover-color=#8882,
+                             hover-text="Its conversation",
+                             font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
+                    on click {
+                        toggle_fold (path="../Talk")
+                    }
+                }
+                timestamp moved_at (label="", mode="elapsed", font-size=11px, font-color="#9ca3af", width=120px,
+                                   alignment="center", hover-text="Time since it last changed") =
+                    $(../touched_at > ../added ? ../touched_at : ../added)
+                button drop (icon="cross", margin=0, width=32px, background-color="transparent", hover-color=#8882,
+                             font-color="#6b7280", hover-text="Remove it") {
+                    on click {
+                        remove (from="/project/Features", keyField="handle", keyValue=$(../handle))
+                    }
+                }
+            }
+
+            div Detail (foldable=true, folded=true, layout="vertical", margin=0, spacing=4, overflow-x=auto) {
+                text description (label="", markdown=true, font-size=12px) = ""
+                text pros_header (markdown=true, margin=0) = "**Pros**"
+                text pros (label="", markdown=true, font-size=12px) = ""
+                text cons_header (markdown=true, margin=0) = "**Cons**"
+                text cons (label="", markdown=true, font-size=12px) = ""
+            }
+            div Talk (foldable=true, folded=true, layout="vertical", margin=0, spacing=4) {
+                list Comments (entry=<Comment>, layout="vertical", spacing=4, border-style=none) { }
+                button add (label="add comment", icon="message-square-plus", margin-top=4, margin-bottom=8,
+                            margin-left=0, margin-right=0) {
+                    on click {
+                        set (path="../../touched_at", mode="value") = $(now())
+                        append (list="../Comments") {
+                            - at = $(now())
+                            - author = $(me/handle == "" ? "owner" : me/handle)
+                        }
+                        start_editing (path="../Comments[-1]/body")
+                    }
+                }
+            }
+            string colour (hidden=true) =
+                $(/project/Standings.filter(|s| s/tag == ../standing).map(|s| s/colour).first())
+        }
     }
 
     // The plan in two tabs - what is still to do, and what was finished or cancelled - so the
@@ -590,8 +697,40 @@ tab project (label="Project", mutable=true) {
         list History (entry=<Finished>, key="handle", window=20, parts=$(|x| week(x/finished_at)), layout="vertical", spacing=1, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) { }
     }
 
+    // Inside the project tab, so that every tracker made from it has the features too: a tracker
+    // writes `- Features { ... }` beside `- Items` once it holds any.
+    tab (label="Features", hover-text="What the project could become, each feature placed beside the ones it goes with") {
+        div FindFeature (layout="horizontal", margin=0, spacing=10, alignment="center", border-style=none) {
+            textbox find (placeholder="find", narrows="/project/Features",
+                          by="handle, title, description, pros, cons, Comments", width=30%) = ""
+            textbox standing (placeholder="standings", vocabulary="/project/Standings", narrows="/project/Features",
+                              by="standing", width=20%) = ""
+        }
+
+        div NewFeature (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none) {
+            textbox handle (label="", placeholder="HANDLE", width=20%) = ""
+            textbox title (label="", placeholder="what it is, in a line", width=52%) = ""
+            button add (label="+ feature", margin=0, width=16%) {
+                on click {
+                    if (cond=$(../handle == "")) {
+                        refuse = "say a handle"
+                    }
+                    if (cond=$(/project/Features.filter(|x| x/handle == ../handle).count() > 0)) {
+                        refuse = "this handle is taken, say another"
+                    }
+                    append (list="/project/Features", from="..") {
+                        - added = $(now())
+                        - touched_at = $(now())
+                    }
+                }
+            }
+        }
+
+        list Features (entry=<Feature>, key="handle", view="canvas", x="x", y="y") { }
+    }
+
     tab (label="Definition", hover-text="What the project is, from the document beside the tracker", hidden=$(definition.count() == 0)) {
         mount definition (source="definition.os/definition", mutable=false) { }
-        text help (markdown=true, font-size=14px, mutable=false) = "**Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; parts that nothing is left on it but its parts, and once the last of them is finished or cancelled it moves to testing by itself; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. **Milestones:** the releases or goals an item counts towards, picked from the project's list of them as tags are, and drawn leaning so they read apart from the tags beside them. **Tabs:** the plan has two pages, Open, what is still to do, and Closed, what was finished or cancelled; Definition is what the project is, as the document beside the tracker says it, and this help. A tab beside the plan is the project's own."
+        text help (markdown=true, font-size=14px, mutable=false) = "**Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; parts that nothing is left on it but its parts, and once the last of them is finished or cancelled it moves to testing by itself; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. **Milestones:** the releases or goals an item counts towards, picked from the project's list of them as tags are, and drawn leaning so they read apart from the tags beside them. **Features:** what the project could become, kept apart from the plan: each is a card with a handle in capitals, so it is never taken for an item's, a line saying what it is, its description, pros and cons, and the features it needs, excludes or goes with. Its standing - proposed, wanted, accepted or discarded - colours the card. Cards are placed by dragging them anywhere on the area, so features that belong together can stand together; a new one waits in the strip above until it is placed. Text names a feature as <#HANDLE>, which draws its chip. **Tabs:** the plan has two pages, Open, what is still to do, and Closed, what was finished or cancelled; Features is what the project could become; Definition is what the project is, as the document beside the tracker says it, and this help. A tab beside the plan is the project's own."
     }
 }

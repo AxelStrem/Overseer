@@ -113,6 +113,63 @@
             - colour = "#0891b2"
         }
     }
+    - Features {
+        - {
+            - added = "2026-09-02T10:00:00+04:00"
+            - handle = "UNDO-TREE"
+            - standing = "accepted"
+            - title = "Undo keeps every branch, not only the last"
+            - synergies = "HISTORY-VIEW"
+            - x = 24
+            - y = 24
+            div Detail {
+                - description = "An undo after a new edit keeps the edits it replaced, as a branch to go back to."
+                - pros = "Nothing typed is ever lost."
+                - cons = "Needs a way to show the branches."
+            }
+        }
+        - {
+            - added = "2026-09-02T10:05:00+04:00"
+            - handle = "HISTORY-VIEW"
+            - standing = "wanted"
+            - title = "A page that draws the edit history"
+            - requires = "UNDO-TREE"
+            - synergies = "UNDO-TREE"
+            - x = 320
+            - y = 40
+            div Talk {
+                list Comments {
+                    - {
+                        - at = "2026-09-03T09:00:00+04:00"
+                        - author = "owner"
+                        - body = "Only worth it once <#UNDO-TREE> is in."
+                    }
+                }
+            }
+        }
+        - {
+            - added = "2026-09-02T10:10:00+04:00"
+            - handle = "PLUGINS"
+            - title = "Third-party plugins for the editor"
+            - incompatible = "SANDBOX"
+            - x = 40
+            - y = 380
+        }
+        - {
+            - added = "2026-09-02T10:15:00+04:00"
+            - handle = "SANDBOX"
+            - standing = "discarded"
+            - title = "Run every document in a sandbox"
+            - incompatible = "PLUGINS"
+            - x = 336
+            - y = 380
+        }
+        - {
+            - added = "2026-09-02T10:20:00+04:00"
+            - handle = "SPELLCHECK"
+            - title = "Underline misspelled words as they are typed"
+        }
+    }
     - History {
         - {
             - finished_at = "2026-09-05T17:20:00+04:00"
