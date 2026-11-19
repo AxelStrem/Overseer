@@ -572,6 +572,31 @@ list Ranked (entry=<Food>, view="board", by="tier", layout="vertical", movable=t
 list Unranked (entry=<Food>, layout="horizontal", movable=true) { }
 ```
 
+#### Drawing a list as a canvas
+
+`view="canvas"` draws one list as cards on an open area, each at the position its entry holds in
+two number fields named by `x` and `y`, in pixels from the area's top left. Related entries can be
+grouped by where they stand rather than by a column.
+
+```overseer
+div Card (layout="vertical") {
+    string title = ""
+    float x (hidden=true) = 0
+    float y (hidden=true) = 0
+}
+
+list Notes (entry=<Card>, view="canvas", x="x", y="y") { }
+```
+
+Dragging a card to another spot writes both fields as one change: each field's `on change` runs
+in it, one undo takes all of it back, and `mutable` is respected as for a board. Nothing moves in
+the list itself, so a filter, `narrows`, `sort_by` and `window` work on a canvas as on any list.
+
+An entry whose two fields still hold the template's values has no place yet. It waits in a strip
+above the area, where it can be seen and picked up, and takes a place once dragged onto it. The
+area grows to hold its farthest card and scrolls both ways, by touch too. A card is the entry
+drawn as anywhere else, as wide as its template's `width` says, or 220px.
+
 #### Drawing a list as a tree
 
 `tree=` draws a list as an outline: each entry under its parent, indented by its depth, with lines
@@ -3254,7 +3279,7 @@ div Tasks {
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`; `select` and `segments`, on an `enum`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `curve`, `smoothing`, `x-scale`, `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
-- **Lists**: `entry`, `key`, `window`, `parts`, `sort_by`, `view` (`table`, `board`), `by`, `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
+- **Lists**: `entry`, `key`, `window`, `parts`, `sort_by`, `view` (`table`, `board`, `canvas`), `by`, `x` and `y` (a canvas's position fields), `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
 - **Grids**: `entry`, `columns`, `rows`, `header`
 - **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`

@@ -1941,7 +1941,7 @@ export class OverseerRenderer {
         const path = list.__overseer_path
         if (!Array.isArray(path) || path.length === 0 || change.renamed || change.whole) return false
         const view = String(this.getParameterValue(list, 'view') || '')
-        if (view === 'table' || view === 'board') return false
+        if (view === 'table' || view === 'board' || view === 'canvas') return false
         // A tree works out where each entry stands from the others - see `arrangeTree`.
         if (this.treeOf(list)) return false
         // Entries that are tabs are drawn as one system, not as rows of the list.
@@ -3038,6 +3038,7 @@ export class OverseerRenderer {
                         this.setUpTable(element, node)
                         this.drawEntriesLeftOut(element, node, path)
                         this.setUpBoard(element, node)
+                        this.setUpCanvas(element, node)
                         this.makeEntriesMovable(element, node)
                     }
                 } else {
@@ -3046,6 +3047,7 @@ export class OverseerRenderer {
                     if (nodeTypeLower === 'list') {
                         this.setUpTable(element, node)
                         this.setUpBoard(element, node)
+                        this.setUpCanvas(element, node)
                         this.makeEntriesMovable(element, node)
                     }
                 }
@@ -4526,6 +4528,189 @@ export class OverseerRenderer {
     }
 
     /**
+     * A list drawn as a canvas: each entry a card on an open area, at the position two number
+     * fields of it hold - `view="canvas", x="x", y="y"`, in pixels from the area's top left.
+     *
+     * Only the drawing changes, as on a board: the entries are drawn as they always are and then
+     * placed, so a filter, a sort and a window work on a canvas as on any list. Dragging a card
+     * writes both fields as one change - see `dropOnCanvas` - and moves nothing in the list.
+     *
+     * An entry whose fields both still hold the template's values has no place yet, and is drawn
+     * in a strip above the area rather than stacked unseen at its corner; dragging it onto the area
+     * gives it one. The area grows to hold its farthest card, and scrolls both ways.
+     *
+     * Written to be run again at any time - see `arrangeCanvases`.
+     */
+    setUpCanvas(element, node) {
+        if (!element || !node) return
+        if (String(this.getParameterValue(node, 'view') || '') !== 'canvas') return
+        const x = String(this.getParameterValue(node, 'x') ?? '').trim()
+        const y = String(this.getParameterValue(node, 'y') ?? '').trim()
+        if (!x || !y || this.entriesAreTabs(node)) return
+        element.dataset.canvasX = x
+        element.dataset.canvasY = y
+        // The cards lay the canvas out; the list's own direction would only fight them.
+        element.classList.add('view-canvas')
+        element.classList.remove('layout-vertical', 'layout-horizontal', 'layout-flow')
+        this.arrangeCanvas(element, node)
+        // A drop is a write of both fields, so it is offered wherever they could be written.
+        if (this.getEffectiveMutableMode(node, element) === 'false') return
+        element.dataset.canvasDrag = '1'
+        this.listenForEntryDrags(element)
+    }
+
+    /// What a number field of a list's entries holds on its template: what an entry holds that
+    /// does not say, and so what says it has no place yet.
+    canvasDefaultOf(node, name) {
+        const template = this.templateNamed(this.entryTemplateOf(node))
+        const field = template ? this.entryField(template, name) : null
+        const held = field ? Number(this.getNodeValue(field)) : NaN
+        return Number.isFinite(held) ? held : 0
+    }
+
+    /// Where an entry stands on its canvas, or null when it has no place yet.
+    canvasPlaceOf(entry, element, defaults) {
+        const read = (name) => {
+            const field = this.entryField(entry, name)
+            return field ? Number(this.getNodeValue(field)) : NaN
+        }
+        const x = read(element.dataset.canvasX)
+        const y = read(element.dataset.canvasY)
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+        if (x === defaults.x && y === defaults.y) return null
+        return { x: Math.max(0, x), y: Math.max(0, y) }
+    }
+
+    /// Put each card of a canvas where its entry says, or in the strip when it says nowhere.
+    arrangeCanvas(element, node) {
+        if (!element.dataset.canvasX) return
+        let frame = element.querySelector(':scope > .overseer-canvas')
+        if (!frame) {
+            frame = document.createElement('div')
+            frame.className = 'overseer-canvas'
+            const strip = document.createElement('div')
+            strip.className = 'canvas-strip'
+            const scroll = document.createElement('div')
+            scroll.className = 'canvas-scroll'
+            const area = document.createElement('div')
+            area.className = 'canvas-area'
+            scroll.appendChild(area)
+            frame.append(strip, scroll)
+            element.insertBefore(frame, element.firstChild)
+            // Where the viewer had scrolled to, kept across the list being drawn again whole.
+            const key = element.dataset.path || ''
+            const kept = this._canvasScroll && this._canvasScroll.get(key)
+            if (kept) requestAnimationFrame(() => { scroll.scrollLeft = kept.left; scroll.scrollTop = kept.top })
+            scroll.addEventListener('scroll', () => {
+                if (!this._canvasScroll) this._canvasScroll = new Map()
+                this._canvasScroll.set(key, { left: scroll.scrollLeft, top: scroll.scrollTop })
+            }, { passive: true })
+        }
+        const strip = frame.querySelector(':scope > .canvas-strip')
+        const area = frame.querySelector(':scope > .canvas-scroll > .canvas-area')
+
+        const drawn = new Map()
+        for (const el of element.querySelectorAll(':scope > [data-uid], :scope > .overseer-canvas > .canvas-strip > [data-uid], :scope > .overseer-canvas > .canvas-scroll > .canvas-area > [data-uid]')) {
+            drawn.set(el.getAttribute('data-uid'), el)
+        }
+        const defaults = {
+            x: this.canvasDefaultOf(node, element.dataset.canvasX),
+            y: this.canvasDefaultOf(node, element.dataset.canvasY),
+        }
+        const placed = []
+        for (const entry of this.inDisplayOrder(node)) {
+            const el = entry && entry.__uid ? drawn.get(entry.__uid) : null
+            if (!el) continue
+            const at = this.canvasPlaceOf(entry, element, defaults)
+            if (at) {
+                el.style.left = `${at.x}px`
+                el.style.top = `${at.y}px`
+                area.appendChild(el)
+                placed.push({ el, at })
+            } else {
+                el.style.left = ''
+                el.style.top = ''
+                strip.appendChild(el)
+            }
+        }
+        strip.hidden = strip.children.length === 0
+        this.sizeCanvas(area, placed)
+        // Drawn before it is on the page, a card has no size yet to grow the area by.
+        if (!element.isConnected) requestAnimationFrame(() => this.sizeCanvas(area, placed))
+    }
+
+    /// Grow a canvas's area to hold its farthest card, with room beyond it to drag one further.
+    sizeCanvas(area, placed) {
+        let right = 0
+        let bottom = 0
+        for (const { el, at } of placed) {
+            right = Math.max(right, at.x + (el.offsetWidth || 220))
+            bottom = Math.max(bottom, at.y + (el.offsetHeight || 80))
+        }
+        area.style.width = `${Math.ceil(right) + 160}px`
+        area.style.height = `${Math.ceil(bottom) + 160}px`
+    }
+
+    /** Put every canvas's cards back where their entries now say. */
+    arrangeCanvases() {
+        const doc = this.app && this.app.currentDocument
+        if (!doc) return
+        for (const element of this.scopedAll('.overseer-list.view-canvas')) {
+            let node = null
+            try { node = this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { node = null }
+            if (node) this.arrangeCanvas(element, node)
+        }
+    }
+
+    /// A card carried over its canvas: near an edge of what is shown, the area scrolls on.
+    followCanvasDrag(drag) {
+        drag.line.hidden = true
+        const scroll = drag.target
+        const r = scroll.getBoundingClientRect()
+        const edge = 32
+        const step = (near, far, at) => (at < near + edge ? -16 : at > far - edge ? 16 : 0)
+        const dx = step(r.left, r.right, drag.x)
+        const dy = step(r.top, r.bottom, drag.y)
+        if (dx || dy) scroll.scrollBy(dx, dy)
+    }
+
+    /**
+     * A card let go over its canvas: its entry takes the place it was let go at, both fields in
+     * one change, with each field's `on change` run in it - see `app_api::set_in_entry_at`.
+     */
+    dropOnCanvas(drag) {
+        const list = drag.list
+        const area = drag.target.querySelector(':scope > .canvas-area')
+        const entryNode = this.nodeDrawnBy(drag.entry)
+        if (!area || !entryNode) return
+        const r = area.getBoundingClientRect()
+        const x = Math.max(0, Math.round(drag.x - drag.offsetX - r.left))
+        const y = Math.max(0, Math.round(drag.y - drag.offsetY - r.top))
+        const entryPath = JSON.parse(drag.entry.dataset.path)
+        const settings = []
+        for (const [name, value] of [[list.dataset.canvasX, x], [list.dataset.canvasY, y]]) {
+            const field = this.entryField(entryNode, name)
+            if (!field) return
+            const fieldPath = this.fieldPathIn(entryNode, entryPath, field)
+            // Named from the entry, as a board's drop names its field.
+            const named = fieldPath && fieldPath.slice(0, entryPath.length).every((s, i) => s === entryPath[i])
+                ? fieldPath.slice(entryPath.length)
+                : [name]
+            const type = String(field.node_type || field.type || '').toLowerCase()
+            settings.push({ node_path: named, value: type === 'int' ? { Integer: value } : { Float: value } })
+        }
+        // Shown where it was let go at once; the answer draws it where the file then says.
+        drag.entry.style.left = `${x}px`
+        drag.entry.style.top = `${y}px`
+        if (drag.entry.parentElement !== area) area.appendChild(drag.entry)
+        this.writeByInstruction(drag.entry, 'set_overseer_entry_fields', {
+            entry_path: entryPath,
+            entryPath,
+            settings,
+        }).catch((err) => console.warn('The placing failed:', err))
+    }
+
+    /**
      * A list drawn as a tree: `tree=` names what makes its hierarchy.
      *
      * Either a list inside each entry that holds its children - `tree="Kids"`, the entries
@@ -4952,6 +5137,7 @@ export class OverseerRenderer {
             try { node = this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { node = null }
             if (node) this.arrangeBoard(element, node)
         }
+        this.arrangeCanvases()
     }
 
     /**
@@ -4988,9 +5174,14 @@ export class OverseerRenderer {
         const out = []
         // A tree's row goes to a place in its own tree, its branch with it.
         if (drag.list.dataset.treeMove) return [drag.list]
+        // A canvas's card goes to a place on its own canvas, and nowhere else.
+        if (drag.list.dataset.canvasDrag) {
+            const area = drag.list.querySelector(':scope > .overseer-canvas > .canvas-scroll')
+            return area ? [area] : []
+        }
         const template = drag.list.dataset.movable === '1' ? (drag.list.dataset.entryTemplate || '') : null
         for (const list of template === null ? [] : this.scopedAll('.overseer-list[data-movable="1"]')) {
-            if (list.dataset.board || list.dataset.treeMove) continue
+            if (list.dataset.board || list.dataset.treeMove || list.dataset.canvasX) continue
             const accepts = list === drag.list
                 ? list.dataset.sorted !== '1' || this.entriesTiedWith(list, drag.entry).length > 1
                 :(template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
@@ -5346,7 +5537,7 @@ export class OverseerRenderer {
         const target = event.target
         if (!target || !target.closest) return
         // The innermost movable list a pointer is in is the one it drags in.
-        if (target.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"]') !== list) return
+        if (target.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"], .overseer-list[data-canvas-drag="1"]') !== list) return
         // A grip is there to be dragged by, whatever lies around it.
         const grip = target.closest('.mark-grip')
         const byGrip = !!grip && list.contains(grip)
@@ -5418,8 +5609,8 @@ export class OverseerRenderer {
      */
     entryCanBeDragged(entry, list) {
         if (this.entryStays(this.nodeDrawnBy(entry))) return false
-        // A board's entry is a value to pick, sorted or not.
-        if (list.dataset.board) return true
+        // A board's entry is a value to pick, sorted or not, and a canvas's card a place to put.
+        if (list.dataset.board || list.dataset.canvasDrag) return true
         if (list.dataset.sorted !== '1') return true
         if (this.entriesTiedWith(list, entry).length > 1) return true
         const template = list.dataset.entryTemplate || ''
@@ -5454,7 +5645,7 @@ export class OverseerRenderer {
 
     gripCanDrag(grip) {
         // The same list a press on it would drag in - see `armEntryDrag`.
-        const list = grip.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"]')
+        const list = grip.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"], .overseer-list[data-canvas-drag="1"]')
         if (!list) return false
         let entry = grip
         while (entry && !this.isEntryElementOf(entry, list)) entry = entry.parentElement
@@ -5467,7 +5658,9 @@ export class OverseerRenderer {
         const parent = el.parentElement
         if (!parent) return false
         if (parent === list) return true
-        return parent.classList.contains('board-column-body') && parent.closest('.overseer-list') === list
+        const holds = parent.classList.contains('board-column-body')
+            || parent.classList.contains('canvas-area') || parent.classList.contains('canvas-strip')
+        return holds && parent.closest('.overseer-list') === list
     }
 
     /// The pointer means a drag: lift the entry and mark where it can go.
@@ -5524,7 +5717,7 @@ export class OverseerRenderer {
     dragShellFor(entry, rect) {
         const parent = entry.parentElement
         const shell = parent.cloneNode(false)
-        for (const name of ['id', 'data-path', 'data-uid', 'data-movable', 'data-board-drag', 'data-sorted']) {
+        for (const name of ['id', 'data-path', 'data-uid', 'data-movable', 'data-board-drag', 'data-canvas-drag', 'data-sorted']) {
             shell.removeAttribute(name)
         }
         shell.classList.remove('accepts-drop', 'drop-here', 'is-dragged', 'filtered-out')
@@ -5761,7 +5954,7 @@ export class OverseerRenderer {
         const under = typeof document.elementFromPoint === 'function'
             ? document.elementFromPoint(drag.x, drag.y)
             : null
-        const wanted = '.board-column.accepts-drop, .overseer-list.accepts-drop'
+        const wanted = '.board-column.accepts-drop, .canvas-scroll.accepts-drop, .overseer-list.accepts-drop'
         let target = under && under.closest ? under.closest(wanted) : null
         // A tree's row is carried left to stand less deep, which takes the pointer past the
         // tree's edge when the rows start there, as a table's do: level with the tree, it is
@@ -5780,6 +5973,7 @@ export class OverseerRenderer {
         if (!target) { line.hidden = true; return }
         target.classList.add('drop-here')
         if (target === drag.list && drag.tree) { this.followTreeDrag(drag); return }
+        if (target.classList.contains('canvas-scroll')) { this.followCanvasDrag(drag); return }
         let list = target
         let across
         if (target.classList.contains('board-column')) {
@@ -5852,6 +6046,10 @@ export class OverseerRenderer {
         }
         if (drag.target.classList.contains('board-column')) {
             this.dropInLane(drag)
+            return
+        }
+        if (drag.target.classList.contains('canvas-scroll')) {
+            this.dropOnCanvas(drag)
             return
         }
         const sorted = drag.target.dataset.sorted === '1'
@@ -5944,25 +6142,35 @@ export class OverseerRenderer {
      * field of the entry, named from it, to write where it lands - see `dropInLane`.
      */
     async moveEntry(element, entryPath, toListPath, beforePath, setting) {
+        return this.writeByInstruction(element, 'move_overseer_entry', {
+            entry_path: entryPath,
+            entryPath,
+            to_list_path: toListPath,
+            toListPath,
+            before: beforePath,
+            ...(setting ? { setting } : {}),
+        })
+    }
+
+    /**
+     * Send an instruction that changes the document's shape or several of its values, and show
+     * what the file then says - a move, or a card placed on a canvas.
+     */
+    async writeByInstruction(element, instruction, args) {
         const app = this.app
         if (!app || !app.currentFile) return
         let update = null
         app._writingByInstruction = (app._writingByInstruction || 0) + 1
         try {
-            update = await this.ask('move_overseer_entry', {
+            update = await this.ask(instruction, {
                 path: app.currentFile,
                 ...app.showing?.(),
-                entry_path: entryPath,
-                entryPath,
-                to_list_path: toListPath,
-                toListPath,
-                before: beforePath,
-                ...(setting ? { setting } : {}),
+                ...args,
             })
         } catch (e) {
             const said = refusalIn(e)
             if (said !== null) this.sayRefused(element, said)
-            else console.warn('[Overseer] the move was refused', e)
+            else console.warn(`[Overseer] ${instruction} was refused`, e)
             return
         } finally {
             app._writingByInstruction -= 1

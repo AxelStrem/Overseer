@@ -4980,6 +4980,19 @@ impl ActionExecutor {
         Ok(())
     }
 
+    /// `set_in_entry` for an entry named by its path, found afresh - see `app_api::set_in_entry_at`.
+    pub fn set_in_entry_at(
+        nodes: &mut Vec<OverseerNode>,
+        entry_path: &str,
+        field: &[String],
+        value: OverseerValue,
+    ) -> Result<(), OverseerError> {
+        let (segments, _, anchored) = Self::split_path_and_param(entry_path);
+        let at = Self::resolve_target_indices(nodes, &[], anchored, &segments)
+            .ok_or_else(|| OverseerError::ValidationError(format!("Nothing at: {}", entry_path)))?;
+        Self::set_in_entry(nodes, &at, field, value)
+    }
+
     /// What a list says of moving its entries by hand: `movable=true`, `movable="anywhere"` (a
     /// tree's entries going to any level of it), or nothing.
     fn says_movable(list: &OverseerNode) -> Option<Movable> {

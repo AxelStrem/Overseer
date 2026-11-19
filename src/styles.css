@@ -893,6 +893,71 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     outline-offset: 1px;
 }
 
+/* A list drawn as a canvas: its cards stand where their entries say on an open area, which grows
+   to hold the farthest of them and scrolls both ways inside a frame no taller than most of the
+   screen - so on a phone the page still scrolls past it. Cards with no place yet wait in a strip
+   above it. A card is as wide as its template says, else 220px. */
+.overseer-list.view-canvas {
+    display: block;
+}
+
+.overseer-canvas {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.canvas-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 6px;
+    background: var(--ov-background);
+}
+
+.canvas-scroll {
+    overflow: auto;
+    max-height: 75vh;
+    min-height: 160px;
+    border: 1px dashed var(--ov-line, rgba(127, 127, 127, 0.35));
+    border-radius: 6px;
+    background: var(--ov-background);
+    -webkit-overflow-scrolling: touch;
+}
+
+.canvas-area {
+    position: relative;
+    min-width: 100%;
+}
+
+.canvas-area > [data-uid] {
+    position: absolute;
+    margin: 0;
+}
+
+.canvas-area > [data-uid],
+.canvas-strip > [data-uid] {
+    width: 220px;
+    max-width: calc(100vw - 32px);
+    box-sizing: border-box;
+}
+
+.overseer-list[data-canvas-drag="1"] .overseer-canvas [data-uid] {
+    -webkit-touch-callout: none;
+}
+
+.overseer-list[data-canvas-drag="1"] .overseer-canvas > * > .is-dragged,
+.overseer-list[data-canvas-drag="1"] .canvas-area > .is-dragged {
+    opacity: 0.35;
+}
+
+.canvas-scroll.drop-here {
+    outline: 2px dashed var(--ov-accent);
+    outline-offset: 1px;
+}
+
 .overseer-mark {
     display: inline-flex;
     align-items: center;

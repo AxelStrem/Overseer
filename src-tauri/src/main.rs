@@ -371,6 +371,22 @@ async fn move_overseer_entry(
     })
 }
 
+/// Write several fields of one entry as one change, their handlers run - a card dragged on a canvas.
+#[command]
+async fn set_overseer_entry_fields(
+    request: tauri::ipc::Request<'_>,
+    path: String,
+    entry_path: Vec<String>,
+    settings: Vec<app_api::ValueWrite>,
+    shown_version: Option<String>,
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::set_in_entry_at(&path, &path, entry_path, settings, THE_WINDOW)
+            .map(app_api::for_the_page).map(ForThePage)
+    })
+}
+
 /// Run one handler, the same way.
 #[command]
 async fn run_overseer_event(
@@ -595,6 +611,7 @@ fn main() {
             append_overseer_entry,
             remove_overseer_entry,
             move_overseer_entry,
+            set_overseer_entry_fields,
             ensure_overseer_entry,
             drawer_location,
             document_label,

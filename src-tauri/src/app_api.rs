@@ -2397,6 +2397,30 @@ pub fn move_entry_at(
     })
 }
 
+/// Write several fields of one entry as one change, each field's `on change` run in it - a card
+/// dragged on a canvas, which gives its entry a new `x` and `y` at once.
+///
+/// Unlike `write_values_at`, which writes values and runs nothing, each field is written as
+/// `ActionExecutor::set_in_entry` writes the one a board's drop sets: a value it already holds is
+/// left alone, and its handler runs after it. One file write and one undo step take in all of it.
+/// The fields are named from the entry, and the entry is found again before each, so a handler
+/// that reshapes the document does not leave the next write pointing somewhere else.
+pub fn set_in_entry_at(
+    path: &str,
+    document: &str,
+    entry_path: Vec<String>,
+    settings: Vec<ValueWrite>,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    change_document(path, document, session, move |nodes| {
+        let entry = format!("/{}", entry_path.join("/"));
+        for set in settings {
+            crate::actions::ActionExecutor::set_in_entry_at(nodes, &entry, &set.node_path, set.value)?;
+        }
+        Ok(())
+    })
+}
+
 /// Set one value, named by the path of node names the page already speaks in.
 pub fn write_value_at(
     path: &str,
