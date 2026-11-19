@@ -46,6 +46,19 @@ pub struct Listing {
     pub public: Vec<String>,
 }
 
+/// One entry of a `sharing.os` and what it comes to, as `DocumentRoot::sharing_reach` answers.
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct Reach {
+    /// The entry as written.
+    pub document: String,
+    pub with: String,
+    pub can: String,
+    /// The documents it covers now, each by its full name.
+    pub documents: Vec<String>,
+    /// The accounts it is with, and `everyone` if it is.
+    pub people: Vec<String>,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum RequestError {
     /// The name is not one this server will look up, regardless of what is on disk.
@@ -395,6 +408,36 @@ impl DocumentRoot {
             }
         }
         listing
+    }
+
+    /// What each entry of this person's `sharing.os` comes to now: the documents of theirs it
+    /// covers, each by its full name, and the accounts it is with, its groups' members spelt out.
+    pub fn sharing_reach(&self, owner: &str) -> Vec<Reach> {
+        let sharing = crate::access::sharing_of(&self.root.join(owner));
+        let prefix = format!("{}/", owner);
+        let theirs: Vec<String> = self
+            .everything()
+            .into_iter()
+            .filter(|name| name.strip_prefix(&prefix).is_some_and(|inside| inside != crate::access::SHARING))
+            .collect();
+        sharing
+            .shares
+            .iter()
+            .map(|share| Reach {
+                document: share.document.clone(),
+                with: share.with.clone(),
+                can: share.can.clone(),
+                documents: theirs
+                    .iter()
+                    .filter(|name| {
+                        let inside = &name[prefix.len()..];
+                        share.documents().iter().any(|entry| crate::access::covers(entry, inside))
+                    })
+                    .cloned()
+                    .collect(),
+                people: sharing.people(share),
+            })
+            .collect()
     }
 
     /// Every document under the root, named as the service would ask for it.

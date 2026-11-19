@@ -2237,6 +2237,7 @@ the desktop, a file from the disk in a browser - answers that it is not availabl
 | `invite` | | a link to join, good for one person | browser |
 | `reset_password` | `person`, a username | a link that sets their new password | browser |
 | `sharing` | none: the person's sharing document is opened, made the first time | | browser |
+| `sharing_reach` | | what each entry of the person's sharing document comes to, a line each: the documents it covers and who it is with | browser |
 | `sign_out` | | | browser |
 | `copy` | `text`: put on the clipboard | `Copied.` | both |
 | `fold_drawer` | `folded`, turned over if left out | | both |

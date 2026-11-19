@@ -234,3 +234,23 @@ fn a_person_without_a_sharing_document_is_given_one_to_fill_in() {
 fn the_starter_sharing_document_shares_nothing() {
     assert!(overseer::access::read_shares(overseer::access::SHARING_STARTER).is_empty());
 }
+
+#[test]
+fn a_sharer_is_told_what_each_entry_comes_to() {
+    let server = start(4833, "reach");
+    let port = server.port;
+    let (ap31, bob) = ap31_and_bob(&server);
+
+    let reach = get(port, "/account/sharing", &[cookie(&ap31)]);
+    assert_eq!(reach.status, 200, "{}", reach.body);
+    assert!(
+        reach.body.contains(r#"{"can":"read","document":"foods.os","documents":["ap31/foods.os"],"people":["bob"],"with":"bob"}"#),
+        "{}",
+        reach.body
+    );
+    assert!(reach.body.contains(r#""people":["everyone"]"#), "{}", reach.body);
+
+    let none = get(port, "/account/sharing", &[cookie(&bob)]);
+    assert!(none.body.contains(r#"{"shares":[]}"#), "{}", none.body);
+    assert_eq!(get(port, "/account/sharing", &[]).status, 401);
+}

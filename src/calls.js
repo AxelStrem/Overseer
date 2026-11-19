@@ -38,6 +38,21 @@ export class NotHere extends Error {
 
 const text = (value) => (value === undefined || value === null ? '' : String(value))
 
+/// What each entry of a person's sharing comes to, as `GET /account/sharing` answers it: one
+/// markdown line an entry, naming the documents it covers and the accounts it is with.
+export function describeReach(answer) {
+    const shares = (answer && answer.shares) || []
+    if (!shares.length) return 'Nothing is shared.'
+    const plain = (s) => text(s).replace(/[\\`*_[\]<>]/g, (c) => '\\' + c)
+    return shares.map((share) => {
+        const documents = share.documents.length
+            ? share.documents.map((d) => plain(d.split('/').slice(1).join('/'))).join(', ')
+            : 'no document'
+        const people = share.people.length ? share.people.map(plain).join(', ') : 'no one'
+        return `- **${plain(share.document)}** - ${plain(share.can)} - ${documents}, with ${people}`
+    }).join('\n')
+}
+
 /// The operations, by name, each given the call's arguments and the app. Where one needs a host,
 /// `browser` or `desktop` says which.
 export const OPERATIONS = {
@@ -102,6 +117,7 @@ export const OPERATIONS = {
         const made = await request('POST', '/account/sharing', {})
         navigate('/doc/' + String(made.document).split('/').map(encodeURIComponent).join('/'))
     }),
+    sharing_reach: browser(async () => describeReach(await request('GET', '/account/sharing'))),
     sign_out: browser(async () => {
         try {
             await fetch('/signout', { method: 'POST' })

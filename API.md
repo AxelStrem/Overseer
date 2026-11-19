@@ -50,6 +50,10 @@ The token stays what it was: whoever holds it may do anything.
 - **`POST /account/sharing`** makes the person's `sharing.os` (see below) when they have none,
   with a form that adds an entry, and answers `{"document": "<username>/sharing.os"}`; one that
   is there already is left as it is. The page's "Sharing" opens it.
+- **`GET /account/sharing`** answers what each entry of the person's own `sharing.os` comes to
+  now: `{"shares": [{"document", "with", "can", "documents", "people"}]}`, each entry as written
+  with the documents it covers, by full name, and the accounts it is with, its groups' members
+  spelt out (and `everyone`, where it says so). The sharing document's "What it comes to" shows it.
 - **Acting for someone**: a request with the token may add `X-Overseer-As: <username>` to be
   that person - the bot does, for whoever is talking to it. From anyone else the header is
   ignored, and naming no account is `403`.
@@ -90,12 +94,25 @@ a list whose entries each say a `document` in their folder, who it is `with` - a
 `everyone` for anyone at all, signed in or not - and what they `can` do, `read` or `edit`.
 `sharing.os` itself is never shared, whatever it says.
 
+One entry can cover more than one of each. `document` may name several documents, separated by
+commas, or a folder, ending in `/`: `projects/` covers every document under it, in folders within
+it too, now and later. A name with a `.` or `..` step, or `/` alone, covers nothing. `with` may
+name several, separated by commas, and any of them may be a group: an entry of another list of
+the same document with a `name` and its `members`, usernames separated by commas. Adding someone
+to a group shares with them everything shared with it. A group's name stands for its members
+even where an account has the same name, so an account made later under that name gets nothing by
+it; a member is an account, never another group, nor `everyone`.
+
 ```overseer
 div (hidden=true) {
     div Share {
         string document = ""
         string with = ""
         string can = "read"
+    }
+    div Group {
+        string name = ""
+        string members = ""
     }
 }
 
@@ -106,11 +123,33 @@ list Shares (entry=<Share>) {
         - can = "edit"
     }
     - {
-        - document = "recipes.os"
+        - document = "recipes/"
         - with = "everyone"
+    }
+    - {
+        - document = "projects/game.os, projects/notes.os"
+        - with = "team"
+        - can = "edit"
+    }
+    - {
+        - document = "projects/game.project.os"
+        - with = "team"
+    }
+}
+
+list Groups (entry=<Group>, key="name") {
+    - {
+        - name = "team"
+        - members = "bob, bob-agents"
     }
 }
 ```
+
+Every entry is asked, and any one that allows is enough: where entries overlap, the widest `can`
+wins. So a `read` share of a document beside an `edit` share of its folder gives `edit` on the
+document; documents of one folder that are to be shared differently are named in entries of their
+own, as `team` above edits the trackers and only reads the definition. A folder share reaches
+what a share of each of its documents would - their parts, and their folders of files.
 
 This is asked of every file a request reaches: the document named, what it mounts and the files
 its templates come from. A mount of something its reader may not read loads as a missing file

@@ -868,6 +868,20 @@ async fn start_sharing(
     })))
 }
 
+/// What each entry of one's own `sharing.os` comes to now - see `DocumentRoot::sharing_reach`.
+async fn sharing_reach(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let user = signed_in(&caller)?;
+    let owner = user.username.clone();
+    let documents = service.documents.clone();
+    let shares = tokio::task::spawn_blocking(move || documents.sharing_reach(&owner))
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("reading what is shared panicked: {}", e))))?;
+    Ok(Json(json!({ "shares": shares })))
+}
+
 #[derive(serde::Deserialize)]
 struct InviteAsked {
     /// The account to send a new password to; absent, an invite for someone new.
@@ -1696,7 +1710,7 @@ async fn serve() {
         )
         .route("/account/me", get(me).post(change_me))
         .route("/account/invite", post(invite))
-        .route("/account/sharing", post(start_sharing))
+        .route("/account/sharing", get(sharing_reach).post(start_sharing))
         .route("/account/keys", get(keys).post(make_key))
         .route("/account/keys/:name", axum::routing::delete(revoke_key))
         .route("/", get(index));
