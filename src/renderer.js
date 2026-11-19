@@ -4605,6 +4605,19 @@ export class OverseerRenderer {
                 if (!this._canvasScroll) this._canvasScroll = new Map()
                 this._canvasScroll.set(key, { left: scroll.scrollLeft, top: scroll.scrollTop })
             }, { passive: true })
+            // The card last pressed in - a fold opened, a button, an edit begun - is drawn above
+            // the others, so what it grows to show is not covered by the cards placed after it.
+            // Kept by the entry's address, as the scroll is, across the card or the whole document
+            // being drawn again - an entry's uid is made anew when the document is read again.
+            area.addEventListener('pointerdown', (event) => {
+                let el = event.target instanceof Element ? event.target : null
+                while (el && el.parentElement !== area) el = el.parentElement
+                if (!el || !el.hasAttribute('data-uid')) return
+                if (!this._canvasFront) this._canvasFront = new Map()
+                this._canvasFront.set(key, el.dataset.path || '')
+                for (const other of area.querySelectorAll(':scope > .canvas-front')) other.classList.remove('canvas-front')
+                el.classList.add('canvas-front')
+            }, { capture: true })
         }
         const strip = frame.querySelector(':scope > .canvas-strip')
         const area = frame.querySelector(':scope > .canvas-scroll > .canvas-area')
@@ -4618,10 +4631,12 @@ export class OverseerRenderer {
             y: this.canvasDefaultOf(node, element.dataset.canvasY),
         }
         const placed = []
+        const front = this._canvasFront && this._canvasFront.get(element.dataset.path || '')
         for (const entry of this.inDisplayOrder(node)) {
             const el = entry && entry.__uid ? drawn.get(entry.__uid) : null
             if (!el) continue
             const at = this.canvasPlaceOf(entry, element, defaults)
+            el.classList.toggle('canvas-front', !!at && !!front && el.dataset.path === front)
             if (at) {
                 el.style.left = `${at.x}px`
                 el.style.top = `${at.y}px`

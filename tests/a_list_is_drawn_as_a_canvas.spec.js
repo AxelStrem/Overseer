@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 
 // A list that says `view="canvas", x="x", y="y"` draws its entries as cards on an open area, each
 // where its two fields say. One whose fields still hold the template's values waits in a strip
@@ -186,5 +187,39 @@ describe('a list drawn as a canvas', () => {
     dragTo(entryAt('placed'), 312, 252)
     await settle()
     expect(placings()).toHaveLength(0)
+  })
+
+  it('draws the card last pressed in above the others, and only that one', () => {
+    render()
+    pointer(entryAt('placed').querySelector('[data-path]') || entryAt('placed'), 'pointerdown', 0, 0)
+    expect(entryAt('placed').classList.contains('canvas-front')).toBe(true)
+    pointer(entryAt('far'), 'pointerdown', 0, 0)
+    expect(entryAt('far').classList.contains('canvas-front')).toBe(true)
+    expect(entryAt('placed').classList.contains('canvas-front')).toBe(false)
+  })
+
+  it('keeps the card last pressed in above the others when the document is drawn again', () => {
+    render()
+    pointer(entryAt('placed'), 'pointerdown', 0, 0)
+    app.currentDocument = theDocument()
+    app.renderer.renderDocument(app.currentDocument)
+    expect(entryAt('placed').classList.contains('canvas-front')).toBe(true)
+    expect(document.querySelectorAll('.canvas-front')).toHaveLength(1)
+  })
+
+  it('stacks a canvas card that is pointed at, edited or last pressed in above the cards around it', () => {
+    const styles = readFileSync('src/styles.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    // The z-index of the rule whose selectors name the given one.
+    const zIndexOf = (selector) => {
+      for (const [, selectors, body] of styles.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        if (!selectors.split(',').some((s) => s.trim() === selector)) continue
+        const z = body.match(/z-index:\s*(\d+)/)
+        if (z) return Number(z[1])
+      }
+      return null
+    }
+    expect(zIndexOf('.canvas-area > [data-uid].canvas-front')).toBeGreaterThan(0)
+    expect(zIndexOf('.canvas-area > [data-uid]:hover')).toBeGreaterThan(zIndexOf('.canvas-area > [data-uid].canvas-front'))
+    expect(zIndexOf('.canvas-area > [data-uid]:focus-within')).toBeGreaterThan(zIndexOf('.canvas-area > [data-uid].canvas-front'))
   })
 })

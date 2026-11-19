@@ -932,9 +932,43 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     min-width: 100%;
 }
 
+/* A card that grows - a fold opened - would run under the cards placed after it, which are drawn
+   later. The card last pressed in stays above them; the one pointed at or being edited is above all.
+   Each card is its own stack, backed by what the frame is painted with, so a card whose colour is
+   see-through looks as it does on the bare canvas and still hides what it is drawn over. */
 .canvas-area > [data-uid] {
     position: absolute;
     margin: 0;
+    z-index: 1;
+}
+
+.canvas-area > [data-uid]::before,
+.canvas-area > [data-uid]:not(.overseer-pressable)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+}
+
+/* The backing paints over the card's own colour, so the card's colour is laid again above it -
+   but for a card that is pressed itself, whose press shows on that layer. */
+.canvas-area > [data-uid]::before {
+    background: var(--ov-background);
+}
+
+.canvas-area > [data-uid]:not(.overseer-pressable)::after {
+    background: inherit;
+}
+
+.canvas-area > [data-uid].canvas-front {
+    z-index: 2;
+}
+
+.canvas-area > [data-uid]:hover,
+.canvas-area > [data-uid]:focus-within {
+    z-index: 3;
 }
 
 .canvas-area > [data-uid],
