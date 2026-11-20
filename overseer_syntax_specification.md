@@ -3251,7 +3251,9 @@ holds no credentials and nothing of anyone's machine.
 `Tools` lists the files a project's sessions run, keyed by `file`, each with its `sha256` and the
 `systems` it is for (every one, when none are picked); the files themselves are kept beside the
 definition in `tools/p.project/`, read and written over the server's `/v1/file` (see
-[API.md](API.md)).
+[API.md](API.md)). A tool marked `setup` is the script that installs what the project's sessions
+need on the systems it is for, at most one for each system; a definition without one asks for no
+setup.
 
 A lazy mount brings in what it names once something asks for it; `load_mount` brings it in from a
 press and `unload_mount` lets it go again (see "Actions and Events").

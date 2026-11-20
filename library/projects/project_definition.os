@@ -18,6 +18,7 @@ div definition (layout="vertical", mutable=true) {
         div Tool (layout="horizontal", margin=0, spacing=8, alignment="center") {
             string file (label="", font-weight="bold", width=180px) = ""
             tags systems (label="", vocabulary="/definition/Systems", hover-text="Every system, when none is picked") = ""
+            bool setup (label="Setup", hover-text="The script AgentLoop runs to install what the project's sessions need, on the systems it is for") = false
             string sha256 (label="", font-size=11px) = ""
         }
 
