@@ -299,3 +299,57 @@ fn a_formula_beside_a_fields_value_does_not_stop_its_summary() {
         assert_eq!(value(&nodes, "log/kept"), Some(OverseerValue::Integer(3)));
     });
 }
+
+const BY_DAY: &str = r#"    div (hidden=true) {
+        div Day {
+            string day_key = ""
+            int done = $(/log/History.filter(|x| x/status != "cancelled" && day(x/done_at) == ../day_key).sum(|x| x/points))
+        }
+    }
+    date anchor (mutable=false) = "2026-10-27"
+    int that_week (mutable=false) = $(History.filter(|x| week(x/done_at) == week(../anchor)).sum(|x| x/points))
+    list Days (entry=<Day>, key="day_key") {
+        - {
+            - day_key = "2026-10-20"
+        }
+        - {
+            - day_key = "2026-10-21"
+        }
+        - {
+            - day_key = "2026-10-27"
+        }
+    }
+"#;
+
+const BY_DAY_ANSWERS: &[&str] =
+    &["log/that_week", "log/Days/[2026-10-20]/done", "log/Days/[2026-10-21]/done", "log/Days/[2026-10-27]/done"];
+
+#[test]
+fn a_total_keyed_on_a_function_of_the_entry_is_answered_from_summaries() {
+    serialised(|| {
+        let whole = {
+            let (_sandbox, documents) = sandbox("byday_whole", &host(BY_DAY, false));
+            let nodes = documents.open("log.os").expect("open");
+            values(&nodes, BY_DAY_ANSWERS)
+        };
+        let (_sandbox, documents) = sandbox("byday", &host(BY_DAY, true));
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(held(&nodes), vec!["b"], "only this week is read");
+        assert_eq!(said(&nodes, "_parts_read_whole"), None);
+        assert_eq!(values(&nodes, BY_DAY_ANSWERS), whole);
+        assert_eq!(value(&nodes, "log/that_week"), Some(OverseerValue::Integer(4)));
+        assert_eq!(value(&nodes, "log/Days/[2026-10-20]/done"), Some(OverseerValue::Integer(3)));
+        assert_eq!(value(&nodes, "log/Days/[2026-10-21]/done"), Some(OverseerValue::Integer(0)), "cancelled");
+    });
+}
+
+#[test]
+fn a_key_reading_more_than_its_entry_reads_every_part() {
+    serialised(|| {
+        let extra = "    int cap (mutable=false) = 4\n    int over (mutable=false) = $(History.filter(|x| x/points + ../cap == ../cap + 3).count())\n";
+        let (_sandbox, documents) = sandbox("keyout", &host(extra, true));
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(held(&nodes), vec!["a", "d", "c", "b"]);
+        assert_eq!(value(&nodes, "log/over"), Some(OverseerValue::Integer(1)));
+    });
+}

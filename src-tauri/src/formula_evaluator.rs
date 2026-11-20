@@ -4355,9 +4355,10 @@ fn relative_path_reference(input: &str) -> IResult<&str, FormulaExpression> {
 /// A chain over a list that summaries of the parts the list has not read can answer - see
 /// `FormulaEvaluator::summarised`.
 struct Summarised {
-    /// The field a filter compares with its reader, the reader's side, and whether the field is
-    /// on the left.
-    keyed: Option<(String, FormulaExpression, bool)>,
+    /// What a filter compares with its reader: the entry's side, as a lambda over the entry -
+    /// `|x| x/parent`, `|x| day(x/finished_at)` - the reader's side, and whether the entry's side
+    /// is on the left.
+    keyed: Option<(FormulaExpression, FormulaExpression, bool)>,
     /// The filters and maps each entry goes through, that comparison taken out.
     steps: Vec<MethodCall>,
     /// What the last step reads of each item, as `sum(|x| x/points)` does.
@@ -6022,9 +6023,10 @@ impl FormulaEvaluator {
     /// of each entry is the same wherever the entry is, and the last step adds the entries up in
     /// any order. Each lambda reads only its entry - its fields, constants, and functions of them
     /// that read nothing else, no clock among them - so a part is summarised once for every reader.
-    /// The one thing a filter may compare with its reader is a field, `x/parent == ../handle`,
-    /// joined to the rest by `&&`: a summary then keeps what each entry gave by what that field
-    /// holds, and a reader looks its own value up in it.
+    /// The one thing a filter may compare with its reader is a function of the entry's fields
+    /// alone - `x/parent == ../handle`, `day(x/finished_at) == ../day` - joined to the rest by
+    /// `&&`: a summary then keeps what each entry gave by what that function gives for it, and a
+    /// reader looks its own value up in it.
     fn summarised(calls: &[MethodCall]) -> Option<Summarised> {
         let (last, steps) = calls.split_last()?;
         let mapped = steps.iter().any(|c| c.name == "map");
@@ -6068,17 +6070,25 @@ impl FormulaEvaluator {
                 let FormulaExpression::BinaryOp { left, operator: BinaryOperator::Equal, right } = condition else {
                     return None;
                 };
-                let field_of = |e: &FormulaExpression| match e {
-                    FormulaExpression::PathReference(path) if path.len() == 2 && path[0] == params[0] => Some(path[1].clone()),
-                    _ => None,
+                // The entry's side reads its entry and nothing else, the reader's side no entry
+                // at all. Both reading only the entry would have kept the condition above.
+                let of_entry = |e: &FormulaExpression| {
+                    let mut read = Vec::new();
+                    (Self::mentions_binding(e, &params[0]) && Self::reads_only_its_entry(e, params, &mut read))
+                        .then_some(read)
                 };
-                let found = match (field_of(left), field_of(right)) {
-                    (Some(field), None) if !Self::mentions_binding(right, &params[0]) => (field, (**right).clone(), true),
-                    (None, Some(field)) if !Self::mentions_binding(left, &params[0]) => (field, (**left).clone(), false),
-                    _ => return None,
+                let (side, reader, on_left) = if Self::mentions_binding(right, &params[0]) {
+                    (right, left, false)
+                } else {
+                    (left, right, true)
                 };
-                fields.push(found.0.clone());
-                keyed = Some(found);
+                if Self::mentions_binding(reader, &params[0]) {
+                    return None;
+                }
+                let Some(read) = of_entry(side) else { return None };
+                fields.extend(read);
+                let lambda = FormulaExpression::Lambda { params: params.clone(), body: side.clone() };
+                keyed = Some((lambda, (**reader).clone(), on_left));
             }
             if let Some(rest) = rest.into_iter().reduce(|left, right| FormulaExpression::BinaryOp {
                 left: Box::new(left),
@@ -6100,7 +6110,7 @@ impl FormulaEvaluator {
         fields.dedup();
         let name = format!(
             "{:?} | {:?} | {:?}",
-            keyed.as_ref().map(|(field, _, on_left)| (field, on_left)),
+            keyed.as_ref().map(|(side, _, on_left)| (side, on_left)),
             kept,
             projection
         );
@@ -6260,10 +6270,12 @@ impl FormulaEvaluator {
             }
             let Some(value) = Self::through_the_steps(&entry, chain, context) else { continue };
             match &chain.keyed {
-                Some((field, ..)) => match Self::field_already_known(&entry, field) {
-                    Some(OverseerValue::String(held)) => summary.by_key.entry(held).or_default().push(value),
-                    Some(held) => summary.odd.push((held, value)),
-                    None => {}
+                // A key that cannot be worked out leaves the entry out, as the walk's filter
+                // would when its comparison fails.
+                Some((side, ..)) => match Self::eval_lambda(side, None, Some(&entry), None, context) {
+                    Ok(OverseerValue::String(held)) => summary.by_key.entry(held).or_default().push(value),
+                    Ok(held) => summary.odd.push((held, value)),
+                    Err(_) => {}
                 },
                 None => summary.values.push(value),
             }

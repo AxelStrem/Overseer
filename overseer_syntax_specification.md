@@ -450,12 +450,14 @@ again only when the part changes, so an append to this week's part leaves the ol
 as they were. A chain is summarised when each of its lambdas reads only its entry: the entry's
 fields, constants, and functions of them that read nothing else (`week`, `same_day`,
 `millis_since_epoch` and the like, but not `today`, `now` or `days_since`). One condition of the
-first filter may compare a field with the reader instead, joined to the rest by `&&`. A summary then
-keeps what each entry gave under what that field holds, and each reader looks up its own value:
+first filter may compare one of these with the reader instead, joined to the rest by `&&`: a field,
+or a function of the entry's fields alone, such as `day(x/finished_at)`. A summary then keeps what
+each entry gave under what that side gives for it, and each reader looks up its own value:
 
 ```overseer
 int kids = $(/project/History.filter(|x| x/parent == ../handle && x/status != "cancelled").count())
 float done = $(/project/History.filter(|x| x/parent == ../handle).map(|x| x/points).sum())
+int that_day = $(/project/History.filter(|x| day(x/finished_at) == ../day).sum(|x| x/points))
 timestamp last = $(/project/History.map(|x| x/finished_at).max())
 ```
 
