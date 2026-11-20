@@ -896,7 +896,8 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* A list drawn as a canvas: its cards stand where their entries say on an open area, which grows
    to hold the farthest of them and scrolls both ways inside a frame no taller than most of the
    screen - so on a phone the page still scrolls past it. Cards with no place yet wait in a strip
-   above it. A card is as wide as its template says, else 220px. */
+   above it, one row that scrolls sideways, so that however many there are the area stays in
+   reach of a drag. A card is as wide as its template says, else 220px. */
 .overseer-list.view-canvas {
     display: block;
 }
@@ -909,7 +910,10 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 
 .canvas-strip {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
     align-items: flex-start;
     gap: 6px;
     padding: 6px;
@@ -969,6 +973,10 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 .canvas-area > [data-uid]:hover,
 .canvas-area > [data-uid]:focus-within {
     z-index: 3;
+}
+
+.canvas-strip > [data-uid] {
+    flex: none;
 }
 
 .canvas-area > [data-uid],

@@ -222,4 +222,16 @@ describe('a list drawn as a canvas', () => {
     expect(zIndexOf('.canvas-area > [data-uid]:hover')).toBeGreaterThan(zIndexOf('.canvas-area > [data-uid].canvas-front'))
     expect(zIndexOf('.canvas-area > [data-uid]:focus-within')).toBeGreaterThan(zIndexOf('.canvas-area > [data-uid].canvas-front'))
   })
+
+  it('keeps the strip to one row that scrolls sideways, its cards at their own width', () => {
+    const styles = readFileSync('src/styles.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    // Everything the rules naming the given selector say, in order.
+    const bodyOf = (selector) => [...styles.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .filter(([, selectors]) => selectors.split(',').some((s) => s.trim() === selector))
+      .map(([, , body]) => body)
+      .join(';')
+    expect(bodyOf('.canvas-strip')).toMatch(/flex-wrap:\s*nowrap/)
+    expect(bodyOf('.canvas-strip')).toMatch(/overflow-x:\s*auto/)
+    expect(bodyOf('.canvas-strip > [data-uid]')).toMatch(/flex:\s*none/)
+  })
 })

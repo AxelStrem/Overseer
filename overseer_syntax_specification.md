@@ -593,7 +593,7 @@ in it, one undo takes all of it back, and `mutable` is respected as for a board.
 the list itself, so a filter, `narrows`, `sort_by` and `window` work on a canvas as on any list.
 
 An entry whose two fields still hold the template's values has no place yet. It waits in a strip
-above the area, where it can be seen and picked up, and takes a place once dragged onto it. The
+above the area, one row that scrolls sideways, where it can be seen and picked up, and takes a place once dragged onto it. The
 area grows to hold its farthest card and scrolls both ways, by touch too. A card is the entry
 drawn as anywhere else, as wide as its template's `width` says, or 220px.
 
