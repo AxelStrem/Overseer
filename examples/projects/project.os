@@ -170,6 +170,22 @@
             - title = "Underline misspelled words as they are typed"
         }
     }
+    - Discussion {
+        - {
+            - added = "2026-09-03T11:00:00+04:00"
+            - handle = "naming"
+            - title = "Should the editor and the viewer share one name?"
+            div Talk {
+                list Comments {
+                    - {
+                        - at = "2026-09-03T11:00:00+04:00"
+                        - author = "owner"
+                        - body = "people mix them up in the issues"
+                    }
+                }
+            }
+        }
+    }
     - History {
         - {
             - finished_at = "2026-09-05T17:20:00+04:00"
