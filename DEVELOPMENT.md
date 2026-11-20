@@ -51,6 +51,25 @@ each named by the node's address as a formula names it, and then what the file g
 own, for a document that reaches files outside it; `--keep` leaves the server running for a
 person to open the copy.
 
+## Setting up for AgentLoop
+
+`scripts/agentloop-setup.sh` is the setup script that AgentLoop runs before a loop's first
+session on Linux or macOS. The owner copies it into the project's definition as its setup tool.
+Without root, it installs these into the folder AgentLoop gives it, `AGENTLOOP_PROJECT_ENV`:
+- Rust stable, through rustup;
+- Node 22, unless the system already has it;
+- a headless Chrome.
+
+It then writes `session-env.txt` there, so every session gets them on its `PATH`, and `CHROME`
+points `preview.mjs` at the browser. It skips whatever an earlier run installed. System packages
+are not its to install: a C compiler and linker, `curl`, `tar`, and on Linux the libraries Chrome
+loads. AgentLoop's image has them all, and the script stops and names any that are missing. By
+hand:
+
+```bash
+AGENTLOOP_PROJECT_ENV=$HOME/overseer-env bash scripts/agentloop-setup.sh
+```
+
 ## Building for release
 
 ```bash
