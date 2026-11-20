@@ -339,7 +339,7 @@ run this way, each with its hash, in its `Tools` list.
   Both need the document shared to edit: a read share is `403`, and anyone it is not shared with
   `404`, as for any write. A library's document is only read.
 - `path` is relative to the document's folder of files, plain names separated by `/`: no `..`, no
-  root, no drive, and nothing that leads outside the folder once links are followed - `400`, or
+  root, no drive, no `:`, and nothing that leads outside the folder once links are followed - `400`, or
   `404` for a link that points away. A file not there is `404`.
 - A file may weigh 8 MiB at most, as an image may. A larger body is `413` and nothing is kept; a larger file put
   there by other means is `400` and is not handed out.

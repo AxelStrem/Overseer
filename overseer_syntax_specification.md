@@ -2404,7 +2404,7 @@ string pantry (label="<icon=icons/jar.svg color=gray> Pantry") = "full"
 ```
 
 Only the document's folder and the folders under it can be reached: a path that starts at a root
-or a drive, or holds `..`, names no icon, and nor does a file that is not `.svg` or is larger than
+or a drive, or holds `..` or a `:`, names no icon on any system, and nor does a file that is not `.svg` or is larger than
 256 KB. Such a name, like one the library does not have, leaves an empty space where the icon
 would be. The SVG is drawn as a picture, so nothing it carries runs.
 

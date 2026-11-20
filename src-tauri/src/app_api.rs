@@ -3684,9 +3684,6 @@ fn file_beside(
     most: u64,
     what: &str,
 ) -> std::result::Result<std::path::PathBuf, IconRefused> {
-    if name.is_empty() || std::path::Path::new(name).is_absolute() {
-        return Err(IconRefused::NotAName(format!("'{}' is not a path relative to the document", name)));
-    }
     let missing = || IconRefused::Missing(format!("no {} '{}'", what.trim_start_matches("an "), name));
     let folder = document.parent().ok_or_else(missing)?;
     file_in(folder, name, extensions, most, what)
@@ -3706,7 +3703,9 @@ fn kept_folder(document: &std::path::Path) -> std::result::Result<std::path::Pat
 }
 
 /// Only a path of plain names, relative, as `file_in` takes it - checked before anything is
-/// looked up or made on disk.
+/// looked up or made on disk. A colon is refused anywhere, on every system: `C:/x` is a drive on
+/// Windows but a folder named `C:` elsewhere, and `x:stream` is a hidden stream of `x` on NTFS,
+/// so a path that holds one would mean different files on different hosts.
 fn plain_relative(name: &str) -> std::result::Result<&std::path::Path, IconRefused> {
     use std::path::{Component, Path};
     let relative = Path::new(name);
@@ -3795,14 +3794,7 @@ fn file_in(
     most: u64,
     what: &str,
 ) -> std::result::Result<std::path::PathBuf, IconRefused> {
-    use std::path::{Component, Path};
-    let relative = Path::new(name);
-    if name.is_empty() || relative.is_absolute() {
-        return Err(IconRefused::NotAName(format!("'{}' is not a relative path", name)));
-    }
-    if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
-        return Err(IconRefused::NotAName(format!("'{}' contains a path component that is not a name", name)));
-    }
+    let relative = plain_relative(name)?;
     let extension = relative.extension().and_then(|e| e.to_str()).unwrap_or_default();
     if !extensions.is_empty() && !extensions.iter().any(|e| e.eq_ignore_ascii_case(extension)) {
         return Err(IconRefused::NotAName(format!("'{}' is not {} file", name, what)));

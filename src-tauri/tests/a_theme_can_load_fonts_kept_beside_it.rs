@@ -53,6 +53,7 @@ fn the_server_reads_no_font_outside_the_themes_folders() {
         "fonts/../../upstairs.woff2",
         "/upstairs.woff2",
         "C:/upstairs.woff2",
+        "fonts/hidden:plex-sans.woff2",
         outside.as_str(),
         "./fonts/plex-sans.woff2",
         "",

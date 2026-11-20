@@ -60,6 +60,7 @@ fn the_server_reads_no_image_outside_the_documents_folder() {
         "images/../../upstairs.png",
         "/upstairs.png",
         "C:/upstairs.png",
+        "images/hidden:plate.png",
         outside.as_str(),
         "./images/plate.png",
         "",

@@ -47,7 +47,7 @@ fn the_server_reads_nothing_outside_the_documents_folder() {
     let root = a_root("refused");
     let service = DocumentRoot::new(&root).expect("open the root");
     let outside = root.join("upstairs.svg").to_string_lossy().replace('\\', "/");
-    for icon in ["../upstairs.svg", "icons/../../upstairs.svg", "/upstairs.svg", "C:/upstairs.svg", outside.as_str(), "./icons/jar.svg", ""] {
+    for icon in ["../upstairs.svg", "icons/../../upstairs.svg", "/upstairs.svg", "C:/upstairs.svg", "icons/hidden:jar.svg", outside.as_str(), "./icons/jar.svg", ""] {
         assert!(
             matches!(ask(&service, icon), Err(RequestError::Rejected(_))),
             "'{}' was not refused: {:?}",
