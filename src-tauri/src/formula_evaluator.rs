@@ -4356,9 +4356,10 @@ fn relative_path_reference(input: &str) -> IResult<&str, FormulaExpression> {
 /// `FormulaEvaluator::summarised`.
 struct Summarised {
     /// What a filter compares with its reader: the entry's side, as a lambda over the entry -
-    /// `|x| x/parent`, `|x| day(x/finished_at)` - the reader's side, and whether the entry's side
-    /// is on the left.
-    keyed: Option<(FormulaExpression, FormulaExpression, bool)>,
+    /// `|x| x/parent`, `|x| day(x/finished_at)` - the reader's side, whether the entry's side
+    /// is on the left, and whether the entry's side holds several values of which one is to be
+    /// the reader's - `x/labels.filter(|t| t == ../tag).count() > 0` - rather than being it.
+    keyed: Option<(FormulaExpression, FormulaExpression, bool, bool)>,
     /// The filters and maps each entry goes through, that comparison taken out.
     steps: Vec<MethodCall>,
     /// What the last step reads of each item, as `sum(|x| x/points)` does.
@@ -6026,7 +6027,9 @@ impl FormulaEvaluator {
     /// The one thing a filter may compare with its reader is a function of the entry's fields
     /// alone - `x/parent == ../handle`, `day(x/finished_at) == ../day` - joined to the rest by
     /// `&&`: a summary then keeps what each entry gave by what that function gives for it, and a
-    /// reader looks its own value up in it.
+    /// reader looks its own value up in it. Or that condition asks whether such a function, a
+    /// `tags` field or a list, holds the reader's value among its items -
+    /// `x/labels.filter(|t| t == ../tag).count() > 0` - and the entry is kept under each of them.
     fn summarised(calls: &[MethodCall]) -> Option<Summarised> {
         let (last, steps) = calls.split_last()?;
         let mapped = steps.iter().any(|c| c.name == "map");
@@ -6067,6 +6070,16 @@ impl FormulaEvaluator {
                 if keyed.is_some() {
                     return None;
                 }
+                if let Some((side, reader)) = Self::membership_of(condition, &params[0]) {
+                    let mut read = Vec::new();
+                    if !Self::reads_only_its_entry(side, params, &mut read) {
+                        return None;
+                    }
+                    fields.extend(read);
+                    let lambda = FormulaExpression::Lambda { params: params.clone(), body: Box::new(side.clone()) };
+                    keyed = Some((lambda, reader.clone(), true, true));
+                    continue;
+                }
                 let FormulaExpression::BinaryOp { left, operator: BinaryOperator::Equal, right } = condition else {
                     return None;
                 };
@@ -6088,7 +6101,7 @@ impl FormulaEvaluator {
                 let Some(read) = of_entry(side) else { return None };
                 fields.extend(read);
                 let lambda = FormulaExpression::Lambda { params: params.clone(), body: side.clone() };
-                keyed = Some((lambda, (**reader).clone(), on_left));
+                keyed = Some((lambda, (**reader).clone(), on_left, false));
             }
             if let Some(rest) = rest.into_iter().reduce(|left, right| FormulaExpression::BinaryOp {
                 left: Box::new(left),
@@ -6110,11 +6123,56 @@ impl FormulaEvaluator {
         fields.dedup();
         let name = format!(
             "{:?} | {:?} | {:?}",
-            keyed.as_ref().map(|(side, _, on_left)| (side, on_left)),
+            keyed.as_ref().map(|(side, _, on_left, holds)| (side, on_left, holds)),
             kept,
             projection
         );
         Some(Summarised { keyed, steps: kept, projection, fields, name })
+    }
+
+    /// The entry's tags field and the reader's side of a condition asking whether that field
+    /// holds the reader's value - `x/labels.filter(|t| t == ../tag).count() > 0`, with the
+    /// comparison either way round and the count `> 0`, `>= 1` or `!= 0`. The reader's side
+    /// mentions neither the entry nor the tag.
+    fn membership_of<'e>(
+        condition: &'e FormulaExpression,
+        entry: &str,
+    ) -> Option<(&'e FormulaExpression, &'e FormulaExpression)> {
+        let FormulaExpression::BinaryOp { left, operator, right } = condition else { return None };
+        let zero = |e: &FormulaExpression, n: f64| matches!(e, FormulaExpression::Number(v) if *v == n);
+        let counted = match operator {
+            BinaryOperator::GreaterThan | BinaryOperator::NotEqual if zero(right, 0.0) => left,
+            BinaryOperator::GreaterThanOrEqual if zero(right, 1.0) => left,
+            BinaryOperator::LessThan | BinaryOperator::NotEqual if zero(left, 0.0) => right,
+            BinaryOperator::LessThanOrEqual if zero(left, 1.0) => right,
+            _ => return None,
+        };
+        let FormulaExpression::MethodChain { base, calls } = counted.as_ref() else { return None };
+        let FormulaExpression::PathReference(path) = base.as_ref() else { return None };
+        if path.len() != 2 || path[0] != entry || path[1] == ".." {
+            return None;
+        }
+        let [filter, count] = calls.as_slice() else { return None };
+        if filter.name != "filter" || count.name != "count" || !count.args.is_empty() {
+            return None;
+        }
+        let [FormulaExpression::Lambda { params, body }] = filter.args.as_slice() else { return None };
+        let [tag] = params.as_slice() else { return None };
+        let FormulaExpression::BinaryOp { left, operator: BinaryOperator::Equal, right } = body.as_ref() else {
+            return None;
+        };
+        let is_tag = |e: &FormulaExpression| matches!(e, FormulaExpression::FieldReference(n) if n == tag);
+        let reader = if is_tag(left) {
+            right
+        } else if is_tag(right) {
+            left
+        } else {
+            return None;
+        };
+        if Self::mentions_binding(reader, tag) || Self::mentions_binding(reader, entry) {
+            return None;
+        }
+        Some((base, reader))
     }
 
     /// Whether an expression reads nothing but the entry bound to one of `params` - its fields,
@@ -6198,7 +6256,7 @@ impl FormulaEvaluator {
             crate::partsums::template_of(list).ok_or_else(|| "its entries' template is not known".to_string())?;
         let kept_as = format!("{} | {}", template_key, chain.name);
         let reader = match &chain.keyed {
-            Some((_, side, _)) => Some(Self::evaluate_expression(side, context).unwrap_or(OverseerValue::Null)),
+            Some((_, side, ..)) => Some(Self::evaluate_expression(side, context).unwrap_or(OverseerValue::Null)),
             None => None,
         };
         let equal = |held: &OverseerValue, wanted: &OverseerValue, on_left: bool| {
@@ -6228,7 +6286,7 @@ impl FormulaEvaluator {
                 return Err(why.clone());
             }
             match (&chain.keyed, &reader) {
-                (Some((_, _, on_left)), Some(wanted)) => {
+                (Some((_, _, on_left, _)), Some(wanted)) => {
                     if let OverseerValue::String(wanted) = wanted {
                         out.extend(summary.by_key.get(wanted).into_iter().flatten().cloned());
                     } else {
@@ -6272,11 +6330,33 @@ impl FormulaEvaluator {
             match &chain.keyed {
                 // A key that cannot be worked out leaves the entry out, as the walk's filter
                 // would when its comparison fails.
-                Some((side, ..)) => match Self::eval_lambda(side, None, Some(&entry), None, context) {
+                Some((side, _, _, false)) => match Self::eval_lambda(side, None, Some(&entry), None, context) {
                     Ok(OverseerValue::String(held)) => summary.by_key.entry(held).or_default().push(value),
                     Ok(held) => summary.odd.push((held, value)),
                     Err(_) => {}
                 },
+                // Kept under each tag it holds, once however often it holds it: the walk's
+                // `count() > 0` counts the entry once too. An entry without the field holds none.
+                Some((FormulaExpression::Lambda { body, .. }, _, _, true)) => {
+                    let FormulaExpression::PathReference(path) = body.as_ref() else { continue };
+                    let Some(held) = Self::accessible_child(&entry, &path[1]) else { continue };
+                    if held.node_type != "tags" {
+                        summary.cannot = Some(format!("its entries' field '{}' is not a tags field", path[1]));
+                        return summary;
+                    }
+                    let mut tags: Vec<String> = Vec::new();
+                    for item in Self::items_of(held) {
+                        if let ListItem::Value(OverseerValue::String(tag)) = item {
+                            if !tags.contains(&tag) {
+                                tags.push(tag);
+                            }
+                        }
+                    }
+                    for tag in tags {
+                        summary.by_key.entry(tag).or_default().push(value.clone());
+                    }
+                }
+                Some(_) => {}
                 None => summary.values.push(value),
             }
         }

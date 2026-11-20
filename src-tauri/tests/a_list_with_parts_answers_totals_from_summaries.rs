@@ -15,6 +15,7 @@ const TEMPLATE: &str = r#"    div (hidden=true) {
             string status = "done"
             timestamp done_at = "2026-11-02T10:00:00Z"
             int points = 1
+            tags labels = ""
             int twice = $(points * 2)
             bool failed (hidden=$(failed == false), font-color=$(failed ? "red" : "")) = false {
                 on change {
@@ -67,6 +68,7 @@ const OLDEST: &str = r#"list History {
         - done_at = "2026-10-20T08:00:00Z"
         - points = 3
         - failed = true
+        - labels = "ui, dsl"
     }
     - {
         - handle = "d"
@@ -74,6 +76,7 @@ const OLDEST: &str = r#"list History {
         - status = "cancelled"
         - done_at = "2026-10-21T08:00:00Z"
         - points = 8
+        - labels = "ui"
     }
 }
 "#;
@@ -84,6 +87,7 @@ const OLDER: &str = r#"list History {
         - parent = "p"
         - done_at = "2026-10-27T08:00:00Z"
         - points = 4
+        - labels = "dsl, perf, dsl"
     }
 }
 "#;
@@ -351,5 +355,90 @@ fn a_key_reading_more_than_its_entry_reads_every_part() {
         let nodes = documents.open("log.os").expect("open");
         assert_eq!(held(&nodes), vec!["a", "d", "c", "b"]);
         assert_eq!(value(&nodes, "log/over"), Some(OverseerValue::Integer(1)));
+    });
+}
+
+const BY_TAG: &str = r#"    div (hidden=true) {
+        div Tag {
+            string tag = ""
+            int carrying = $(/log/History.filter(|x| x/labels.filter(|t| t == ../tag).count() > 0).count())
+            int won = $(/log/History.filter(|x| x/status != "cancelled" && x/labels.filter(|t| ../tag == t).count() >= 1).map(|x| x/points).sum())
+        }
+    }
+    list Tags (entry=<Tag>, key="tag") {
+        - {
+            - tag = "ui"
+        }
+        - {
+            - tag = "dsl"
+        }
+        - {
+            - tag = "perf"
+        }
+        - {
+            - tag = "docs"
+        }
+    }
+"#;
+
+const BY_TAG_ANSWERS: &[&str] = &[
+    "log/Tags/[ui]/carrying",
+    "log/Tags/[ui]/won",
+    "log/Tags/[dsl]/carrying",
+    "log/Tags/[dsl]/won",
+    "log/Tags/[perf]/carrying",
+    "log/Tags/[perf]/won",
+    "log/Tags/[docs]/carrying",
+    "log/Tags/[docs]/won",
+];
+
+#[test]
+fn a_total_over_the_entries_whose_tags_hold_the_readers_value_is_answered_from_summaries() {
+    serialised(|| {
+        let whole = {
+            let (_sandbox, documents) = sandbox("bytag_whole", &host(BY_TAG, false));
+            let nodes = documents.open("log.os").expect("open");
+            values(&nodes, BY_TAG_ANSWERS)
+        };
+        let (_sandbox, documents) = sandbox("bytag", &host(BY_TAG, true));
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(held(&nodes), vec!["b"], "only this week is read");
+        assert_eq!(said(&nodes, "_parts_read_whole"), None);
+        assert_eq!(values(&nodes, BY_TAG_ANSWERS), whole);
+        let int = |n| Some(OverseerValue::Integer(n));
+        assert_eq!(value(&nodes, "log/Tags/[ui]/carrying"), int(2));
+        assert_eq!(value(&nodes, "log/Tags/[ui]/won"), int(3), "the cancelled entry is left out");
+        assert_eq!(value(&nodes, "log/Tags/[dsl]/carrying"), int(2), "an entry holding a tag twice counts once");
+        assert_eq!(value(&nodes, "log/Tags/[dsl]/won"), int(7));
+        assert_eq!(value(&nodes, "log/Tags/[perf]/won"), int(4));
+        assert_eq!(value(&nodes, "log/Tags/[docs]/carrying"), int(0));
+
+        let added: HashMap<String, OverseerValue> = [
+            ("handle".to_string(), OverseerValue::String("e".to_string())),
+            ("done_at".to_string(), OverseerValue::Timestamp("2026-11-04T12:00:00Z".to_string())),
+            ("points".to_string(), OverseerValue::Integer(2)),
+            ("labels".to_string(), OverseerValue::String("ui, docs".to_string())),
+        ]
+        .into_iter()
+        .collect();
+        documents.append_at("log.os", "log/History", &added).expect("an append to this week");
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(said(&nodes, "_parts_read_whole"), None);
+        assert_eq!(value(&nodes, "log/Tags/[ui]/carrying"), int(3));
+        assert_eq!(value(&nodes, "log/Tags/[ui]/won"), int(5));
+        assert_eq!(value(&nodes, "log/Tags/[docs]/won"), int(2));
+    });
+}
+
+#[test]
+fn a_tag_compared_with_more_than_the_reader_reads_every_part() {
+    serialised(|| {
+        let extra = "    string suffix (mutable=false) = \"\"
+    int own (mutable=false) = $(History.filter(|x| x/labels.filter(|t| t == x/handle + ../suffix).count() > 0).count())
+";
+        let (_sandbox, documents) = sandbox("tagout", &host(extra, true));
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(held(&nodes), vec!["a", "d", "c", "b"]);
+        assert_eq!(value(&nodes, "log/own"), Some(OverseerValue::Integer(0)));
     });
 }

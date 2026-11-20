@@ -452,12 +452,16 @@ fields, constants, and functions of them that read nothing else (`week`, `same_d
 `millis_since_epoch` and the like, but not `today`, `now` or `days_since`). One condition of the
 first filter may compare one of these with the reader instead, joined to the rest by `&&`: a field,
 or a function of the entry's fields alone, such as `day(x/finished_at)`. A summary then keeps what
-each entry gave under what that side gives for it, and each reader looks up its own value:
+each entry gave under what that side gives for it, and each reader looks up its own value. That
+condition may instead ask whether a `tags` field of the entry holds the reader's value,
+`x/labels.filter(|t| t == ../tag).count() > 0`: the entry is then kept under each of its tags, once
+however often it holds one:
 
 ```overseer
 int kids = $(/project/History.filter(|x| x/parent == ../handle && x/status != "cancelled").count())
 float done = $(/project/History.filter(|x| x/parent == ../handle).map(|x| x/points).sum())
 int that_day = $(/project/History.filter(|x| day(x/finished_at) == ../day).sum(|x| x/points))
+int tagged = $(/project/History.filter(|x| x/labels.filter(|t| t == ../tag).count() > 0).sum(|x| x/points))
 timestamp last = $(/project/History.map(|x| x/finished_at).max())
 ```
 
