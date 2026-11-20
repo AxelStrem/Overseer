@@ -831,8 +831,65 @@ tab project (label="Project", mutable=true) {
         list Features (entry=<Feature>, key="handle", view="canvas", x="x", y="y") { }
     }
 
+    // Worked out from the lists alone and writing nothing. What it reads of History is totals the
+    // parts' summaries answer: a lambda reading the clock or a calendar day's date would have
+    // every part read on each open.
+    tab (label="Stats", hover-text="The project added up", mutable=false) {
+        div (layout="flow", min-width=150px, spacing=12) {
+            int tasks_total (label="tasks") = $(/project/Items.count() + /project/History.filter(|x| x/status != "cancelled").count())
+            int tasks_open (label="tasks open") = $(/project/Items.count())
+            int tasks_finished (label="tasks finished") = $(/project/History.filter(|x| x/status != "cancelled").count())
+            int points_total (label="points") = $(/project/points_open + /project/points_won)
+            int points_left (label="points outstanding") = $(/project/points_open)
+            int points_finished (label="points finished") = $(/project/points_won)
+        }
+
+        float finished_share (label="finished", view="progress", color="#15803d") =
+            $(points_total == 0 ? 0 : points_finished / points_total)
+
+        string held (label="held up") = $(/project/Items.filter(|x| x/waiting > 0).count() + " waiting on other items, "
+            + /project/Items.filter(|x| x/flags.filter(|f| f == "asked").count() > 0).count() + " asked, "
+            + /project/Items.filter(|x| x/stage == "testing").count() + " at testing")
+
+        div (layout="flow", min-width=280px, spacing=12) {
+            div (layout="vertical", margin=0, spacing=4) {
+                text stages_header (markdown=true) = "**Open items by stage**"
+                chart stages (kind="pie", height=180px) {
+                    plot filed (label="filed", color=$(/project/Stages.find("filed")/colour),
+                                amount=$(/project/Items.filter(|x| x/stage == "filed").count()))
+                    plot planning (label="planning", color=$(/project/Stages.find("planning")/colour),
+                                   amount=$(/project/Items.filter(|x| x/stage == "planning").count()))
+                    plot ready (label="ready", color=$(/project/Stages.find("ready")/colour),
+                                amount=$(/project/Items.filter(|x| x/stage == "ready").count()))
+                    plot testing (label="testing", color=$(/project/Stages.find("testing")/colour),
+                                  amount=$(/project/Items.filter(|x| x/stage == "testing").count()))
+                    plot parts (label="parts", color=$(/project/Stages.find("parts")/colour),
+                                amount=$(/project/Items.filter(|x| x/stage == "parts").count()))
+                    plot later (label="later", color=$(/project/Stages.find("later")/colour),
+                                amount=$(/project/Items.filter(|x| x/stage == "later").count()))
+                }
+            }
+
+            div (layout="vertical", margin=0, spacing=4) {
+                text complexities_header (markdown=true) = "**Open items by thinking**"
+                chart complexities (kind="pie", height=180px) {
+                    plot unassigned (label="unassigned", color=$(/project/Complexities.find("unassigned")/colour),
+                                     amount=$(/project/Items.filter(|x| x/complexity == "unassigned").count()))
+                    plot trivial (label="trivial", color=$(/project/Complexities.find("trivial")/colour),
+                                  amount=$(/project/Items.filter(|x| x/complexity == "trivial").count()))
+                    plot low (label="low", color=$(/project/Complexities.find("low")/colour),
+                              amount=$(/project/Items.filter(|x| x/complexity == "low").count()))
+                    plot medium (label="medium", color=$(/project/Complexities.find("medium")/colour),
+                                 amount=$(/project/Items.filter(|x| x/complexity == "medium").count()))
+                    plot high (label="high", color=$(/project/Complexities.find("high")/colour),
+                               amount=$(/project/Items.filter(|x| x/complexity == "high").count()))
+                }
+            }
+        }
+    }
+
     tab (label="Definition", hover-text="What the project is, from the document beside the tracker", hidden=$(definition.count() == 0)) {
         mount definition (source="definition.os/definition", mutable=false) { }
-        text help (markdown=true, font-size=14px, mutable=false) = "**Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; parts that nothing is left on it but its parts, and once the last of them is finished or cancelled it moves to testing by itself; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. **Milestones:** the releases or goals an item counts towards, picked from the project's list of them as tags are, and drawn leaning so they read apart from the tags beside them. **Discussion:** anything to talk over that is neither an item nor a feature - a question, an idea not yet a plan, a note for everyone. A topic has an id, whose it is, a title and its comments; it is pinned and dropped as an item is, and its id is never one an item has or had, so a chip naming it is never ambiguous. **Features:** what the project could become, kept apart from the plan: each is a card with a handle in capitals, so it is never taken for an item's, a line saying what it is, its description, pros and cons, and the features it needs, excludes or goes with. Its standing - proposed, wanted, accepted or discarded - colours the card. Cards are placed by dragging them anywhere on the area, so features that belong together can stand together; a new one waits in the strip above until it is placed. Text names a feature as <#HANDLE>, which draws its chip. **Tabs:** the plan has two pages, Open, what is still to do, and Closed, what was finished or cancelled; Discussion is for what is neither an item nor a feature; Features is what the project could become; Definition is what the project is, as the document beside the tracker says it, and this help. A tab beside the plan is the project's own."
+        text help (markdown=true, font-size=14px, mutable=false) = "**Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; parts that nothing is left on it but its parts, and once the last of them is finished or cancelled it moves to testing by itself; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. **Milestones:** the releases or goals an item counts towards, picked from the project's list of them as tags are, and drawn leaning so they read apart from the tags beside them. **Discussion:** anything to talk over that is neither an item nor a feature - a question, an idea not yet a plan, a note for everyone. A topic has an id, whose it is, a title and its comments; it is pinned and dropped as an item is, and its id is never one an item has or had, so a chip naming it is never ambiguous. **Features:** what the project could become, kept apart from the plan: each is a card with a handle in capitals, so it is never taken for an item's, a line saying what it is, its description, pros and cons, and the features it needs, excludes or goes with. Its standing - proposed, wanted, accepted or discarded - colours the card. Cards are placed by dragging them anywhere on the area, so features that belong together can stand together; a new one waits in the strip above until it is placed. Text names a feature as <#HANDLE>, which draws its chip. **Stats:** the project added up, worked out from the lists and writing nothing: how many tasks and points there are, open and finished, and the share finished; what holds open items up - other items they wait on, a question to the owner, a check at testing; and the open items by stage and by how much thinking they take. **Tabs:** the plan has two pages, Open, what is still to do, and Closed, what was finished or cancelled; Discussion is for what is neither an item nor a feature; Features is what the project could become; Stats is the project added up; Definition is what the project is, as the document beside the tracker says it, and this help. A tab beside the plan is the project's own."
     }
 }
