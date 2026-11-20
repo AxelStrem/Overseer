@@ -2730,6 +2730,18 @@ chart allowances (kind="bar", width=240px, height=150px) {
 }
 ```
 
+A pie or bar plot with a `source` reads a list as a line plot does, and draws one slice or bar per
+entry, in the list's order. Its `amount`, `limit`, `label` and `color` may each be a lambda giving
+the entry's own, or a plain value every entry shares. It stands among plots of their own, in its
+place:
+
+```overseer
+chart tags (kind="bar", height=200px, width=100%) {
+    plot each (source=$(/project/Labels), label=$(|t| t/name), color=$(|t| t/colour),
+               amount=$(|t| t/points_done), limit=$(|t| t/points_total), suffix=" pts")
+}
+```
+
 ### 5. Layout and Styling
 
 #### Layout Parameters:

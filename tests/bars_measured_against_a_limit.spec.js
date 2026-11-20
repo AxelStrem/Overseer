@@ -172,4 +172,29 @@ describe('bars measured against a limit', () => {
   it('is a bar chart', () => {
     expect(render([plot('salt', 'Salt', 4, 5)]).type).toBe('bar')
   })
+
+  it('draws a bar per entry of a plot over a list, in its order and colours, after a plot of its own', () => {
+    // The figures the resolver worked out for each entry. One with no limit has nothing to be a
+    // share of and is left out, as a plot of its own would be.
+    const each = Object.assign(base('each', 'plot'), {
+      parameters: {
+        source: { Formula: '/project/Labels' },
+        label: { Formula: '|t| t/name' },
+        suffix: { String: ' pts' },
+        _computed_bars: { String: JSON.stringify([
+          { label: 'ui', color: '#ff0000', amount: 3, limit: 4 },
+          { label: 'docs', color: '#00ff00', amount: 0, limit: 0 },
+          { label: 'dsl', color: '#0000ff', amount: 5, limit: 10 },
+        ]) },
+      },
+    })
+    const config = render([plot('salt', 'Salt', 4, 5), each])
+    expect(config.data.labels).toEqual(['Salt', 'ui', 'dsl'])
+    expect(bars(config).data).toEqual([0.8, 0.75, 0.5])
+    expect(bars(config).backgroundColor.slice(1).map(c => c.toLowerCase())).toEqual(['#ff0000', '#0000ff'])
+    const text = config.options.plugins.tooltip.callbacks.label({
+      label: 'ui', dataIndex: 1, parsed: { y: 0.75 }, datasetIndex: 0,
+    })
+    expect(text).toBe('ui: 3 pts of 4 pts (75%)')
+  })
 })

@@ -3375,6 +3375,12 @@ impl ActionExecutor {
     /// A list a mount brought in was written with its own file's templates, and the host has
     /// none of them, so appending to it failed for want of one. Looked for there first, because
     /// that is the template the entry will be written back against - see `mounts_written`.
+    ///
+    /// A template itself made from another, `<Label> Tag { ... }`, is found as only what it
+    /// writes when it lives in a file the document is made from, which is read without being
+    /// worked out. It is worked out here, as the resolver works it out for the entries it draws -
+    /// see `resolver::as_a_template` - or a copy into it found none of the fields it inherits, and
+    /// a list kept by one of them refused the entry for having no key.
     fn template_for(document: &Vec<OverseerNode>, indices: &[usize], name: &str) -> Option<OverseerNode> {
         let mut level: &[OverseerNode] = document;
         let mut mounted_from = None;
@@ -3387,10 +3393,13 @@ impl ActionExecutor {
             }
             level = &node.children;
         }
+        let worked_out = |found: OverseerNode, within: &[OverseerNode]| {
+            crate::resolver::as_a_template(found, name, within, &mut Vec::new())
+        };
         mounted_from
             .and_then(|file| Self::load_mounted_document(&file).ok())
-            .and_then(|theirs| crate::bases::find(&theirs, name))
-            .or_else(|| crate::bases::find(document, name))
+            .and_then(|theirs| crate::bases::find(&theirs, name).map(|found| worked_out(found, &theirs)))
+            .or_else(|| crate::bases::find(document, name).map(|found| worked_out(found, document)))
     }
 
     /// Look at a mounted file as it was last read, without a copy of it - `None` when it is not

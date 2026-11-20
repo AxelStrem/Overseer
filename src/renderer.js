@@ -8709,6 +8709,47 @@ export class OverseerRenderer {
         return container
     }
 
+    // The figures a bar or pie chart draws, in its plots' order: one for a plot of its own, and
+    // one per entry for a plot reading a list, whose figures the resolver worked out into
+    // `_computed_bars`. A figure the entry does not give falls back to the plot's own, so a
+    // plot can give every bar one colour or one limit.
+    chartFigures(plots) {
+        const number = (plot, key) => {
+            const raw = this.getParameterValue(plot, '_computed_' + key)
+            return Number(raw !== undefined && raw !== null ? raw : this.getParameterValue(plot, key))
+        }
+        const figures = []
+        for (const plot of plots) {
+            const suffix = (this.getParameterValue(plot, 'suffix') || '').toString()
+            const own = this.getParameterValue(plot, 'label')
+            const plain = (v) => (typeof v === 'string' && v.trim().startsWith('|') ? undefined : v)
+            const barsJson = this.getParameterValue(plot, '_computed_bars')
+            if (barsJson) {
+                let bars = []
+                try { bars = JSON.parse(barsJson) } catch (_) { bars = [] }
+                if (!Array.isArray(bars)) bars = []
+                for (const bar of bars) {
+                    figures.push({
+                        amount: Number(bar.amount),
+                        limit: Number(bar.limit),
+                        label: bar.label || plain(own) || plot.name,
+                        color: bar.color || plain(this.getParameterValue(plot, 'color')),
+                        suffix,
+                    })
+                }
+                continue
+            }
+            figures.push({
+                amount: number(plot, 'amount'),
+                limit: number(plot, 'limit'),
+                label: own || plot.name,
+                color: this.getParameterValue(plot, 'color'),
+                suffix,
+            })
+        }
+        return figures
+    }
+
     createChartElement(node) {
         const container = document.createElement('div')
         container.className = 'overseer-chart'
@@ -8832,13 +8873,11 @@ export class OverseerRenderer {
             const labels = []
             const values = []
             const colors = []
-            for (const plot of plotsAll) {
-                const raw = this.getParameterValue(plot, '_computed_amount')
-                const amount = Number(raw !== undefined && raw !== null ? raw : this.getParameterValue(plot, 'amount'))
+            for (const { amount, label, color } of this.chartFigures(plotsAll)) {
                 if (!isFinite(amount) || amount <= 0) continue
-                labels.push(this.getParameterValue(plot, 'label') || plot.name || 'Slice')
+                labels.push(label || 'Slice')
                 values.push(amount)
-                colors.push(this.convertColorValue(this.getParameterValue(plot, 'color') || '#4A90E2'))
+                colors.push(this.convertColorValue(color || '#4A90E2'))
             }
             if (values.length === 0) return container
 
@@ -8888,25 +8927,18 @@ export class OverseerRenderer {
             const shares = []
             const colors = []
             const facts = []
-            for (const plot of plotsAll) {
-                const rawAmount = this.getParameterValue(plot, '_computed_amount')
-                const amount = Number(rawAmount !== undefined && rawAmount !== null
-                    ? rawAmount : this.getParameterValue(plot, 'amount'))
-                const rawLimit = this.getParameterValue(plot, '_computed_limit')
-                const limit = Number(rawLimit !== undefined && rawLimit !== null
-                    ? rawLimit : this.getParameterValue(plot, 'limit'))
+            for (const { amount, limit, label, color, suffix } of this.chartFigures(plotsAll)) {
                 // A plot with no limit has nothing to be a share of. Skipped rather than drawn
                 // against the others, which would put it on an axis it does not belong to.
                 if (!isFinite(amount) || !isFinite(limit) || limit <= 0) continue
-                const suffix = (this.getParameterValue(plot, 'suffix') || '').toString()
                 const share = amount / limit
-                labels.push(this.getParameterValue(plot, 'label') || plot.name || 'Bar')
+                labels.push(label || 'Bar')
                 shares.push(share)
                 // Over the limit is the thing the chart exists to show, so it is not left to the
                 // reader to compare a bar against a line: it changes colour.
                 colors.push(share > 1
                     ? this.convertColorValue('#e63e11')
-                    : this.convertColorValue(this.getParameterValue(plot, 'color') || '#4A90E2'))
+                    : this.convertColorValue(color || '#4A90E2'))
                 facts.push({ amount, limit, suffix })
             }
             if (shares.length === 0) return container

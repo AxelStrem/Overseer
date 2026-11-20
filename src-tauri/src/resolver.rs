@@ -1993,8 +1993,13 @@ unsafe fn recursively_compute_chart_series(
 
     // Process chart nodes: collect bounds across plots
     if (*node_ptr).node_type == "chart" {
-        // Worked out with nothing written, and written afterwards.
-        let mut series_of: Vec<(usize, String)> = Vec::new();
+        // Worked out with nothing written, and written afterwards: the plot, the parameter, and
+        // its JSON.
+        let mut series_of: Vec<(usize, &'static str, String)> = Vec::new();
+        let per_entry_chart = matches!(
+            (*node_ptr).parameters.get("kind"),
+            Some(OverseerValue::String(k)) if matches!(k.to_lowercase().as_str(), "bar" | "pie" | "doughnut")
+        );
         let mut global_min_x: Option<f64> = None;
         let mut global_max_x: Option<f64> = None;
         let mut global_min_y: Option<f64> = None;
@@ -2054,6 +2059,15 @@ unsafe fn recursively_compute_chart_series(
                         }
                         SourceItems::FromList(p, list) => (p, list, None),
                     };
+
+                    // A bar or a pie draws no series over an axis: a plot reading a list gives
+                    // one bar or slice per entry instead, each with the figures its lambdas give
+                    // for that entry - see `per_entry_figures`.
+                    if per_entry_chart {
+                        let figures = per_entry_figures(plot, &items, &source_path_vec, source_ref_opt, document_root);
+                        series_of.push((plot_at, "_computed_bars", figures));
+                        continue;
+                    }
                     let mut series: Vec<(f64, f64)> = Vec::new();
 
                     // Fetch x/y expressions
@@ -2104,16 +2118,16 @@ unsafe fn recursively_compute_chart_series(
                     }
 
                     // Stored as a JSON string, once nothing is being read.
-                    series_of.push((plot_at, series_to_json(&series)));
+                    series_of.push((plot_at, "_computed_series", series_to_json(&series)));
                 }
             }
         }
 
         let node: &mut OverseerNode = &mut *node_ptr;
-        for (plot_at, json) in series_of {
+        for (plot_at, key, json) in series_of {
             node.children[plot_at]
                 .parameters
-                .insert("_computed_series".to_string(), OverseerValue::String(json));
+                .insert(key.to_string(), OverseerValue::String(json));
         }
         // Store computed bounds on the chart
         if let (Some(xmin), Some(xmax), Some(ymin), Some(ymax)) =
@@ -2153,6 +2167,86 @@ unsafe fn recursively_compute_chart_series(
     }
 
     // Helpers local to this function
+
+    /// The figures of a bar or pie plot reading a list: one `{label, color, amount, limit}` per
+    /// entry, in the list's order, as a JSON array.
+    ///
+    /// Each of the four is either a lambda, worked out on the entry, or a plain value - written,
+    /// or worked out once by the formula pass into its `_computed_` shadow - that every entry
+    /// shares, such as one colour or one limit for all the bars. An entry whose amount is not a
+    /// number is left out; what is drawn of the rest is the page's to decide, as for a plot of
+    /// its own.
+    fn per_entry_figures(
+        plot: &OverseerNode,
+        items: &[&OverseerNode],
+        source_path: &[String],
+        source_ref: Option<&OverseerNode>,
+        document_root: &[OverseerNode],
+    ) -> String {
+        use crate::formula_evaluator::{EvaluationContext, FormulaEvaluator};
+        enum Figure {
+            Lambda(crate::formula_evaluator::FormulaExpression),
+            Shared(Option<OverseerValue>),
+        }
+        let figure = |key: &str| -> Figure {
+            if let Some(OverseerValue::Formula(f)) = plot.parameters.get(key) {
+                if f.trim_start().starts_with('|') {
+                    if let Ok(parsed) = FormulaEvaluator::parse_lambda(f) {
+                        return Figure::Lambda(parsed);
+                    }
+                    return Figure::Shared(None);
+                }
+            }
+            Figure::Shared(
+                plot.parameters
+                    .get(&format!("_computed_{}", key))
+                    .or_else(|| plot.parameters.get(key))
+                    .filter(|v| !matches!(v, OverseerValue::Formula(_)))
+                    .cloned(),
+            )
+        };
+        let (label, color, amount, limit) = (figure("label"), figure("color"), figure("amount"), figure("limit"));
+
+        let mut entries: Vec<serde_json::Value> = Vec::new();
+        for item in items {
+            let mut item_path = source_path.to_vec();
+            item_path.push(item.name.clone());
+            let ctx = EvaluationContext::new_with_current_and_parent(item, source_ref, item_path, document_root);
+            let on_entry = |f: &Figure| -> Option<OverseerValue> {
+                match f {
+                    Figure::Lambda(expr) => FormulaEvaluator::evaluate_parsed_lambda_on_item(expr, &ctx, item).ok(),
+                    Figure::Shared(v) => v.clone(),
+                }
+            };
+            let Some(amount) = to_f64(on_entry(&amount)).filter(|a| a.is_finite()) else {
+                continue;
+            };
+            let mut entry = serde_json::Map::new();
+            entry.insert("amount".into(), serde_json::json!(amount));
+            if let Some(limit) = to_f64(on_entry(&limit)).filter(|l| l.is_finite()) {
+                entry.insert("limit".into(), serde_json::json!(limit));
+            }
+            if let Some(text) = on_entry(&label).as_ref().and_then(to_text) {
+                entry.insert("label".into(), serde_json::json!(text));
+            }
+            if let Some(text) = on_entry(&color).as_ref().and_then(to_text) {
+                entry.insert("color".into(), serde_json::json!(text));
+            }
+            entries.push(serde_json::Value::Object(entry));
+        }
+        serde_json::Value::Array(entries).to_string()
+    }
+
+    fn to_text(v: &OverseerValue) -> Option<String> {
+        match v {
+            OverseerValue::String(s) | OverseerValue::Date(s) | OverseerValue::Timestamp(s) => Some(s.clone()),
+            OverseerValue::Integer(i) => Some(i.to_string()),
+            OverseerValue::Float(f) => Some(f.to_string()),
+            OverseerValue::Boolean(b) => Some(b.to_string()),
+            _ => None,
+        }
+    }
+
     fn to_f64(v: Option<OverseerValue>) -> Option<f64> {
         match v? {
             OverseerValue::Integer(i) => Some(i as f64),
@@ -2545,7 +2639,7 @@ thread_local! {
 /// of `entry=<Movie>` had none of Thing's fields, and a button Movie relabelled had no click. Its
 /// bookkeeping as an instance is taken off, so that the copy reads as a plain template of the type
 /// it comes down to. A template that comes back round to itself is used as it is written.
-fn as_a_template(
+pub(crate) fn as_a_template(
     template: OverseerNode,
     path: &str,
     all_nodes: &[OverseerNode],
