@@ -186,3 +186,28 @@ fn with_the_disk_cache_off_no_summary_is_kept() {
     assert_eq!(totals(&nodes), [int(20), int(12), int(2)]);
     assert!(!sandbox.0.join("cache").exists());
 }
+
+#[test]
+fn a_summary_read_from_disk_is_marked_as_used() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let sandbox = sandbox("touched", true);
+    open_fresh(&sandbox);
+    assert!(summaries_on_disk(&sandbox) > 0);
+    let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 3600);
+    let files: Vec<_> = std::fs::read_dir(sandbox.0.join("cache/sums"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    for file in &files {
+        std::fs::File::options().write(true).open(file).unwrap().set_modified(long_ago).unwrap();
+    }
+    open_fresh(&sandbox);
+    overseer::document_disk::settled();
+    let touched = files
+        .iter()
+        .filter(|file| std::fs::metadata(file).unwrap().modified().unwrap() > long_ago)
+        .count();
+    assert_eq!(touched, files.len(), "a trim keeps what was read, and lets go of what was not");
+}

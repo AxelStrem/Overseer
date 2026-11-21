@@ -4385,6 +4385,23 @@ pub(crate) enum ListItem<'a> {
 /// stand in for a comparison that is not transitive.
 type EqualityIndex = std::collections::HashMap<String, Vec<usize>>;
 
+/// What an equality index groups a list's entries by: a field they hold, or a function of their
+/// own fields, as a lambda over the entry - `|x| day(x/finished_at)`.
+enum IndexedBy {
+    Field(String),
+    Function(FormulaExpression),
+}
+
+impl IndexedBy {
+    /// The name the index is kept under for its list during a pass.
+    fn name(&self) -> String {
+        match self {
+            IndexedBy::Field(field) => field.clone(),
+            IndexedBy::Function(function) => format!("{:?}", function),
+        }
+    }
+}
+
 impl FormulaEvaluator {
     /// What a node offers to a method chain.
     ///
@@ -4539,11 +4556,15 @@ impl FormulaEvaluator {
             });
             match answered {
                 Ok((projection, values, took_some)) => {
-                    // Answered with the rest: the list is no longer the one any index of it
-                    // describes.
+                    // Answered with the rest: the list is no longer the one an index of the list
+                    // node describes. What is left is the same for every reader during a pass -
+                    // the entries it holds that are worked out - so it is indexed on its own,
+                    // under the node's address with its lowest bit set, which is no node's
+                    // address, nodes being aligned. A keyed chain's readers each filter it: a
+                    // year's days, each asking for its own day of this week's finished items.
                     if took_some {
                         list.retain(|item| !matches!(item, ListItem::Node(n) if crate::resolver::not_worked_out(n)));
-                        came_from = None;
+                        came_from = came_from.map(|at| at | 1);
                     }
                     from_parts = Some((projection, values));
                 }
@@ -4711,8 +4732,8 @@ impl FormulaEvaluator {
                     let mut may_index = position == 0;
                     let rest;
                     let lambda = match came_from.filter(|_| may_index).and_then(|base| {
-                        Self::narrowed_by_an_indexed_condition(base, lambda, context, |field| {
-                            Self::index_of_items(&list, field)
+                        Self::narrowed_by_an_indexed_condition(base, lambda, context, true, |by| {
+                            Self::index_of_items_by(&list, by, &entries, context)
                         })
                     }) {
                         Some((at, remaining)) => {
@@ -4753,6 +4774,21 @@ impl FormulaEvaluator {
                                     at.into_iter().filter_map(|i| list.get(i).cloned()).collect();
                                 debug_evaluator!("[EVAL] Indexed filter: {} of {}", found.len(), list.len());
                                 list = found;
+                                continue;
+                            }
+                        }
+                        // The same for a function of the entry's own fields compared with a
+                        // string, `day(x/finished_at) == ../day_key`.
+                        if let (Some(base), None, Some((by, wanted))) =
+                            (came_from, &direct, Self::entry_function_comparison(lambda))
+                        {
+                            if let Some(at) = Self::positions_holding(base, &by.name(), &wanted, || {
+                                Self::index_of_items_by(&list, &by, &entries, context)
+                            }) {
+                                // The index read those fields of every entry, and which is not
+                                // said here.
+                                read.entries_alone = false;
+                                list = at.into_iter().filter_map(|i| list.get(i).cloned()).collect();
                                 continue;
                             }
                         }
@@ -5584,8 +5620,9 @@ impl FormulaEvaluator {
                             let mut may_index = position == 0;
                             let rest;
                             let lambda = match Some(came_from).filter(|_| may_index).and_then(|base| {
-                                Self::narrowed_by_an_indexed_condition(base, lambda, context, |field| {
-                                    Self::index_of_nodes(&nodes, field)
+                                Self::narrowed_by_an_indexed_condition(base, lambda, context, false, |by| match by {
+                                    IndexedBy::Field(field) => Self::index_of_nodes(&nodes, field),
+                                    IndexedBy::Function(_) => None,
                                 })
                             }) {
                                 Some((at, remaining)) => {
@@ -5936,6 +5973,63 @@ impl FormulaEvaluator {
         Some(index)
     }
 
+    /// The same, grouped by what a function of the entry gives for each - see `IndexedBy`. An
+    /// entry the function cannot be worked out for is left out, as the walk leaves out an entry
+    /// its predicate fails on; one it gives anything but a string for means the list cannot be
+    /// indexed, as for a field.
+    fn index_of_items_by(
+        list: &[ListItem],
+        by: &IndexedBy,
+        entries: &Option<std::rc::Rc<[String]>>,
+        context: &EvaluationContext,
+    ) -> Option<EqualityIndex> {
+        let function = match by {
+            IndexedBy::Field(field) => return Self::index_of_items(list, field),
+            IndexedBy::Function(function) => function,
+        };
+        let mut index = EqualityIndex::new();
+        for (at, item) in list.iter().enumerate() {
+            let ListItem::Node(node) = item else {
+                return None;
+            };
+            match Self::eval_lambda_over(function, None, Some(*node), None, entries, context) {
+                Ok(OverseerValue::String(held)) => index.entry(held).or_default().push(at),
+                Ok(_) => return None,
+                Err(_) => {}
+            }
+        }
+        Some(index)
+    }
+
+    /// A predicate of the shape `f(x) == "..."`, once the hoist has made the other side a string:
+    /// what to index the list by, and the string. `f` reads only its entry's own fields, through
+    /// functions of nothing else - as a summary's key does, see `summarised` - so what it gives
+    /// for an entry is the same for every reader during a pass. A bare field is
+    /// `direct_field_comparison`'s.
+    fn entry_function_comparison(lambda: &FormulaExpression) -> Option<(IndexedBy, OverseerValue)> {
+        let FormulaExpression::Lambda { params, body } = lambda else {
+            return None;
+        };
+        let [param] = params.as_slice() else { return None };
+        let FormulaExpression::BinaryOp { left, operator: BinaryOperator::Equal, right } = body.as_ref() else {
+            return None;
+        };
+        let (side, wanted) = match (left.as_ref(), right.as_ref()) {
+            (side, FormulaExpression::StringLiteral(wanted)) | (FormulaExpression::StringLiteral(wanted), side) => {
+                (side, wanted)
+            }
+            _ => return None,
+        };
+        if matches!(side, FormulaExpression::PathReference(path) if path.len() == 2)
+            || !Self::mentions_binding(side, param)
+            || !Self::reads_only_its_entry(side, params, &mut Vec::new())
+        {
+            return None;
+        }
+        let function = FormulaExpression::Lambda { params: params.clone(), body: Box::new(side.clone()) };
+        Some((IndexedBy::Function(function), OverseerValue::String(wanted.clone())))
+    }
+
     /// For a predicate of conditions joined by `&&`, one of them a field held equal to a string:
     /// the entries the index says hold it, and the predicate left to ask of them.
     ///
@@ -5949,11 +6043,15 @@ impl FormulaEvaluator {
     /// ones the index leaves out are ones the walk would have left out; and `positions_holding`
     /// answers only when every entry holds a string there, as for the single comparison. `None`
     /// means walk it.
+    ///
+    /// With `functions`, a condition comparing a function of the entry's own fields with a string,
+    /// `day(x/finished_at) == ../day_key`, is answered from an index of what that function gives.
     fn narrowed_by_an_indexed_condition(
         base: usize,
         lambda: &FormulaExpression,
         context: &EvaluationContext,
-        build: impl FnOnce(&str) -> Option<EqualityIndex>,
+        functions: bool,
+        build: impl FnOnce(&IndexedBy) -> Option<EqualityIndex>,
     ) -> Option<(Vec<usize>, FormulaExpression)> {
         let FormulaExpression::Lambda { params, body } = lambda else {
             return None;
@@ -5971,17 +6069,20 @@ impl FormulaEvaluator {
             params: params.clone(),
             body: Box::new(condition.clone()),
         };
-        let (indexed, (field, wanted)) = conditions.iter().enumerate().find_map(|(i, condition)| {
+        let (indexed, (by, wanted)) = conditions.iter().enumerate().find_map(|(i, condition)| {
             let alone = alone(condition);
             let hoisted = Self::with_invariant_side_resolved(&alone, context);
-            match Self::direct_field_comparison(hoisted.as_ref().unwrap_or(&alone)) {
+            let hoisted = hoisted.as_ref().unwrap_or(&alone);
+            match Self::direct_field_comparison(hoisted) {
                 Some((field, BinaryOperator::Equal, wanted @ OverseerValue::String(_), _)) => {
-                    Some((i, (field, wanted)))
+                    Some((i, (IndexedBy::Field(field), wanted)))
                 }
-                _ => None,
+                Some(_) => None,
+                None if functions => Self::entry_function_comparison(hoisted).map(|found| (i, found)),
+                None => None,
             }
         })?;
-        let at = Self::positions_holding(base, &field, &wanted, || build(&field))?;
+        let at = Self::positions_holding(base, &by.name(), &wanted, || build(&by))?;
         let rest = conditions
             .iter()
             .enumerate()

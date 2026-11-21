@@ -473,3 +473,116 @@ fn several_conditions_reach_a_node_through_the_index() {
     assert_eq!(number(&source, "big_beef"), 26.0);
     assert_eq!(number(&source, "big_oats"), 13.0);
 }
+
+/// Each day of a list asks for the rows finished on it: the comparison is of a function of each
+/// row's field with the reader's own value, and every day asks it again of the same rows.
+const BY_DAY: &str = r#"
+tab t (label="T") {
+    div (hidden=true) {
+        div Row {
+            string name = ""
+            timestamp at = ""
+            string status = "done"
+            int n = 0
+        }
+        div Day {
+            string name = ""
+            string key = ""
+            int points = $(/t/Rows.filter(|x| day(x/at) == ../key).sum(|x| x/n))
+            int done = $(/t/Rows.filter(|x| x/status != "cancelled" && day(x/at) == ../key).sum(|x| x/n))
+            int by_year = $(/t/Rows.filter(|x| year(x/at) == ../year).count())
+            string year = "2026"
+        }
+    }
+
+    list Rows (entry=<Row>, key="name") {
+        - {
+            - name = "a"
+            - at = "2026-03-01T09:00:00Z"
+            - n = 1
+        }
+        - {
+            - name = "b"
+            - at = "2026-03-01T15:00:00Z"
+            - n = 2
+            - status = "cancelled"
+        }
+        - {
+            - name = "c"
+            - at = "2026-03-02T10:00:00Z"
+            - n = 4
+        }
+        - {
+            - name = "d"
+            - n = 8
+        }
+    }
+
+    list Days (entry=<Day>, key="name") {
+        - {
+            - name = "first"
+            - key = "2026-03-01"
+        }
+        - {
+            - name = "second"
+            - key = "2026-03-02"
+        }
+        - {
+            - name = "third"
+            - key = "2026-03-03"
+        }
+    }
+}
+"#;
+
+/// A field of the day named `name`, worked out.
+fn of_day(source: &str, name: &str, field: &str) -> OverseerValue {
+    let nodes = app_api::load_document(source.to_string()).expect("document did not load");
+    let days = find(&nodes, "Days").expect("no Days");
+    let day = days
+        .children
+        .iter()
+        .find(|d| {
+            find(&d.children, "name").and_then(|h| h.parameters.get("value"))
+                == Some(&OverseerValue::String(name.to_string()))
+        })
+        .unwrap_or_else(|| panic!("no day `{name}`"));
+    find(&day.children, field)
+        .and_then(|f| f.parameters.get("_computed_value"))
+        .cloned()
+        .unwrap_or(OverseerValue::Null)
+}
+
+#[test]
+fn a_row_is_found_by_what_a_function_of_its_fields_gives() {
+    assert_eq!(of_day(BY_DAY, "first", "points"), OverseerValue::Integer(3));
+    assert_eq!(of_day(BY_DAY, "second", "points"), OverseerValue::Integer(4));
+    assert_eq!(of_day(BY_DAY, "third", "points"), OverseerValue::Integer(0));
+}
+
+#[test]
+fn a_function_of_the_fields_narrows_beside_another_condition() {
+    assert_eq!(of_day(BY_DAY, "first", "done"), OverseerValue::Integer(1));
+    assert_eq!(of_day(BY_DAY, "second", "done"), OverseerValue::Integer(4));
+    assert_eq!(of_day(BY_DAY, "third", "done"), OverseerValue::Integer(0));
+}
+
+#[test]
+fn a_function_giving_numbers_is_not_indexed_but_is_still_matched() {
+    // `year` gives a number, which the walk matches against "2026" as text; an index of strings
+    // would hold none of them. The row without a time is in no year.
+    assert_eq!(of_day(BY_DAY, "first", "by_year"), OverseerValue::Integer(3));
+}
+
+#[test]
+fn a_change_to_the_field_a_function_reads_reaches_every_reader() {
+    use overseer::dependencies;
+    let (_rest, mut nodes) = overseer::parser::parse_document(BY_DAY).expect("parse");
+    dependencies::start_recording();
+    overseer::resolver::resolve_document(&mut nodes);
+    let graph = dependencies::take_recording();
+    let reached = graph.nodes_to_work_out_again(&["t/Rows/c/at".to_string()]);
+    for value in ["t/Days/Day__1/points", "t/Days/Day__3/points", "t/Days/Day__1/done", "t/Days/Day__3/done"] {
+        assert!(reached.contains(&value.to_string()), "{} not reached: {:?}", value, reached);
+    }
+}

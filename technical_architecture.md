@@ -192,9 +192,14 @@ knowing about because each has a cost:
   day; only what the page is sent leaves out what is under it (`ForThePage`, whose writing of a
   node's children skips a marked child's own), since the page draws the square and reads nothing
   more. A change reported under such a day finds no node in the page and is passed over.
-- **An equality index** for `filter`, built per pass and keyed by the field compared. Strings
-  only: `compare_values` falls back to text, so `5 == "5"` while `5.0 != "5.0"`, and an index
-  over a comparison that is not transitive would answer differently from the scan it replaces.
+- **An equality index** for `filter`, built per pass and keyed by the field compared, or by a
+  function of the entry's own fields through functions that read nothing else, such as
+  `day(x/finished_at) == ../day_key`. Strings only: `compare_values` falls back to text, so
+  `5 == "5"` while `5.0 != "5.0"`, and an index over a comparison that is not transitive would
+  answer differently from the scan it replaces. A list with parts it has not read, answered
+  from their summaries, has the entries it holds indexed on their own, so that each reader of a
+  keyed chain over it - each day of a year asking for its own day - looks its day up rather
+  than walking them.
 
 ## The invariant
 

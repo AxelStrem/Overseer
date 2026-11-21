@@ -278,10 +278,7 @@ mod on_disk {
             {
                 return None;
             }
-            // Marked as used: a trim lets go of the files touched longest ago first.
-            if let Ok(file) = std::fs::File::options().write(true).open(&self.file) {
-                let _ = file.set_modified(std::time::SystemTime::now());
-            }
+            touch_later(self.file.clone());
             Some(stored.summary)
         }
 
@@ -305,6 +302,38 @@ mod on_disk {
                 }
             });
         }
+    }
+
+    /// Files read and not yet marked as used, and whether a thread is marking them.
+    static TOUCHING: std::sync::Mutex<(Vec<PathBuf>, bool)> = std::sync::Mutex::new((Vec::new(), false));
+
+    /// Mark a file read as used, so a trim lets go of the files touched longest ago first - on a
+    /// thread of its own, which marks every file read meanwhile. Marking one is a second opening
+    /// of the file, and cost the open that read it more than reading it: a tracker's first open on
+    /// a server just started reads a few hundred summaries, one for each chain and part.
+    fn touch_later(file: PathBuf) {
+        let mut touching = TOUCHING.lock().unwrap_or_else(|e| e.into_inner());
+        touching.0.push(file);
+        if touching.1 {
+            return;
+        }
+        touching.1 = true;
+        crate::document_disk::in_background(|| loop {
+            let files = {
+                let mut touching = TOUCHING.lock().unwrap_or_else(|e| e.into_inner());
+                if touching.0.is_empty() {
+                    touching.1 = false;
+                    return;
+                }
+                std::mem::take(&mut touching.0)
+            };
+            let now = std::time::SystemTime::now();
+            for file in files {
+                if let Ok(file) = std::fs::File::options().write(true).open(&file) {
+                    let _ = file.set_modified(now);
+                }
+            }
+        });
     }
 
     fn trim_now_and_then(folder: &Path, budget: usize) {
