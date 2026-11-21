@@ -38,7 +38,9 @@
 // or beside the script; a long page read whole is shrunk, so look at its parts with `of`.
 //
 // --keep leaves the server running, and prints its address, for a person to open the copy.
-// CHROME names a Chromium browser if Chrome and Edge are not in the usual places.
+// CHROME names a Chromium browser if Chrome and Edge are not in the usual places. Where the
+// system gives the browser no sandbox, as in a container without user namespaces, it is started
+// again with --no-sandbox.
 import { spawn } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -123,20 +125,47 @@ async function startBrowser(profile) {
         '/usr/bin/microsoft-edge', '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     ].find((p) => p && existsSync(p))
     if (!chrome) throw new Error('no Chrome or Edge found; set CHROME to a Chromium browser')
-    const browser = spawn(chrome, [
+    const flags = [
         '--headless=new', '--disable-gpu', '--hide-scrollbars', '--remote-debugging-port=0',
-        '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, 'about:blank',
-    ])
-    const url = await new Promise((done, fail) => {
+        '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`,
+    ]
+    try {
+        return await launchBrowser(chrome, flags)
+    } catch (e) {
+        // A container that allows no unprivileged user namespaces leaves Chrome no sandbox to
+        // run in, and it stops at once; only there is it started again without one.
+        if (!e.noSandbox) throw e
+        return await launchBrowser(chrome, [...flags, '--no-sandbox'])
+    }
+}
+
+function launchBrowser(chrome, flags) {
+    const browser = spawn(chrome, [...flags, 'about:blank'])
+    return new Promise((done, fail) => {
         let seen = ''
+        const timer = setTimeout(() => {
+            browser.kill()
+            fail(new Error('the browser gave no DevTools address'))
+        }, 20000)
         browser.stderr.on('data', (d) => {
             seen += d
             const m = seen.match(/DevTools listening on (ws:\S+)/)
-            if (m) done(m[1])
+            if (m) {
+                clearTimeout(timer)
+                done({ browser, debugPort: new URL(m[1]).port })
+            }
         })
-        setTimeout(() => fail(new Error('the browser gave no DevTools address')), 20000)
+        const exited = () => {
+            clearTimeout(timer)
+            const last = seen.trim().split('\n').pop()?.trim().slice(0, 300)
+            const error = new Error('the browser stopped before it gave a DevTools address' + (last ? ': ' + last : ''))
+            error.noSandbox = /No usable sandbox/i.test(seen)
+            fail(error)
+        }
+        browser.on('error', exited)
+        // 'close', not 'exit': it waits for the last of stderr, which says why.
+        browser.on('close', exited)
     })
-    return { browser, debugPort: new URL(url).port }
 }
 
 /// One page over the DevTools protocol: commands, and the events the helpers listen for.

@@ -63,8 +63,9 @@ Without root, it installs these into the folder AgentLoop gives it, `AGENTLOOP_P
 It then writes `session-env.txt` there, so every session gets them on its `PATH`, and `CHROME`
 points `preview.mjs` at the browser. It skips whatever an earlier run installed. System packages
 are not its to install: a C compiler and linker, `curl`, `tar`, and on Linux the libraries Chrome
-loads. AgentLoop's image has them all, and the script stops and names any that are missing. By
-hand:
+loads. AgentLoop's image has them all, and the script stops and names any that are missing. Where
+the container allows no unprivileged user namespaces, Chrome finds no sandbox and stops at once;
+`preview.mjs` then starts it again with `--no-sandbox`. By hand:
 
 ```bash
 AGENTLOOP_PROJECT_ENV=$HOME/overseer-env bash scripts/agentloop-setup.sh
