@@ -8926,14 +8926,73 @@ export class OverseerRenderer {
         // The real figures are kept for the tooltip, because "84% of the salt you are allowed"
         // is the reading and "4.2 g of 5 g" is the fact behind it.
         if (kind === 'bar') {
+            const figures = this.chartFigures(plotsAll)
+            const limited = ({ limit }) => isFinite(limit) && limit > 0
+            const round = (n) => (Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 10) / 10)
+            const quiet = { grid: { display: false }, ticks: { font: { size: 10 } } }
+
+            // A chart where no plot gives a limit is a distribution - days in each weight
+            // bracket - and its figures share one unit, so they are drawn as they are, on an axis
+            // in that unit, with no line and nothing over. A chart where any plot gives a limit
+            // stays the chart of shares below.
+            if (!figures.some(limited)) {
+                const shown = figures.filter(({ amount }) => isFinite(amount))
+                if (shown.length === 0) return container
+                // A plot's figures share its suffix; the axis takes the first, as a chart that
+                // mixes units on one axis has no single right one.
+                const suffix = shown[0].suffix
+                const counts = new Chart(canvas, {
+                    type: 'bar',
+                    data: {
+                        labels: shown.map(({ label }) => label || 'Bar'),
+                        datasets: [{
+                            data: shown.map(({ amount }) => amount),
+                            backgroundColor: shown.map(({ color }) => this.convertColorValue(color || '#4A90E2')),
+                            borderWidth: 0,
+                        }],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: quiet,
+                            y: {
+                                beginAtZero: true,
+                                grid: { display: false },
+                                ticks: {
+                                    font: { size: 10 },
+                                    // Whole figures - counts - get whole steps, not "0.5 d".
+                                    ...(shown.every(({ amount }) => Number.isInteger(amount)) ? { precision: 0 } : {}),
+                                    callback: (value) => `${value}${suffix}`,
+                                },
+                            },
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: (item) => {
+                                        const fact = shown[item.dataIndex]
+                                        return fact ? `${item.label}: ${round(fact.amount)}${fact.suffix}` : item.label
+                                    },
+                                },
+                            },
+                        },
+                    },
+                })
+                canvas._chartInstance = counts
+                container._chartInstance = counts
+                return container
+            }
+
             const labels = []
             const shares = []
             const colors = []
             const facts = []
-            for (const { amount, limit, label, color, suffix } of this.chartFigures(plotsAll)) {
+            for (const { amount, limit, label, color, suffix } of figures) {
                 // A plot with no limit has nothing to be a share of. Skipped rather than drawn
                 // against the others, which would put it on an axis it does not belong to.
-                if (!isFinite(amount) || !isFinite(limit) || limit <= 0) continue
+                if (!isFinite(amount) || !limited({ limit })) continue
                 const share = amount / limit
                 labels.push(label || 'Bar')
                 shares.push(share)
@@ -8988,7 +9047,7 @@ export class OverseerRenderer {
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+                        x: quiet,
                         y: {
                             beginAtZero: true,
                             max: tallest,
@@ -9008,7 +9067,6 @@ export class OverseerRenderer {
                                 label: (item) => {
                                     const fact = facts[item.dataIndex]
                                     if (!fact) return item.label
-                                    const round = (n) => (n >= 100 ? Math.round(n) : Math.round(n * 10) / 10)
                                     const share = Math.round(item.parsed.y * 100)
                                     return `${item.label}: ${round(fact.amount)}${fact.suffix} of `
                                         + `${round(fact.limit)}${fact.suffix} (${share}%)`

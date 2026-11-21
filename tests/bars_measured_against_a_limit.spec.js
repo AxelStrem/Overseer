@@ -198,3 +198,61 @@ describe('bars measured against a limit', () => {
     expect(text).toBe('ui: 3 pts of 4 pts (75%)')
   })
 })
+
+describe('bars without a limit', () => {
+  beforeEach(setupDOM)
+
+  // A distribution - days in each weight bracket - has no limit to be a share of. Its figures
+  // share one unit, so they are drawn as they are.
+  const counts = () => render([Object.assign(base('each', 'plot'), {
+    parameters: {
+      source: { Formula: '/t/Counts' },
+      label: { Formula: '|n| "" + n' },
+      suffix: { String: ' d' },
+      _computed_bars: { String: JSON.stringify([
+        { label: '1', amount: 1 }, { label: '4', amount: 4 },
+        { label: '5', amount: 5 }, { label: '2', amount: 2 },
+      ]) },
+    },
+  })])
+
+  it('draws the figures themselves when no plot gives a limit', () => {
+    const config = counts()
+    expect(config.type).toBe('bar')
+    expect(config.data.labels).toEqual(['1', '4', '5', '2'])
+    expect(bars(config).data).toEqual([1, 4, 5, 2])
+  })
+
+  it('draws no limit line and nothing in red', () => {
+    const config = counts()
+    expect(line(config)).toBeUndefined()
+    expect(config.data.datasets).toHaveLength(1)
+    expect(bars(config).backgroundColor.every(c => !c.toLowerCase().includes('e63e11'))).toBe(true)
+  })
+
+  it('lets the axis fit the figures and says their unit on it', () => {
+    const config = counts()
+    expect(config.options.scales.y.max).toBeUndefined()
+    expect(config.options.scales.y.ticks.callback(4)).toBe('4 d')
+  })
+
+  it('steps the axis in whole numbers when every figure is whole', () => {
+    expect(counts().options.scales.y.ticks.precision).toBe(0)
+    const config = render([plot('salt', 'Salt', 4.5, null), plot('sugar', 'Sugar', 3, null)])
+    expect(config.options.scales.y.ticks.precision).toBeUndefined()
+  })
+
+  it('says the figure and its unit when a bar is pointed at', () => {
+    const config = counts()
+    const text = config.options.plugins.tooltip.callbacks.label({
+      label: '5', dataIndex: 2, parsed: { y: 5 }, datasetIndex: 0,
+    })
+    expect(text).toBe('5: 5 d')
+  })
+
+  it('draws plots of their own without a limit the same way', () => {
+    const config = render([plot('salt', 'Salt', 4, null, { suffix: ' g' }), plot('sugar', 'Sugar', 30, null, { suffix: ' g' })])
+    expect(bars(config).data).toEqual([4, 30])
+    expect(line(config)).toBeUndefined()
+  })
+})

@@ -2718,7 +2718,9 @@ and a trend is fitted to the points as they are drawn.
 axes fit the points. A time on the x axis is drawn as a date.
 
 A pie plot is one slice, its `amount` a number; a bar plot is one bar, its `amount` drawn as a
-share of its `limit`, with a line where the limit is, and `suffix` after the figures it shows.
+share of its `limit`, with a line where the limit is, and `suffix` after the figures it shows. A
+bar chart where no plot gives a limit draws the amounts themselves, on an axis in their units with
+the `suffix` on it, and no line; in a chart where some plots give a limit, only those are drawn.
 
 ```overseer
 chart macros (kind="pie", width=220px, height=150px) {
