@@ -6,10 +6,15 @@ description: Reading, writing, changing or checking Overseer documents - `.os` f
 # Overseer documents
 
 An Overseer document (`.os`) is plain text: a tree of nodes that is the data, the page's layout
-and the logic all at once. This skill is a head start. The full language is in
-`overseer_syntax_specification.md` in the Overseer repository, and when this skill and the
-specification disagree, the specification is right. `reference.md` beside this file lists every
-function, method, action and address form in one place.
+and the logic all at once. This skill is a head start. `reference.md` beside this file lists every
+function, method, action and address form in one place; read it when you need a name or a
+parameter.
+
+The full language is in `overseer_syntax_specification.md` beside this file. When this skill and
+the specification
+disagree, the specification is right. It runs to some 3,300 lines, so don't read it whole: list
+its headings (`grep -n '^#'`) and read only the section you need. `reference.md` names sections
+as the specification titles them.
 
 ## The shape of a node
 
@@ -185,10 +190,10 @@ tab reading (label="Reading", mutable=true) {
 
 ## Checking a document
 
-In the Overseer repository, `scripts/preview.mjs` serves a *copy* of a document, opens it in
-headless Chrome or Edge, saves screenshots and prints what failed: templates or mounts that could
-not be found, formulas that failed, errors the page threw. It needs the page and the release
-server built first:
+Checking needs a checkout of the Overseer repository. Its `scripts/preview.mjs` serves a *copy*
+of a document from anywhere on disk, opens it in headless Chrome or Edge, saves screenshots and
+prints what failed: templates or mounts that could not be found, formulas that failed, errors the
+page threw. It needs the page and the release server built first, in the checkout:
 
 ```bash
 npm run build
@@ -198,16 +203,20 @@ node scripts/preview.mjs path/to/doc.os --mobile            # at phone width
 node scripts/preview.mjs path/to/doc.os --script steps.mjs  # scripted presses on the copy
 ```
 
+Without a checkout, nothing can check the document, so say that it is unchecked rather than
+calling it done; ask where a checkout is if the user may have one.
+
 A script is the body of an async function. It can call `press('reading/Books/[Dune]/finish')`,
 `type(text)`, `pick(address, option)`, `tab(name)`, `text(address)`, `shot(name, { of })`,
-`problems()`, and `changes()` (what the file gained and lost). `scripts/preview_example.mjs` is an
-example, and `node scripts/preview.mjs --help` lists every helper. **A document is done when it
+`problems()`, and `changes()` (what the file gained and lost). `node scripts/preview.mjs --help`
+lists every helper. **A document is done when it
 draws as intended, prints `problems: none`, and its buttons write what you meant.** Look at the
 screenshots: they show layout mistakes that no error reports.
 
 ## Over the server
 
-`API.md` describes the HTTP API: `GET /v1/node` and `/v1/source` to read, `POST /v1/node` to set
+`API.md` beside this file describes the HTTP API; read it before the first request.
+In short: `GET /v1/node` and `/v1/source` to read, `POST /v1/node` to set
 a value, `/v1/append` and `/v1/remove` for list entries, `/v1/event` to press a button, and
 `/v1/undo`. A document and an address go in the query string. Values travel typed:
 `{"String": "milk"}`, `{"Integer": 2}`, `{"Float": 2.5}`, `{"Boolean": true}`,
@@ -215,10 +224,9 @@ a value, `/v1/append` and `/v1/remove` for list entries, `/v1/event` to press a 
 Pressing a button through the API runs its actions, the document's own rules included, so that
 is usually better than writing the fields yourself.
 
-## Where to look next
+## Following existing documents
 
-- `overseer_syntax_specification.md`: every node type, parameter, function and action.
-- `AGENTS.md`: the short guide in the repository root.
-- `examples/` (working documents; `examples/basic` has one small document per feature) and
-  `library/` (the templates and themes any document can be made from). Before writing something
-  new, find a document that already does something like it and follow its style.
+Before writing something new, find a document that already does something like it and follow its
+style: the user's own `.os` files first. In a checkout, `examples/` holds working documents
+(`examples/basic` has one small document per feature) and `library/` the templates and themes any
+document can be made from.

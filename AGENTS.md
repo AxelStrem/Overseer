@@ -107,8 +107,10 @@ specification's "Entries of a list" says which form each tool takes.
   pressing buttons, undo.
 - [`.claude/skills/overseer-documents`](.claude/skills/overseer-documents) - the same ground as a
   Claude skill, with the mistakes agents make and a one-page reference of every function, method,
-  action and address form. Claude Code picks it up in this repository; copy the folder into
-  `~/.claude/skills/` to have it wherever `.os` files are worked on.
+  action and address form, and copies of the specification and API. Claude Code picks it up in
+  this repository; copy the folder into `~/.claude/skills/` to have it wherever `.os` files are
+  worked on. After editing the specification or API.md, `node scripts/sync-skill.mjs` refreshes
+  the copies; a test fails until it has.
 
 ## Seeing a document
 
