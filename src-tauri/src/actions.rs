@@ -4955,6 +4955,136 @@ impl ActionExecutor {
         Ok(landed)
     }
 
+    /// Put a copy of one entry, named by its own path, at a place in a list - the same one or
+    /// another - and leave the entry where it is. What a drag with the copy key held writes.
+    ///
+    /// The document decides where it is allowed: the entry's list says `copyable=true`, and the
+    /// target, unless it is that list, says `copyable=true` or `movable=true`; two lists only share entries made from the same template; and a keyed list never
+    /// takes a second entry with a key it holds, which in its own list is every copy. An entry
+    /// that says `movable=false` may still be copied, since copying does not move it.
+    ///
+    /// Answers where the copy now is, as indices, for whatever the same change does to it next.
+    pub fn copy_entry(
+        nodes: &mut Vec<OverseerNode>,
+        entry_path: &str,
+        to_list_path: &str,
+        before: Option<&str>,
+    ) -> Result<Vec<usize>, OverseerError> {
+        let find = |nodes: &Vec<OverseerNode>, path: &str| {
+            let (segments, _explicit_param, anchored) = Self::split_path_and_param(path);
+            Self::resolve_target_indices(nodes, &[], anchored, &segments)
+                .ok_or_else(|| OverseerError::ValidationError(format!("Nothing at: {}", path)))
+        };
+        let entry = find(nodes, entry_path)?;
+        let to = find(nodes, to_list_path)?;
+        let (&from_pos, from) = entry
+            .split_last()
+            .ok_or_else(|| OverseerError::ValidationError("Nothing to copy".to_string()))?;
+        let from = from.to_vec();
+        let before_pos = match before {
+            Some(path) => {
+                let at = find(nodes, path)?;
+                match at.split_last() {
+                    Some((&pos, holder)) if holder == to.as_slice() => Some(pos),
+                    _ => {
+                        return Err(OverseerError::ValidationError(format!(
+                            "{} is not an entry of {}",
+                            path, to_list_path
+                        )))
+                    }
+                }
+            }
+            None => None,
+        };
+        if to.starts_with(&entry) {
+            return Err(OverseerError::ValidationError(format!(
+                "{} cannot be copied into a list inside itself",
+                entry_path
+            )));
+        }
+        let (mut item, template) = {
+            let source = Self::get_node_ref_by_indices(nodes, &from)
+                .filter(|n| n.node_type == "list")
+                .ok_or_else(|| {
+                    OverseerError::ValidationError(format!("{} is not in a list", entry_path))
+                })?;
+            let target = Self::get_node_ref_by_indices(nodes, &to)
+                .filter(|n| n.node_type == "list")
+                .ok_or_else(|| {
+                    OverseerError::ValidationError(format!("{} is not a list", to_list_path))
+                })?;
+            let takes = |at: &[usize]| Self::copyable_at(nodes, at) || Self::movable_at(nodes, at) != Movable::No;
+            if !Self::copyable_at(nodes, &from) {
+                return Err(OverseerError::ValidationError(format!(
+                    "{} does not say copyable=true, so its entries are not copied",
+                    source.name
+                )));
+            }
+            if from != to && !takes(&to) {
+                return Err(OverseerError::ValidationError(format!(
+                    "{} says neither copyable=true nor movable=true, so it takes no copies",
+                    target.name
+                )));
+            }
+            let item = source.children.get(from_pos).cloned().ok_or_else(|| {
+                OverseerError::ValidationError(format!("Nothing at: {}", entry_path))
+            })?;
+            refuse_a_given_entry(&item, "be copied")?;
+            let template = Self::entry_template_name(target);
+            if from != to && (template.is_none() || template != Self::entry_template_name(source)) {
+                return Err(OverseerError::ValidationError(format!(
+                    "{} and {} hold entries made from different templates",
+                    source.name, target.name
+                )));
+            }
+            Self::refuse_a_key_already_held(target, &item, to_list_path, "copy")?;
+            (item, template)
+        };
+        // A name no sibling has, as an appended entry gets; its place settles it afterwards - see
+        // `resolver::name_entries_as_parsed`.
+        let target = Self::get_node_mut_by_indices(nodes, &to)
+            .ok_or_else(|| OverseerError::ValidationError(format!("{} is not a list", to_list_path)))?;
+        let stem = template.unwrap_or_else(|| item.node_type.clone());
+        let mut ordinal = target.children.len() + 1;
+        while target.children.iter().any(|c| c.name == format!("{}__{}", stem, ordinal)) {
+            ordinal += 1;
+        }
+        item.name = format!("{}__{}", stem, ordinal);
+        // Shape, not value, and not one `Shape` can follow - see `note_structural`.
+        note_structural();
+        let at = before_pos
+            .unwrap_or(target.children.len())
+            .min(target.children.len())
+            .max(crate::resolver::given_entries(target));
+        target.children.insert(at, item);
+        target.source_fingerprint = None;
+        Self::mark_field_explicit_override(nodes, &to);
+        let mut landed = to;
+        landed.push(at);
+        Ok(landed)
+    }
+
+    /// Whether the list at these indices says `copyable=true`. A tree's inner lists are its root's,
+    /// as for `movable_at`.
+    fn copyable_at(nodes: &Vec<OverseerNode>, list: &[usize]) -> bool {
+        let says = |node: &OverseerNode| match node.parameters.get("copyable") {
+            Some(OverseerValue::Boolean(b)) => Some(*b),
+            Some(OverseerValue::String(s)) => Some(s.trim().eq_ignore_ascii_case("true")),
+            Some(_) => Some(false),
+            None => None,
+        };
+        let Some(node) = Self::get_node_ref_by_indices(nodes, list) else { return false };
+        if let Some(said) = says(node) {
+            return said;
+        }
+        match Self::tree_root_of(nodes, list) {
+            Some(root) if root.as_slice() != list => {
+                Self::get_node_ref_by_indices(nodes, &root).and_then(says).unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
     /// Write a field of an entry, named from the entry, and run the field's `on change`.
     ///
     /// What a drop onto a board's lane does after the move: the entry takes the lane's value.

@@ -371,6 +371,24 @@ async fn move_overseer_entry(
     })
 }
 
+/// Put a copy of one at a place in a list, as a drag with the copy key held asks.
+#[command]
+async fn copy_overseer_entry(
+    request: tauri::ipc::Request<'_>,
+    path: String,
+    entry_path: Vec<String>,
+    to_list_path: Vec<String>,
+    before: Option<Vec<String>>,
+    setting: Option<app_api::ValueWrite>,
+    shown_version: Option<String>,
+) -> Result<ForThePage<app_api::ResolvedUpdate>> {
+    beside(&request, || {
+        let _showing = app_api::describing_for(shown_version);
+        app_api::copy_entry_at(&path, &path, entry_path, to_list_path, before, setting, THE_WINDOW)
+            .map(app_api::for_the_page).map(ForThePage)
+    })
+}
+
 /// Write several fields of one entry as one change, their handlers run - a card dragged on a canvas.
 #[command]
 async fn set_overseer_entry_fields(
@@ -611,6 +629,7 @@ fn main() {
             append_overseer_entry,
             remove_overseer_entry,
             move_overseer_entry,
+            copy_overseer_entry,
             set_overseer_entry_fields,
             ensure_overseer_entry,
             drawer_location,

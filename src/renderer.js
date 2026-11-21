@@ -5226,6 +5226,9 @@ export class OverseerRenderer {
             const area = drag.list.querySelector(':scope > .overseer-canvas > .canvas-scroll')
             return area ? [area] : []
         }
+        if (drag.copy) return this.copyTargetsFor(drag)
+        // Not moved where it says it stays - dragged at all only because its list copies too.
+        if (drag.list.dataset.copyable === '1' && this.entryStays(this.nodeDrawnBy(drag.entry))) return []
         const template = drag.list.dataset.movable === '1' ? (drag.list.dataset.entryTemplate || '') : null
         for (const list of template === null ? [] : this.scopedAll('.overseer-list[data-movable="1"]')) {
             if (list.dataset.board || list.dataset.treeMove || list.dataset.canvasX) continue
@@ -5239,6 +5242,27 @@ export class OverseerRenderer {
             if (!own && (!template || board.dataset.movable !== '1'
                 || board.dataset.entryTemplate !== template || drag.entry.contains(board))) continue
             out.push(...this.lanesTaking(board, drag.entry, own))
+        }
+        return out
+    }
+
+    /**
+     * Everywhere a copy of a dragged entry can be dropped: its own list, and any list or board's
+     * lane made from the same template that says `movable=true` or `copyable=true` - but never a
+     * keyed list holding its key already, its own among them. The backend checks it all again.
+     */
+    copyTargetsFor(drag) {
+        const out = []
+        const template = drag.list.dataset.entryTemplate || ''
+        const shares = (list) => list === drag.list
+            || (template !== '' && list.dataset.entryTemplate === template && !drag.entry.contains(list))
+        for (const list of this.scopedAll('.overseer-list[data-movable="1"], .overseer-list[data-copyable="1"]')) {
+            if (list.dataset.board || list.dataset.treeMove || list.dataset.canvasX) continue
+            if (shares(list) && !this.holdsKeyOf(list, drag.entry)) out.push(list)
+        }
+        for (const board of this.scopedAll('.overseer-list.view-board')) {
+            if (board.dataset.movable !== '1' && board.dataset.copyable !== '1') continue
+            if (shares(board) && !this.holdsKeyOf(board, drag.entry)) out.push(...this.lanesTaking(board, drag.entry, false))
         }
         return out
     }
@@ -5515,13 +5539,18 @@ export class OverseerRenderer {
     makeEntriesMovable(element, node) {
         if (!element || !node) return
         const said = String(this.getParameterValue(node, 'movable') ?? '').trim().toLowerCase()
-        if (said !== 'true' && said !== 'anywhere') return
+        const moves = said === 'true' || said === 'anywhere'
+        // `copyable=true`: a drag with the copy key held - or any drag, where the list does not
+        // move its entries - leaves the entry where it is and puts a copy where it is dropped.
+        const copies = String(this.getParameterValue(node, 'copyable') ?? '').trim().toLowerCase() === 'true'
+        if (!moves && !copies) return
         if (this.getEffectiveMutableMode(node, element) !== 'true') return
         if (this.entriesAreTabs(node)) return
         // Nor is there anywhere to drag to while a reader has it sorted: the order on screen is
         // not the list's, and a drag in it would write an order nobody can see.
         if (this.isColumnSorted(node)) {
             delete element.dataset.movable
+            delete element.dataset.copyable
             return
         }
         // A list drawn in an order worked out from its entries has an order to drag into only
@@ -5536,7 +5565,17 @@ export class OverseerRenderer {
         const tree = this.treeOf(node) !== '' && element.classList.contains('view-tree')
             && !(sorted && this.isNestedTree(node))
         if (!tree && this.isNestedTree(node)) return
-        element.dataset.movable = '1'
+        // A tree's rows, and a canvas's cards, are not copied: they go where their own drags put
+        // them.
+        const copiesHere = copies && !tree && element.dataset.canvasDrag !== '1'
+        if (!moves && !copiesHere) return
+        if (moves) element.dataset.movable = '1'
+        else delete element.dataset.movable
+        if (copiesHere) element.dataset.copyable = '1'
+        else delete element.dataset.copyable
+        const key = String(this.getParameterValue(node, 'key') ?? '').trim()
+        if (key) element.dataset.listKey = key
+        else delete element.dataset.listKey
         element.dataset.entryTemplate = this.entryTemplateOf(node)
         if (tree) element.dataset.treeMove = said === 'anywhere' ? 'anywhere' : 'siblings'
         else delete element.dataset.treeMove
@@ -5584,7 +5623,7 @@ export class OverseerRenderer {
         const target = event.target
         if (!target || !target.closest) return
         // The innermost movable list a pointer is in is the one it drags in.
-        if (target.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"], .overseer-list[data-canvas-drag="1"]') !== list) return
+        if (target.closest('.overseer-list[data-movable="1"], .overseer-list[data-copyable="1"], .overseer-list[data-board-drag="1"], .overseer-list[data-canvas-drag="1"]') !== list) return
         // A grip is there to be dragged by, whatever lies around it.
         const grip = target.closest('.mark-grip')
         const byGrip = !!grip && list.contains(grip)
@@ -5599,8 +5638,12 @@ export class OverseerRenderer {
         if (!this.entryCanBeDragged(entry, list)) return
 
         const touch =event.pointerType === 'touch' || event.pointerType === 'pen'
+        // A finger has no key to hold, so a list that only copies is not dragged by one.
+        const copyable = list.dataset.copyable === '1' && !touch
+        if (touch && list.dataset.movable !== '1' && list.dataset.boardDrag !== '1' && list.dataset.canvasDrag !== '1') return
         const drag = {
-            list, entry, touch,
+            list, entry, touch, copyable,
+            copy: this.dragCopies(list, copyable, this.copyKeyHeld(event)),
             pointerId: event.pointerId,
             startX: event.clientX, startY: event.clientY,
             x: event.clientX, y: event.clientY,
@@ -5611,6 +5654,7 @@ export class OverseerRenderer {
             if (e.pointerId !== drag.pointerId) return
             drag.x = e.clientX
             drag.y = e.clientY
+            this.switchEntryDrag(this.copyKeyHeld(e))
             const far = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY)
             if (!drag.started) {
                 if (drag.touch) { if (far > 8) end(false) }
@@ -5620,11 +5664,20 @@ export class OverseerRenderer {
             e.preventDefault()
             this.followEntryDrag()
         }
-        const onUp = (e) => { if (e.pointerId === drag.pointerId) end(drag.started) }
+        const onUp = (e) => {
+            if (e.pointerId !== drag.pointerId) return
+            // The key as it is when the entry is let go decides between a move and a copy.
+            this.switchEntryDrag(this.copyKeyHeld(e))
+            end(drag.started)
+        }
         const onCancel = (e) => { if (e.pointerId === drag.pointerId) end(false) }
         // Once a finger is dragging, moving it must not scroll the page as well.
         const onTouchMove = (e) => { if (drag.started && e.cancelable) e.preventDefault() }
-        const onKey = (e) => { if (e.key === 'Escape') end(false) }
+        const onKey = (e) => {
+            if (e.key === 'Escape') end(false)
+            else this.switchEntryDrag(this.copyKeyHeld(e))
+        }
+        const onKeyUp = (e) => this.switchEntryDrag(this.copyKeyHeld(e))
         // A long press asks for the browser's menu, which would end the drag under it.
         const onMenu = (e) => { if (drag.touch) e.preventDefault() }
         drag.off = () => {
@@ -5633,6 +5686,7 @@ export class OverseerRenderer {
             window.removeEventListener('pointercancel', onCancel)
             window.removeEventListener('touchmove', onTouchMove)
             window.removeEventListener('keydown', onKey)
+            window.removeEventListener('keyup', onKeyUp)
             window.removeEventListener('contextmenu', onMenu)
         }
         window.addEventListener('pointermove', onMove)
@@ -5640,11 +5694,59 @@ export class OverseerRenderer {
         window.addEventListener('pointercancel', onCancel)
         window.addEventListener('touchmove', onTouchMove, { passive: false })
         window.addEventListener('keydown', onKey)
+        window.addEventListener('keyup', onKeyUp)
         window.addEventListener('contextmenu', onMenu)
         this._entryDrag = drag
         // A finger on a grip means the drag: the hold only stands in for knowing that.
         if (touch && byGrip) this.beginEntryDrag()
         else if (touch) drag.timer = setTimeout(() => this.beginEntryDrag(), 350)
+    }
+
+    /// Whether the key that turns a drag into a copy is held: Option on a Mac, where Ctrl and a
+    /// click is the right button's, and Ctrl elsewhere, as file managers have it.
+    copyKeyHeld(event) {
+        if (!event) return false
+        const platform = (typeof navigator !== 'undefined' && (navigator.userAgentData?.platform || navigator.platform || navigator.userAgent)) || ''
+        return /mac|iphone|ipad/i.test(platform) ? !!event.altKey : !!event.ctrlKey
+    }
+
+    /// Whether a drag in `list` copies: with the key held, where its list says `copyable=true`, and
+    /// always where the list copies and does not move - but a board's drag picks a lane, and
+    /// copies only with the key held.
+    dragCopies(list, copyable, held) {
+        if (!copyable) return false
+        return held || (list.dataset.movable !== '1' && !list.dataset.board)
+    }
+
+    /// The copy key pressed or let go during a drag: it becomes a copy or a move, and the places it
+    /// can go are marked again.
+    switchEntryDrag(held) {
+        const drag = this._entryDrag
+        if (!drag) return
+        const copy = this.dragCopies(drag.list, drag.copyable, held)
+        if (copy === drag.copy) return
+        drag.copy = copy
+        if (!drag.started) return
+        drag.shell?.classList.toggle('is-copy', copy)
+        document.body.classList.toggle('overseer-copying', copy)
+        for (const shown of this.scopedAll('.accepts-drop, .drop-here')) shown.classList.remove('accepts-drop', 'drop-here')
+        for (const target of this.dropTargetsFor(drag)) target.classList.add('accepts-drop')
+        this.followEntryDrag()
+    }
+
+    /// Whether a keyed list already holds an entry with the dragged entry's key, so that a copy of
+    /// it would share an address there.
+    holdsKeyOf(list, entry) {
+        const key = list.dataset.listKey
+        if (!key) return false
+        const value = (node) => {
+            const field = node ? this.entryField(node, key) : null
+            const held = field ? this.getNodeValue(field) : null
+            return held === null || held === undefined ? '' : String(held).trim()
+        }
+        const wanted = value(this.nodeDrawnBy(entry))
+        const node = this.nodeDrawnBy(list)
+        return (node?.children || []).some((other) => other && value(other) === wanted)
     }
 
     /**
@@ -5655,6 +5757,8 @@ export class OverseerRenderer {
      * there is no other list on the page that takes its entries.
      */
     entryCanBeDragged(entry, list) {
+        // A copy leaves the entry where it is, so one that stays can be copied all the same.
+        if (list.dataset.copyable === '1') return !this.isGivenEntry(this.nodeDrawnBy(entry))
         if (this.entryStays(this.nodeDrawnBy(entry))) return false
         // A board's entry is a value to pick, sorted or not, and a canvas's card a place to put.
         if (list.dataset.board || list.dataset.canvasDrag) return true
@@ -5692,7 +5796,7 @@ export class OverseerRenderer {
 
     gripCanDrag(grip) {
         // The same list a press on it would drag in - see `armEntryDrag`.
-        const list = grip.closest('.overseer-list[data-movable="1"], .overseer-list[data-board-drag="1"], .overseer-list[data-canvas-drag="1"]')
+        const list = grip.closest('.overseer-list[data-movable="1"], .overseer-list[data-copyable="1"], .overseer-list[data-board-drag="1"], .overseer-list[data-canvas-drag="1"]')
         if (!list) return false
         let entry = grip
         while (entry && !this.isEntryElementOf(entry, list)) entry = entry.parentElement
@@ -5741,6 +5845,8 @@ export class OverseerRenderer {
         ghost.style.width = `${rect.width}px`
         ghost.style.margin = '0'
         const shell = this.dragShellFor(drag.entry, rect)
+        shell.classList.toggle('is-copy', !!drag.copy)
+        document.body.classList.toggle('overseer-copying', !!drag.copy)
         shell.appendChild(ghost)
         document.body.appendChild(shell)
         drag.ghost = ghost
@@ -5764,7 +5870,7 @@ export class OverseerRenderer {
     dragShellFor(entry, rect) {
         const parent = entry.parentElement
         const shell = parent.cloneNode(false)
-        for (const name of ['id', 'data-path', 'data-uid', 'data-movable', 'data-board-drag', 'data-canvas-drag', 'data-sorted']) {
+        for (const name of ['id', 'data-path', 'data-uid', 'data-movable', 'data-copyable', 'data-board-drag', 'data-canvas-drag', 'data-sorted']) {
             shell.removeAttribute(name)
         }
         shell.classList.remove('accepts-drop', 'drop-here', 'is-dragged', 'filtered-out')
@@ -6080,7 +6186,7 @@ export class OverseerRenderer {
         drag.line?.remove()
         drag.entry.classList.remove('is-dragged')
         for (const row of drag.tree?.branch || []) row.element?.classList.remove('is-dragged')
-        document.body.classList.remove('overseer-dragging')
+        document.body.classList.remove('overseer-dragging', 'overseer-copying')
         for (const list of this.scopedAll('.accepts-drop, .drop-here')) {
             list.classList.remove('accepts-drop', 'drop-here')
         }
@@ -6100,6 +6206,14 @@ export class OverseerRenderer {
             return
         }
         const sorted = drag.target.dataset.sorted === '1'
+        const read = (el) => JSON.parse(el.dataset.path)
+        if (drag.copy) {
+            // A list kept sorted puts the copy where its order says.
+            const before = drag.before && !sorted ? read(drag.before) : null
+            this.copyEntry(drag.entry, read(drag.entry), read(drag.target), before)
+                .catch((err) => console.warn('The copy failed:', err))
+            return
+        }
         if (drag.target === drag.list) {
             // Dropped where it was drawn already: nothing to write.
             const entries = sorted
@@ -6108,7 +6222,6 @@ export class OverseerRenderer {
             const next = entries[entries.indexOf(drag.entry) + 1] || null
             if (drag.before === next) return
         }
-        const read = (el) => JSON.parse(el.dataset.path)
         let before = drag.before && !sorted ? read(drag.before) : null
         if (sorted && drag.target === drag.list) before = this.beforeAmongTies(drag)
         this.moveEntry(drag.entry, read(drag.entry), read(drag.target), before)
@@ -6135,13 +6248,13 @@ export class OverseerRenderer {
         const entryPath = read(drag.entry)
         const fieldPath = this.fieldPathIn(entryNode, entryPath, field)
         if (!fieldPath) return
-        if (board.dataset.movable !== '1') {
+        if (board.dataset.movable !== '1' && !drag.copy) {
             this.writeEnumValue(field, fieldPath, held, value)
                 .catch((err) => console.warn('The write failed:', err))
             return
         }
         const body = lane.querySelector(':scope > .board-column-body')
-        if (board === drag.list && value === held) {
+        if (board === drag.list && value === held && !drag.copy) {
             // Dropped where it was drawn already: nothing to write.
             const entries = this.droppableEntries(body, null)
             const next = entries[entries.indexOf(drag.entry) + 1] || null
@@ -6155,7 +6268,13 @@ export class OverseerRenderer {
         const named = fieldPath.slice(0, entryPath.length).every((s, i) => s === entryPath[i])
             ? fieldPath.slice(entryPath.length)
             : [field.name]
-        this.moveEntry(drag.entry, entryPath, read(board), before, { node_path: named, value: { String: value } })
+        const setting = { node_path: named, value: { String: value } }
+        if (drag.copy) {
+            this.copyEntry(drag.entry, entryPath, read(board), before, setting)
+                .catch((err) => console.warn('The copy failed:', err))
+            return
+        }
+        this.moveEntry(drag.entry, entryPath, read(board), before, setting)
             .catch((err) => console.warn('The move failed:', err))
     }
 
@@ -6190,6 +6309,18 @@ export class OverseerRenderer {
      */
     async moveEntry(element, entryPath, toListPath, beforePath, setting) {
         return this.writeByInstruction(element, 'move_overseer_entry', {
+            entry_path: entryPath,
+            entryPath,
+            to_list_path: toListPath,
+            toListPath,
+            before: beforePath,
+            ...(setting ? { setting } : {}),
+        })
+    }
+
+    /// Ask for a copy of an entry to be put in a list, as `moveEntry` asks for a move.
+    async copyEntry(element, entryPath, toListPath, beforePath, setting) {
+        return this.writeByInstruction(element, 'copy_overseer_entry', {
             entry_path: entryPath,
             entryPath,
             to_list_path: toListPath,

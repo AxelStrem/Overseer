@@ -518,6 +518,22 @@ list Doing (entry=<Card>, movable=true) { }
 list Done (entry=<Card>, movable=true) { }
 ```
 
+`copyable=true` lets a list's entries be copied by dragging: the entry stays where it is, and a
+copy of it, with every value it writes, goes where it is dropped. The copy can go into the list
+itself, or into any list or lane of a board made from the same template that says `movable=true`
+or `copyable=true`. A list that says both moves an entry when it is dragged, and copies it when it
+is dragged with Ctrl held, or Option on a Mac. One that says only `copyable=true` copies with
+every drag, as a palette does. The key counts at the moment the entry is let go, and the dragged
+entry shows a "+" while the drag would copy. A keyed list never takes a copy whose key it already
+holds, so its own entries are copied only into other lists. An entry that says `movable=false`
+can still be copied. A copy is one change, and one undo takes it back. Copying is not available
+on trees, canvases or touch screens, where there is no key to hold.
+
+```overseer
+list Palette (entry=<Card>, key="name", copyable=true) { }
+list Week (entry=<Card>, movable=true, copyable=true) { }
+```
+
 An entry is picked up by what lies around its values - the space of the entry and of its fields,
 their labels, the gaps between them - never by a value itself, so a value's text can still be
 selected. On a phone an entry is picked up by holding it still for a moment, since a finger that

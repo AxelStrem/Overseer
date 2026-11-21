@@ -924,6 +924,33 @@ impl DocumentRoot {
                     .map_err(|e| RequestError::from_event("could not move", e))?),
                 )
             }
+            "copy_overseer_entry" => {
+                let named = document
+                    .ok_or_else(|| RequestError::Rejected("'document' is required".into()))?;
+                let at = self.resolve(named)?;
+                let entry = arg_strings(args, &["entry_path", "entryPath"]);
+                let to_list = arg_strings(args, &["to_list_path", "toListPath"]);
+                let before = args
+                    .get("before")
+                    .and_then(|v| v.as_array())
+                    .map(|_| arg_strings(args, &["before"]));
+                let setting: Option<app_api::ValueWrite> = match args.get("setting") {
+                    Some(v) if !v.is_null() => Some(from_value(args, "setting")?),
+                    _ => None,
+                };
+                as_json(
+                    app_api::for_the_page(app_api::copy_entry_at(
+                        at.to_string_lossy().as_ref(),
+                        named,
+                        entry,
+                        to_list,
+                        before,
+                        setting,
+                        session,
+                    )
+                    .map_err(|e| RequestError::from_event("could not copy", e))?),
+                )
+            }
             "set_overseer_entry_fields" => {
                 let named = document
                     .ok_or_else(|| RequestError::Rejected("'document' is required".into()))?;

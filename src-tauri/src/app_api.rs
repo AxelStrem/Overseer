@@ -2397,6 +2397,36 @@ pub fn move_entry_at(
     })
 }
 
+/// Put a copy of one entry at a place in a list, the entry staying where it is - a drag with the
+/// copy key held. As `move_entry_at` in every other way: `before` names the entry it lands in
+/// front of, `setting` a field of the copy to write where it lands (a board's lane), and it is one
+/// change with one step to take back. See `ActionExecutor::copy_entry`.
+pub fn copy_entry_at(
+    path: &str,
+    document: &str,
+    entry_path: Vec<String>,
+    to_list_path: Vec<String>,
+    before: Option<Vec<String>>,
+    setting: Option<ValueWrite>,
+    session: &str,
+) -> Result<ResolvedUpdate> {
+    change_document(path, document, session, move |nodes| {
+        let before = before.map(|b| format!("/{}", b.join("/")));
+        let entry_path = format!("/{}", entry_path.join("/"));
+        let to_list_path = format!("/{}", to_list_path.join("/"));
+        let landed = crate::actions::ActionExecutor::copy_entry(
+            nodes,
+            &entry_path,
+            &to_list_path,
+            before.as_deref(),
+        )?;
+        if let Some(set) = setting {
+            crate::actions::ActionExecutor::set_in_entry(nodes, &landed, &set.node_path, set.value)?;
+        }
+        Ok(())
+    })
+}
+
 /// Write several fields of one entry as one change, each field's `on change` run in it - a card
 /// dragged on a canvas, which gives its entry a new `x` and `y` at once.
 ///

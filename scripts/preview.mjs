@@ -21,8 +21,9 @@
 //                              throws while no input has the focus;
 //                              press(at, { hold: 2 }) holds it down two seconds before letting go,
 //                              and press(at, { right: true }) is a right-click
-//   drag(at, { by: [dx, dy], grab: [x, y] })
-//                              pressed at grab from the node's corner, carried by, let go
+//   drag(at, { by: [dx, dy], grab: [x, y], keys: ['ctrl'] })
+//                              pressed at grab from the node's corner, carried by, let go,
+//                              with keys ('ctrl', 'alt', 'shift', 'meta') held throughout
 //   pick(at, option), tab(name)
 //                              an option of an enum or tags field; a tab, by name or label
 //   text(at), drawn(at), node(at, depth)
@@ -557,19 +558,21 @@ async function main() {
             },
             /// A drag with the mouse, as a person's: pressed at `grab` - pixels from the node's
             /// top-left corner, somewhere around its values rather than on one - carried `by`
-            /// pixels across and down in small steps, and let go there.
-            async drag(target, { by = [0, 0], grab = [4, 4] } = {}) {
+            /// pixels across and down in small steps, and let go there. `keys` are held all the while.
+            async drag(target, { by = [0, 0], grab = [4, 4], keys = [] } = {}) {
+                const bits = { alt: 1, ctrl: 2, meta: 4, shift: 8 }
+                const modifiers = keys.reduce((m, k) => m | (bits[String(k).toLowerCase()] || 0), 0)
                 const r = await rectOf(target)
                 const x = r.x + grab[0]
                 const y = r.y + grab[1]
-                await mouse(x, y, 'mouseMoved', { button: 'none' })
-                await mouse(x, y, 'mousePressed')
+                await mouse(x, y, 'mouseMoved', { button: 'none', modifiers })
+                await mouse(x, y, 'mousePressed', { modifiers })
                 const steps = 12
                 for (let i = 1; i <= steps; i++) {
-                    await mouse(x + (by[0] * i) / steps, y + (by[1] * i) / steps, 'mouseMoved', { buttons: 1 })
+                    await mouse(x + (by[0] * i) / steps, y + (by[1] * i) / steps, 'mouseMoved', { buttons: 1, modifiers })
                     await wait(15)
                 }
-                await mouse(x + by[0], y + by[1], 'mouseReleased')
+                await mouse(x + by[0], y + by[1], 'mouseReleased', { modifiers })
                 await settle()
             },
             /// A press, as a person's: the mouse moved there and clicked - or, in --mobile, a tap.
