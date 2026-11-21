@@ -10,7 +10,7 @@
 //! than the whole idle footprint the server was brought down to. Hence a budget in bytes, and the
 //! cases below are mostly about what happens when it is reached.
 
-use overseer::{app_api, document_cache};
+use overseer::{app_api, document_cache, document_disk};
 
 /// The budget and the store are process-wide.
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -20,7 +20,12 @@ fn with_budget<T>(mb: usize, body: impl FnOnce() -> T) -> T {
     app_api::forget_dependencies();
     app_api::forget_baseline();
     document_cache::set_budget_override(Some(mb * 1024 * 1024));
+    // What the budget lets go of is written to disk on a thread of its own, and a document read
+    // back from there would answer for the memory cache these are about - or not, as the write
+    // happened to finish in time.
+    document_disk::set_override(Some(None));
     let out = body();
+    document_disk::set_override(None);
     document_cache::set_budget_override(None);
     app_api::forget_dependencies();
     app_api::forget_baseline();

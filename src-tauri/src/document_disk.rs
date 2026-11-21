@@ -58,9 +58,10 @@ pub fn set_override(setting: Option<Option<(PathBuf, usize)>>) {
 ///
 /// `OVERSEER_DISK_CACHE` names the folder, and set empty turns this off. Otherwise a folder of its
 /// own under the system's temporary one - never beside the documents, which are synced by commits.
-/// `OVERSEER_DISK_CACHE_MB` is the budget, 512 unless it says otherwise. Off for the tests unless
-/// one asks, as the memory cache's budget is their own: several check what is held in memory, and a
-/// document coming back from a file another test left would answer for it.
+/// `OVERSEER_DISK_CACHE_MB` is the budget, 512 unless it says otherwise. On for integration tests
+/// built with `server` too, so a test that checks what is held in memory turns it off with
+/// `set_override(Some(None))`: a document coming back from a file - one it let go a moment ago, or
+/// one another test left - would answer for it.
 pub(crate) fn setting() -> Option<(PathBuf, usize)> {
     if let Some(asked) = OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         return asked;
