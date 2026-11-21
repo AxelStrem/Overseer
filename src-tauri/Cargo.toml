@@ -63,7 +63,7 @@ getrandom = { version = "0.2", optional = true }
 
 [dev-dependencies]
 parking_lot = "0.12"
-# Writes the page's frozen project fixture compressed; see tests/a_project_of_120_items_for_the_page.rs.
+# Writes the page's frozen project fixture compressed; see tests/it/a_project_of_120_items_for_the_page.rs.
 flate2 = "1"
 
 [features]

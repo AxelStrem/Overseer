@@ -100,17 +100,16 @@ impl RequestError {
 }
 
 impl DocumentRoot {
-    /// The documents under this folder, drawn through the settings beside them. Those settings are
-    /// also made the process's own, for what is worked out outside any request - a server has one
-    /// folder; a request through it says its settings anyway, so two in one process, as the tests
-    /// run them, still each draw in their own.
+    /// The documents under this folder, drawn through the settings beside them. A request through
+    /// it says its settings, so two in one process, as the tests run them, each draw in their own.
+    /// Making them the process's own as well, for what is worked out outside any request, is the
+    /// server's to do for the one folder it serves: done here, every folder opened - the examples
+    /// a server serves beside its own, a test's - would put its settings on the whole process.
     pub fn new(root: impl AsRef<Path>) -> std::io::Result<Self> {
-        let documents = Self {
+        Ok(Self {
             root: root.as_ref().canonicalize()?,
             accounts: None,
-        };
-        crate::environment::set_file(Some(documents.settings_file()));
-        Ok(documents)
+        })
     }
 
     pub fn path(&self) -> &Path {

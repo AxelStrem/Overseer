@@ -1,0 +1,299 @@
+//! The integration tests, built as one binary: each file is a module of it, so the crate and its
+//! dependencies are linked once rather than once a file.
+//!
+//! One file's tests: `cargo test --test it <module>::`. A file that needs the server is only built
+//! with `--features server`.
+//!
+//! The tests run on threads of one process, so what the crate holds for the whole process is
+//! shared between every module. Each test holds it, alone or beside the others - see `common`.
+//!
+//! The files beside this folder are binaries of their own, because they cannot share a process:
+//! they count what the caches hold, set environment variables the crate reads on every call, or
+//! change the working directory.
+
+mod common;
+
+mod a_bar_or_pie_plot_over_a_list_draws_one_figure_per_entry;
+mod a_base_can_come_from_a_users_library;
+mod a_button_opens_a_field_for_editing;
+mod a_calendar_day_is_reached_and_frozen_when_first_written;
+mod a_calendar_holds_a_cell_for_every_day;
+mod a_calendar_view_draws_another_calendars_days;
+mod a_call_is_handed_to_the_page;
+mod a_canvas_card_is_placed_in_one_change;
+mod a_catch_up_after_a_write_elsewhere_is_described_not_sent_whole;
+mod a_cell_read_through_at_is_reached_only_by_that_cell;
+mod a_change_of_shape_is_followed;
+mod a_change_to_one_field_of_an_entry_reaches_what_read_that_field;
+mod a_closed_item_can_be_reopened;
+mod a_comment_between_entries_survives_a_write;
+mod a_container_hides_its_labels;
+mod a_context_follows_what_it_is_worked_out_from;
+mod a_context_is_addressed_once;
+mod a_context_is_seen_by_everything_inside_it;
+mod a_copy_carries_an_entrys_lists;
+mod a_copy_holds_only_what_changed;
+mod a_day_keeps_what_it_was_aiming_at;
+#[cfg(feature = "server")]
+mod a_display_name_is_read_by_any_document;
+mod a_div_folds_away_and_comes_back;
+mod a_div_without_a_name_is_only_layout;
+mod a_document_brings_its_own_icons;
+mod a_document_follows_its_base_when_the_base_changes;
+mod a_document_held_is_marked_with_the_minute_it_was_worked_out_in;
+mod a_document_in_two_folders_is_two_documents;
+mod a_document_is_as_current_as_what_it_mounts;
+mod a_document_is_drawn_in_the_users_theme;
+mod a_document_is_instantiated_in_one_template_pass;
+#[cfg(feature = "server")]
+mod a_document_keeps_plain_files_beside_it;
+#[cfg(feature = "server")]
+mod a_document_names_the_library_bases_it_inherits;
+mod a_document_past_the_cap_is_not_written;
+mod a_document_settles;
+mod a_document_shows_its_own_images;
+mod a_document_that_does_not_parse_says_where;
+#[cfg(feature = "server")]
+mod a_document_that_reads_no_one_is_shared_between_people;
+mod a_document_under_a_listed_extension_opens;
+#[cfg(feature = "server")]
+mod a_documents_text_is_read_as_written;
+mod a_field_holds_one_of_a_list;
+mod a_filter_finds_the_same_rows;
+mod a_float_can_be_written_the_usual_ways;
+mod a_food_says_what_it_is;
+mod a_form_fills_an_entry;
+mod a_form_fills_an_entry_of_a_template_made_from_another;
+mod a_formula_joins_strings_with_plus;
+mod a_formula_reading_a_cells_formula_through_at_sees_the_change;
+mod a_grid_cell_knows_its_place;
+mod a_grid_is_filled_from_its_template;
+mod a_guarded_field_stays_out_of_the_file_whatever_writes_it;
+mod a_guarded_press_through_the_api_stays_the_callers;
+mod a_hold_runs_its_own_actions;
+#[cfg(feature = "server")]
+mod a_key_acts_as_its_account;
+mod a_key_two_entries_share_is_refused;
+mod a_large_derived_document_saves_only_its_edits;
+mod a_link_to_an_entry_out_of_view_reaches_it;
+mod a_list_can_start_over_from_its_templates_entries;
+mod a_list_entry_can_be_made_from_another_lists_entry;
+mod a_list_in_a_context_is_read_through_list_methods;
+mod a_list_in_an_unnamed_div_of_an_entry_is_written;
+mod a_list_inside_an_entrys_div_is_written;
+mod a_list_keeps_its_entries_in_parts;
+mod a_list_of_plain_values;
+mod a_list_shows_part_of_itself;
+mod a_list_with_parts_answers_totals_from_summaries;
+mod a_list_with_parts_reads_only_the_parts_its_window_draws;
+mod a_mark_is_kept_and_not_addressed;
+mod a_minus_before_a_value_negates_it;
+mod a_mounted_calendar_reads_a_day_nobody_wrote_as_its_template;
+mod a_mounted_node_is_worked_out_in_its_own_document;
+mod a_move_can_set_a_field_of_the_entry_it_moves;
+mod a_move_or_a_sort_reaches_the_file;
+mod a_moved_entry_takes_the_colour_of_where_it_goes;
+mod a_nested_entry_lines_up;
+mod a_new_day_keeps_its_fields_where_the_template_has_them;
+mod a_new_entry_cannot_take_a_key_already_held;
+mod a_new_entry_overrides_an_inherited_instance_as_an_override;
+mod a_new_project_item_is_its_adders;
+#[cfg(feature = "server")]
+mod a_page_is_told_what_its_viewer_may_do;
+mod a_parameter_list_keeps_its_shape;
+mod a_part_let_go_of_takes_its_snapshots_with_it;
+mod a_part_summary_outlives_the_server;
+mod a_pasted_image_is_saved_beside_its_document;
+mod a_path_after_at_ends_in_a_list_method;
+mod a_path_can_start_from_its_own_node;
+mod a_person_finds_their_own_drawer;
+mod a_press_can_narrow_a_list;
+mod a_press_goes_on_after_its_entry_is_removed;
+mod a_press_is_the_save;
+mod a_press_on_a_new_day_is_one_step;
+mod a_press_settles_once;
+mod a_preview_becomes_real;
+mod a_project_can_have_tabs_of_its_own;
+mod a_project_item_holds_a_conversation;
+mod a_project_item_is_claimed_once;
+mod a_project_item_moves_through_stages;
+mod a_project_of_120_items_for_the_page;
+mod a_project_reads_its_definition_through_a_mount;
+mod a_project_task_can_be_dropped;
+mod a_reader_can_ask_a_list_for_more;
+mod a_refused_press_says_why;
+mod a_relative_read_climbs_past_a_wrapper;
+mod a_save_adds_no_lines_between_an_entrys_divs;
+mod a_save_cannot_discard_someone_elses_write;
+mod a_save_keeps_the_blank_line_between_top_level_tabs;
+mod a_secret_textbox_is_never_sent_to_the_server;
+mod a_sorted_list_keeps_its_order_after_an_edit;
+mod a_square_day_is_sent_without_what_is_under_it;
+mod a_square_day_leaves_its_lists_as_written;
+mod a_step_of_a_guarded_grid_is_settled_once;
+mod a_style_a_template_gives_an_instance_stays_the_templates;
+mod a_style_given_to_a_container_is_not_copied_to_what_is_inside;
+mod a_tabs_hover_text_is_its_own;
+mod a_template_can_be_made_from_another;
+mod a_template_can_come_from_another_file;
+mod a_template_inside_an_instance_of_a_base_is_the_documents;
+mod a_template_named_like_a_field_type_is_refused;
+mod a_theme_can_load_fonts_kept_beside_it;
+mod a_theme_colour_can_change_in_one_mode_alone;
+mod a_tick_changes_only_what_is_the_viewers;
+mod a_tracker_shared_to_edit_is_worked_beside_a_week_out_of_place;
+mod a_tree_entry_moved_to_another_depth_is_reindented;
+mod a_tree_entry_moves_with_its_branch;
+mod a_tree_window_keeps_branches_whole;
+mod a_viewers_press_starts_from_what_they_last_saw;
+mod a_viewers_write_into_a_grid_cell_leaves_the_file_alone;
+mod a_vocabulary_over_a_list_with_parts_reads_no_old_part;
+mod a_week_starts_on_the_week_start;
+mod a_whole_entry_is_pressable;
+mod a_wrapped_list_header_keeps_its_lines;
+mod a_write_below_a_container_reaches_the_file;
+mod a_write_can_be_taken_back;
+mod a_write_is_announced_to_whoever_watches_the_document;
+mod a_write_reads_the_clock_as_it_is_now;
+mod a_write_through_a_mount_reaches_the_mounted_file;
+mod a_write_to_a_mounted_file_is_announced_to_whoever_watches_the_document;
+mod a_written_day_out_of_view_is_worked_out_only_when_reached;
+mod a_year_view_works_out_only_what_its_squares_draw;
+mod added_sugar_falls_back;
+#[cfg(feature = "server")]
+mod an_account_is_made_by_an_invite_used_once;
+mod an_action_on_an_entry_reaches_the_file;
+mod an_action_path_names_an_entry_by_position;
+mod an_action_says_what_it_changed;
+mod an_add_form_suggests_an_id;
+mod an_answer_is_described_against_what_the_caller_holds;
+mod an_answer_names_the_text_rather_than_sending_it;
+mod an_append_from_a_list_copies_every_entry;
+mod an_append_of_the_template_alone_writes_an_entry;
+mod an_array_is_a_grid_of_one_row;
+mod an_edit_agrees_with_a_full_resolve;
+mod an_edit_inside_a_nested_instance_is_saved;
+mod an_edited_instance_keeps_what_it_wrote;
+mod an_entry_an_action_adds_is_worked_out_as_an_open_would;
+mod an_entry_appears_at_its_key;
+mod an_entry_can_say_it_stays;
+mod an_entry_carries_only_the_contexts_it_changes;
+mod an_entry_finished_into_a_part_is_written_at_its_depth;
+mod an_entry_folds_by_its_own_flag;
+mod an_entry_is_copied_by_dragging;
+mod an_entry_knows_its_depth_in_its_tree;
+mod an_entry_moves_by_dragging;
+mod an_entry_out_of_view_can_be_reached;
+mod an_enum_in_an_unnamed_div_of_an_entry_writes_its_value;
+mod an_instance_follows_its_template;
+mod an_instance_follows_its_template_past_a_mount_or_a_part;
+mod an_instance_s_list_entries_come_after_the_template_s;
+mod an_instance_walks_its_template;
+mod an_item_carries_its_workflow_flags;
+mod an_item_waits_on_others;
+mod an_items_moved_time_follows_its_stage_and_its_conversation;
+mod an_open_answers_only_what_the_page_reads;
+mod an_open_of_a_list_with_parts_answers_no_path;
+mod an_override_element_can_start_over;
+mod an_unnamed_instance_adds_no_step;
+mod app_load_save_cycle;
+mod appended_entry_indent;
+mod both_hosts_answer_what_the_page_asks;
+mod calendar_functions;
+mod closed_items_have_a_tab_of_their_own;
+mod comment_after_childless_list;
+mod comment_trivia;
+mod concurrent_documents;
+mod concurrent_writes_to_one_document_all_land;
+mod day_navigation;
+mod document_delta;
+mod duplicate_keys;
+mod each_goes_through_a_list_and_press_runs_another_nodes_click;
+mod each_persons_documents_are_their_own;
+mod edit_value_persists;
+mod empty_block_bodies;
+mod event_from_text;
+mod every_project_tracker_has_a_discussion_tab;
+mod every_project_tracker_has_a_features_canvas;
+#[cfg(feature = "server")]
+mod examples_are_served_to_anyone_to_read;
+mod exercise_chart_has_data;
+mod exercise_done_regression;
+mod exercise_roundtrip;
+mod field_with_a_handler;
+mod filters_mean_what_they_say;
+mod finishing_an_item_of_a_tracker_in_parts_is_followed;
+mod food_catalog;
+mod guarded_save_from_text;
+mod history_prepend_diff;
+mod inherited_styling_provenance;
+mod ipc_payload_fidelity;
+mod label_layout;
+mod materialized_entry_shape;
+mod me_is_empty_where_no_settings_are_in_force;
+mod merge_property;
+mod minesweeper_is_played_without_writing_the_file;
+mod modulo;
+mod mount_preload;
+mod mount_registry_isolation;
+mod names_survive_a_removal;
+mod newline_fidelity;
+mod on_load_sets_what_is_the_viewers_and_never_writes;
+mod one_sharing_entry_covers_documents_folders_and_groups;
+#[cfg(feature = "server")]
+mod people_sign_in_with_accounts_they_were_invited_to;
+mod pressing_nothing;
+mod project_rollup;
+mod prose_values;
+mod random_is_fixed_by_its_seed;
+mod real_documents_round_trip;
+mod reopening_agrees_with_a_full_load;
+mod selective_resolve_completeness;
+mod selective_update;
+mod serializer_golden;
+mod server_access;
+#[cfg(feature = "server")]
+mod server_auth_end_to_end;
+mod server_commands;
+mod server_documents;
+mod server_events;
+mod server_saves;
+mod server_writes;
+mod shopping_buy;
+mod stable_addresses;
+mod stale_removal;
+#[cfg(feature = "server")]
+mod strangers_are_asked_to_sign_in;
+mod table_columns;
+mod tag_sets;
+mod task_rules;
+mod template_comments;
+mod templates_can_be_stacked;
+mod text_carries_edits;
+#[cfg(feature = "server")]
+mod the_base_drawer_draws_what_the_old_one_did;
+mod the_bot_writes_the_way_the_page_does;
+mod the_built_in_pages_are_bundled_resolved;
+mod the_cascade_covers_the_change;
+mod the_clock_holds_still_for_one_answer;
+mod the_desktop_tells_a_document_what_is_open_beside_it;
+mod the_document_says_what_may_change;
+mod the_graph_keeps_up_with_the_document;
+#[cfg(feature = "server")]
+mod the_host_tells_a_document_what_is_open_beside_it;
+#[cfg(feature = "server")]
+mod the_icon_names_are_a_vocabulary;
+mod the_last_entry_of_a_list_can_be_removed;
+mod the_page_can_add_and_remove_entries;
+mod the_page_sends_an_instruction;
+mod the_viewers_day_stays_out_of_the_file;
+mod tracker_records;
+mod undo_reaches_a_document_in_a_folder;
+mod undo_steps_are_real_changes;
+mod unknown_fields;
+mod unset_is_not_null;
+mod values_are_worked_out_in_one_pass;
+mod what_a_value_was_worked_out_from;
+mod what_a_viewer_is_looking_at;
+mod where_a_days_calories_came_from;
+mod wrapper_transparency;

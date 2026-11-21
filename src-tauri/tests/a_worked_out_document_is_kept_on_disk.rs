@@ -110,6 +110,14 @@ fn open(folder: &Path, name: &str) -> Vec<OverseerNode> {
     })
 }
 
+/// The folder served as the server serves it, its settings the process's own: what is looked up
+/// outside a request, as `kept` does, sees the documents through them.
+fn served(folder: &Path) -> DocumentRoot {
+    let root = DocumentRoot::new(folder).unwrap();
+    overseer::environment::set_file(Some(root.settings_file()));
+    root
+}
+
 /// Open two other copies of the tasks, which leaves room in memory for nothing else.
 fn push_out(sandbox: &Sandbox) {
     open(&sandbox.root.join("other"), "tasks.os");
@@ -188,13 +196,13 @@ fn a_write_to_a_document_read_back_from_disk_writes_what_it_always_did() {
     // read back after a restart.
     let expected = {
         let sandbox = sandbox("write_held");
-        let root = DocumentRoot::new(&sandbox.documents).unwrap();
+        let root = served(&sandbox.documents);
         root.open("tasks.os").expect("open");
         root.set_at("tasks.os", "tasks/header", header()).expect("a write");
         std::fs::read_to_string(sandbox.documents.join("tasks.os")).unwrap()
     };
     let sandbox = sandbox("write_disk");
-    let root = DocumentRoot::new(&sandbox.documents).unwrap();
+    let root = served(&sandbox.documents);
     root.open("tasks.os").expect("open");
     push_out(&sandbox);
     assert!(kept(&sandbox.documents, "tasks.os").is_some(), "what was let go was not written down");

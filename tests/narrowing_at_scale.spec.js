@@ -8,7 +8,7 @@ import { gunzipSync } from 'node:zlib'
 // This is the size it exists for. A box that is correct on four rows and slow or wrong on a
 // hundred would have missed the point, so the numbers below are measured rather than assumed.
 
-// The items are invented, and the tree is written by src-tauri/tests/a_project_of_120_items_for_the_page.rs.
+// The items are invented, and the tree is written by src-tauri/tests/it/a_project_of_120_items_for_the_page.rs.
 const FIXTURE = 'tests/fixtures/project_120.json.gz'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))

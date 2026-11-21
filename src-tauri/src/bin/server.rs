@@ -1627,10 +1627,13 @@ async fn serve() {
 
     let documents = match DocumentRoot::new(&root) {
         // With accounts, each person's documents are in a folder named for them.
-        Ok(r) => Arc::new(match accounts.clone() {
-            Some(accounts) => r.with_accounts(move |name| accounts.user(name).is_some()),
-            None => r,
-        }),
+        Ok(r) => {
+            overseer::environment::set_file(Some(r.settings_file()));
+            Arc::new(match accounts.clone() {
+                Some(accounts) => r.with_accounts(move |name| accounts.user(name).is_some()),
+                None => r,
+            })
+        }
         Err(e) => {
             eprintln!("cannot serve '{}': {}", root.display(), e);
             std::process::exit(1);

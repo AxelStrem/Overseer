@@ -14,7 +14,7 @@
 // -
 // Formatting note: this leading block is deliberately contiguous. A bare "//" line is
 // dropped on save, and a blank line between leading comment blocks is hoisted to the top
-// of the file. See the ignored tests in src-tauri/tests/comment_trivia.rs.
+// of the file. See the ignored tests in src-tauri/tests/it/comment_trivia.rs.
 
 tab food_catalog (label="Food Catalog", mutable=true) {
 

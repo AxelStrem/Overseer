@@ -17,7 +17,7 @@
 // -
 // Formatting note: this leading block is deliberately contiguous, because a blank line
 // between leading comment blocks is still hoisted to the top of the file on save. Bare "//"
-// separator lines are fine now and used below. See src-tauri/tests/comment_trivia.rs.
+// separator lines are fine now and used below. See src-tauri/tests/it/comment_trivia.rs.
 
 tab tracker_v2 (label="Calories", mutable=true) {
 
@@ -308,7 +308,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
                 // Written out here rather than through the <NutriScore> block the meals use. A
                 // template instance anywhere in this record makes the comment further down lose
                 // its indentation every time the file is written - see the ignored test in
-                // tests/comment_after_childless_list.rs. The rules are the same rules; when that
+                // tests/it/comment_after_childless_list.rs. The rules are the same rules; when that
                 // is fixed this becomes an instance like the meals'.
                 float eaten_grams (hidden=true) = $(intake.map(|x| x/grams).sum())
                 float day_kj (hidden=true) = $(eaten_grams > 0 ? totals/calories / eaten_grams * 100 * 4.184 : 0)
@@ -485,7 +485,7 @@ tab tracker_v2 (label="Calories", mutable=true) {
     // matters here because days added through the UI are prepended and days added by an assistant are
     // appended, so the stored order has never been the order to read them in.
     // On one line because the serialiser writes parameters on one line, and this document is
-    // checked byte for byte across a save - see tests/app_load_save_cycle.rs.
+    // checked byte for byte across a save - see tests/it/app_load_save_cycle.rs.
     // Three days in view, and the rest costing nothing.
     //
     // `window` is applied before anything is instantiated, so a day out of view has no template

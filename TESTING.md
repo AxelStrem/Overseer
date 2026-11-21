@@ -6,7 +6,8 @@ Overseer is tested from both sides of the Tauri IPC boundary:
 
 - **Rust** (`src-tauri/`) — the language core: parser, resolver, formula evaluator,
   actions, and the serializer. Unit tests live beside the code they cover; the
-  cross-cutting ones live in `src-tauri/tests/`.
+  cross-cutting ones live in `src-tauri/tests/it/`, one module a file, built together as
+  the one test binary `it` so the crate is linked once for all of them.
 - **JavaScript** (`tests/`) — the renderer and app shell, run under jsdom with
   Vitest. These drive the real DOM the app builds and assert on what the user
   would see, with the backend stubbed.
@@ -23,10 +24,21 @@ npm run test:rust:watch
 npm run test:verbose  # cargo test with stdout captured
 
 cd src-tauri && cargo test <name>            # single Rust test
+cd src-tauri && cargo test --test it <file>::  # one file of the integration tests
 npx vitest run -c tests/vitest.config.mjs <file>   # single spec
 ```
 
 VS Code: Command Palette → "Tasks: Run Task" → "Test: Run All Tests".
+
+The modules of `it` run on threads of one process, and share what the crate keeps for the
+whole process: the snapshots of every parse, the documents it holds worked out, the view state,
+the folder of the current document, the overrides of its caches. Every test holds
+`common::PROCESS`: alone, with `common::serial()`, when it sets or resets any of that or relies on
+nobody else touching it, and beside the others, with `common::shared()`, otherwise - so a
+`SourceRegistry::reset` never lands in the middle of another test's save. A new test takes one of
+the two as its first line. A file that cannot share a process at all - it counts what the caches hold, sets
+an environment variable the crate reads on every call, or changes the working directory - stays
+a binary of its own beside `it/`, run with `cargo test --test <file>`.
 
 ## How the JS specs talk to the backend
 
@@ -75,7 +87,7 @@ folder named in `OVERSEER_REAL_DOCS`, separated as in `PATH` (`;` on Windows, `:
 elsewhere):
 
 ```bash
-OVERSEER_REAL_DOCS="E:/docs;E:/docs/projects" cargo test --test real_documents_round_trip -- --nocapture
+OVERSEER_REAL_DOCS="E:/docs;E:/docs/projects" cargo test --test it real_documents_round_trip:: -- --nocapture
 ```
 
 Without it the test prints that no folders were named and passes; the examples and
@@ -86,7 +98,7 @@ the library are round-tripped either way.
 A reproducible bug that is not being fixed yet is worth a test marked
 `#[ignore = "known bug: ..."]`, describing the observed behaviour. It stays out
 of the red, documents the defect precisely, and turns into the regression test
-by deleting one line. See `src-tauri/tests/comment_trivia.rs`.
+by deleting one line. See `src-tauri/tests/it/comment_trivia.rs`.
 
 On the JS side the equivalent is `it.skip` with a description of the expected
 outcome — see `tests/weight_tracker_amount_calories_total_ui_bug.spec.js`.

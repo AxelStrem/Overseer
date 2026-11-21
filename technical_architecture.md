@@ -208,7 +208,7 @@ knowing about because each has a cost:
 
 Loading a document and saving it without touching anything gives back the same bytes, however
 many times it is repeated. Several real documents are checked that way in
-`src-tauri/tests/app_load_save_cycle.rs`, and the serializer's own fixtures in
+`src-tauri/tests/it/app_load_save_cycle.rs`, and the serializer's own fixtures in
 `tests/fixtures/serializer/` are checked against golden files.
 
 It is the invariant the app promises and the one most easily broken by accident, because
