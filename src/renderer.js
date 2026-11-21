@@ -10401,6 +10401,10 @@ export class OverseerRenderer {
      * its own colours unless given one), at `opacity`, `size` high (of the box's height; larger is
      * cropped by the box) and at `position`, a CSS background position.
      *
+     * A `text` draws the words `text` says on one line, as an icon is drawn: in `colour`, at
+     * `opacity`, the line `size` high (`1em`, the box's own letters' size) and at `position`;
+     * `weight` makes it bold.
+     *
      * `layers` is the same, one entry for each layer drawn, with its `name`, its `motion` - one of
      * `BACKDROP_MOTIONS`, or null for a still one - and `period`, in seconds, and for a gradient
      * what it is made of, so that `drawBackdropMotion` can draw it again in a box of its own.
@@ -10443,21 +10447,46 @@ export class OverseerRenderer {
                 lists.repeat.push('repeat')
                 drawn()
                 layers.at(-1).gradient = gradient
-            } else if (kind === 'icon') {
-                const opacitySaid = String(this.contextValue(key('opacity')) ?? '').trim()
-                let opacity = parseFloat(opacitySaid)
-                if (opacitySaid.endsWith('%')) opacity /= 100
-                opacity = Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1
+                continue
+            }
+            if (kind !== 'icon' && kind !== 'text') continue
+            const opacitySaid = String(this.contextValue(key('opacity')) ?? '').trim()
+            let opacity = parseFloat(opacitySaid)
+            if (opacitySaid.endsWith('%')) opacity /= 100
+            opacity = Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1
+            // A bare number is a share of the box's height; anything else must be one CSS
+            // length, and a place only words and lengths, so nothing can reach the other layers.
+            const sizeOf = (otherwise) => {
+                const said = String(this.contextValue(key('size')) ?? otherwise).trim()
+                return /^\d+(\.\d+)?$/.test(said) ? `${said}%`
+                    : /^\d+(\.\d+)?(%|px|em|rem|vh|vw|vmin|vmax)$/.test(said) ? said : otherwise
+            }
+            // Words, lengths and `calc()` of them: no comma, quote or `url`, which could reach
+            // the other layers.
+            const placeOf = () => {
+                const said = String(this.contextValue(key('position')) ?? '').trim()
+                return /^[a-z0-9.%\s()+*/-]+$/i.test(said) && !/url/i.test(said) ? said : 'center'
+            }
+            const paint = (svg, size) => {
+                const position = placeOf()
+                lists.image.push(`url("data:image/svg+xml,${encodeURIComponent(svg)}")`)
+                lists.size.push(`auto ${size}`)
+                lists.position.push(position)
+                lists.repeat.push('no-repeat')
+                drawn()
+                if (motion === 'turn') layers.at(-1).origin = iconTurnOrigin(position, size)
+            }
+            if (kind === 'text') {
+                // Words have no copies to scatter, so a sparkle draws nothing, as it does still.
+                if (motion === 'sparkle') continue
+                const colour = paintable(this.contextValue(key('colour') || key('color'))) ?? paintable(textColour)
+                const svg = this.backdropTextSvg(this.contextValue(key('text')), colour, opacity,
+                    this.contextValue(key('weight')))
+                if (svg) paint(svg, sizeOf('1em'))
+            } else {
                 const colourOf = (parts) => {
                     const said = paintable(this.contextValue(key('colour') || key('color')) ?? parts.color)
                     return said ?? (parts.key ? paintable(textColour) : null)
-                }
-                // A bare number is a share of the box's height; anything else must be one CSS
-                // length, and a place only words and lengths, so nothing can reach the other layers.
-                const sizeOf = (otherwise) => {
-                    const said = String(this.contextValue(key('size')) ?? otherwise).trim()
-                    return /^\d+(\.\d+)?$/.test(said) ? `${said}%`
-                        : /^\d+(\.\d+)?(%|px|em|rem|vh|vw|vmin|vmax)$/.test(said) ? said : otherwise
                 }
                 if (motion === 'sparkle') {
                     // Drawn only as it moves, by `drawBackdropMotion`: still, there is nothing of
@@ -10497,17 +10526,7 @@ export class OverseerRenderer {
                 if (!text) continue
                 const svg = this.backdropIconSvg(text, colourOf(parts), opacity)
                 if (!svg) continue
-                const size = sizeOf('100%')
-                // Words, lengths and `calc()` of them: no comma, quote or `url`, which could reach
-                // the other layers.
-                const placeSaid = String(this.contextValue(key('position')) ?? '').trim()
-                const position = /^[a-z0-9.%\s()+*/-]+$/i.test(placeSaid) && !/url/i.test(placeSaid) ? placeSaid : 'center'
-                lists.image.push(`url("data:image/svg+xml,${encodeURIComponent(svg)}")`)
-                lists.size.push(`auto ${size}`)
-                lists.position.push(position)
-                lists.repeat.push('no-repeat')
-                drawn()
-                if (motion === 'turn') layers.at(-1).origin = iconTurnOrigin(position, size)
+                paint(svg, sizeOf('100%'))
             }
         }
         if (!lists.image.length) return { image: 'none', size: 'auto', position: '0% 0%', repeat: 'repeat', layers, waiting }
@@ -10680,6 +10699,39 @@ export class OverseerRenderer {
         }
         if (opacity < 1) svg.setAttribute('opacity', String(opacity))
         return new XMLSerializer().serializeToString(svg)
+    }
+
+    /**
+     * Words as a backdrop draws them: one line of `text` in `colour` at `opacity`, `weight` bold or
+     * a number, in an SVG as wide as the line, so that sized by its height it keeps its letters'
+     * proportions. Null for no words, or a colour the page does not accept.
+     */
+    backdropTextSvg(text, colour, opacity, weight) {
+        const words = String(text ?? '').replace(/\s+/g, ' ').trim()
+        if (!words) return null
+        const paint = colour === null || colour === undefined ? 'currentColor' : String(colour).trim()
+        if (paint !== 'currentColor' && !new RegExp(`^${COLOR_VALUE}$`).test(paint)) return null
+        const weightSaid = String(weight ?? '').trim()
+        const bold = /^(bold|bolder|[1-9]00)$/.test(weightSaid) ? weightSaid : 'normal'
+        // Measured where the page can, at the font the SVG names; else about how wide such
+        // letters are, which only leaves a little room at the end.
+        const font = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+        const SIZE = 100
+        let width = words.length * SIZE * 0.6
+        if (typeof OffscreenCanvas !== 'undefined') {
+            const measure = new OffscreenCanvas(1, 1).getContext('2d')
+            if (measure) {
+                measure.font = `${bold} ${SIZE}px ${font}`
+                width = measure.measureText(words).width
+            }
+        }
+        width = Math.ceil(width) + 4
+        const escape = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+        const fade = opacity < 1 ? ` opacity="${opacity}"` : ''
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${SIZE * 1.25}"${fade}>` +
+            `<text x="2" y="${SIZE}" font-size="${SIZE}" font-weight="${bold}" font-family="${escape(font)}" ` +
+            `fill="${escape(paint)}">${escape(words)}</text></svg>`
     }
 
     /**

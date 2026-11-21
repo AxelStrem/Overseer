@@ -275,6 +275,13 @@ tab project (label="Project", mutable=true) {
                         - motion = "turn"
                         - period = "3s"
                     }
+                    - worker_mark {
+                        - kind = $(working && worker != "" ? "text" : "none")
+                        - text = $(worker)
+                        - colour = "#22c55e"
+                        - size = "14px"
+                        - position = "right 8px top 1px"
+                    }
                     - asked_mark {
                         - kind = $(asked && !working ? "icon" : "none")
                         - source = "message-circle-question"
@@ -347,6 +354,7 @@ tab project (label="Project", mutable=true) {
                              hover-text="Estimated cognitive effort: the model is selected based on it") = "unassigned"
             bool pinned (hidden=true) = false
             bool working (hidden=true) = false
+            string worker (hidden=true) = ""
 
             timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
             mark (type="separator")

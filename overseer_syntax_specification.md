@@ -1387,8 +1387,8 @@ context week_start = "system"
   its `text`, and `button/label` says otherwise.
 - **`backdrop` is what is painted over `background`**: layers, each a key of its own, drawn in the
   order written with the first on top, and the `background` colour under them all. A layer has a
-  `kind`, `gradient` or `icon`; one of a kind the page does not draw, `none` among them, is left
-  out.
+  `kind`, `gradient`, `icon` or `text`; one of a kind the page does not draw, `none` among them,
+  is left out.
 
   ```overseer
   context theme {
@@ -1434,7 +1434,22 @@ context week_start = "system"
   }
   ```
 
-  A layer of either kind can move on its own, in the page alone, for as long as its `motion` says
+  A `text` layer draws words over the box, on one line: `text` is what it says, a formula like any
+  key, and draws nothing when empty. `colour`, `opacity` and `position` are as an icon's; `size`
+  is how high the line is (`1em`, as high as the box's own letters), and `weight` is `bold` or a
+  number for bolder letters. A stamp in a card's corner, a watermark, or who is at work on an item:
+
+  ```overseer
+  - worker_mark {
+      - kind = $(worker != "" ? "text" : "none")
+      - text = $(worker)
+      - colour = "#22c55e"
+      - size = "11px"
+      - position = "right 4px top 0"
+  }
+  ```
+
+  A layer of any kind can move on its own, in the page alone, for as long as its `motion` says
   so: `turn` turns it round and round (a gradient's angle; an icon on its own middle, where it
   stands), `drift` moves it back and forth (a
   gradient along its angle, an icon from side to side), `breathe` fades it out a little and
