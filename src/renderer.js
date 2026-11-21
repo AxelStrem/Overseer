@@ -4021,8 +4021,7 @@ export class OverseerRenderer {
             for (const { ms, day } of week) if (ms <= lastDay) items.push(day ? day.cell : blank())
         })
         put(items)
-        // Wider than a phone, it scrolls sideways: shown at its end, the latest days, once drawn.
-        requestAnimationFrame(() => { element.scrollLeft = element.scrollWidth })
+        this.keepYearAtItsEnd(element)
         // A square shows its day's value on hover. Set when the pointer comes, rather than once
         // here, so that a day drawn again after an edit shows its new value.
         if (!element._calendarHover) {
@@ -4038,6 +4037,39 @@ export class OverseerRenderer {
                 cell.title = shown ? `${name}: ${shown}` : name
             })
         }
+    }
+
+    /// Wider than a phone, a year scrolls sideways, and is shown at its end, the latest days, the
+    /// way a contribution graph is. It is placed when it first has a size rather than when drawn:
+    /// on a tab or in a fold not yet open it has none, and a scroll then sets nothing. Where the
+    /// reader scrolled it, it keeps their place, through redraws too, which draw a new element;
+    /// scrolled back to the end, it follows the end again.
+    keepYearAtItsEnd(element) {
+        if (!this._yearScrolledTo) this._yearScrolledTo = new Map()
+        const kept = this._yearScrolledTo
+        const key = element.dataset.path || ''
+        const place = () => {
+            if (!element.clientWidth) return
+            element.scrollLeft = kept.has(key) ? kept.get(key) : element.scrollWidth
+            // A scroll event follows a scroll set here as well as the reader's; this tells them apart.
+            element._yearPlacedAt = element.scrollLeft
+        }
+        element.addEventListener('scroll', () => {
+            if (element.scrollLeft === element._yearPlacedAt) return
+            element._yearPlacedAt = null
+            if (element.scrollLeft + element.clientWidth >= element.scrollWidth - 1) kept.delete(key)
+            else kept.set(key, element.scrollLeft)
+        })
+        if (typeof ResizeObserver === 'undefined') {
+            requestAnimationFrame(place)
+            return
+        }
+        const observer = new ResizeObserver(() => {
+            if (!element.isConnected) { observer.disconnect(); return }
+            place()
+        })
+        observer.observe(element)
+        element._resizeObserver = observer
     }
 
     createListElement(node) {
