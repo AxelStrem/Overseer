@@ -164,8 +164,11 @@ knowing about because each has a cost:
   is gone, while it listens, has that tree worked out again from the text it was handed, and is
   sent what changed rather than the whole document.
   The summaries a total over a list with parts reads of the parts it has not read go in its
-  `sums/` folder, an eighth of the budget, each named by the part's text, the entries' template,
-  the chain and the build, so a server that has just started reads no part a summary was kept for.
+  `sums/` folder, an eighth of the budget, one file for each part, named by the part's text and
+  the build and holding every chain's summary of it by the chain with its entries' template, so a
+  server that has just started reads no part a summary was kept for, and one file for each part
+  rather than one for each chain. Summaries made meanwhile are added to their part's file in the
+  background, which keeps the 64 chains written last.
   A document as one viewer sees it, with their guarded values in, is held under the text it
   serializes to, which the file never holds; the viewer's state remembers that text with the
   file's version and the values it was worked out with. A press, a tick or an open of theirs,

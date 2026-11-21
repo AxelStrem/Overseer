@@ -211,3 +211,35 @@ fn a_summary_read_from_disk_is_marked_as_used() {
         .count();
     assert_eq!(touched, files.len(), "a trim keeps what was read, and lets go of what was not");
 }
+
+#[test]
+fn every_chain_over_a_part_is_kept_in_one_file() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let sandbox = sandbox("one_file", true);
+    open_fresh(&sandbox);
+    assert_eq!(summaries_on_disk(&sandbox), 2, "one file for each of the two parts outside the window");
+}
+
+#[test]
+fn a_new_chain_over_a_part_joins_its_file_and_keeps_the_others() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let sandbox = sandbox("new_chain", true);
+    open_fresh(&sandbox);
+    let document = sandbox.0.join("documents/log.os");
+    let more = DOCUMENT.replace(
+        "    list Items",
+        "    int most (mutable=false) = $(History.map(|x| x/points).max())\n\n    list Items",
+    );
+    std::fs::write(&document, more).unwrap();
+    let made = overseer::partsums::summaries_made();
+    let nodes = open_fresh(&sandbox);
+    assert!(overseer::partsums::summaries_made() > made, "the new chain summarises the parts");
+    assert_eq!(value(&nodes, "log/most"), int(8));
+
+    let made = overseer::partsums::summaries_made();
+    let nodes = open_fresh(&sandbox);
+    assert_eq!(overseer::partsums::summaries_made(), made, "neither the new chain nor the old ones are made again");
+    assert_eq!(totals(&nodes), [int(20), int(12), int(2)]);
+    assert_eq!(value(&nodes, "log/most"), int(8));
+    assert_eq!(summaries_on_disk(&sandbox), 2);
+}

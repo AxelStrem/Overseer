@@ -122,9 +122,9 @@ pub fn summary(
     let made = match on_disk::folder() {
         Some(folder) => {
             let text = on_disk::text_of(file, stamp)?;
-            let key = on_disk::Key::new(folder, chain, text);
+            let key = on_disk::Key::new(folder, file, chain, text);
             match key.read() {
-                Some(found) => Arc::new(found),
+                Some(found) => found,
                 None => {
                     // From the parse the part's other chains share: parsing it for each chain
                     // made a fresh server's first open a third slower than one keeping nothing.
@@ -169,24 +169,28 @@ pub fn forget_in_memory() {
     if let Ok(mut held) = HELD.lock() {
         held.clear();
     }
+    on_disk::forget_in_memory();
 }
 
 /// Summaries kept on disk, beside the documents `document_disk` keeps, so that a server that has
 /// just started - a deploy, a restart - does not read every part of a history again to make them.
 ///
-/// A file is named by the build, the chain with its template, the time zone, and the part's text,
-/// and holds all of them to be checked against. Nothing else goes into a summary: the chain reads
-/// only its entry, through functions that read no clock, though the days and weeks they count are
-/// local ones. A part edited, a template or a chain changed, a server rebuilt: each is another
-/// name, and the old file is never read. A file is read without being taken, unlike a document's,
-/// since every open of every document reading the part wants it; files no longer asked for go as
-/// the folder is trimmed.
+/// A part has one file, named by the build, the time zone, and the part's text, holding every
+/// chain's summary of that text by the chain with its template - all of them checked as it is
+/// read. Nothing else goes into a summary: the chain reads only its entry, through functions that
+/// read no clock, though the days and weeks they count are local ones. A part edited or a server
+/// rebuilt is another file, and the old one is never read; a template or a chain changed is
+/// another chain in the file. One file for every chain over the part, rather than one for each,
+/// is what lets a tracker's first open on a server just started read a dozen files instead of a
+/// few hundred. A file is read without being taken, unlike a document's, since every open of every
+/// document reading the part wants it; files no longer asked for go as the folder is trimmed.
 mod on_disk {
     use super::Summary;
     use serde::{Deserialize, Serialize};
+    use std::collections::{BTreeMap, HashMap};
     use std::hash::Hasher;
     use std::path::{Path, PathBuf};
-    use std::sync::Arc;
+    use std::sync::{Arc, LazyLock, Mutex};
 
     /// The share of the disk cache's budget summaries may take: they are small, and a document
     /// worked out again costs more than any one of them.
@@ -195,6 +199,11 @@ mod on_disk {
     /// How many files are written between trims of the folder: listing it is what a trim costs.
     const TRIM_EVERY: usize = 64;
 
+    /// How many chains a part's file keeps: the ones written longest ago go first, so the chains
+    /// of templates no longer used do not pile up in a part that never changes.
+    const CHAINS_KEPT: usize = 64;
+
+    #[derive(Clone)]
     pub struct Folder {
         path: PathBuf,
         budget: usize,
@@ -218,8 +227,7 @@ mod on_disk {
     /// The part's text as it stood with this stamp, read and hashed once for every chain over it:
     /// an open of a tracker asks for each of its parts half a dozen times.
     pub fn text_of(file: &str, stamp: &str) -> Option<Text> {
-        static HASHED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, (String, Text)>>> =
-            std::sync::LazyLock::new(Default::default);
+        static HASHED: LazyLock<Mutex<HashMap<String, (String, Text)>>> = LazyLock::new(Default::default);
         if let Some((was, text)) = HASHED.lock().ok()?.get(file) {
             if was == stamp {
                 return Some(*text);
@@ -235,23 +243,49 @@ mod on_disk {
     #[derive(Deserialize)]
     struct Stored {
         build: String,
-        chain: String,
         zone: String,
         text: Text,
+        chains: HashMap<String, StoredChain>,
+    }
+
+    #[derive(Deserialize)]
+    struct StoredChain {
         summary: Summary,
     }
 
-    #[derive(Serialize)]
-    struct Storing<'a> {
-        build: &'a str,
-        chain: &'a str,
-        zone: &'a str,
+    /// A part's file as it is merged: the chains already in it are carried as they were written,
+    /// without being read into summaries.
+    #[derive(Serialize, Deserialize)]
+    struct Merging {
+        build: String,
+        zone: String,
         text: Text,
+        chains: BTreeMap<String, serde_json::Value>,
+    }
+
+    #[derive(Serialize)]
+    struct StoringChain<'a> {
+        /// Seconds since the epoch, for `CHAINS_KEPT`.
+        written: u64,
         summary: &'a Summary,
+    }
+
+    /// The chains of each part's file read so far, by the part: the first chain over a part reads
+    /// the file, and the rest find their summaries here. Only the part's text as it stands now is
+    /// held, so it is bounded by the parts a server reads. A file not there is held as one with
+    /// no chains: what is made meanwhile is held in memory, and written down in the background.
+    type Chains = Arc<HashMap<String, Arc<Summary>>>;
+    static LOADED: LazyLock<Mutex<HashMap<String, (PathBuf, Chains)>>> = LazyLock::new(Default::default);
+
+    pub fn forget_in_memory() {
+        if let Ok(mut loaded) = LOADED.lock() {
+            loaded.clear();
+        }
     }
 
     pub struct Key {
         folder: Folder,
+        part: String,
         chain: String,
         zone: String,
         text: Text,
@@ -259,58 +293,123 @@ mod on_disk {
     }
 
     impl Key {
-        pub fn new(folder: Folder, chain: &str, text: Text) -> Key {
+        pub fn new(folder: Folder, part: &str, chain: &str, text: Text) -> Key {
             let zone = zone();
             let said = format!("{:016x}{:016x}{}", text.0, text.1, text.2);
-            let name = hash(0, &[folder.build, chain, &zone, &said]);
+            let name = hash(0, &[folder.build, &zone, &said]);
             let file = folder.path.join(format!("{:016x}.json", name));
-            Key { folder, chain: chain.to_string(), zone, text, file }
+            Key { folder, part: part.to_string(), chain: chain.to_string(), zone, text, file }
         }
 
         /// The summary kept under this key, if there is one that will do.
-        pub fn read(&self) -> Option<Summary> {
+        pub fn read(&self) -> Option<Arc<Summary>> {
+            let held = LOADED.lock().ok()?.get(&self.part).filter(|(file, _)| *file == self.file).map(|(_, c)| c.clone());
+            let chains = match held {
+                Some(chains) => chains,
+                None => {
+                    let chains = Arc::new(self.load().unwrap_or_default());
+                    if let Ok(mut loaded) = LOADED.lock() {
+                        loaded.insert(self.part.clone(), (self.file.clone(), chains.clone()));
+                    }
+                    chains
+                }
+            };
+            chains.get(&self.chain).cloned()
+        }
+
+        /// Every chain the part's file holds, when it holds this part's text for this build.
+        fn load(&self) -> Option<HashMap<String, Arc<Summary>>> {
             let bytes = std::fs::read(&self.file).ok()?;
             let stored: Stored = serde_json::from_slice(&bytes).ok()?;
-            if stored.build != self.folder.build
-                || stored.chain != self.chain
-                || stored.zone != self.zone
-                || stored.text != self.text
-            {
+            if stored.build != self.folder.build || stored.zone != self.zone || stored.text != self.text {
                 return None;
             }
             touch_later(self.file.clone());
-            Some(stored.summary)
+            Some(stored.chains.into_iter().map(|(chain, kept)| (chain, Arc::new(kept.summary))).collect())
         }
 
         /// Write the summary down, without making the open that made it wait.
         pub fn write(self, summary: Arc<Summary>) {
-            crate::document_disk::in_background(move || {
-                let storing = Storing {
-                    build: self.folder.build,
-                    chain: &self.chain,
-                    zone: &self.zone,
-                    text: self.text,
-                    summary: &summary,
+            let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+            pending.0.push((self, summary));
+            if pending.1 {
+                return;
+            }
+            pending.1 = true;
+            crate::document_disk::in_background(|| loop {
+                let written = {
+                    let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+                    if pending.0.is_empty() {
+                        pending.1 = false;
+                        return;
+                    }
+                    std::mem::take(&mut pending.0)
                 };
-                let Ok(bytes) = serde_json::to_vec(&storing) else { return };
-                if bytes.len() > self.folder.budget {
-                    return;
+                let mut by_file: HashMap<PathBuf, Vec<(Key, Arc<Summary>)>> = HashMap::new();
+                for (key, summary) in written {
+                    by_file.entry(key.file.clone()).or_default().push((key, summary));
                 }
-                // A summary that cannot be written is one made again later, and nothing more.
-                if crate::document_disk::put(&self.folder.path, &self.file, &bytes).is_ok() {
-                    trim_now_and_then(&self.folder.path, self.folder.budget);
+                for (_, chains) in by_file {
+                    merge(chains);
                 }
             });
         }
     }
 
+    /// Summaries made and not yet written, and whether a thread is writing them. One thread
+    /// writes them all, a part's file once for every chain made over it meanwhile: a tracker's
+    /// first open makes a few dozen chains over each part, and each written on its own would
+    /// rewrite a growing file as many times.
+    static PENDING: Mutex<(Vec<(Key, Arc<Summary>)>, bool)> = Mutex::new((Vec::new(), false));
+
+    /// Add chains to their part's file: read it, keep what it holds of the same text, add the
+    /// chains, and write it back whole. Two servers writing one file at once keep the chains of
+    /// the one that wrote last, and the other's are made again when next asked for.
+    fn merge(chains: Vec<(Key, Arc<Summary>)>) {
+        let Some((first, _)) = chains.first() else { return };
+        let (folder, file) = (first.folder.clone(), first.file.clone());
+        let mut merging = std::fs::read(&file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Merging>(&bytes).ok())
+            .filter(|was| was.build == folder.build && was.zone == first.zone && was.text == first.text)
+            .unwrap_or_else(|| Merging {
+                build: folder.build.to_string(),
+                zone: first.zone.clone(),
+                text: first.text,
+                chains: BTreeMap::new(),
+            });
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        for (key, summary) in &chains {
+            let Ok(value) = serde_json::to_value(StoringChain { written: now, summary }) else { continue };
+            merging.chains.insert(key.chain.clone(), value);
+        }
+        while merging.chains.len() > CHAINS_KEPT {
+            let written = |v: &serde_json::Value| v.get("written").and_then(|w| w.as_u64()).unwrap_or(0);
+            let Some(oldest) = merging.chains.iter().min_by_key(|(_, v)| written(v)).map(|(c, _)| c.clone()) else {
+                break;
+            };
+            merging.chains.remove(&oldest);
+        }
+        let Ok(bytes) = serde_json::to_vec(&merging) else { return };
+        // A file that would outgrow the budget is left as it was: its other chains still do.
+        if bytes.len() > folder.budget {
+            return;
+        }
+        // A summary that cannot be written is one made again later, and nothing more.
+        if crate::document_disk::put(&folder.path, &file, &bytes).is_ok() {
+            trim_now_and_then(&folder.path, folder.budget);
+        }
+    }
+
     /// Files read and not yet marked as used, and whether a thread is marking them.
-    static TOUCHING: std::sync::Mutex<(Vec<PathBuf>, bool)> = std::sync::Mutex::new((Vec::new(), false));
+    static TOUCHING: Mutex<(Vec<PathBuf>, bool)> = Mutex::new((Vec::new(), false));
 
     /// Mark a file read as used, so a trim lets go of the files touched longest ago first - on a
     /// thread of its own, which marks every file read meanwhile. Marking one is a second opening
-    /// of the file, and cost the open that read it more than reading it: a tracker's first open on
-    /// a server just started reads a few hundred summaries, one for each chain and part.
+    /// of the file, and cost the open that read it more than reading it.
     fn touch_later(file: PathBuf) {
         let mut touching = TOUCHING.lock().unwrap_or_else(|e| e.into_inner());
         touching.0.push(file);
