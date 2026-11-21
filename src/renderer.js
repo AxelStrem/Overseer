@@ -8719,9 +8719,12 @@ export class OverseerRenderer {
             return Number(raw !== undefined && raw !== null ? raw : this.getParameterValue(plot, key))
         }
         const figures = []
+        // A chart is drawn on a canvas, which holds only text: a label's icons, such as a tag's
+        // `<icon=bug> wrong`, are left out rather than printed as markup.
+        const words = (v) => (v === undefined || v === null ? v : textWithoutIcons(v) || undefined)
         for (const plot of plots) {
             const suffix = (this.getParameterValue(plot, 'suffix') || '').toString()
-            const own = this.getParameterValue(plot, 'label')
+            const own = words(this.getParameterValue(plot, 'label'))
             const plain = (v) => (typeof v === 'string' && v.trim().startsWith('|') ? undefined : v)
             const barsJson = this.getParameterValue(plot, '_computed_bars')
             if (barsJson) {
@@ -8732,7 +8735,7 @@ export class OverseerRenderer {
                     figures.push({
                         amount: Number(bar.amount),
                         limit: Number(bar.limit),
-                        label: bar.label || plain(own) || plot.name,
+                        label: words(bar.label) || plain(own) || plot.name,
                         color: bar.color || plain(this.getParameterValue(plot, 'color')),
                         suffix,
                     })
@@ -9148,7 +9151,8 @@ export class OverseerRenderer {
 
             // Get plot styling
             const color = this.convertColorValue(this.getParameterValue(plot, 'color') || '#4A90E2')
-            const label = this.getParameterValue(plot, 'label') || plot.name || 'Series'
+            // A canvas holds only text, so a label's icons are left out of the legend.
+            const label = textWithoutIcons(this.getParameterValue(plot, 'label') || '') || plot.name || 'Series'
             const curve = (this.getParameterValue(plot, 'curve') ?? chartCurve ?? '').toString().toLowerCase()
 
             // A trend is fitted where the points are drawn, so on an even axis to their ranks.
