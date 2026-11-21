@@ -281,9 +281,6 @@ tab project (label="Project", mutable=true) {
                     }
                 }
             }
-            on click {
-                narrow (path="/project/Narrow/branch") = $(./handle)
-            }
 
             mark (type="grip")
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
