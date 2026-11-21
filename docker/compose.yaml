@@ -1,0 +1,27 @@
+# Overseer under Docker Compose (DEPLOYING.md, "Unraid"). The paths are Unraid's; change them for
+# another host. The secrets come from a .env file beside this one, never written here:
+#
+#   OVERSEER_TOKEN=<a long random string: openssl rand -hex 32>
+#   OVERSEER_ADMIN=<the username you will sign in with>
+services:
+  overseer:
+    image: ghcr.io/axelstrem/overseer:latest
+    container_name: overseer
+    restart: unless-stopped
+    ports:
+      - "4747:4747"
+    volumes:
+      # The documents, one folder per person.
+      - /mnt/user/appdata/overseer/documents:/data
+      # The accounts file: password hashes, kept out of the documents and their backups.
+      - /mnt/user/appdata/overseer/config:/config
+      # Worked-out documents, kept across restarts; many small files, so on the cache pool.
+      - /mnt/cache/appdata/overseer-cache:/cache
+    environment:
+      PUID: "99"
+      PGID: "100"
+      TZ: "Etc/UTC"
+      OVERSEER_TOKEN: ${OVERSEER_TOKEN}
+      OVERSEER_ACCOUNTS: /config/accounts.json
+      OVERSEER_ADMIN: ${OVERSEER_ADMIN}
+      OVERSEER_DISK_CACHE: /cache

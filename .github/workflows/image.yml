@@ -1,0 +1,108 @@
+# The container image, for linux/amd64, pushed to ghcr.io/<owner>/overseer on a tag v<version>
+# as :<version> and :latest. Run by hand it builds and tries the same and pushes nothing: a dry run
+# before tagging. The tag must be `v` + the version in src-tauri/Cargo.toml.
+#
+# The image is tried before it is pushed: started as Unraid starts it (PUID 99, a token,
+# accounts), it must refuse a request without the token, make a document with it, and run as 99.
+
+name: Image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version, and check the tag names it
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "The tag is $GITHUB_REF_NAME, but src-tauri/Cargo.toml says $version: tag v$version, or raise the version." >&2
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image for this runner
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: overseer:try
+          cache-to: type=gha,mode=max
+          cache-from: type=gha
+
+      - name: Try the image
+        run: |
+          set -eu
+          token="$(openssl rand -hex 24)"
+          data="$RUNNER_TEMP/overseer"
+          mkdir -p "$data/documents" "$data/config" "$data/cache"
+          docker run -d --name overseer-try -p 4747:4747 \
+            -v "$data/documents:/data" -v "$data/config:/config" -v "$data/cache:/cache" \
+            -e PUID=99 -e PGID=100 -e OVERSEER_TOKEN="$token" \
+            -e OVERSEER_ACCOUNTS=/config/accounts.json -e OVERSEER_ADMIN=owner -e OVERSEER_DISK_CACHE=/cache \
+            overseer:try
+          b=http://127.0.0.1:4747
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@" || true; }
+          fail() { echo "image: $*" >&2; docker logs overseer-try >&2 || true; exit 1; }
+          for i in $(seq 60); do
+            [ "$(code "$b/v1/source?document=x.os")" = "401" ] && break
+            sleep 1
+          done
+          [ "$(code "$b/v1/source?document=x.os")" = "401" ] || fail "a request without the token was not refused in 60 s"
+          printf 'int answer = 42\n' > "$RUNNER_TEMP/try.os"
+          made="$(code -X PUT -H "Authorization: Bearer $token" --data-binary @"$RUNNER_TEMP/try.os" "$b/v1/source?document=projects/try.os")"
+          [ "$made" = "201" ] || fail "PUT /v1/source with the token answered $made, not 201"
+          [ "$(stat -c %u "$data/documents/projects/try.os")" = "99" ] || fail "the document made does not belong to 99"
+          [ "$(stat -c %u "$data/config")" = "99" ] || fail "the accounts file's folder does not belong to 99"
+          [ "$(stat -c %u "$data/cache")" = "99" ] || fail "the cache folder does not belong to 99"
+          uid="$(docker top overseer-try -eo pid,uid,args | awk '/overseer-server/ {print $2; exit}')"
+          [ "$uid" = "99" ] || fail "the server runs as uid '$uid', not 99"
+          docker logs overseer-try 2>&1 | grep -q "join?invite=" || fail "no join link for the admin in the log"
+          echo "image: refused without the token, made a document with it, ran as 99."
+
+      - name: Log in to the GitHub container registry
+        if: github.ref_type == 'tag'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Name the image
+        id: names
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/$owner/overseer" >> "$GITHUB_OUTPUT"
+
+      - name: Push the image, for amd64
+        if: github.ref_type == 'tag'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.names.outputs.image }}:${{ steps.version.outputs.version }}
+            ${{ steps.names.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.description=Overseer's server and its page, serving the documents on /data
+          cache-from: type=gha

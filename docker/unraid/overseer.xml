@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!-- An Unraid template for the Overseer image. Add it on the Docker tab by its address, under
+     Template repositories; DEPLOYING.md says how. Every variable is in DEPLOYING.md's table. -->
+<Container version="2">
+  <Name>overseer</Name>
+  <Repository>ghcr.io/axelstrem/overseer:latest</Repository>
+  <Registry>https://github.com/AxelStrem/Overseer/pkgs/container/overseer</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/AxelStrem/Overseer/issues</Support>
+  <Project>https://github.com/AxelStrem/Overseer</Project>
+  <Overview>Overseer serves documents that are data, layout and logic at once - trackers, lists, project boards - with the page to read and change them and a JSON API for programs. Set OVERSEER_TOKEN, the server's master key, and OVERSEER_ADMIN, the username you will sign in with: the log then holds a link to make that account. Programs get keys of an account, made in the page's account drawer. See DEPLOYING.md in the repository.</Overview>
+  <Category>Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:4747]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/AxelStrem/Overseer/master/docker/unraid/overseer.xml</TemplateURL>
+  <ExtraParams/>
+  <PostArgs/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Web page" Target="4747" Default="4747" Mode="tcp" Description="The port of the page and the API." Type="Port" Display="always" Required="true" Mask="false">4747</Config>
+  <Config Name="Documents" Target="/data" Default="/mnt/user/appdata/overseer/documents" Mode="rw" Description="The documents, a folder per person, and the server's own settings. A share instead of appdata reaches them over SMB too." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/overseer/documents</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/overseer/config" Mode="rw" Description="The accounts file, with the password hashes: kept out of the documents and their backups." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/overseer/config</Config>
+  <Config Name="Cache" Target="/cache" Default="/mnt/cache/appdata/overseer-cache" Mode="rw" Description="Worked-out documents, kept across restarts. Many small files: on a cache pool." Type="Path" Display="always" Required="false" Mask="false">/mnt/cache/appdata/overseer-cache</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="The user id the server runs as and its files belong to; 99 is Unraid's nobody. Never 0." Type="Variable" Display="always" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="The group id; 100 is Unraid's users." Type="Variable" Display="always" Required="true" Mask="false">100</Config>
+  <Config Name="OVERSEER_TOKEN" Target="OVERSEER_TOKEN" Default="" Mode="" Description="The server's master key: whoever holds it may do anything. A long random string (openssl rand -hex 32). Give programs an account's key instead." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="OVERSEER_ADMIN" Target="OVERSEER_ADMIN" Default="" Mode="" Description="The username of the account that may invite others. Until it exists, the log holds a link to make it." Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="TZ" Target="TZ" Default="Etc/UTC" Mode="" Description="The time zone documents read their dates in." Type="Variable" Display="always" Required="true" Mask="false">Etc/UTC</Config>
+  <Config Name="OVERSEER_ACCOUNTS" Target="OVERSEER_ACCOUNTS" Default="/config/accounts.json" Mode="" Description="Where the accounts file is, in the container." Type="Variable" Display="advanced" Required="true" Mask="false">/config/accounts.json</Config>
+  <Config Name="OVERSEER_DISK_CACHE" Target="OVERSEER_DISK_CACHE" Default="/cache" Mode="" Description="Where worked-out documents are kept, in the container; empty keeps none." Type="Variable" Display="advanced" Required="false" Mask="false">/cache</Config>
+</Container>

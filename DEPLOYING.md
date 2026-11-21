@@ -42,6 +42,32 @@ docker build -t overseer .
 docker run -d -p 4747:4747 -v /srv/documents:/data -e OVERSEER_OPEN=1 overseer
 ```
 
+## Unraid
+
+Each release is an image, `ghcr.io/axelstrem/overseer:<version>` and `:latest`, for
+`linux/amd64`. It runs with accounts: people sign in, and each program gets a key of an account
+rather than the server's token.
+
+- **Template**: on the Docker tab, under Template repositories, add
+  `https://github.com/AxelStrem/Overseer/tree/master/docker/unraid` and save (or put
+  [`docker/unraid/overseer.xml`](docker/unraid/overseer.xml) in
+  `/boot/config/plugins/dockerMan/templates-user/`). Then Add Container and pick `overseer`.
+- **Compose** (the Compose Manager plugin): [`docker/compose.yaml`](docker/compose.yaml), with
+  `OVERSEER_TOKEN` and `OVERSEER_ADMIN` in an `.env` beside it, as its header says.
+
+Either way:
+
+1. Set `OVERSEER_TOKEN` to `openssl rand -hex 32` and keep it; it is for emergencies, never for
+   a program. Set `OVERSEER_ADMIN` to your username and `TZ` to your time zone.
+2. Start it, and find the join link in the log: `docker logs overseer 2>&1 | grep join`. Open
+   `http://<tower>:4747/join?invite=...` from it, and make the account.
+3. Keys for programs - Claude, AgentLoop - are made in the page's account drawer, under "Keys".
+   A loop that should see only some documents gets an account of its own, by an invite from
+   yours, and those documents are shared with it in your `sharing.os`.
+
+The files belong to `PUID:PGID`, `99:100` by default, Unraid's `nobody:users`. From outside the
+network, put it behind a reverse proxy with HTTPS, or reach it over a VPN such as Tailscale.
+
 ## A hosting service
 
 Railway, Render, Fly, Heroku and the like can build the `Dockerfile` in this repository directly.
@@ -134,7 +160,7 @@ A flag wins over its variable.
 | `--open` | `OVERSEER_OPEN=1` | off | serve beyond `127.0.0.1` without a token |
 | `--accounts PATH` | `OVERSEER_ACCOUNTS` | none | the file of accounts people sign in with; without it, nobody signs in |
 | `--admin NAME` | `OVERSEER_ADMIN` | none | the account that may invite others, made by a link printed at start-up |
-| `--examples DIR` | `OVERSEER_EXAMPLES` | none (`/app/examples` in the image) | example documents shown to anyone at `/examples/`, with no sign-in, read-only; unset, none are |
+| `--examples DIR` | `OVERSEER_EXAMPLES` | none | example documents shown to anyone at `/examples/`, with no sign-in, read-only; unset, none are |
 | | `OVERSEER_LIBRARY` | the checkout it was built from, else `library` beside the binary (`/app/library` in the image) | the templates shipped in `library/` |
 | | `OVERSEER_CACHE_MB` | `64` | see above |
 | | `OVERSEER_DISK_CACHE` | system temp folder | see above |
@@ -143,6 +169,7 @@ A flag wins over its variable.
 | | `OVERSEER_MEMORY_LOG` | `15` | minutes between the `memory` lines in the log; `0` for none |
 | | `OVERSEER_DEPENDENCY_GRAPH` | on | `0` stops recording what each value was worked out from: a first open is a little quicker, every later one much slower |
 | | `TZ` | `UTC` | the time zone a document's dates are read in |
+| | `PUID`, `PGID` | the image's own user | in the image: the user and group the server runs as, and its folders are given to; never `0` |
 
 For diagnosis only: `OVERSEER_PROFILE` prints what formulas cost, and `OVERSEER_DEBUG_SNAPSHOTS`
 reports each node that a save is about to reformat.
