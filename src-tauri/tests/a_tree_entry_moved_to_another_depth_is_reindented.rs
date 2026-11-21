@@ -157,3 +157,55 @@ fn a_string_over_several_lines_keeps_its_value_when_its_entry_moves() {
     );
     assert_eq!(std::fs::read_to_string(root.join("d.os")).unwrap(), expected);
 }
+
+const AN_EMPTY_LIST_DEEPER: &str = r#"div (hidden=true) {
+    div Meal {
+        string name = ""
+    }
+}
+
+tab t (mutable=true) {
+    list Dishes (entry=<Meal>, key="name", movable=true) {
+        - {
+            - name = "Pasta"
+        }
+        - {
+            - name = "Soup"
+        }
+    }
+    div (layout="horizontal") {
+        list Tuesday (entry=<Meal>, key="name", movable=true) { }
+    }
+}
+"#;
+
+const PASTA_ON_TUESDAY: &str = r#"div (hidden=true) {
+    div Meal {
+        string name = ""
+    }
+}
+
+tab t (mutable=true) {
+    list Dishes (entry=<Meal>, key="name", movable=true) {
+        - {
+            - name = "Soup"
+        }
+    }
+    div (layout="horizontal") {
+        list Tuesday (entry=<Meal>, key="name", movable=true) {
+            - {
+                - name = "Pasta"
+            }
+        }
+    }
+}
+"#;
+
+#[test]
+fn an_entry_moved_into_an_empty_list_one_level_in_is_indented_one_level_more() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let root = a_root_with("empty", AN_EMPTY_LIST_DEEPER);
+    let service = DocumentRoot::new(&root).expect("open the root");
+    move_to(&service, "t/Dishes/[Pasta]", "t/Tuesday", None);
+    assert_eq!(std::fs::read_to_string(root.join("d.os")).unwrap(), PASTA_ON_TUESDAY);
+}

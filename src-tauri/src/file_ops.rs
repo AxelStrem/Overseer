@@ -1820,6 +1820,13 @@ impl FileOperations {
                             }
                         }
                     }
+                    // An empty list has no entry to line up with, and an entry dragged into it
+                    // from another depth was otherwise left at its old one. Its entries belong
+                    // one step in from the list's own line, which the text it was read from says.
+                    if list_indent_hints.is_empty() && matches!(snap.origin, SnapshotOrigin::Parsed) {
+                        let own = snap.indent_unit.clone().unwrap_or_default();
+                        last_list_indent_hint = Some(format!("{}{}", own, fallback_indent_unit));
+                    }
                 }
             }
             // Suppress template-derived children for any node that originated from a template (standalone instances or list entries)
