@@ -105,6 +105,10 @@ specification's "Entries of a list" says which form each tool takes.
   be made from (`<projects/project_template.os/project>`).
 - [API.md](API.md) - reading and writing documents over the server: addresses, values, appending,
   pressing buttons, undo.
+- [`.claude/skills/overseer-documents`](.claude/skills/overseer-documents) - the same ground as a
+  Claude skill, with the mistakes agents make and a one-page reference of every function, method,
+  action and address form. Claude Code picks it up in this repository; copy the folder into
+  `~/.claude/skills/` to have it wherever `.os` files are worked on.
 
 ## Seeing a document
 
