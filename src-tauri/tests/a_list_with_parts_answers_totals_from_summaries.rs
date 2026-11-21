@@ -17,11 +17,19 @@ const TEMPLATE: &str = r#"    div (hidden=true) {
             int points = 1
             tags labels = ""
             int twice = $(points * 2)
+            div Agents {
+                list Work (entry=<Run>) { }
+            }
             bool failed (hidden=$(failed == false), font-color=$(failed ? "red" : "")) = false {
                 on change {
                     set (path="../points") = $(../points + 1)
                 }
             }
+        }
+        div Run {
+            timestamp at = "2026-01-01T00:00:00Z"
+            float cost = 0.0
+            int output = 0
         }
         div Item {
             string handle = ""
@@ -69,6 +77,17 @@ const OLDEST: &str = r#"list History {
         - points = 3
         - failed = true
         - labels = "ui, dsl"
+        div Agents {
+            list Work {
+                - {
+                    - cost = 1.5
+                    - output = 10
+                }
+                - {
+                    - output = 4
+                }
+            }
+        }
     }
     - {
         - handle = "d"
@@ -88,6 +107,13 @@ const OLDER: &str = r#"list History {
         - done_at = "2026-10-27T08:00:00Z"
         - points = 4
         - labels = "dsl, perf, dsl"
+        div Agents {
+            list Work {
+                - {
+                    - cost = 0.25
+                }
+            }
+        }
     }
 }
 "#;
@@ -97,6 +123,14 @@ const THIS_WEEK: &str = r#"list History {
         - handle = "b"
         - parent = "q"
         - points = 5
+        div Agents {
+            list Work {
+                - {
+                    - cost = 2.0
+                    - output = 1
+                }
+            }
+        }
     }
 }
 "#;
@@ -440,5 +474,33 @@ fn a_tag_compared_with_more_than_the_reader_reads_every_part() {
         let nodes = documents.open("log.os").expect("open");
         assert_eq!(held(&nodes), vec!["a", "d", "c", "b"]);
         assert_eq!(value(&nodes, "log/own"), Some(OverseerValue::Integer(0)));
+    });
+}
+
+const NESTED: &str = r#"    float spent (mutable=false) = $(History.sum(|x| x/Agents/Work.sum(|r| r/cost)))
+    int output (mutable=false) = $(History.map(|x| x/Agents/Work.sum(|r| r/output)).sum())
+    int sessions (mutable=false) = $(History.sum(|x| x/Agents/Work.count()))
+    float spent_that_week (mutable=false) = $(History.filter(|x| week(x/done_at) == "2026-W44").sum(|x| x/Agents/Work.sum(|r| r/cost)))
+"#;
+
+const NESTED_ANSWERS: &[&str] = &["log/spent", "log/output", "log/sessions", "log/spent_that_week"];
+
+#[test]
+fn a_total_over_a_list_inside_each_entry_is_answered_from_summaries() {
+    serialised(|| {
+        let whole = {
+            let (_sandbox, documents) = sandbox("nested_whole", &host(NESTED, false));
+            let nodes = documents.open("log.os").expect("open");
+            values(&nodes, NESTED_ANSWERS)
+        };
+        let (_sandbox, documents) = sandbox("nested", &host(NESTED, true));
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(held(&nodes), vec!["b"], "only this week is read");
+        assert_eq!(said(&nodes, "_parts_read_whole"), None);
+        assert_eq!(values(&nodes, NESTED_ANSWERS), whole);
+        assert_eq!(value(&nodes, "log/spent"), Some(OverseerValue::Float(3.75)), "a run that writes no cost counts as nothing");
+        assert_eq!(value(&nodes, "log/output"), Some(OverseerValue::Integer(15)));
+        assert_eq!(value(&nodes, "log/sessions"), Some(OverseerValue::Integer(4)), "an entry without runs counts none");
+        assert_eq!(value(&nodes, "log/spent_that_week"), Some(OverseerValue::Float(0.25)));
     });
 }
