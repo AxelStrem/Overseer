@@ -127,7 +127,8 @@ A script presses, types and picks as a person would - `press('reading/Books/[Dun
 `type(...)`, `pick(address, option)` - reads back `text(address)`, and ends with `changes()`,
 what the file gained and lost. [scripts/preview_example.mjs](scripts/preview_example.mjs) is one;
 `node scripts/preview.mjs --help` lists every helper. Screenshots go to `--out`, else to
-`AGENT_SCRATCH`.
+`AGENT_SCRATCH`. `CHROME` names the browser if it is not in the usual places, and
+`PREVIEW_NO_SANDBOX=1` starts it without its sandbox, for a container without user namespaces.
 
 Check a document you wrote this way before calling it done: that it draws, that its formulas
 work (`problems: none`), and that its buttons write what you meant.

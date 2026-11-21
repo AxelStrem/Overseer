@@ -21,9 +21,8 @@
 //                              throws while no input has the focus;
 //                              press(at, { hold: 2 }) holds it down two seconds before letting go,
 //                              and press(at, { right: true }) is a right-click
-//   drag(at, { by: [dx, dy], grab: [x, y], keys: ['ctrl'] })
-//                              pressed at grab from the node's corner, carried by, let go,
-//                              with keys ('ctrl', 'alt', 'shift', 'meta') held throughout
+//   drag(at, { by: [dx, dy], grab: [x, y] })
+//                              pressed at grab from the node's corner, carried by, let go
 //   pick(at, option), tab(name)
 //                              an option of an enum or tags field; a tab, by name or label
 //   text(at), drawn(at), node(at, depth)
@@ -41,7 +40,7 @@
 // --keep leaves the server running, and prints its address, for a person to open the copy.
 // CHROME names a Chromium browser if Chrome and Edge are not in the usual places. Where the
 // system gives the browser no sandbox, as in a container without user namespaces, it is started
-// again with --no-sandbox.
+// again with --no-sandbox; PREVIEW_NO_SANDBOX=1 starts it with --no-sandbox from the outset.
 import { spawn } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -130,12 +129,16 @@ async function startBrowser(profile) {
         '--headless=new', '--disable-gpu', '--hide-scrollbars', '--remote-debugging-port=0',
         '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`,
     ]
+    // The setup script sets this where it has found already that Chrome has no sandbox, which
+    // saves the first launch failing.
+    const noSandbox = !['', '0'].includes(process.env.PREVIEW_NO_SANDBOX ?? '')
+    if (noSandbox) flags.push('--no-sandbox')
     try {
         return await launchBrowser(chrome, flags)
     } catch (e) {
         // A container that allows no unprivileged user namespaces leaves Chrome no sandbox to
         // run in, and it stops at once; only there is it started again without one.
-        if (!e.noSandbox) throw e
+        if (!e.noSandbox || noSandbox) throw e
         return await launchBrowser(chrome, [...flags, '--no-sandbox'])
     }
 }
@@ -558,21 +561,19 @@ async function main() {
             },
             /// A drag with the mouse, as a person's: pressed at `grab` - pixels from the node's
             /// top-left corner, somewhere around its values rather than on one - carried `by`
-            /// pixels across and down in small steps, and let go there. `keys` are held all the while.
-            async drag(target, { by = [0, 0], grab = [4, 4], keys = [] } = {}) {
-                const bits = { alt: 1, ctrl: 2, meta: 4, shift: 8 }
-                const modifiers = keys.reduce((m, k) => m | (bits[String(k).toLowerCase()] || 0), 0)
+            /// pixels across and down in small steps, and let go there.
+            async drag(target, { by = [0, 0], grab = [4, 4] } = {}) {
                 const r = await rectOf(target)
                 const x = r.x + grab[0]
                 const y = r.y + grab[1]
-                await mouse(x, y, 'mouseMoved', { button: 'none', modifiers })
-                await mouse(x, y, 'mousePressed', { modifiers })
+                await mouse(x, y, 'mouseMoved', { button: 'none' })
+                await mouse(x, y, 'mousePressed')
                 const steps = 12
                 for (let i = 1; i <= steps; i++) {
-                    await mouse(x + (by[0] * i) / steps, y + (by[1] * i) / steps, 'mouseMoved', { buttons: 1, modifiers })
+                    await mouse(x + (by[0] * i) / steps, y + (by[1] * i) / steps, 'mouseMoved', { buttons: 1 })
                     await wait(15)
                 }
-                await mouse(x + by[0], y + by[1], 'mouseReleased', { modifiers })
+                await mouse(x + by[0], y + by[1], 'mouseReleased')
                 await settle()
             },
             /// A press, as a person's: the mouse moved there and clicked - or, in --mobile, a tap.

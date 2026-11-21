@@ -90,6 +90,21 @@ if [ "$os" = linux ] && command -v ldd >/dev/null 2>&1; then
     [ -z "$libs" ] || fail "Chrome needs libraries the system lacks: $libs"
 fi
 
+# A container without unprivileged user namespaces has no sandbox for Chrome, which then refuses
+# to start; preview.mjs starts it without one when PREVIEW_NO_SANDBOX says so.
+no_sandbox=""
+if [ "$os" = linux ]; then
+    probe() { timeout 20 "$chrome" --headless --disable-gpu "$@" --dump-dom about:blank 2>&1; }
+    if ! seen=$(probe); then
+        if probe --no-sandbox >/dev/null; then
+            no_sandbox=1
+            say "Chrome: no usable sandbox here; previews run it with --no-sandbox"
+        else
+            fail "Chrome does not start: $(printf '%s' "$seen" | tail -n 1 | cut -c 1-300)"
+        fi
+    fi
+fi
+
 # What every session gets. Paths are written against {env}, so the file stays right if the data
 # folder moves.
 {
@@ -98,6 +113,7 @@ fi
     say "CARGO_HOME={env}/cargo"
     say "RUSTUP_HOME={env}/rustup"
     say "CHROME={env}${chrome#"$ENV_DIR"}"
+    [ -z "$no_sandbox" ] || say "PREVIEW_NO_SANDBOX=1"
 } > "$ENV_DIR/session-env.txt.partial"
 mv "$ENV_DIR/session-env.txt.partial" "$ENV_DIR/session-env.txt"
 say "Overseer's tools are set up in $ENV_DIR"
