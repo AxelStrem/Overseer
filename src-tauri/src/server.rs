@@ -72,6 +72,9 @@ pub enum RequestError {
     SignIn,
     /// The document is shared with whoever asked to read, and they asked to change it.
     ReadOnly(String),
+    /// A write that said what it expected of the document - there, at a version, or not there at
+    /// all - and found otherwise.
+    Stale(String),
 }
 
 impl std::fmt::Display for RequestError {
@@ -81,7 +84,8 @@ impl std::fmt::Display for RequestError {
             | RequestError::NotFound(m)
             | RequestError::Failed(m)
             | RequestError::Refused(m)
-            | RequestError::ReadOnly(m) => write!(f, "{}", m),
+            | RequestError::ReadOnly(m)
+            | RequestError::Stale(m) => write!(f, "{}", m),
             RequestError::SignIn => write!(f, "sign in"),
         }
     }
@@ -323,6 +327,22 @@ impl DocumentRoot {
     }
 
     fn resolve_name(&self, name: &str) -> std::result::Result<PathBuf, RequestError> {
+        let relative = self.checked_name(name)?;
+        let candidate = self.root.join(relative);
+        let resolved = candidate
+            .canonicalize()
+            .map_err(|_| RequestError::NotFound(format!("no document '{}'", name)))?;
+        if !resolved.starts_with(&self.root) {
+            // Reported as missing rather than refused: which paths exist outside the root is
+            // not something a caller needs to learn from the error it gets back.
+            return Err(RequestError::NotFound(format!("no document '{}'", name)));
+        }
+        Ok(resolved)
+    }
+
+    /// A name from the network as a path under the root, refused unless it is a plain relative
+    /// path of names to an Overseer document. Nothing is looked up on disk.
+    fn checked_name<'a>(&self, name: &'a str) -> std::result::Result<&'a Path, RequestError> {
         if name.is_empty() {
             return Err(RequestError::Rejected("no document named".into()));
         }
@@ -352,17 +372,7 @@ impl DocumentRoot {
                 name
             )));
         }
-
-        let candidate = self.root.join(relative);
-        let resolved = candidate
-            .canonicalize()
-            .map_err(|_| RequestError::NotFound(format!("no document '{}'", name)))?;
-        if !resolved.starts_with(&self.root) {
-            // Reported as missing rather than refused: which paths exist outside the root is
-            // not something a caller needs to learn from the error it gets back.
-            return Err(RequestError::NotFound(format!("no document '{}'", name)));
-        }
-        Ok(resolved)
+        Ok(relative)
     }
 
     /// Every document whoever is asking may read, each by its full name.
@@ -1647,6 +1657,48 @@ pub struct Source {
     pub tag: String,
 }
 
+/// What a write of a document's whole text expects to find - see `DocumentRoot::put_source`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Expect {
+    /// Nothing said: the document is made, and one already there is refused.
+    Anything,
+    /// `If-None-Match: *`: the document must not be there.
+    Absent,
+    /// `If-Match`: the document must be there, at one of these versions or tags.
+    Version(Vec<String>),
+}
+
+/// A document's text as written by `put_source`.
+#[derive(serde::Serialize)]
+pub struct Put {
+    pub document: String,
+    pub version: String,
+    pub created: bool,
+}
+
+/// What the parser would pass over in `text`, one sentence for each - see `parser::unread_at`.
+fn unreadable(text: &str) -> Vec<String> {
+    fn gather(nodes: &[OverseerNode], out: &mut Vec<String>) {
+        for node in nodes {
+            if let Some(OverseerValue::String(said)) = node.parameters.get(crate::parser::PARSE_ERROR) {
+                out.extend(said.lines().map(str::to_string));
+            }
+            gather(&node.children, out);
+        }
+    }
+    match crate::parser::parse_document(text) {
+        Ok((rest, nodes)) => {
+            let mut out = Vec::new();
+            gather(&nodes, &mut out);
+            if !rest.trim().is_empty() {
+                out.push(format!("could not read from: {}", rest.lines().next().unwrap_or_default().trim()));
+            }
+            out
+        }
+        Err(e) => vec![format!("the text could not be read: {:?}", e)],
+    }
+}
+
 /// A node, with the addresses of what is under it.
 #[derive(serde::Serialize)]
 pub struct NodeView {
@@ -2186,6 +2238,90 @@ impl DocumentRoot {
             format!("{}+{}", version, crate::app_api::version_of(&listing.join("\n")))
         };
         Ok(Source { document, version, text, parts, bases, tag })
+    }
+
+    /// Write a document's whole text, as given, making it if it is not there - `PUT /v1/source`.
+    ///
+    /// Nothing is replaced unless the caller names the version it is replacing, so a program that
+    /// means to start a document cannot overwrite one of the same name. Text the parser would pass
+    /// over is refused rather than written, with the lines it could not read.
+    pub fn put_source(&self, name: &str, text: &str, expect: Expect) -> std::result::Result<Put, RequestError> {
+        if name.starts_with(LIBRARY) || name == crate::drawer::LIBRARY_NAME {
+            return Err(RequestError::ReadOnly(crate::access::READ_ONLY.into()));
+        }
+        let unread = unreadable(text);
+        if !unread.is_empty() {
+            return Err(RequestError::Rejected(format!("nothing was written: {}", unread.join("; "))));
+        }
+        let document = self.named(name);
+        let relative = self.checked_name(&document)?.to_path_buf();
+        let created = !self.root.join(&relative).exists();
+        let path = if created { self.new_document(&document, &relative)? } else { self.resolve_for(name, crate::access::Need::Edit)? };
+        let _held = crate::writelock::lock(&path);
+        match (std::fs::read_to_string(&path).ok(), &expect) {
+            (Some(_), Expect::Absent) => {
+                return Err(RequestError::Stale(format!("'{}' is there already; nothing was written", document)));
+            }
+            (Some(_), Expect::Anything) => {
+                return Err(RequestError::Stale(format!(
+                    "'{}' is there already: send its version as If-Match to replace it",
+                    document
+                )));
+            }
+            (Some(on_disk), Expect::Version(held)) => {
+                let version = crate::app_api::version_of(&on_disk);
+                let tag = self.source(name).map(|s| s.tag).unwrap_or_else(|_| version.clone());
+                if !held.iter().any(|v| *v == version || *v == tag) {
+                    return Err(RequestError::Stale(format!(
+                        "'{}' has changed since that version; read it again and write onto what it says now",
+                        document
+                    )));
+                }
+            }
+            (None, Expect::Version(_)) => {
+                return Err(RequestError::Stale(format!("'{}' is not there to replace", document)));
+            }
+            (None, _) => {}
+        }
+        self.write_document(&path, &document, text)?;
+        self.journal(serde_json::json!({
+            "at": chrono::Utc::now().to_rfc3339(),
+            "document": document,
+            "operation": if created { "create" } else { "replace" },
+            "via": "/v1/source",
+        }));
+        Ok(Put { document, version: crate::app_api::version_of(text), created })
+    }
+
+    /// Where a document not there yet is to go, for whoever is asking: refused unless they may
+    /// change a document of that name, and made only inside the root, its folders included.
+    fn new_document(&self, document: &str, relative: &Path) -> std::result::Result<PathBuf, RequestError> {
+        use crate::access::{allows, Asker, Need};
+        let asker = crate::access::asker();
+        let may = match &asker {
+            Asker::Anyone => relative != Path::new(crate::people::FILE) && relative != Path::new(crate::environment::FILE),
+            Asker::Person(_) => allows(&self.root, &asker, relative, Need::Edit),
+            Asker::Stranger => return Err(RequestError::SignIn),
+            Asker::Visitor => false,
+        };
+        if !may {
+            return Err(RequestError::ReadOnly(format!("'{}' may not be made by you", document)));
+        }
+        let candidate = self.root.join(relative);
+        let folder = candidate.parent().unwrap_or(&self.root);
+        // The nearest folder already there decides where the rest are made: a link inside the
+        // root that points out of it is not followed into making folders elsewhere.
+        let existing = folder.ancestors().find(|a| a.exists()).unwrap_or(&self.root);
+        let inside = |p: &Path| p.canonicalize().is_ok_and(|p| p.starts_with(&self.root));
+        if !inside(existing) {
+            return Err(RequestError::NotFound(format!("no document '{}'", document)));
+        }
+        std::fs::create_dir_all(folder)
+            .map_err(|e| RequestError::Failed(format!("could not make the folder for '{}': {}", document, e)))?;
+        if !inside(folder) {
+            return Err(RequestError::NotFound(format!("no document '{}'", document)));
+        }
+        Ok(folder.canonicalize().unwrap_or_else(|_| folder.to_path_buf()).join(candidate.file_name().unwrap_or_default()))
     }
 
     /// The bytes of a file kept beside a document - see `app_api::kept_file` - for whoever may

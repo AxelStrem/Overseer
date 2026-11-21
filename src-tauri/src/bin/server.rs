@@ -35,7 +35,7 @@ use axum::Extension;
 use overseer::access::Asker;
 use overseer::accounts::{AccountError, Accounts, User};
 use overseer::server::{
-    from_environment, is_loopback, is_switched_on, refuse_to_start, Access, DocumentRoot,
+    from_environment, is_loopback, is_switched_on, refuse_to_start, Access, DocumentRoot, Expect,
     RequestError,
 };
 use serde_json::json;
@@ -1010,6 +1010,44 @@ async fn read_source(
     Ok(([(header::ETAG, tag)], Json(json!(source))).into_response())
 }
 
+/// Write a document's whole text, the request's body - see `DocumentRoot::put_source`. What the
+/// caller expects of it comes as HTTP says: `If-Match` with the version or ETag it is replacing,
+/// `If-None-Match: *` for one that must not be there yet. Answered `201` for a document made.
+async fn write_source(
+    State(service): State<Service>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    axum::extract::Query(which): axum::extract::Query<Which>,
+    body: axum::body::Bytes,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let text = String::from_utf8(body.to_vec())
+        .map_err(|_| respond(RequestError::Rejected("the text is not UTF-8".into())))?;
+    let said = |name| headers.get(name).and_then(|v| v.to_str().ok()).map(str::trim);
+    let expect = match (said(header::IF_MATCH), said(header::IF_NONE_MATCH)) {
+        (Some(_), Some(_)) => {
+            return Err(respond(RequestError::Rejected("send If-Match or If-None-Match, not both".into())));
+        }
+        (None, Some("*")) => Expect::Absent,
+        (None, Some(_)) => {
+            return Err(respond(RequestError::Rejected("If-None-Match takes only * here".into())));
+        }
+        (Some(held), None) => Expect::Version(
+            held.split(',').map(|v| v.trim().trim_start_matches("W/").trim_matches('"').to_string()).collect(),
+        ),
+        (None, None) => Expect::Anything,
+    };
+    let documents = service.documents.clone();
+    let put = tokio::task::spawn_blocking(move || {
+        documents.as_asker(caller.asker(), || documents.put_source(&which.document, &text, expect))
+    })
+        .await
+        .map_err(|e| respond(RequestError::Failed(format!("writing panicked: {}", e))))?
+        .map_err(respond)?;
+    let status = if put.created { StatusCode::CREATED } else { StatusCode::OK };
+    let tag = format!("\"{}\"", put.version);
+    Ok((status, [(header::ETAG, tag)], Json(json!(put))).into_response())
+}
+
 /// Which file beside which document `/v1/file` is asked for.
 #[derive(serde::Deserialize)]
 struct FileQuery {
@@ -1268,6 +1306,7 @@ fn respond(error: RequestError) -> (StatusCode, Json<serde_json::Value>) {
         RequestError::Refused(_) => StatusCode::UNPROCESSABLE_ENTITY,
         RequestError::SignIn => StatusCode::UNAUTHORIZED,
         RequestError::ReadOnly(_) => StatusCode::FORBIDDEN,
+        RequestError::Stale(_) => StatusCode::PRECONDITION_FAILED,
     };
     match error {
         // A press on a document only to be read is refused in a sentence for whoever pressed
@@ -1702,7 +1741,12 @@ async fn serve() {
         .route("/v1/event", post(run_event))
         .route("/v1/undo", post(undo))
         .route("/v1/watch", get(watch))
-        .route("/v1/source", get(read_source))
+        .route(
+            "/v1/source",
+            get(read_source)
+                .put(write_source)
+                .layer(axum::extract::DefaultBodyLimit::max(overseer::app_api::DOCUMENT_MOST_BYTES as usize)),
+        )
         // A body over the cap is refused here, as 413, before it is read whole.
         .route(
             "/v1/file",

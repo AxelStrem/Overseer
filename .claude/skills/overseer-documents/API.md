@@ -280,8 +280,8 @@ curl -H "$A" -G $B/v1/source --data-urlencode document=$D
 The document's text as it is written - its own layout, comments and line endings, with what it
 leaves to its templates left out - for a program that reads documents with a parser of its own.
 `version` is the one `watch` reports. It reaches what any read reaches; a document's mounts and
-bases are not read with it. It is only for reading: changes go through the writes below, which
-keep the text's layout.
+bases are not read with it. To change a few values, use the writes below, which keep the text's
+layout; to make a document, or write one whole, `PUT` it.
 
 `parts` names the files a document's lists keep their entries in, `{}` when it has none: for each
 such list, its parts in the order of their keys, under the names `/v1/source` reads them by -
@@ -314,6 +314,38 @@ the text and its new version as above. For a document with parts the `ETag` is t
 the parts there are folded in, so a new part gets the answer again even while the text stands as
 it was; a past part, asked for by its own version, is answered `304` until it changes. Without
 parts, the `ETag` is the version. A document it may not read is refused all the same.
+
+## Writing the text: `PUT /v1/source`
+
+```bash
+curl -H "$A" -X PUT --data-binary @tracker.os --url-query document=projects/parser.os $B/v1/source
+# 201 {"document":"alice/projects/parser.os","version":"...","created":true}
+curl -H "$A" -X PUT --data-binary @tracker.os --url-query document=projects/parser.os \
+     -H 'If-Match: "<version>"' $B/v1/source
+# 200 {"document":"alice/projects/parser.os","version":"...","created":false}
+```
+
+The body is the document's whole text, UTF-8, and it is written byte for byte. A document that is
+not there is made, with the folders on the way; it is `201`, and the answer's `ETag` is the new
+version. Whoever may change a document of that name may make it: a person in their own folder,
+or in a folder of someone else's that `sharing.os` lets them edit.
+
+It never replaces a document unless told what it is replacing:
+
+| sent | the document is there | it is not |
+| --- | --- | --- |
+| nothing | `412`, nothing written | made, `201` |
+| `If-None-Match: *` | `412` | made, `201` |
+| `If-Match: "<version>"` (or the `ETag`) | replaced, `200`, when it is still that version; else `412` | `412` |
+
+So a program that means to start a document cannot write over one of the same name, and one that
+read a document, changed its text and writes it back loses no write made in between: on `412` it
+reads again and writes onto what is there now. A replacement is one undo step, as any write is.
+Only the text is written: a list's parts are left as they are.
+
+Text the parser would pass over (see "Text that cannot be read" in
+[the specification](overseer_syntax_specification.md#text-that-cannot-be-read)) is refused with a
+`400` that names each line, and nothing is written. A library's document is never written.
 
 ## Files beside a document: `/v1/file`
 
@@ -478,6 +510,7 @@ disk:
 | 401 | no token, or the wrong one, and no session - with accounts, `sign in`, for anything not shared with everyone |
 | 403 | not allowed to whoever is asking: an invite by someone who is no admin, `X-Overseer-As` naming no account, a write to a document shared to be read or to an example, which says why in `refused` too |
 | 404 | no such document, or one not shared with whoever is asking, or nothing at that address |
+| 412 | a `PUT /v1/source` found the document otherwise than it said: there when it should not be, or at another version |
 | 413 | a file kept beside a document over its cap |
 | 422 | the document refused the press, or the write would make it too large (`refused` holds the sentence) |
 | 500 | the write failed |

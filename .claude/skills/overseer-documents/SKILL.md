@@ -217,8 +217,9 @@ screenshots: they show layout mistakes that no error reports.
 
 `API.md` beside this file describes the HTTP API; read it before the first request.
 In short: `GET /v1/node` and `/v1/source` to read, `POST /v1/node` to set
-a value, `/v1/append` and `/v1/remove` for list entries, `/v1/event` to press a button, and
-`/v1/undo`. A document and an address go in the query string. Values travel typed:
+a value, `/v1/append` and `/v1/remove` for list entries, `/v1/event` to press a button,
+`/v1/undo`, and `PUT /v1/source` to make a document or write it whole: it never replaces one
+unless sent `If-Match` with the version read. A document and an address go in the query string. Values travel typed:
 `{"String": "milk"}`, `{"Integer": 2}`, `{"Float": 2.5}`, `{"Boolean": true}`,
 `{"Date": "2026-10-18"}`, `{"Timestamp": "2026-10-18T12:00:00Z"}`. A bare `2` is refused.
 Pressing a button through the API runs its actions, the document's own rules included, so that

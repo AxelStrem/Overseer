@@ -3,9 +3,15 @@
 //! agentic loop's tracker scripts do. It reaches what a read reaches and nothing more. A caller
 //! that already holds the text's version is told so, and not sent the text again.
 //!
-//!   cargo test --features server --test it a_documents_text_is_read_as_written::
+//! `PUT /v1/source` writes a document's whole text as given, making it if it is not there. It
+//! never replaces a document unless told which version it is replacing, and it reaches what a
+//! write reaches and nothing more.
+//!
+//!   cargo test --features server --test it a_documents_text_is_read_and_written_as_given::
 
 use crate::common::shared;
+use overseer::access::Asker;
+use overseer::server::{DocumentRoot, Expect, RequestError};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
@@ -331,4 +337,134 @@ fn a_document_names_its_parts_and_whoever_reads_it_reads_them() {
     assert_eq!(after.status, 200, "{}", after.body);
     assert_eq!(after.json()["version"], read["version"], "the document's own text is as it was");
     assert_eq!(after.json()["parts"]["History"].as_array().unwrap().len(), 3);
+}
+
+// The writes are asked of `DocumentRoot` itself, in this process: no server, no accounts made by
+// joining. Only `a_put_answers_as_http_says` goes over the wire, for the answers' codes.
+
+const SHARED_FOR_WRITING: &str = "div (hidden=true) {\r\n    div Share {\r\n        string document = \"\"\r\n        string with = \"\"\r\n        string can = \"read\"\r\n    }\r\n}\r\n\r\nlist Shares (entry=<Share>) {\r\n    - {\r\n        - document = \"shared/\"\r\n        - with = \"bob\"\r\n        - can = \"edit\"\r\n    }\r\n    - {\r\n        - document = \"foods.os\"\r\n        - with = \"bob\"\r\n    }\r\n}\r\n";
+
+const TRACKER: &str = "// made by a program\r\ntab project (mutable=true) {\r\n    string name = \"Parser\"\r\n}\r\n";
+
+fn documents(name: &str) -> (DocumentRoot, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("overseer-put-{}-{}", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("documents");
+    write(&root, "ap31/sharing.os", SHARED_FOR_WRITING);
+    write(&root, "ap31/foods.os", FOODS);
+    write(&root, "bob/weight.os", "int kg = 80\r\n");
+    let documents = DocumentRoot::new(&root).unwrap().with_accounts(|n| n == "ap31" || n == "bob");
+    (documents, root)
+}
+
+fn put(documents: &DocumentRoot, asker: Asker, name: &str, text: &str, expect: Expect) -> Result<(String, bool), RequestError> {
+    documents
+        .as_asker(asker, || documents.put_source(name, text, expect))
+        .map(|put| (put.document, put.created))
+}
+
+fn bob() -> Asker {
+    Asker::Person("bob".into())
+}
+
+fn stale(answer: Result<(String, bool), RequestError>) -> bool {
+    matches!(answer, Err(RequestError::Stale(_)))
+}
+
+#[test]
+fn a_text_is_made_as_given_and_never_written_over_unasked() {
+    let _shared = shared();
+    let (documents, root) = documents("made");
+    let made = put(&documents, bob(), "projects/parser.os", TRACKER, Expect::Anything);
+    assert_eq!(made, Ok(("bob/projects/parser.os".into(), true)), "made in bob's own folder, folders and all");
+    let file = root.join("bob/projects/parser.os");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), TRACKER, "the bytes as sent, CRLF and comment included");
+
+    // There now: neither a plain write nor one that wants it absent replaces it.
+    let other = TRACKER.replace("Parser", "Other");
+    assert!(stale(put(&documents, bob(), "projects/parser.os", &other, Expect::Anything)));
+    assert!(stale(put(&documents, bob(), "projects/parser.os", &other, Expect::Absent)));
+    assert!(stale(put(&documents, bob(), "projects/parser.os", &other, Expect::Version(vec!["0-0".into()]))));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), TRACKER, "nothing refused was written");
+
+    // Named by the version it replaces, it is replaced.
+    let version = overseer::app_api::version_of(TRACKER);
+    let replaced = put(&documents, bob(), "projects/parser.os", &other, Expect::Version(vec![version]));
+    assert_eq!(replaced, Ok(("bob/projects/parser.os".into(), false)));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), other);
+
+    // A version of a document not there matches nothing.
+    assert!(stale(put(&documents, bob(), "projects/none.os", TRACKER, Expect::Version(vec!["0-0".into()]))));
+    assert!(!root.join("bob/projects/none.os").exists());
+}
+
+#[test]
+fn a_text_reaches_only_where_its_writer_may_write() {
+    let _shared = shared();
+    let (documents, root) = documents("reach");
+    // A folder shared for editing takes new documents too; anywhere else of ap31's does not.
+    assert_eq!(
+        put(&documents, bob(), "ap31/shared/plan.os", TRACKER, Expect::Anything),
+        Ok(("ap31/shared/plan.os".into(), true))
+    );
+    assert!(matches!(put(&documents, bob(), "ap31/private/plan.os", TRACKER, Expect::Anything), Err(RequestError::ReadOnly(_))));
+    assert!(!root.join("ap31/private").exists(), "no folder is made for a write refused");
+    // Shared to read, not to change.
+    let version = overseer::app_api::version_of(FOODS);
+    assert!(matches!(put(&documents, bob(), "ap31/foods.os", TRACKER, Expect::Version(vec![version])), Err(RequestError::ReadOnly(_))));
+    // Nobody signed in, a path that climbs, and the shipped library.
+    assert_eq!(put(&documents, Asker::Stranger, "ap31/shared/x.os", TRACKER, Expect::Anything), Err(RequestError::SignIn));
+    assert!(matches!(put(&documents, bob(), "../x.os", TRACKER, Expect::Anything), Err(RequestError::Rejected(_))));
+    assert!(matches!(
+        put(&documents, bob(), "library:projects/project_template.os", TRACKER, Expect::Anything),
+        Err(RequestError::ReadOnly(_))
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_out_of_the_root_is_not_followed_into_making_folders() {
+    let _shared = shared();
+    let (documents, root) = documents("link");
+    let outside = root.parent().unwrap().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("bob/out")).unwrap();
+    assert!(put(&documents, bob(), "out/deep/x.os", TRACKER, Expect::Anything).is_err());
+    assert!(!outside.join("deep").exists(), "nothing was made outside the root");
+}
+
+#[test]
+fn a_text_the_parser_would_pass_over_is_refused_with_its_line() {
+    let _shared = shared();
+    let (documents, root) = documents("unread");
+    let answer = put(&documents, bob(), "broken.os", "tab t {\r\n    string name = \"open\r\n}\r\n", Expect::Anything);
+    match answer {
+        Err(RequestError::Rejected(said)) => assert!(said.contains("line 2"), "{}", said),
+        other => panic!("refused, not {:?}", other),
+    }
+    assert!(!root.join("bob/broken.os").exists());
+}
+
+#[test]
+fn a_put_answers_as_http_says() {
+    let _shared = shared();
+    let server = start(4876, "put");
+    let port = server.port;
+    let token = format!("Authorization: Bearer {}", TOKEN);
+    let path = "/v1/source?document=ap31/projects/t.os";
+    let text = Some(("text/plain", TRACKER));
+
+    let made = ask(port, "PUT", path, &[token.clone()], text);
+    assert_eq!(made.status, 201, "{}", made.body);
+    assert_eq!(made.json()["document"], "ap31/projects/t.os");
+    let version = made.json()["version"].as_str().unwrap().to_string();
+    assert!(made.headers.to_ascii_lowercase().contains(&format!("etag: \"{}\"", version.to_ascii_lowercase())), "{}", made.headers);
+
+    assert_eq!(ask(port, "PUT", path, &[token.clone()], text).status, 412, "there already");
+    assert_eq!(ask(port, "PUT", path, &[token.clone(), "If-None-Match: *".into()], text).status, 412);
+    let other = TRACKER.replace("Parser", "Other");
+    let replaced = ask(port, "PUT", path, &[token.clone(), format!("If-Match: \"{}\"", version)], Some(("text/plain", &other)));
+    assert_eq!(replaced.status, 200, "{}", replaced.body);
+    assert_eq!(source(port, "ap31/projects/t.os", &[token.clone()]).json()["text"].as_str().unwrap(), other);
+    assert_eq!(ask(port, "PUT", path, &[], text).status, 401, "a stranger is asked to sign in");
 }

@@ -111,6 +111,10 @@ specification's "Entries of a list" says which form each tool takes.
   this repository; copy the folder into `~/.claude/skills/` to have it wherever `.os` files are
   worked on. After editing the specification or API.md, `node scripts/sync-skill.mjs` refreshes
   the copies; a test fails until it has.
+- [`.claude/skills/overseer-new-tracker`](.claude/skills/overseer-new-tracker) - a Claude skill
+  that starts a project tracker for a repository on a remote server: it writes the definition and
+  the tracker AgentLoop reads, carries over a local `docs/todo.md`, and pushes both with
+  `PUT /v1/source` and the person's key (`~/.overseer/key` by default). Copied the same way.
 
 ## Seeing a document
 
