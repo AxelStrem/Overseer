@@ -2226,12 +2226,18 @@ impl FileOperations {
                 continue;
             }
             let given = Self::is_template_derived(child) || mark.is_some();
+            // An instance of another template is its own block, written from what was set in it -
+            // unless it has no name: then it is layout only, as an unnamed div is, no step of any
+            // address, and what the block wrote through it is this block's. Written as a block of
+            // its own, it came out as `- Section { ... }`, a step the file never had, beside the
+            // override the document had written through it.
             if Self::walked_through(child)
                 && given
-                && !matches!(
-                    child.parameters.get("_from_template"),
-                    Some(OverseerValue::Boolean(true))
-                )
+                && (crate::addressing::is_wrapper(child)
+                    || !matches!(
+                        child.parameters.get("_from_template"),
+                        Some(OverseerValue::Boolean(true))
+                    ))
             {
                 Self::gather_block(&child.children, up + 1, take_edits, marks, anchor, pieces);
                 continue;

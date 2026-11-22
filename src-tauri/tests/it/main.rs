@@ -170,6 +170,7 @@ mod an_answer_is_described_against_what_the_caller_holds;
 mod an_answer_names_the_text_rather_than_sending_it;
 mod an_append_from_a_list_copies_every_entry;
 mod an_append_of_the_template_alone_writes_an_entry;
+mod an_append_through_an_unnamed_instance_writes_one_entry;
 mod an_array_is_a_grid_of_one_row;
 mod an_edit_agrees_with_a_full_resolve;
 mod an_edit_inside_a_nested_instance_is_saved;

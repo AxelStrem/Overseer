@@ -5091,7 +5091,7 @@ pub(crate) fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]
             Some(path) => {
                 if let Some(template_field) = get_child_mut_by_path(template, &path) {
                     merge_into_field(template_field, override_field, root);
-                    mark_written(template_field, position, path.len() - 1);
+                    mark_written_unless_marked(template_field, override_field, position, path.len() - 1);
                 }
                 cursor = after(&path);
             }
@@ -5101,7 +5101,7 @@ pub(crate) fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]
                     override_field.name
                 );
                 let mut kept = override_field.clone();
-                mark_written(&mut kept, position, 0);
+                mark_written_unless_marked(&mut kept, override_field, position, 0);
                 unmatched.push(kept);
             }
         }
@@ -5121,6 +5121,25 @@ fn mark_written(node: &mut OverseerNode, position: usize, up: usize) {
     );
     node.parameters
         .insert("_written_up".to_string(), OverseerValue::Integer(up as i64));
+}
+
+/// Marks a node as `mark_written` does, unless what was merged into it carries a mark already.
+///
+/// Every copy of a template is stripped of its marks, so a mark that reaches a block's merge was
+/// put there by a block of this document around it - a document made from a base, writing
+/// `- Places { ... }` through an unnamed `<Section> { }` instance the base holds, which is merged
+/// first and then has the instance's own block merged over it. That block is the base's text, and
+/// marking the node again with its place there had the writer look for `- Places` in the wrong
+/// block: the override was given back as read, and the entry appended to it was lost.
+fn mark_written_unless_marked(node: &mut OverseerNode, merged: &OverseerNode, position: usize, up: usize) {
+    match (merged.parameters.get("_written_at"), merged.parameters.get("_written_up")) {
+        (Some(at), Some(up)) => {
+            let (at, up) = (at.clone(), up.clone());
+            node.parameters.insert("_written_at".to_string(), at);
+            node.parameters.insert("_written_up".to_string(), up);
+        }
+        _ => mark_written(node, position, up),
+    }
 }
 
 /// Whether a node was written into the block of the node it is a direct child of, and where.
