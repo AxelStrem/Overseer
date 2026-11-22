@@ -114,6 +114,9 @@ these are the settings to turn:
   A restart, or a wake-up from sleep, then reads back what it had instead of working it out
   again. Its files are only ever `.json`. They are named by the build of the server, so a deploy
   of a new one finds none it can use, and the old ones go as the folder is trimmed to its budget.
+  On Linux the server tells the kernel not to keep these files in its file cache once they are
+  written or read, so the folder adds nothing to the container's `file` memory. That does not
+  work on a folder held in memory (tmpfs): its files show as `shmem` and stay there.
 - `OVERSEER_DISK_CACHE_MB` - how much that folder may hold, 512 by default; `0` turns it off. A
   large worked-out document takes 12-15 MB there, and the summaries up to an eighth of the
   budget. 256 is room for about fifteen such documents: enough for one person's, and better on

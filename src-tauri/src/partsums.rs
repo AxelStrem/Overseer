@@ -319,7 +319,7 @@ mod on_disk {
 
         /// Every chain the part's file holds, when it holds this part's text for this build.
         fn load(&self) -> Option<HashMap<String, Arc<Summary>>> {
-            let bytes = std::fs::read(&self.file).ok()?;
+            let bytes = crate::document_disk::read_once(&self.file).ok()?;
             let stored: Stored = serde_json::from_slice(&bytes).ok()?;
             if stored.build != self.folder.build || stored.zone != self.zone || stored.text != self.text {
                 return None;

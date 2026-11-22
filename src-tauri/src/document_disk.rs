@@ -403,12 +403,57 @@ pub(crate) fn put(folder: &Path, file: &Path, bytes: &[u8]) -> std::io::Result<(
         std::process::id(),
         SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    std::fs::write(&part, bytes)?;
-    if let Err(e) = std::fs::rename(&part, file) {
+    let written = (|| {
+        use std::io::Write;
+        let mut out = std::fs::File::create(&part)?;
+        out.write_all(bytes)?;
+        // Only pages already on disk can be dropped, so the file is synced first. This runs on a
+        // writer thread of its own, and no open waits for it.
+        out.sync_data()?;
+        let_go(&out);
+        Ok(())
+    })()
+    .and_then(|()| std::fs::rename(&part, file));
+    if let Err(e) = written {
         let _ = std::fs::remove_file(&part);
         return Err(e);
     }
     Ok(())
+}
+
+/// Read a whole file kept here, and tell the kernel it need not keep it cached.
+pub(crate) fn read_once(file: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut opened = std::fs::File::open(file)?;
+    let mut bytes = Vec::new();
+    opened.read_to_end(&mut bytes)?;
+    let_go(&opened);
+    Ok(bytes)
+}
+
+/// Tell the kernel it need not keep this file's pages in its cache.
+///
+/// The files here are written once and read back at most once, by which time what they hold is in
+/// memory. Left alone, the kernel keeps every page of them cached for as long as nothing else in
+/// the container wants the memory - hundreds of MB with the default budget - and a host that bills
+/// the container's memory counts that cache. A memory limit on the container would make the kernel
+/// let go of it, but would also kill the server at its next spike of its own memory; this lets go
+/// of only these files. The documents and images, read again and again, keep their cache.
+///
+/// Linux only; elsewhere it does nothing. On a folder in memory (tmpfs) it does nothing either:
+/// there the pages are the file.
+fn let_go(file: &std::fs::File) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: the descriptor is open for as long as `file` is borrowed, and the call only
+        // advises the kernel about it.
+        unsafe {
+            libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = file;
 }
 
 /// Bring the folder back within budget, the files written longest ago going first.
@@ -442,6 +487,7 @@ pub fn take(text: &str, base: &Option<PathBuf>, seen: &str) -> Option<Held> {
     let build = build()?;
     let file = file_for(&folder, build, base, seen, text);
     let bytes = std::fs::read(&file).ok()?;
+    // Deleted once read, which lets go of its pages in the kernel's cache too.
     let _ = std::fs::remove_file(&file);
     let stored: Stored = serde_json::from_slice(&bytes).ok()?;
     if stored.build != build || &stored.base != base || stored.seen != seen || stored.text != text {
@@ -464,5 +510,59 @@ pub fn settled() {
     let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     while *writing > 0 {
         writing = WRITTEN.wait(writing).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    /// How many of the file's pages the kernel holds in its cache, and how many it has.
+    fn resident(file: &Path) -> (usize, usize) {
+        use std::os::fd::AsRawFd;
+        let opened = std::fs::File::open(file).unwrap();
+        let len = opened.metadata().unwrap().len() as usize;
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let pages = len.div_ceil(page);
+        let mut held = vec![0u8; pages];
+        // SAFETY: a read-only mapping of an open file, unmapped before it is closed; `held` has a
+        // byte for every page of it.
+        unsafe {
+            let at = libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, opened.as_raw_fd(), 0);
+            assert_ne!(at, libc::MAP_FAILED);
+            assert_eq!(libc::mincore(at, len, held.as_mut_ptr()), 0);
+            libc::munmap(at, len);
+        }
+        (held.iter().filter(|b| *b & 1 == 1).count(), pages)
+    }
+
+    fn in_memory(folder: &Path) -> bool {
+        const TMPFS_MAGIC: i64 = 0x0102_1994;
+        let name = std::ffi::CString::new(folder.as_os_str().as_encoded_bytes()).unwrap();
+        let mut about: libc::statfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `name` is a C string and `about` a statfs to fill.
+        unsafe { libc::statfs(name.as_ptr(), &mut about) == 0 && about.f_type as i64 == TMPFS_MAGIC }
+    }
+
+    #[test]
+    fn a_file_written_or_read_here_is_not_kept_in_the_kernels_cache() {
+        let folder = std::env::temp_dir().join(format!("overseer_let_go_{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        if in_memory(&folder) {
+            let _ = std::fs::remove_dir_all(&folder);
+            return;
+        }
+        let file = folder.join("kept.json");
+        let bytes: Vec<u8> = (0..8 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+
+        put(&folder, &file, &bytes).unwrap();
+        let (held, pages) = resident(&file);
+        assert!(held * 10 < pages, "{} of {} pages still cached after writing", held, pages);
+
+        assert_eq!(read_once(&file).unwrap(), bytes);
+        let (held, pages) = resident(&file);
+        assert!(held * 10 < pages, "{} of {} pages still cached after reading", held, pages);
+
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }
