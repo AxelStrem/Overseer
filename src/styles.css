@@ -87,8 +87,14 @@ body {
     background: color-mix(in srgb, var(--ov-surface) 95%, var(--ov-accent));
     border-right: 1px solid var(--ov-line);
     overflow-y: auto;
+    /* It scrolls by the wheel, the trackpad or a finger; a bar would take room from a strip this narrow. */
+    scrollbar-width: none;
     z-index: 50;
     transition: transform 160ms ease;
+}
+
+.drawer::-webkit-scrollbar {
+    display: none;
 }
 
 body.drawer-folded .drawer {

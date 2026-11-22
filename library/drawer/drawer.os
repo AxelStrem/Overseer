@@ -69,9 +69,14 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
             }
         }
 
+        div Heading (layout="horizontal", alignment="center", width=100%, spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
+            text (width=1fr, font-size=11px, font-weight=600, font-color=$(theme/muted), padding="12px 8px 2px") = ""
+        }
+
         div Choice {
             string tag = ""
             string name = ""
+            string hover = ""
             string colour = ""
             string icon = ""
             string shape = ""
@@ -80,15 +85,18 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
         list Modes (entry=<Choice>, key="tag") {
             - {
                 - tag = "light"
-                - name = "Light"
+                - name = "<icon=sun>"
+                - hover = "Light"
             }
             - {
                 - tag = "dark"
-                - name = "Dark"
+                - name = "<icon=moon>"
+                - hover = "Dark"
             }
             - {
                 - tag = "system"
-                - name = "System"
+                - name = "<icon=monitor>"
+                - hover = "System"
             }
         }
 
@@ -199,21 +207,37 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
     bool stranger (hidden=true) = $(host/accounts && me/handle == "")
     bool kept (hidden=true) = $(Places.filter(|x| x/path == host/open/path).count() + Places.map(|x| x/Places.filter(|y| y/path == host/open/path).count()).sum() > 0)
 
-    text (font-size=11px, font-weight=600, font-color=$(theme/muted), padding="10px 8px 2px") = "DOCUMENTS"
-    div (layout="vertical", alignment="near", hidden=$(stranger), spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
-        text (hidden=$(Places.count() > 0), font-size=13px, font-color=$(theme/muted)) = "Nothing kept here yet."
-        list Places (entry=<Place>, key="name", tree="Places", movable="anywhere", width=100%,
-                     padding=0, margin=0, border-style="none", shadow="none", background-color="transparent") { }
-
-        button keep (label="+ Keep this document here", hidden=$(host/open/path == "" || kept)) {
-            on click {
-                append (list="../Places") {
-                    - name = $(host/open/label)
-                    - path = $(host/open/path)
+    div (hidden=$(stranger), layout="vertical", alignment="near", spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
+        <Heading> {
+            text = "DOCUMENTS"
+            button all (label="All documents", hidden=$(host/kind != "browser"), font-color=$(theme/muted), font-size=12px, padding="12px 8px 2px") {
+                on click {
+                    call (name="open")
                 }
             }
         }
-        div Adding (layout="vertical", alignment="near", mutable="guarded", spacing=2, padding="4px 8px", margin=0, border-style="none", shadow="none") {
+        text (hidden=$(Places.count() > 0), font-size=13px, font-color=$(theme/muted), padding="2px 8px") = "Nothing kept here yet."
+        list Places (entry=<Place>, key="name", tree="Places", movable="anywhere", width=100%,
+                     padding=0, margin=0, border-style="none", shadow="none", background-color="transparent") { }
+
+        div (layout="horizontal", alignment="center", spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
+            button keep (label="+ Keep this document", hover-text="Keep the open document here", hidden=$(host/open/path == "" || kept),
+                         font-color=$(theme/muted), font-size=13px) {
+                on click {
+                    append (list="../Places") {
+                        - name = $(host/open/label)
+                        - path = $(host/open/path)
+                    }
+                }
+            }
+            button adding (label="+ Add…", hover-text="Add a document by its path", font-color=$(theme/muted), font-size=13px) {
+                on click {
+                    toggle_fold (path="../Adding")
+                }
+            }
+        }
+        div Adding (layout="vertical", alignment="near", mutable="guarded", foldable=true, folded=true,
+                    spacing=2, padding="2px 8px 6px", margin=0, border-style="none", shadow="none") {
             textbox name (placeholder=$(described != "" ? described : "name"), width=100%) = ""
             textbox path (placeholder="document path", width=100%) = "" {
                 on change {
@@ -223,7 +247,7 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
                 }
             }
             string described (hidden=true) = ""
-            button add (label="+ Add") {
+            button add (label="Add") {
                 on click {
                     if (cond=$(../name == "" && ../described == "" && ../path == "")) {
                         refuse = "Give it a name, or the path of a document."
@@ -235,47 +259,53 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
                         - name = $(../name != "" ? ../name : (../described != "" ? ../described : ../path))
                     }
                     set (path="../described") = ""
+                    fold (path="..")
                 }
             }
         }
     }
-    button all (label="All documents", hidden=$(host/kind != "browser" || stranger), font-color=$(theme/muted), font-size=13px) {
-        on click {
-            call (name="open")
-        }
-    }
 
-    text (font-size=11px, font-weight=600, font-color=$(theme/muted), padding="10px 8px 2px") = "THIS DOCUMENT"
-    text (hidden=$(host/open/path == ""), font-size=12px, font-color=$(theme/muted)) = $(host/open/path)
-    button undo (label="Undo", hover-text="Take back the last change (Ctrl+Z)", hidden=$(host/open/can != "edit")) {
-        on click {
-            call (name="undo")
+    div (hidden=$(host/open/path == "" && host/open/can != "edit" && host/kind != "desktop"), layout="vertical", alignment="near", spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
+        <Heading> {
+            text = "THIS DOCUMENT"
         }
-    }
-    button open_file (label="Open a file…", hidden=$(host/kind != "desktop")) {
-        on click {
-            call (name="open_file")
-        }
-    }
-    button new_file (label="New file…", hidden=$(host/kind != "desktop")) {
-        on click {
-            call (name="new_file")
-        }
-    }
-
-    div (layout="vertical", alignment="near", hidden=$(stranger), padding=0, margin=0, border-style="none", shadow="none") {
-        text (font-size=11px, font-weight=600, font-color=$(theme/muted), padding="10px 8px 2px") = "LOOK"
-        enum look (label="Theme", vocabulary="/host/themes", view="select", mutable="guarded", width=100%) = $(host/theme) {
-            on change {
-                call (name="look") {
-                    - theme = $(../look)
+        text (hidden=$(host/open/path == ""), font-size=12px, font-color=$(theme/muted), padding="0px 8px 2px") = $(host/open/path)
+        div (layout="horizontal", alignment="center", spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
+            button undo (label="Undo", hover-text="Take back the last change (Ctrl+Z)", hidden=$(host/open/can != "edit")) {
+                on click {
+                    call (name="undo")
+                }
+            }
+            button open_file (label="Open…", hover-text="Open a file", hidden=$(host/kind != "desktop")) {
+                on click {
+                    call (name="open_file")
+                }
+            }
+            button new_file (label="New…", hover-text="Make a new file", hidden=$(host/kind != "desktop")) {
+                on click {
+                    call (name="new_file")
                 }
             }
         }
-        enum shade (label="Light or dark", vocabulary="/drawer/Modes", view="segments", mutable="guarded", width=100%) = $(host/chosen_mode) {
-            on change {
-                call (name="look") {
-                    - mode = $(../shade)
+    }
+
+    div (hidden=$(stranger), layout="vertical", alignment="near", spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
+        <Heading> {
+            text = "LOOK"
+        }
+        div (layout="horizontal", alignment="center", width=100%, spacing=6, padding="0px 8px 0px 0px", margin=0, border-style="none", shadow="none") {
+            enum look (label="Theme", vocabulary="/host/themes", view="select", mutable="guarded", width=1fr) = $(host/theme) {
+                on change {
+                    call (name="look") {
+                        - theme = $(../look)
+                    }
+                }
+            }
+            enum shade (label="Light or dark", vocabulary="/drawer/Modes", view="segments", mutable="guarded") = $(host/chosen_mode) {
+                on change {
+                    call (name="look") {
+                        - mode = $(../shade)
+                    }
                 }
             }
         }
@@ -288,10 +318,17 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
         }
     }
 
-    div (layout="vertical", alignment="near", hidden=$(me/handle == ""), padding=0, margin=0, border-style="none", shadow="none") {
-        div (layout="horizontal", alignment="center", spacing=6) {
-            text (font-size=11px, font-weight=600, font-color=$(theme/muted), padding="10px 8px 2px") = "SIGNED IN AS"
-            enum who (vocabulary="/drawer/Chips", mutable=false) = "me"
+    div (hidden=$(me/handle == ""), layout="vertical", alignment="near", spacing=0, padding=0, margin=0, border-style="none", shadow="none") {
+        <Heading> {
+            text = "ACCOUNT"
+        }
+        div (layout="horizontal", alignment="center", width=100%, spacing=6, padding="2px 0px 2px 8px", margin=0, border-style="none", shadow="none") {
+            enum who (vocabulary="/drawer/Chips", mutable=false, width=1fr) = "me"
+            button sign_out (label="Sign out", font-color=$(theme/muted), font-size=13px) {
+                on click {
+                    call (name="sign_out")
+                }
+            }
         }
         button sharing (label="Sharing") {
             on click {
@@ -299,7 +336,7 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
             }
         }
 
-        div Profile (label="Profile", foldable=true, folded=true, mutable="guarded") {
+        div Profile (label="Profile", foldable=true, folded=true, font-size=14px, padding="4px 8px", margin=0, border-style="none", shadow="none", background-color="transparent", mutable="guarded") {
             context hide-labels = false
             textbox name (label="Display name") = $(me/written_name)
             text hint (font-size=12px, font-color=$(theme/muted)) = "Markdown and icons are drawn in it, as in any text."
@@ -347,7 +384,7 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
             string changed (hidden=$(changed == ""), font-size=12px, font-color=$(theme/muted)) = ""
         }
 
-        div Keys (label="Keys", foldable=true, folded=true, mutable="guarded") {
+        div Keys (label="Keys", foldable=true, folded=true, font-size=14px, padding="4px 8px", margin=0, border-style="none", shadow="none", background-color="transparent", mutable="guarded") {
             text (font-size=12px, font-color=$(theme/muted)) = "A key lets a program act as you through the API."
             text (markdown=true, font-size=13px, hidden=$(me/keys.count() == 0)) = $(me/keys.reduce("", |all, x| all + (all == "" ? "" : ", ") + "**" + x/name + "** (" + (x/used == "" ? "never used" : "used " + day(x/used)) + ")"))
             div (layout="horizontal", alignment="center") {
@@ -386,7 +423,7 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
             string said (hidden=$(said == ""), font-size=12px, font-color=$(theme/muted)) = ""
         }
 
-        div People (label="People", foldable=true, folded=true, hidden=$(!me/admin), mutable="guarded") {
+        div People (label="People", foldable=true, folded=true, font-size=14px, padding="4px 8px", margin=0, border-style="none", shadow="none", background-color="transparent", hidden=$(!me/admin), mutable="guarded") {
             button invite (label="Invite someone") {
                 on click {
                     call (name="invite", into="../link")
@@ -413,12 +450,6 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
                 }
             }
             string said (hidden=$(said == ""), font-size=12px, font-color=$(theme/muted)) = ""
-        }
-
-        button sign_out (label="Sign out", font-color=$(theme/muted), font-size=13px) {
-            on click {
-                call (name="sign_out")
-            }
         }
     }
 }
