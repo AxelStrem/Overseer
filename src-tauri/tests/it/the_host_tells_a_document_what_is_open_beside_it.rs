@@ -361,3 +361,40 @@ fn me_carries_the_chip_the_directory_draws_and_the_keys_the_server_holds() {
     assert_eq!(value(&nodes, "keys"), OverseerValue::Integer(0));
     assert_eq!(text(&nodes, "colour"), "");
 }
+
+#[test]
+fn a_document_shared_with_someone_can_be_kept_in_their_drawer() {
+    let _shared = shared();
+    let (documents, root) = served("shared-kept");
+    let base = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../library/drawer/drawer.os")).unwrap();
+    let drawn = |drawer: &str| {
+        write(&root, "bob/drawer.os", drawer);
+        documents.as_asker(person("bob"), || {
+            let open = documents.open_beside("ap31/notes.os");
+            beside(Some(open), || documents.open("drawer.os").unwrap())
+        })
+    };
+    let keep_hidden = |nodes: &[OverseerNode]| {
+        match find(nodes, "keep").and_then(|keep| keep.parameters.get("_computed_hidden")) {
+            Some(OverseerValue::Boolean(hidden)) => *hidden,
+            other => panic!("keep's hidden is {:?}", other),
+        }
+    };
+
+    // Shared with bob only to read, it is offered to his own drawer all the same.
+    let nodes = drawn(&base);
+    assert!(!truth(&nodes, "kept"));
+    assert!(!keep_hidden(&nodes));
+
+    // Kept by the name it is shared under, it is known as kept, and offered no more.
+    let empty = "background-color=\"transparent\") { }";
+    assert!(base.contains(empty));
+    let kept = base.replacen(
+        empty,
+        "background-color=\"transparent\") {\n            - {\n                - name = \"Notes\"\n                - path = \"ap31/notes.os\"\n            }\n        }",
+        1,
+    );
+    let nodes = drawn(&kept);
+    assert!(truth(&nodes, "kept"));
+    assert!(keep_hidden(&nodes));
+}
