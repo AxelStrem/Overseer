@@ -2697,6 +2697,16 @@ enum stage (vocabulary="/project/Stages") = "filed" {
 from being finished. It changes only what the picker offers: a value held back can still be
 written some other way, so a handler that must not act on it says so in its own `if`.
 
+Once a value is picked, the picker offers only the others: an enum holds one of its values, as a
+task always has a stage. `clearable=true` lets it be emptied again - the picker of a field that
+holds a value then offers, first, a choice reading as its `placeholder` (a dash, when that says
+nothing) that writes `""`, as any pick does, with its `on change` and one undo. So a column saying
+whom an item is for can be made nobody's again:
+
+```overseer
+enum assignee (label="for", vocabulary="/project/people/People", chip="icon", placeholder="", clearable=true) = ""
+```
+
 `view="select"` draws the value as a drop-down rather than a chip: a box holding the chosen
 value's name, with a caret. Pressing it opens the same picker, and everything else - `withhold`,
 `placeholder`, `on change`, `mutable` - is as it is for the chip. With nothing to pick, or nothing
@@ -2709,7 +2719,8 @@ enum look (label="Theme", vocabulary="/settings/Themes", view="select") = "defau
 `view="segments"` draws every value as a button of one row, the chosen one pressed and filled with
 its colour - the theme's `accent` when it has none. Pressing another chooses it, as a pick does.
 What `withhold` names is greyed out and cannot be pressed, a value the list does not hold presses
-none, and with nothing it may change the row is drawn but presses do nothing.
+none, and with nothing it may change the row is drawn but presses do nothing. A `clearable` enum's
+row begins with the empty choice, pressed while the field holds nothing.
 
 ```overseer
 enum mode (vocabulary="/settings/Modes", view="segments") = "system"
@@ -3338,7 +3349,7 @@ div Tasks {
 - **Grids**: `entry`, `columns`, `rows`, `header`
 - **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`
-- **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`, `chip`
+- **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`, `chip`, `clearable`
 - **Tags**: `vocabulary`, `shape`, `chip` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`
 - **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `calendar`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`

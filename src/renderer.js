@@ -6896,7 +6896,8 @@ export class OverseerRenderer {
                 .split(',').map(s => s.trim()).filter(Boolean))
             const others = [...vocabulary.keys()]
                 .filter(v => v !== value && !withheld.has(v) && vocabulary.get(v).offered !== false)
-            if (!editable() || others.length === 0) {
+            const empty = value ? this.enumEmptyChoice(node) : null
+            if (!editable() || (others.length === 0 && empty === null)) {
                 // Nothing to pick, so a press shows what the value stands for instead.
                 if (value) this.letChipReveal(chip, vocabulary.get(value))
                 return
@@ -6907,7 +6908,7 @@ export class OverseerRenderer {
                 event.stopPropagation()
                 // Nor the entry this field is part of: an item is not its own parent.
                 const itself = this.entryHolding(container, vocabulary)
-                this.offerTags(chip, others.filter(v => !itself(v)), vocabulary, (picked) => { choose(picked) })
+                this.offerTags(chip, others.filter(v => !itself(v)), vocabulary, (picked) => { choose(picked) }, [], empty)
             })
         }
         paint()
@@ -6916,6 +6917,19 @@ export class OverseerRenderer {
         this.applyFieldDefaultStyles(container, node)
         this.applyNodeStyles(container, node)
         return container
+    }
+
+    /**
+     * What the empty choice of a `clearable` enum reads - its placeholder, or a dash where that
+     * says nothing, since a choice in a picker must show something to be pressed - or null for an
+     * enum that offers none. Only a field that asks for it can be emptied: most enums - a stage -
+     * always hold one of their values.
+     */
+    enumEmptyChoice(node) {
+        const clearable = this.getParameterValue(node, 'clearable')
+        if (!(clearable === true || String(clearable).toLowerCase() === 'true')) return null
+        const said = this.getParameterValue(node, 'placeholder')
+        return said === null || said === undefined || String(said) === '' ? '—' : String(said)
     }
 
     /**
@@ -6931,6 +6945,27 @@ export class OverseerRenderer {
         const withheld = new Set(String(this.getParameterValue(node, 'withhold') ?? '')
             .split(',').map(s => s.trim()).filter(Boolean))
         const itself = this.entryHolding(container, vocabulary)
+        const empty = this.enumEmptyChoice(node)
+        if (empty !== null) {
+            const segment = document.createElement('button')
+            segment.type = 'button'
+            segment.className = 'enum-segment enum-segment-empty'
+            segment.dataset.tag = ''
+            const name = document.createElement('span')
+            name.className = 'chip-name'
+            this.setTextWithIcons(name, empty)
+            segment.appendChild(name)
+            const chosen = value === ''
+            segment.setAttribute('aria-pressed', chosen ? 'true' : 'false')
+            if (chosen) segment.classList.add('chosen')
+            if (!editable) segment.disabled = true
+            segment.addEventListener('click', (event) => {
+                event.stopPropagation()
+                if (segment.disabled || chosen) return
+                choose('')
+            })
+            row.appendChild(segment)
+        }
         for (const [tag, known] of vocabulary) {
             if (tag !== value && (known.offered === false || itself(tag))) continue
             const segment = document.createElement('button')
@@ -7501,14 +7536,28 @@ export class OverseerRenderer {
      * the entry's key, name or title, or in the fields `by` names when it names any. The arrows
      * move between what is left, Enter picks, Escape closes. The box takes focus, so a phone's
      * keyboard comes up with it, and the chips are still pressed as ever.
+     *
+     * `empty`, when given, is what a first choice reads that picks nothing - `""` - for a field
+     * that may be emptied again.
      */
-    offerTags(beside, available, vocabulary, chosen, by = []) {
+    offerTags(beside, available, vocabulary, chosen, by = [], empty = null) {
         document.querySelectorAll('.tag-picker').forEach(picker => picker.remove())
-        if (available.length === 0) return
+        if (available.length === 0 && empty === null) return
         const picker = document.createElement('span')
         picker.className = 'tag-picker'
         const dismiss = () => { picker.remove(); document.removeEventListener('click', dismiss) }
         const pick = (tag) => { dismiss(); chosen(tag) }
+        if (empty !== null) {
+            const none = document.createElement('span')
+            none.className = 'tag-chip tag-placeholder tag-option tag-option-empty'
+            this.setTextWithIcons(none, empty)
+            none.title = 'leave it empty'
+            none.addEventListener('click', (event) => {
+                event.stopPropagation()
+                pick('')
+            })
+            picker.appendChild(none)
+        }
         const option = (tag) => {
             const chip = this.tagChip(tag, vocabulary.get(tag), null)
             chip.classList.add('tag-option')
