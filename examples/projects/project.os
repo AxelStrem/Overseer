@@ -1,5 +1,6 @@
-<projects/project_template.os/project> project {
+<projects/project_template.os/project> project (label="Editor") {
     - definition (source="project.project.os/definition", lazy=false)
+    - name = "Editor"
     - Items {
         - {
             - added = "2026-09-01T09:00:00+04:00"

@@ -224,3 +224,24 @@ fn a_document_that_inherits_its_tab_is_called_by_that_tab_label() {
         assert_eq!(labels, vec!["Overseer", "Project", "Mine", "Sheet", "", ""]);
     });
 }
+
+#[test]
+fn a_tracker_the_new_tracker_skill_starts_is_called_by_the_projects_name() {
+    // The skill writes the tracker as section 5 of its SKILL.md shows; the browser tab and the
+    // drawer call it by its tab's label, and the template's own is only "Project".
+    serialised(|| {
+        let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let skill = std::fs::read_to_string(repository.join(".claude/skills/overseer-new-tracker/SKILL.md")).unwrap();
+        let section = &skill[skill.find("## 5.").expect("the skill has a section 5")..];
+        let start = section.find("```overseer\n").expect("section 5 shows the tracker") + "```overseer\n".len();
+        let block = &section[start..start + section[start..].find("```").unwrap()];
+        let tracker = block.replace("<Name as people say it>", "Garden planner");
+        let root = a_folder("skill_tracker");
+        let file = root.join("garden.os");
+        std::fs::write(&file, tracker).unwrap();
+        std::env::set_var("OVERSEER_LIBRARY", repository.join("library"));
+        let label = menu::label_in(&file);
+        std::env::remove_var("OVERSEER_LIBRARY");
+        assert_eq!(label.as_deref(), Some("Garden planner"));
+    });
+}
