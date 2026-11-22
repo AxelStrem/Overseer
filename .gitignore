@@ -63,3 +63,5 @@ scripts/agent/
 run-agent-loop.ps1
 # Scratch output of tools and agent sessions
 *.tmp
+
+.claude/settings-local.json

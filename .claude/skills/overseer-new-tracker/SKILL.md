@@ -94,13 +94,18 @@ URL without any credentials in it; an SSH remote stays as it is.
             - added = "2026-11-21T14:05:00+01:00"
             - handle = "T-04"
             - title = "<one line of intent>"
+            - flags = "manual"
         }
     }
+    - Labels { }
+    - History { }
 }
 ```
 
-Leave `Items` out when there is nothing to carry over. Every other list - stages, labels,
-milestones, history - starts as the template has it.
+**Always write `- Items`, `- Labels` and `- History`**, as `- Items { }` when there is nothing to
+carry over. AgentLoop's `tracker.py` reads the tracker's own text, not what the template fills in,
+and stops at `no list History` when one is missing. Stages, complexities, flags and milestones are
+left to the template.
 
 ### Carrying over a local tracker
 
@@ -128,8 +133,11 @@ entry becomes an item, in the order it is written:
 ```
 
 `added` is now, with the local offset (`date +%Y-%m-%dT%H:%M:%S%z`, with a colon put into the
-offset), the same for every item. Leave `stage` out (it starts as `filed`), and `labels`,
-`milestones` and `points` too: the template's vocabularies are empty until the person makes them.
+offset), the same for every item. **Every item carried over gets `flags = "manual"`**, as an
+item a person adds on the page does: agents leave it alone until the person takes the flag off,
+so a loop pointed at the new tracker starts no work on its own. Leave `stage` out (it starts as
+`filed`), and `labels`, `milestones` and `points` too: the template's vocabularies are empty
+until the person makes them.
 The archive (`docs/archive/`) is history and is not carried over.
 
 Strings are double-quoted; inside them `\"`, `\\` and `\n` are the escapes. Indent four spaces.
@@ -160,8 +168,9 @@ curl -sS -H "$A" -G $B/v1/node --data-urlencode document=projects/<name>.os \
      --data-urlencode address=project/Items                     # child_addresses: one per item
 ```
 
-Both must answer `200`, and `Items` must have as many entries as were carried over. Then tell the
-person:
+Both must answer `200`, and `Items` must have as many entries as were carried over. The text as
+pushed must hold the lines `- Items {` (or `- Items { }`), `- Labels { }` and `- History { }`.
+Then tell the person:
 
 - the tracker's page, `<B>/doc/<their username>/projects/<name>.os`, which is also the address an
   AgentLoop loop takes;
