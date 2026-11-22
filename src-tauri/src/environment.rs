@@ -486,8 +486,8 @@ fn who_is_looking() -> (String, String) {
 }
 
 /// Whoever is looking's chip, as the directory of people draws it: its colour, icon and shape,
-/// all empty for nobody.
-fn chip_of_whoever_is_looking() -> (String, String, String) {
+/// all empty for nobody, and whether the directory says they are a bot.
+fn chip_of_whoever_is_looking() -> (String, String, String, bool) {
     looking()
         .zip(crate::access::root())
         .and_then(|(handle, root)| crate::people::person_of(&root, &handle))
@@ -496,6 +496,7 @@ fn chip_of_whoever_is_looking() -> (String, String, String) {
                 person.colour.unwrap_or_default(),
                 person.icon.unwrap_or_default(),
                 person.shape.unwrap_or_default(),
+                person.bot,
             )
         })
         .unwrap_or_default()
@@ -512,9 +513,9 @@ fn me() -> OverseerNode {
         .and_then(|(handle, root)| crate::people::name_of(&root, &handle))
         .filter(|written| !written.trim().is_empty())
         .unwrap_or_else(|| name.clone());
-    let (colour, icon, shape) = chip_of_whoever_is_looking();
+    let (colour, icon, shape, bot) = chip_of_whoever_is_looking();
     let mut text = format!(
-        "context {} {{\n    string handle = {}\n    string name = {}\n    string written_name = {}\n    bool admin = {}\n    string colour = {}\n    string icon = {}\n    string shape = {}\n",
+        "context {} {{\n    string handle = {}\n    string name = {}\n    string written_name = {}\n    bool admin = {}\n    string colour = {}\n    string icon = {}\n    string shape = {}\n    bool bot = {}\n",
         ME,
         quoted(&handle),
         quoted(&name),
@@ -522,7 +523,8 @@ fn me() -> OverseerNode {
         admin(),
         quoted(&colour),
         quoted(&icon),
-        quoted(&shape)
+        quoted(&shape),
+        bot
     );
     // Written whole, by place, as `host/themes` is.
     text.push_str("    list keys (key=\"name\") {\n");
@@ -713,7 +715,7 @@ pub fn look() -> String {
 /// Who is looking, as `me` says them - see `look`.
 pub fn who() -> String {
     let (handle, name) = who_is_looking();
-    let (colour, icon, shape) = chip_of_whoever_is_looking();
+    let (colour, icon, shape, bot) = chip_of_whoever_is_looking();
     // When each key was last used is left out: using one would throw away every copy kept for
     // its owner.
     let keys: Vec<String> = keys()
@@ -721,13 +723,14 @@ pub fn who() -> String {
         .map(|key| format!("{}@{}", key.name, key.made.to_rfc3339()))
         .collect();
     format!(
-        "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         handle,
         name,
         admin(),
         colour,
         icon,
         shape,
+        bot,
         keys.join("|")
     )
 }

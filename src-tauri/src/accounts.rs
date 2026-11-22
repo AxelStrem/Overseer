@@ -51,6 +51,8 @@ pub struct User {
     pub icon: Option<String>,
     /// The shape of their chip, one of `CHIP_SHAPES`, where they chose one.
     pub shape: Option<String>,
+    /// Whether the account says it is a bot rather than a person.
+    pub bot: bool,
 }
 
 /// What an invite will do when it is used.
@@ -109,6 +111,9 @@ struct Account {
     icon: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shape: Option<String>,
+    /// Whether the account says it is a bot rather than a person.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    bot: bool,
     #[serde(default)]
     sessions: Vec<Secret>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -292,6 +297,7 @@ fn as_user(account: &Account) -> User {
         colour: account.colour.clone(),
         icon: account.icon.clone(),
         shape: account.shape.clone(),
+        bot: account.bot,
     }
 }
 
@@ -365,6 +371,7 @@ impl Accounts {
                     colour: a.colour.clone(),
                     icon: a.icon.clone(),
                     shape: a.shape.clone(),
+                    bot: a.bot,
                 })
                 .collect()
         })
@@ -516,6 +523,7 @@ impl Accounts {
                     colour: None,
                     icon: None,
                     shape: None,
+                    bot: false,
                     sessions: Vec::new(),
                     keys: Vec::new(),
                 }),
@@ -666,8 +674,9 @@ impl Accounts {
         Some(user)
     }
 
-    /// Change one's own display name, chip colour, chip icon, chip shape or password, or any of
-    /// them. An empty colour or shape goes back to the default, and an empty icon to none. A new password needs the current one: a session left open on
+    /// Change one's own display name, chip colour, chip icon, chip shape, whether the account is a
+    /// bot, or password, or any of them. An empty colour or shape goes back to the default, and an
+    /// empty icon to none. A new password needs the current one: a session left open on
     /// someone else's phone must not be enough to take the account.
     pub fn change_own(
         &self,
@@ -676,6 +685,7 @@ impl Accounts {
         colour: Option<&str>,
         icon: Option<&str>,
         shape: Option<&str>,
+        bot: Option<bool>,
         password: Option<(&str, &str)>,
         now: DateTime<Utc>,
     ) -> Result<User, AccountError> {
@@ -712,6 +722,9 @@ impl Accounts {
             }
             if let Some(shape) = shape {
                 account.shape = shape;
+            }
+            if let Some(bot) = bot {
+                account.bot = bot;
             }
             if let Some(hash) = password_hash {
                 account.password = hash;

@@ -754,6 +754,9 @@ struct OwnChange {
     /// The chip's shape, such as `tag`; empty for the default.
     #[serde(default)]
     shape: Option<String>,
+    /// Whether the account is a bot rather than a person.
+    #[serde(default)]
+    bot: Option<bool>,
     #[serde(default)]
     password: Option<String>,
     /// The password now, which a new one needs.
@@ -761,7 +764,7 @@ struct OwnChange {
     current: Option<String>,
 }
 
-/// Change one's own display name, chip colour, chip icon or password.
+/// Change one's own display name, chip, whether the account is a bot, or password.
 async fn change_me(
     State(service): State<Service>,
     Extension(caller): Extension<Caller>,
@@ -792,6 +795,7 @@ async fn change_me(
             body.colour.as_deref(),
             body.icon.as_deref(),
             body.shape.as_deref(),
+            body.bot,
             password,
             chrono::Utc::now(),
         )

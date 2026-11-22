@@ -142,7 +142,7 @@ fn a_new_name_is_seen_without_writing_the_document() {
 
     // What `POST /api/me` does.
     accounts
-        .change_own("ap31", Some("Dima"), None, None, None, None, chrono::Utc::now())
+        .change_own("ap31", Some("Dima"), None, None, None, None, None, chrono::Utc::now())
         .unwrap();
     assert!(std::fs::read_to_string(root.join("people.os")).unwrap().contains("\"Dima\""));
     assert_eq!(read(), ("Dima".to_string(), "ap31".to_string()));
@@ -158,7 +158,7 @@ fn a_styled_name_and_a_chosen_colour_reach_the_directory() {
     let (documents, accounts, root) = served("styled");
     let styled = "<color=#e11d48 | D><color=#2563eb | ima> <icon=bot>";
     accounts
-        .change_own("ap31", Some(styled), Some("#0F766E"), None, None, None, chrono::Utc::now())
+        .change_own("ap31", Some(styled), Some("#0F766E"), None, None, None, None, chrono::Utc::now())
         .unwrap();
     let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
     assert!(directory.contains("- colour = \"#0f766e\""), "{}", directory);
@@ -174,7 +174,7 @@ fn a_styled_name_and_a_chosen_colour_reach_the_directory() {
 
     // An empty colour is the default again.
     accounts
-        .change_own("ap31", None, Some(""), None, None, None, chrono::Utc::now())
+        .change_own("ap31", None, Some(""), None, None, None, None, chrono::Utc::now())
         .unwrap();
     let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
     assert!(!directory.contains("- colour = "), "{}", directory);
@@ -188,7 +188,7 @@ fn a_chosen_icon_reaches_the_directory() {
         assert_eq!(text(&documents.open("ap31/card.os").unwrap(), "author_icon"), "", "none chosen");
     });
     accounts
-        .change_own("ap31", None, None, Some("bot"), None, None, chrono::Utc::now())
+        .change_own("ap31", None, None, Some("bot"), None, None, None, chrono::Utc::now())
         .unwrap();
     let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
     assert!(directory.contains("- icon = \"bot\""), "{}", directory);
@@ -199,7 +199,7 @@ fn a_chosen_icon_reaches_the_directory() {
 
     // An empty icon is none again, and the directory says nothing of it.
     accounts
-        .change_own("ap31", None, None, Some(""), None, None, chrono::Utc::now())
+        .change_own("ap31", None, None, Some(""), None, None, None, chrono::Utc::now())
         .unwrap();
     let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
     assert!(!directory.contains("- icon = "), "{}", directory);
@@ -213,7 +213,7 @@ fn a_chosen_shape_reaches_the_directory() {
         assert_eq!(text(&documents.open("ap31/card.os").unwrap(), "author_shape"), "", "none chosen");
     });
     accounts
-        .change_own("ap31", None, None, None, Some("chainsaw"), None, chrono::Utc::now())
+        .change_own("ap31", None, None, None, Some("chainsaw"), None, None, chrono::Utc::now())
         .unwrap();
     let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
     assert!(directory.contains("- shape = \"chainsaw\""), "{}", directory);
@@ -223,10 +223,37 @@ fn a_chosen_shape_reaches_the_directory() {
     });
 
     accounts
-        .change_own("ap31", None, None, None, Some(""), None, chrono::Utc::now())
+        .change_own("ap31", None, None, None, Some(""), None, None, chrono::Utc::now())
         .unwrap();
     let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
     assert!(!directory.contains("- shape = "), "{}", directory);
+}
+
+#[test]
+fn an_account_marked_a_bot_says_so_in_the_directory() {
+    let _shared = shared();
+    let (_documents, accounts, root) = served("bot");
+    let marked = accounts
+        .change_own("ap31", None, None, None, None, Some(true), None, chrono::Utc::now())
+        .unwrap();
+    assert!(marked.bot);
+    let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
+    assert!(directory.contains("bool bot = false"), "{}", directory);
+    assert_eq!(directory.matches("- bot = true").count(), 1, "bob is a person: {}", directory);
+    assert!(overseer::people::person_of(&root, "ap31").unwrap().bot);
+    assert!(!overseer::people::person_of(&root, "bob").unwrap().bot);
+
+    // A change of name leaves the flag as it was.
+    accounts
+        .change_own("ap31", Some("Dima"), None, None, None, None, None, chrono::Utc::now())
+        .unwrap();
+    assert!(overseer::people::person_of(&root, "ap31").unwrap().bot);
+
+    accounts
+        .change_own("ap31", None, None, None, None, Some(false), None, chrono::Utc::now())
+        .unwrap();
+    let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
+    assert!(!directory.contains("- bot = "), "{}", directory);
 }
 
 #[test]

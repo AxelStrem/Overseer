@@ -83,10 +83,11 @@ export const OPERATIONS = {
             await app.loadFile(app.currentFile)
         }
     },
-    save_profile: browser(async ({ name, colour, icon, shape }, app) => {
+    save_profile: browser(async ({ name, colour, icon, shape, bot }, app) => {
         if (!text(name).trim()) throw new Error('A name cannot be empty.')
         const person = await request('POST', '/account/me', {
-            name: text(name).trim(), colour: text(colour), icon: text(icon), shape: text(shape)
+            name: text(name).trim(), colour: text(colour), icon: text(icon), shape: text(shape),
+            bot: text(bot) === 'true'
         })
         if (app.account) app.account.person = person
         return 'Saved.'

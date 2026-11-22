@@ -1560,7 +1560,7 @@ whoever is looking, `me/name` what they are called, and `me/admin` whether they 
 may invite others and give someone a new password. `me/written_name` is the name as they wrote
 it, markup and all, for a profile that changes it. `me/colour`, `me/icon` and `me/shape` are
 their chip as the directory of people below draws it - a colour they did not choose is the
-directory's own. `me/keys` lists the keys they made to reach the server from scripts and bots, keyed
+directory's own, and `me/bot` is whether the directory says their account is a bot. `me/keys` lists the keys they made to reach the server from scripts and bots, keyed
 by `name`, each with `made` and `used`, the timestamps it was made and last used - empty where it
 never was; the keys themselves are never in it. They are all empty and false where nobody is
 signed in, and in the desktop app. `me` is there whether or not settings are in force, so a document worked
@@ -1568,9 +1568,10 @@ out on its own reads it as empty and does not fail on it; a mounted document see
 place it is mounted at.
 
 A document names people by username and shows them by name through the server's directory,
-`people.os` at its root: a list `People` keyed by `tag`, one entry per account with its `name` - and its `colour`, `icon` and `shape`, where the person chose them. The
+`people.os` at its root: a list `People` keyed by `tag`, one entry per account with its `name` - and its `colour`, `icon` and `shape`, where the person chose them, and
+`bot = true` for an account marked as a bot, so that a reader can tell bots from people. The
 server writes it from its accounts, everyone may read it, and nobody changes it through a document
-- a person changes their own name, chip colour, chip icon and chip shape in their profile. The name is markdown, as any
+- a person changes their own name, chip colour, chip icon, chip shape and whether the account is a bot in their profile. The name is markdown, as any
 vocabulary entry's is (see "Tags"), and `me/name` is it as plain text. Mounted, it is a vocabulary like any other, so
 a field holding `ap31` and a `<#ap31>` in any text draw that person's chip with the name they have
 now; renamed, they are shown by the new name everywhere, and no document is written for it:

@@ -28,6 +28,8 @@ pub struct Person {
     pub icon: Option<String>,
     /// The shape of their chip, where they chose one; the field's otherwise.
     pub shape: Option<String>,
+    /// Whether the account says it is a bot rather than a person.
+    pub bot: bool,
 }
 
 /// The directory's text, an entry for each person in the order given.
@@ -43,6 +45,7 @@ pub fn text(people: &[Person]) -> String {
     out.push_str("        string colour = \"#6b7280\"\r\n");
     out.push_str("        string icon = \"\"\r\n");
     out.push_str("        string shape = \"\"\r\n");
+    out.push_str("        bool bot = false\r\n");
     out.push_str("    }\r\n");
     out.push_str("}\r\n");
     out.push_str("\r\n");
@@ -63,6 +66,9 @@ pub fn text(people: &[Person]) -> String {
         }
         if let Some(shape) = &person.shape {
             out.push_str(&format!("        - shape = {}\r\n", quoted(shape)));
+        }
+        if person.bot {
+            out.push_str("        - bot = true\r\n");
         }
         out.push_str("    }\r\n");
     }
@@ -188,7 +194,7 @@ fn collect(nodes: &[OverseerNode], out: &mut Vec<Person>) {
     for node in nodes {
         if node.node_type == "list" {
             for (_, entry) in crate::addressing::effective_children(node) {
-                let field = |name: &str| {
+                let value = |name: &str| {
                     crate::addressing::effective_children(entry)
                         .into_iter()
                         .map(|(_, child)| child)
@@ -200,10 +206,10 @@ fn collect(nodes: &[OverseerNode], out: &mut Vec<Person>) {
                                 .or_else(|| child.parameters.get("value"))
                                 .cloned()
                         })
-                        .and_then(|value| match value {
-                            OverseerValue::String(s) => Some(s),
-                            _ => None,
-                        })
+                };
+                let field = |name: &str| match value(name) {
+                    Some(OverseerValue::String(s)) => Some(s),
+                    _ => None,
                 };
                 if let Some(tag) = field("tag") {
                     out.push(Person {
@@ -212,6 +218,7 @@ fn collect(nodes: &[OverseerNode], out: &mut Vec<Person>) {
                         colour: field("colour"),
                         icon: field("icon"),
                         shape: field("shape"),
+                        bot: matches!(value("bot"), Some(OverseerValue::Boolean(true))),
                     });
                 }
             }
@@ -235,9 +242,10 @@ mod tests {
             colour: colour.map(String::from),
             icon: icon.map(String::from),
             shape: shape.map(String::from),
+            bot: false,
         };
         let people = vec![
-            person("ap31", "Dmitrii", Some("#e11d48"), None, Some("tag")),
+            Person { bot: true, ..person("ap31", "Dmitrii", Some("#e11d48"), None, Some("tag")) },
             person("bob", "Bob \"the\" \\ Builder", None, Some("hammer"), None),
         ];
         write(&dir, &people).unwrap();
@@ -252,6 +260,12 @@ mod tests {
         assert_eq!(text.matches("- icon = ").count(), 1, "{}", text);
         assert_eq!(text.matches("- shape = \"tag\"").count(), 1, "{}", text);
         assert!(text.contains("string shape = \"\""), "{}", text);
+        // Only a bot says so; a person is the template's.
+        assert_eq!(text.matches("- bot = true").count(), 1, "{}", text);
+        assert_eq!(
+            everyone(&dir).iter().map(|p| p.bot).collect::<Vec<_>>(),
+            vec![true, false]
+        );
         assert_eq!(name_of(&dir, "bob").as_deref(), Some("Bob \"the\" \\ Builder"));
         assert_eq!(name_of(&dir, "carol"), None);
         std::fs::remove_dir_all(&dir).ok();

@@ -28,6 +28,7 @@ const DRAWER: &str = r#"tab drawer {
     string colour = $(me/colour)
     string icon = $(me/icon)
     string shape = $(me/shape)
+    bool bot = $(me/bot)
     int keys = $(me/keys.count())
     string first_key = $(me/keys.first()/name)
     enum look (vocabulary="/host/themes") = "default"
@@ -212,6 +213,7 @@ fn a_name_written_with_markup_is_plain_in_me_name_and_whole_in_written_name() {
         colour: None,
         icon: None,
         shape: None,
+        bot: false,
     };
     overseer::people::write(&root, &[person_named("ap31", "**Dmitrii** <icon=bot>"), person_named("bob", "")]).unwrap();
     let nodes = documents.as_asker(person("ap31"), || documents.open("drawer.os").unwrap());
@@ -309,10 +311,14 @@ fn me_carries_the_chip_the_directory_draws_and_the_keys_the_server_holds() {
         colour: colour.map(String::from),
         icon: icon.map(String::from),
         shape: shape.map(String::from),
+        bot: false,
     };
     overseer::people::write(
         &root,
-        &[chosen("ap31", Some("#ff8800"), Some("bot"), Some("tag")), chosen("bob", None, None, None)],
+        &[
+            overseer::people::Person { bot: true, ..chosen("ap31", Some("#ff8800"), Some("bot"), Some("tag")) },
+            chosen("bob", None, None, None),
+        ],
     )
     .unwrap();
     let made = chrono::DateTime::parse_from_rfc3339("2026-11-01T10:00:00Z").unwrap().to_utc();
@@ -331,6 +337,7 @@ fn me_carries_the_chip_the_directory_draws_and_the_keys_the_server_holds() {
     assert_eq!(text(&nodes, "colour"), "#ff8800");
     assert_eq!(text(&nodes, "icon"), "bot");
     assert_eq!(text(&nodes, "shape"), "tag");
+    assert_eq!(value(&nodes, "bot"), OverseerValue::Boolean(true));
     assert_eq!(value(&nodes, "keys"), OverseerValue::Integer(2));
     assert_eq!(text(&nodes, "first_key"), "laptop");
 
@@ -344,6 +351,7 @@ fn me_carries_the_chip_the_directory_draws_and_the_keys_the_server_holds() {
     assert_eq!(text(&nodes, "colour"), "#6b7280");
     assert_eq!(text(&nodes, "icon"), "");
     assert_eq!(text(&nodes, "shape"), "");
+    assert_eq!(value(&nodes, "bot"), OverseerValue::Boolean(false));
     assert_eq!(value(&nodes, "keys"), OverseerValue::Integer(0));
 
     // Nobody signed in holds no keys, whatever was said.

@@ -360,13 +360,15 @@ tab drawer (label="Drawer", mutable=true, alignment="near") {
                     }
                 }
             }
-            button save (label="Save the name, colour, icon and shape") {
+            bool bot (label="This account is a bot") = $(me/bot)
+            button save (label="Save the profile") {
                 on click {
                     call (name="save_profile", into="../said") {
                         - name = $(../name)
                         - colour = $(../colour)
                         - icon = $(../icon)
                         - shape = $(../shape)
+                        - bot = $(../bot)
                     }
                 }
             }

@@ -1248,6 +1248,18 @@
           }
         },
         {
+          "name": "bot",
+          "node_type": "bool",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Boolean": false
+            }
+          }
+        },
+        {
           "name": "keys",
           "node_type": "list",
           "parameters": {
@@ -2696,6 +2708,18 @@
             },
             "value": {
               "String": ""
+            }
+          }
+        },
+        {
+          "name": "bot",
+          "node_type": "bool",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            },
+            "value": {
+              "Boolean": false
             }
           }
         },
