@@ -222,6 +222,8 @@ fn the_project_tracker_draws_the_columns_it_means_to() {
     assert_eq!(
         names(&nodes, "Items"),
         vec![
+            // Who is at work on the item, a line over the row rather than a column.
+            "worker_chip",
             // The grip each row is dragged by, in a column of its own with no heading, and a
             // separator before each column with a rule at its left.
             "mark#0",

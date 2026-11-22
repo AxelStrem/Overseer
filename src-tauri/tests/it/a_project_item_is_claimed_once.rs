@@ -4,6 +4,9 @@
 //! Loops run side by side on one tracker, and two of them must never work the same item. Reading
 //! `working` and then setting it would let two loops both see it free; a press is one write, so the
 //! check and the set happen together and only the first press gets the item.
+//!
+//! The press also records whose key made it, in `worker_by`, so the tracker can draw the account
+//! at work as its chip without the loop writing it separately.
 
 use crate::common::serial;
 use overseer::app_api;
@@ -66,5 +69,26 @@ fn claiming_one_item_leaves_the_others_free() {
         let other = press_claim(&file, "editor").expect("another item's claim");
         assert!(other.wrote);
         assert_eq!(std::fs::read_to_string(&file).unwrap().matches("- working = true").count(), 2);
+    });
+}
+
+#[test]
+fn a_claim_records_the_account_that_pressed_it() {
+    serialised(|| {
+        let root = std::env::temp_dir().join(format!("overseer_project_claim_by_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("bot")).unwrap();
+        let file = root.join("bot/p.os");
+        std::fs::write(&file, EXAMPLE).unwrap();
+        app_api::forget_baseline();
+        app_api::forget_dependencies();
+        overseer::viewstate::forget_all();
+        let file = file.to_string_lossy().to_string();
+
+        let asker = overseer::access::Asker::Person("bot".into());
+        overseer::access::within(asker, &root, || press_claim(&file, "brace")).expect("the claim");
+        let claimed = std::fs::read_to_string(&file).unwrap();
+        assert!(claimed.contains("- working = true"), "{}", claimed);
+        assert_eq!(claimed.matches("- worker_by = \"bot\"").count(), 1, "{}", claimed);
     });
 }

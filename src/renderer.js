@@ -4181,7 +4181,7 @@ export class OverseerRenderer {
             .join(' ')
 
         const column = new Map(across.map((c, i) => [c.name, i + 1]))
-        const aligned = new Map(across.map((c) => [c.name, c.align || '']))
+        const aligned = new Map(columns.map((c) => [c.name, c.align || '']))
         // The column a tree's lines are drawn in, and its rows stand in by their depth: the key's,
         // or the first where the key is not a column. Kept on the element for `drawTreeLines`,
         // which draws the lines again without the table.
@@ -4232,6 +4232,9 @@ export class OverseerRenderer {
                     // own that happens to sit next to it.
                     cell.style.gridColumn = '1 / -1'
                     cell.classList.add('table-own-line')
+                    // A line of its own has no column to line up with, but its field can still
+                    // place its value along the row: a stamp in the row's far corner.
+                    this.alignInColumn(cell, aligned.get(name))
                 }
                 // In a table a row is a row whatever its template says, so a separator is turned
                 // by where the table put it: down its column, or across the row on a line of its own.

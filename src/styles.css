@@ -1588,6 +1588,14 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     min-height: 0;
 }
 
+/* A field on a line of its own placed along it as its `alignment` says. */
+.overseer-list.view-table > .table-row > .table-own-line.column-center {
+    text-align: center;
+}
+.overseer-list.view-table > .table-row > .table-own-line.column-far {
+    text-align: right;
+}
+
 /* The heading. Quiet on purpose: it names the columns and should not compete with them. */
 .table-header {
     font-size: var(--ov-table-heading-size, 11px);

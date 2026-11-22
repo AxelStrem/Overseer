@@ -158,6 +158,22 @@ describe('a list drawn as a table', () => {
     // Inside its row, so it keeps the row's box and whatever colour the row is tinted.
     expect(note.parentElement.classList.contains('table-row')).toBe(true)
   })
+
+  it('places a line of its own along the row as its alignment says', () => {
+    // A stamp in the row's far corner: who is at work on an item, over its cells.
+    const columns = JSON.parse(COLUMNS).map(c => c.name === 'note' ? { ...c, align: 'far' } : c)
+    const withNote = row(3, [
+      field('handle', 'h3', { label: 'id', width: 10 }),
+      field('note', 'worth saying', { label: '' }),
+    ])
+    render([withNote], { _columns: { String: JSON.stringify(columns) } })
+    const note = Array.from(rowsOf()[0].children).find(c => c.textContent.includes('worth saying'))
+
+    expect(note.classList.contains('table-own-line')).toBe(true)
+    expect(note.classList.contains('column-far')).toBe(true)
+    const styles = readFileSync('src/styles.css', 'utf8')
+    expect(styles).toMatch(/\.table-own-line\.column-far\s*\{\s*text-align:\s*right;/)
+  })
 })
 
 describe('the room a table does not have', () => {

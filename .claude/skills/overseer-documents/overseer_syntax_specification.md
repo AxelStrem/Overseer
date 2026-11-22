@@ -2849,7 +2849,8 @@ div Cell (background-color=$(alive ? "#4ade80" : "#0f2a1d"), ease=$(alive ? "120
 for a heading naming them and `sticky=true` to keep the heading in view while the rows scroll. A
 node of an entry that says `span="row"` is not a column but a line of its own across the row,
 under the cells when it comes last and over them when it comes first - a folded thread of
-comments under each task.
+comments under each task. Its `alignment` places its value along that line: `far` puts it at the
+row's end, a stamp in its corner.
 
 ```overseer
 list Items (entry=<Item>, view="table", header=true, sticky=true) { }
