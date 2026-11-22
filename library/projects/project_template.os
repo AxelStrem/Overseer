@@ -1,4 +1,4 @@
-tab project (label="Project", mutable=true) {
+tab project (label=$(name), mutable=true) {
     context vocabulary = "/project/Items, /project/History, /project/Discussion, /project/Features"
     // Raised whenever Stages, Complexities, Flags or the fields of an item change, so a program that reads projects can tell it was written against another.
     int template_version (hidden=true) = 1

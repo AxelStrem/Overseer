@@ -1,4 +1,4 @@
-<projects/project_template.os/project> project (label="Editor") {
+<projects/project_template.os/project> project {
     - definition (source="project.project.os/definition", lazy=false)
     - name = "Editor"
     - Items {

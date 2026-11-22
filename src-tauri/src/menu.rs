@@ -162,7 +162,8 @@ pub fn drop(file: &Path, path: &str) -> Result<Vec<Place>> {
 ///
 /// `locate` says which file an entry names - the entry itself on the desktop, a document under its
 /// folder on the server - or nothing, for one that cannot be read there. Only the document's first
-/// lines are read, so opening the drawer does not read every document it lists in full.
+/// lines are read, so opening the drawer does not read every document it lists in full - unless
+/// its label is a formula, which only the whole document can answer (see `label_in`).
 pub fn labelled(places: Vec<Place>, locate: impl Fn(&str) -> Option<std::path::PathBuf>) -> Vec<Place> {
     places
         .into_iter()
@@ -178,7 +179,8 @@ pub fn labelled(places: Vec<Place>, locate: impl Fn(&str) -> Option<std::path::P
 ///
 /// Wrapping a whole document in a tab is a habit rather than a rule, but where it is followed the
 /// tab's label is what the document calls itself - and what it is shown as when documents are put
-/// together, each in its own tab.
+/// together, each in its own tab. A label that is a formula - the project template's `$(name)` -
+/// is worked out from the whole document; one that cannot be is no label.
 pub fn label_in(file: &Path) -> Option<String> {
     use std::io::BufRead;
     let reader = std::io::BufReader::new(std::fs::File::open(file).ok()?);
@@ -200,25 +202,61 @@ pub fn label_in(file: &Path) -> Option<String> {
             // The tab's header and nothing of what it holds: parsed as an empty tab.
             let header = format!("{}}}\n", &head[..=open]);
             let (_, nodes) = crate::parser::parse_document(&header).ok()?;
-            let label = tab_label(nodes.first()?, file.parent()?, 8)?;
+            let label = match tab_label(nodes.first()?, file.parent()?, 8)? {
+                Label::Text(text) => text,
+                Label::Formula => worked_out_label(file)?,
+            };
             return (!label.is_empty()).then_some(label);
         }
     }
     None
 }
 
+/// What a tab's label is, as its header says: the text, or a formula that has to be worked out.
+enum Label {
+    Text(String),
+    Formula,
+}
+
 /// What a tab says it is called: its own label, or what its template says when it gives none.
 /// Nothing when it is not a tab, nor an instance of one - the template followed through the files
 /// it names, `depth` of them at most, as `bases` finds them for a document in `beside`. A template
 /// of the document's own would be further down than the lines read, and is not looked for.
-fn tab_label(node: &OverseerNode, beside: &Path, depth: usize) -> Option<String> {
-    let own = text_of(node.parameters.get("label")).trim().to_string();
+fn tab_label(node: &OverseerNode, beside: &Path, depth: usize) -> Option<Label> {
+    let own = match node.parameters.get("label") {
+        Some(OverseerValue::Formula(_)) => Label::Formula,
+        value => Label::Text(text_of(value).trim().to_string()),
+    };
     let Some(template) = &node.template else {
         return (node.node_type == "tab").then_some(own);
     };
     let base = crate::bases::find_beside(beside, template).filter(|_| depth > 0)?;
     let inherited = tab_label(&base, beside, depth - 1)?;
-    Some(if own.is_empty() { inherited } else { own })
+    Some(match own {
+        Label::Text(text) if text.is_empty() => inherited,
+        own => own,
+    })
+}
+
+/// The label of the document's first node as the document works it out - for a label that is a
+/// formula, such as the project template's `$(name)`, which only the whole document can answer.
+/// The open goes through `load_document`, so a document opened before, and not changed since, is
+/// handed back as it was worked out rather than worked out again.
+fn worked_out_label(file: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let nodes = crate::docmgr::manager::DocumentManager::with_document_file(Some(file.to_path_buf()), || {
+        app_api::load_document(text)
+    })
+    .ok()?;
+    let first = nodes.first()?;
+    let label = first.parameters.get("_computed_label").or_else(|| first.parameters.get("label"));
+    match label {
+        Some(OverseerValue::Formula(_)) | None => None,
+        // What the resolver leaves in place of a formula it could not work out, or one that
+        // came to nothing.
+        Some(OverseerValue::String(text)) if text == "invalid formula error" || text == "null" => None,
+        value => Some(text_of(value).trim().to_string()),
+    }
 }
 
 /// Where the first `{` outside a quoted string is.

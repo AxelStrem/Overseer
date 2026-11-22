@@ -85,7 +85,7 @@ URL without any credentials in it; an SSH remote stays as it is.
 ## 5. The tracker: `projects/<name>.os`
 
 ```overseer
-<projects/project_template.os/project> project (label="<Name as people say it>") {
+<projects/project_template.os/project> project {
     - definition (source="<name>.project.os/definition", lazy=false)
     - name = "<Name as people say it>"
     - description = "<one sentence>"
@@ -101,9 +101,6 @@ URL without any credentials in it; an SSH remote stays as it is.
     - History { }
 }
 ```
-
-**Give the tab its `label`**, the project's name as `name` gives it: the browser tab and the
-drawer call a document by the label of its tab, and the template's own is only "Project".
 
 **Always write `- Items`, `- Labels` and `- History`**, as `- Items { }` when there is nothing to
 carry over. AgentLoop's `tracker.py` reads the tracker's own text, not what the template fills in,

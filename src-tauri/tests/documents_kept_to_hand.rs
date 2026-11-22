@@ -245,3 +245,38 @@ fn a_tracker_the_new_tracker_skill_starts_is_called_by_the_projects_name() {
         assert_eq!(label.as_deref(), Some("Garden planner"));
     });
 }
+
+#[test]
+fn a_tab_whose_label_is_a_formula_is_called_by_what_it_works_out_to() {
+    // The project template's tab is `label=$(name)`, so each tracker is called by its project's
+    // name; one that gives a label of its own is still called by that.
+    serialised(|| {
+        let root = a_folder("formula_labels");
+        let library = a_folder("formula_labels_library");
+        std::fs::create_dir_all(library.join("projects")).unwrap();
+        std::fs::write(
+            library.join("projects").join("project_template.os"),
+            "tab project (label=$(name), mutable=true) {\n    string name = \"Untitled project\"\n}\n",
+        )
+        .unwrap();
+        let docs = [
+            ("garden.os", "<projects/project_template.os/project> project {\n    - name = \"Garden\"\n}\n"),
+            ("own.os", "<projects/project_template.os/project> project (label=\"Mine\") {\n    - name = \"Garden\"\n}\n"),
+            ("plain.os", "tab sheet (label=$(title)) {\n    string title = \"Sheet\"\n}\n"),
+            ("broken.os", "tab sheet (label=$(nowhere.count())) {\n}\n"),
+            ("broken2.os", "tab sheet (label=$(1 + )) {\n}\n"),
+        ];
+        let file = root.join(menu::FILE);
+        for (name, text) in docs {
+            std::fs::write(root.join(name), text).unwrap();
+            menu::keep(&file, &root.join(name).to_string_lossy(), "").unwrap();
+        }
+        std::env::set_var("OVERSEER_LIBRARY", &library);
+        let places = menu::labelled(menu::places(&file).unwrap(), |path| Some(std::path::PathBuf::from(path)));
+        let broken = menu::label_in(&root.join("broken.os"));
+        std::env::remove_var("OVERSEER_LIBRARY");
+        let labels: Vec<String> = places.into_iter().map(|p| p.label).collect();
+        assert_eq!(labels, vec!["Garden", "Mine", "Sheet", "", ""]);
+        assert_eq!(broken, None);
+    });
+}
