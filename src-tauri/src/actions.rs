@@ -2926,21 +2926,20 @@ impl ActionExecutor {
         fn is_named(n: &OverseerNode, base: &str) -> bool {
             !crate::contexts::is_copy(n) && matches_base(eff_name(n), base)
         }
-        // Helper: DFS to find a descendant by name through transparent nodes, returning index chain from 'cur'
-        fn find_child_chain(cur: &OverseerNode, target: &str) -> Option<Vec<usize>> {
+        // Every descendant named `target` that is reached through transparent nodes only, as the
+        // index chain from `cur`, in document order. Not only the first: a template declared in a
+        // hidden div and an unnamed instance of it beside that div are both named by the
+        // template's name, and the path goes on into whichever holds its next step.
+        fn child_chains(cur: &OverseerNode, target: &str, out: &mut Vec<Vec<usize>>, prefix: &mut Vec<usize>) {
             for (i, ch) in cur.children.iter().enumerate() {
+                prefix.push(i);
                 if is_named(ch, target) {
-                    return Some(vec![i]);
+                    out.push(prefix.clone());
+                } else if ch.is_hierarchy_transparent {
+                    child_chains(ch, target, out, prefix);
                 }
-                if ch.is_hierarchy_transparent {
-                    if let Some(mut sub) = find_child_chain(ch, target) {
-                        let mut out = vec![i];
-                        out.append(&mut sub);
-                        return Some(out);
-                    }
-                }
+                prefix.pop();
             }
-            None
         }
         // Helper: select the k-th direct child whose effective name matches target
         fn find_kth_direct_child(cur: &OverseerNode, target: &str, k: usize) -> Option<usize> {
@@ -2955,56 +2954,16 @@ impl ActionExecutor {
             }
             None
         }
-        // Helper: search from roots for first segment, allowing ordinal and transparent wrappers
-        fn find_root_chain(nodes: &Vec<OverseerNode>, first_seg: &str) -> Option<Vec<usize>> {
-            let (base, ord) = parse_seg(first_seg);
-            if let Some(k) = ord {
-                // k-th direct root with effective name == base
-                let mut count = 0usize;
-                for (i, n) in nodes.iter().enumerate() {
-                    if is_named(n, base) {
-                        if count == k {
-                            return Some(vec![i]);
-                        }
-                        count += 1;
-                    }
-                }
-                None
-            } else {
-                // No ordinal: try direct root first, else search through transparent wrappers
-                for (i, n) in nodes.iter().enumerate() {
-                    if is_named(n, base) {
-                        return Some(vec![i]);
-                    }
-                    if let Some(mut sub) = find_child_chain(n, base) {
-                        let mut out = vec![i];
-                        out.append(&mut sub);
-                        return Some(out);
-                    }
-                }
-                None
+        fn descend<'a>(mut node: &'a OverseerNode, chain: &[usize]) -> &'a OverseerNode {
+            for idx in chain {
+                node = &node.children[*idx];
             }
+            node
         }
-
-        let mut indices: Vec<usize> = Vec::new();
-        // Find first segment anywhere in the (transparent-flattened) roots
-        let (first, first_position) = split_position(&path[0]);
-        let mut chain = find_root_chain(nodes, first)?;
-        indices.append(&mut chain);
-        // Walk remaining segments, allowing transparent traversal and ordinal selection at each step
-        let mut cur: &OverseerNode = {
-            let mut node_ref: &OverseerNode = &nodes[indices[0]];
-            for idx in indices.iter().skip(1) {
-                node_ref = &node_ref.children[*idx];
-            }
-            node_ref
-        };
-        if let Some(n) = first_position {
-            let at = at_position(cur, n)?;
-            indices.push(at);
-            cur = &cur.children[at];
-        }
-        for seg in &path[1..] {
+        // The rest of the path from `cur`, as the index chain under it: each candidate for a step
+        // tried in turn, the first that resolves the whole of what follows taken.
+        fn walk(cur: &OverseerNode, rest: &[String]) -> Option<Vec<usize>> {
+            let Some(seg) = rest.first() else { return Some(Vec::new()) };
             // A path going on into an entry the window left unworked reaches it - see
             // `resolver::note_reached`.
             crate::resolver::note_reached(cur);
@@ -3014,33 +2973,66 @@ impl ActionExecutor {
             // may share its name - the project template's `definition/definition`.
             if eff_name(cur) == base && ord.is_none() && position.is_none() && cur.node_type != "mount" {
                 // Segment refers to current node by name; continue
-                continue;
+                return walk(cur, &rest[1..]);
             }
-            let next_idx_opt = if let Some(k) = ord {
-                find_kth_direct_child(cur, base, k).map(|i| vec![i])
-            } else {
-                find_child_chain(cur, base)
+            let candidates = match ord {
+                Some(k) => find_kth_direct_child(cur, base, k).map(|i| vec![i]).into_iter().collect(),
+                None => {
+                    let mut out = Vec::new();
+                    child_chains(cur, base, &mut out, &mut Vec::new());
+                    out
+                }
             };
-            if let Some(mut sub) = next_idx_opt {
-                indices.append(&mut sub);
-                // advance cur to new node
-                let mut node_ref: &OverseerNode = &nodes[indices[0]];
-                for idx in indices.iter().skip(1) {
-                    node_ref = &node_ref.children[*idx];
-                }
-                cur = node_ref;
-                if let Some(n) = position {
-                    let at = at_position(cur, n)?;
-                    indices.push(at);
-                    cur = &cur.children[at];
-                }
-            } else {
+            if candidates.is_empty() {
                 // Perhaps in a part of the list it has not read - see `resolver::note_missed_under`.
                 crate::resolver::note_missed_under(cur);
                 return None;
             }
+            candidates.into_iter().find_map(|mut chain| {
+                let mut next = descend(cur, &chain);
+                if let Some(n) = position {
+                    let at = at_position(next, n)?;
+                    chain.push(at);
+                    next = &next.children[at];
+                }
+                let mut tail = walk(next, &rest[1..])?;
+                chain.append(&mut tail);
+                Some(chain)
+            })
         }
-        Some(indices)
+
+        // The first segment, among the roots or anywhere under them through transparent wrappers.
+        let (first, first_position) = split_position(&path[0]);
+        let (base, ord) = parse_seg(first);
+        let mut roots: Vec<Vec<usize>> = Vec::new();
+        match ord {
+            Some(k) => {
+                if let Some((i, _)) = nodes.iter().enumerate().filter(|(_, n)| is_named(n, base)).nth(k) {
+                    roots.push(vec![i]);
+                }
+            }
+            None => {
+                for (i, n) in nodes.iter().enumerate() {
+                    if is_named(n, base) {
+                        roots.push(vec![i]);
+                    } else {
+                        let mut prefix = vec![i];
+                        child_chains(n, base, &mut roots, &mut prefix);
+                    }
+                }
+            }
+        }
+        roots.into_iter().find_map(|mut chain| {
+            let mut cur = descend(&nodes[chain[0]], &chain[1..]);
+            if let Some(n) = first_position {
+                let at = at_position(cur, n)?;
+                chain.push(at);
+                cur = &cur.children[at];
+            }
+            let mut tail = walk(cur, &path[1..])?;
+            chain.append(&mut tail);
+            Some(chain)
+        })
     }
 
     fn get_node_mut_by_indices<'a>(
