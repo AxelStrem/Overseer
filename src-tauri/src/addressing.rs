@@ -195,7 +195,7 @@ pub fn is_wrapper(node: &OverseerNode) -> bool {
 /// and not in addresses, so a `..` written inside one landed on it, a level short of where the
 /// document meant - and a formula that had learned to say `../..` for that is one level too far
 /// now, which the documents were changed for when this was.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Level {
     seen: std::collections::HashMap<String, usize>,
 }

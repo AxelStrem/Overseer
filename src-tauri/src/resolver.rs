@@ -3238,6 +3238,16 @@ fn resolve_node_templates(
                                         // Assign ordering index after authored children (authored indices assigned at parse time). Since these are cloned now, just use sequence.
                                         child.child_original_index = Some(c_idx);
                                     }
+                                    // The walk is at the list here, and steps into the entry
+                                    // only once every entry is made: stepped into for the
+                                    // instances it expands, and put back as it was.
+                                    let walked = WALKED.with(|w| w.borrow().clone());
+                                    let stepped = step_into(&resolved_item);
+                                    if expand_unnamed_instances(&mut resolved_item, all_nodes, missed) {
+                                        local_progress = true;
+                                    }
+                                    step_out(stepped);
+                                    WALKED.with(|w| *w.borrow_mut() = walked);
                                     merge_node(&mut resolved_item, &list_item.children, all_nodes);
                                     // The entry's own text, rather than its template's: what it
                                     // wrote is given back from it, as an instance's is - see
@@ -3755,6 +3765,18 @@ fn resolve_node_templates(
                     "_explicit_overrides".to_string(),
                     OverseerValue::String(override_names.join(",")),
                 );
+                // Under the instance's own key, as the walk into its children will be.
+                if let Some(key) = &instantiating {
+                    INSTANTIATING.with(|above| above.borrow_mut().push(key.clone()));
+                }
+                if expand_unnamed_instances(node, all_nodes, missed) {
+                    local_progress = true;
+                }
+                if instantiating.is_some() {
+                    INSTANTIATING.with(|above| {
+                        above.borrow_mut().pop();
+                    });
+                }
                 merge_node(node, &instance_children, all_nodes);
             }
 
@@ -5030,6 +5052,37 @@ fn after(path: &[usize]) -> Vec<usize> {
         *last += 1;
     }
     next
+}
+
+/// Expands the unnamed instances in a fresh copy of a template, through the wrappers around
+/// them, before a block is merged onto it.
+///
+/// An unnamed instance adds no step, so a block names what is inside it as though it sat beside
+/// it: an entry of `Row` writes `- count` for the `count` of the `<Box> { }` that `Row` holds.
+/// A pass resolves from a copy of the document taken as it starts, in which that instance is
+/// still unexpanded and holds nothing, so `count` was not found, and the entry's value was kept
+/// as a stray field the read never reached. Expanded here by the same call the walk into the
+/// children would make, which then finds them made and leaves them be. A named instance needs
+/// nothing: a block reaches into it by its name, and its block is merged when it is expanded.
+fn expand_unnamed_instances(
+    node: &mut OverseerNode,
+    all_nodes: &[OverseerNode],
+    missed: &mut Vec<String>,
+) -> bool {
+    let mut progress = false;
+    for child in node.children.iter_mut() {
+        if !crate::addressing::is_wrapper(child) {
+            continue;
+        }
+        if child.template.is_some() {
+            if resolve_node_templates(child, all_nodes, missed) {
+                progress = true;
+            }
+        } else if expand_unnamed_instances(child, all_nodes, missed) {
+            progress = true;
+        }
+    }
+    progress
 }
 
 /// Merges an instance's block into a clone of its template, walking the two together.

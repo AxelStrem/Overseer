@@ -45,7 +45,9 @@ added as an override in the nearest written block around it. A node keeps the ma
 outermost block that wrote it: a document made from a base writes through an unnamed instance the
 base holds, and that instance's own block, the base's text, is merged over it afterwards. The
 writer walks through an unnamed instance as through an unnamed div, since neither is a step of
-any address.
+any address. For the block's merge to find what such an instance holds, the unnamed instances in
+the copy of the template are expanded before the block is merged onto it: a pass resolves from a
+copy of the document taken as it starts, in which an instance a template holds is still empty.
 
 A context (`context theme { ... }`) is the other thing the writer gives back from text rather than
 from the tree. Once templates are instantiated, `contexts.rs` works out what each container that
