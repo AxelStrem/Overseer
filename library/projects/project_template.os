@@ -230,7 +230,7 @@ tab project (label=$(name), mutable=true) {
         }
 
         div Run (layout="horizontal", margin=0, spacing=6, alignment="center") {
-            timestamp at (label="when", format="datetime", precision="minutes", width=14%) = "2026-01-01T00:00:00Z"
+            timestamp at (label="when", format="datetime", precision="minutes", width=13%) = "2026-01-01T00:00:00Z"
             mark (type="separator")
             string kind (label="kind", width=8%) = ""
             mark (type="separator")
@@ -240,19 +240,19 @@ tab project (label=$(name), mutable=true) {
             mark (type="separator")
             int points (label="pts", format="trim", width=5%) = 1
             mark (type="separator")
-            float cost (label="$", precision=2, width=7%) = 0.0
+            float cost (label="cost", prefix="$", precision=2, width=7%) = 0.0
             mark (type="separator")
-            int read (label="read k", format="trim", width=8%) = 0
+            int read (label="read", suffix="k", format="trim", width=8%) = 0
             mark (type="separator")
-            int written (label="written k", format="trim", width=8%) = 0
+            int written (label="written", suffix="k", format="trim", width=8%) = 0
             mark (type="separator")
-            int output (label="output k", format="trim", width=7%) = 0
+            int output (label="output", suffix="k", format="trim", width=7%) = 0
             mark (type="separator")
             int turns (label="turns", format="trim", width=5%) = 0
             mark (type="separator")
-            float minutes (label="min", precision=1, width=5%) = 0.0
+            float minutes (label="time", suffix=" min", precision=1, width=7%) = 0.0
             mark (type="separator")
-            int lines (label="lines", format="trim", width=6%) = 0
+            int lines (label="lines", format="trim", width=5%) = 0
         }
 
         div Item (layout="horizontal", margin=0, margin-bottom=3px, spacing=6, padding=2, alignment="center",
@@ -456,6 +456,7 @@ tab project (label=$(name), mutable=true) {
             timestamp said_at (hidden=true) =
                 $(../Talk/Comments.filter(|c| c/at > ../closed_at).count() == 0 ? ../closed_at :
                   ../Talk/Comments.map(|c| c/at).max())
+            string last_author (hidden=true) = $(../Talk/Comments.reduce("", |a, c| c/author))
         }
 
         div Topic (layout="horizontal", margin=0, margin-bottom=3px, spacing=6, padding=2, alignment="center",
@@ -886,6 +887,28 @@ tab project (label=$(name), mutable=true) {
             }
         }
 
+        div (layout="flow", min-width=280px, spacing=12) {
+            div (layout="vertical", margin=0, spacing=4) {
+                text owners_header (markdown=true) = "**Open items by owner**"
+                chart owners (kind="pie", height=180px) {
+                    plot each (source=$(/project/people/People), label=$(|p| p/name == "" ? p/tag : p/name), color=$(|p| p/colour),
+                               amount=$(|p| /project/Items.filter(|x| x/owner == p/tag).count()))
+                    plot nobody (label="nobody", color="#6b7280", amount=$(/project/Items.filter(|x| x/owner == "").count()))
+                }
+            }
+
+            div (layout="vertical", margin=0, spacing=4) {
+                text last_authors_header (markdown=true) = "**Open items by who wrote last**"
+                chart last_authors (kind="pie", height=180px) {
+                    plot each (source=$(/project/people/People), label=$(|p| p/name == "" ? p/tag : p/name), color=$(|p| p/colour),
+                               amount=$(|p| /project/Items.filter(|x| x/last_author == p/tag).count()))
+                    plot agents (label="agents", color="#6b7280",
+                                 amount=$(/project/Items.filter(|x| x/last_author != ""
+                                     && /project/people/People.filter(|p| p/tag == x/last_author).count() == 0).count()))
+                }
+            }
+        }
+
         div (hidden=true) {
             int week_0 = $(/project/History.filter(|x| x/status != "cancelled" && week(x/finished_at) == week(today())).sum(|x| x/points))
             int week_1 = $(/project/History.filter(|x| x/status != "cancelled" && week(x/finished_at) == week(date_add_days(today(), -7))).sum(|x| x/points))
@@ -935,30 +958,30 @@ tab project (label=$(name), mutable=true) {
         div (layout="flow", min-width=150px, spacing=12) {
             int work_sessions (label="sessions") = $(/project/Items.sum(|x| x/Agents/Work.count())
                 + /project/History.sum(|x| x/Agents/Work.count()))
-            float work_cost (label="$ spent", precision=2) = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/cost))
+            float work_cost (label="spent", prefix="$", precision=2) = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/cost))
                 + /project/History.sum(|x| x/Agents/Work.sum(|r| r/cost)))
-            int work_output (label="output k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/output))
+            int work_output (label="output", suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/output))
                 + /project/History.sum(|x| x/Agents/Work.sum(|r| r/output)))
-            int work_read (label="read k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/read))
+            int work_read (label="read", suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/read))
                 + /project/History.sum(|x| x/Agents/Work.sum(|r| r/read)))
-            int work_written (label="written k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/written))
+            int work_written (label="written", suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/written))
                 + /project/History.sum(|x| x/Agents/Work.sum(|r| r/written)))
-            float work_hours (label="hours", precision=1) = $(work_minutes / 60)
+            float work_hours (label="time", suffix=" h", precision=1) = $(work_minutes / 60)
         }
 
         text work_month_header (markdown=true) = "**The last thirty days**"
         div (layout="flow", min-width=150px, spacing=12) {
             int work_sessions_month (label="sessions") = $(WorkDays.cells().sum(|d| d/sessions) + /project/Items.sum(|x|
                 x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).count()))
-            float work_cost_month (label="$ spent", precision=2) = $(WorkDays.cells().sum(|d| d/cost) + /project/Items.sum(|x|
+            float work_cost_month (label="spent", prefix="$", precision=2) = $(WorkDays.cells().sum(|d| d/cost) + /project/Items.sum(|x|
                 x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/cost)))
-            int work_output_month (label="output k") = $(WorkDays.cells().sum(|d| d/output) + /project/Items.sum(|x|
+            int work_output_month (label="output", suffix="k") = $(WorkDays.cells().sum(|d| d/output) + /project/Items.sum(|x|
                 x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/output)))
-            int work_read_month (label="read k") = $(WorkDays.cells().sum(|d| d/read) + /project/Items.sum(|x|
+            int work_read_month (label="read", suffix="k") = $(WorkDays.cells().sum(|d| d/read) + /project/Items.sum(|x|
                 x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/read)))
-            int work_written_month (label="written k") = $(WorkDays.cells().sum(|d| d/written) + /project/Items.sum(|x|
+            int work_written_month (label="written", suffix="k") = $(WorkDays.cells().sum(|d| d/written) + /project/Items.sum(|x|
                 x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/written)))
-            float work_hours_month (label="hours", precision=1) = $(work_minutes_month / 60)
+            float work_hours_month (label="time", suffix=" h", precision=1) = $(work_minutes_month / 60)
         }
 
         div (layout="vertical", margin=0, spacing=4) {
@@ -1041,6 +1064,6 @@ tab project (label=$(name), mutable=true) {
             }
         }
 
-        text help (markdown=true, font-size=14px, mutable=false) = "**Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and a line over it naming the account at work, as its chip, and the model it runs; other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; parts that nothing is left on it but its parts, and once the last of them is finished or cancelled it moves to testing by itself; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. **Milestones:** the releases or goals an item counts towards, picked from the project's list of them as tags are, and drawn leaning so they read apart from the tags beside them. **Discussion:** anything to talk over that is neither an item nor a feature - a question, an idea not yet a plan, a note for everyone. A topic has an id, whose it is, a title and its comments; it is pinned and dropped as an item is, and its id is never one an item has or had, so a chip naming it is never ambiguous. **Features:** what the project could become, kept apart from the plan: each is a card with a handle in capitals, so it is never taken for an item's, a line saying what it is, its description, pros and cons, and the features it needs, excludes or goes with. Its standing - proposed, wanted, accepted or discarded - colours the card. Cards are placed by dragging them anywhere on the area, so features that belong together can stand together; a new one waits in the strip above until it is placed. Text names a feature as <#HANDLE>, which draws its chip. **Stats:** the project added up, worked out from the lists and writing nothing: how many tasks and points there are, open and finished, and the share finished; what holds open items up - other items they wait on, a question to the owner, a check at testing; the open items by stage and by how much thinking they take; the points finished in each of the last eight weeks, against the best of them; the points finished on each of the last year's days, the darker the more; what the agents' work on the project cost - its sessions, the dollars spent, the thousands of tokens written out, read from the cache and written to it, and the hours worked - all told and in the last thirty days, where the thirty days count the runs on open items made in them and every run on an item finished in them; and how much of each tag is done, its points finished out of all its points, open and finished - an item with several tags counts in each; how far each milestone is, the same way; and the points finished by tag, where an item with several tags counts in each slice, so a slice is that tag's share of the tagged work rather than of all the points; and the dollars spent by tag, open and closed items alike, counted the same way. **Tabs:** the plan has two pages, Open, what is still to do, and Closed, what was finished or cancelled; Discussion is for what is neither an item nor a feature; Features is what the project could become; Stats is the project added up; Definition is what the project is, as the document beside the tracker says it, the tags and milestones items are given, where new ones are added, and this help. A tab beside the plan is the project's own."
+        text help (markdown=true, font-size=14px, mutable=false) = "**Items:** the open list is in the owner's order: new items go on top, and an item can be dragged to another place. A pinned item stays on top, where it cannot be dragged, and the rest are dragged among themselves below it. A heading with a sort icon sorts the list by its column while the page is open, without changing the file, pinned items still first; a sorted list cannot be dragged. A larger piece of work is the parent of smaller ones, which stand under it, indented, and fold away under its chevron; an item dragged carries its parts with it, and carried right or left as it is let go it goes under another item or out from under one; a parent reads how much of its parts is done; points say how big each is, 1 the smallest thing worth writing down and 8 most of a day; think says how much thinking building it takes, from trivial, straightforward however much of it, through low and medium to high, which wants a good understanding of several parts of the project - unassigned until it is ready; after names the items one waits on, and it is drawn grey while any of them is still open; by names whose item it is - whoever added it, and for an item an agent filed, the owner of the item it came from. An item an agent loop is working on has a green border and a turning green icon by its id, and a line over it naming the account at work, as its chip, and the model it runs; other loops leave it alone. **Stages:** an item starts filed; planning means its plan is being worked out; ready that nothing is left to decide; testing that it is done and waits to be confirmed; parts that nothing is left on it but its parts, and once the last of them is finished or cancelled it moves to testing by itself; later that it is decided against for now. Picking finished moves it to Closed, from where it reaches the task history. Picking cancelled moves it there too, marked cancelled: it counts as neither work done nor an open part of its parent, and never reaches the task history. Neither can be picked while any part of the item is still open. **Flags:** the same in every project, unlike the tags. manual marks an item for a person to work, which agents leave alone - an item added here starts with it, and taking it off hands the item to them; auto one an agent filed of its own accord; first one to take before anything else, whatever its stage; asked one whose note holds a question for the owner - once it is answered there, the flag comes off and work goes on; discuss one the owner wants an opinion on before anything is decided, which an agent gives in the note, moving the item at most to planning and flagging it asked. **Milestones:** the releases or goals an item counts towards, picked from the project's list of them as tags are, and drawn leaning so they read apart from the tags beside them. **Discussion:** anything to talk over that is neither an item nor a feature - a question, an idea not yet a plan, a note for everyone. A topic has an id, whose it is, a title and its comments; it is pinned and dropped as an item is, and its id is never one an item has or had, so a chip naming it is never ambiguous. **Features:** what the project could become, kept apart from the plan: each is a card with a handle in capitals, so it is never taken for an item's, a line saying what it is, its description, pros and cons, and the features it needs, excludes or goes with. Its standing - proposed, wanted, accepted or discarded - colours the card. Cards are placed by dragging them anywhere on the area, so features that belong together can stand together; a new one waits in the strip above until it is placed. Text names a feature as <#HANDLE>, which draws its chip. **Stats:** the project added up, worked out from the lists and writing nothing: how many tasks and points there are, open and finished, and the share finished; what holds open items up - other items they wait on, a question to the owner, a check at testing; the open items by stage and by how much thinking they take; the open items by owner, and by who wrote the last comment on them, where every comment not signed by a person counts as the agents'; the points finished in each of the last eight weeks, against the best of them; the points finished on each of the last year's days, the darker the more; what the agents' work on the project cost - its sessions, the dollars spent, the thousands of tokens written out, read from the cache and written to it, and the hours worked - all told and in the last thirty days, where the thirty days count the runs on open items made in them and every run on an item finished in them; and how much of each tag is done, its points finished out of all its points, open and finished - an item with several tags counts in each; how far each milestone is, the same way; and the points finished by tag, where an item with several tags counts in each slice, so a slice is that tag's share of the tagged work rather than of all the points; and the dollars spent by tag, open and closed items alike, counted the same way. **Tabs:** the plan has two pages, Open, what is still to do, and Closed, what was finished or cancelled; Discussion is for what is neither an item nor a feature; Features is what the project could become; Stats is the project added up; Definition is what the project is, as the document beside the tracker says it, the tags and milestones items are given, where new ones are added, and this help. A tab beside the plan is the project's own."
     }
 }
