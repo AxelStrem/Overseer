@@ -134,8 +134,17 @@ The server also hands free memory back to the system after every request.
 To see where the memory goes, read the server's log. Every 15 minutes, and after a request that
 took more than five seconds, it prints a `memory` line:
 - what the server holds now and the most it has held;
-- on Linux, what the container holds in all, and how much of that is the programs' own memory
-  (`anon`) and how much file cache (`file`), which the kernel takes back when it needs the room;
+- on Linux, what the container holds in all, and what that is made of:
+  - `anon`, the programs' own memory;
+  - `file`, the file cache, with how much of it the kernel takes back first when it needs the
+    room (`inactive`) and how much it would rather keep (`active`), and the parts of those still
+    to be written to the disk (`dirty`) or held in memory-only files (`shmem`);
+  - `kernel`, what the kernel keeps for the container - mostly `slab`, its records of the files
+    and folders read, of which `reclaimable` it can give up as easily as the file cache;
+  - `sock`, network buffers, and `other`, whatever of the total the rest leave unnamed;
+
+  a part under 4 MB is left out. Where the container's cgroup is the older kind (v1), the line
+  says only `anon` and `file`;
 - what the other processes in the container hold, by name;
 - what each of the server's caches is keeping.
 
