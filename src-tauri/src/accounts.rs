@@ -714,8 +714,14 @@ impl Accounts {
             if let Some(name) = name {
                 account.name = name;
             }
+            // The profile starts from the colour drawn, which is the template's for an account
+            // that chose none: sent back unchanged, it is no choice, and is not kept as one, or
+            // the account would hold on to that grey after the template's changed.
             if let Some(colour) = colour {
-                account.colour = colour;
+                let unchosen = account.colour.is_none() && colour.as_deref() == Some(crate::people::DEFAULT_COLOUR);
+                if !unchosen {
+                    account.colour = colour;
+                }
             }
             if let Some(icon) = icon {
                 account.icon = icon;

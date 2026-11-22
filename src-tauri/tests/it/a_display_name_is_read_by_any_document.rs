@@ -181,6 +181,31 @@ fn a_styled_name_and_a_chosen_colour_reach_the_directory() {
 }
 
 #[test]
+fn saving_the_profile_with_the_default_colour_chooses_none() {
+    let _shared = shared();
+    let (_documents, accounts, root) = served("default-colour");
+    // The profile starts from the colour drawn, which is the template's for an account that chose
+    // none, and sends it back with whatever else changed.
+    let saved = accounts
+        .change_own("ap31", Some("Dima"), Some("#6B7280"), None, None, None, None, chrono::Utc::now())
+        .unwrap();
+    assert_eq!(saved.colour, None);
+    let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
+    assert!(!directory.contains("- colour = "), "{}", directory);
+
+    // An account that chose a colour can still choose the default's as its own.
+    accounts
+        .change_own("ap31", None, Some("#0f766e"), None, None, None, None, chrono::Utc::now())
+        .unwrap();
+    let saved = accounts
+        .change_own("ap31", None, Some("#6b7280"), None, None, None, None, chrono::Utc::now())
+        .unwrap();
+    assert_eq!(saved.colour.as_deref(), Some("#6b7280"));
+    let directory = std::fs::read_to_string(root.join("people.os")).unwrap();
+    assert!(directory.contains("- colour = \"#6b7280\""), "{}", directory);
+}
+
+#[test]
 fn a_chosen_icon_reaches_the_directory() {
     let _shared = shared();
     let (documents, accounts, root) = served("icon");

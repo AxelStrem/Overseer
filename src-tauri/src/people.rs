@@ -17,6 +17,9 @@ use std::sync::{LazyLock, Mutex};
 /// The directory's name, at the root of the folder a server serves.
 pub const FILE: &str = "people.os";
 
+/// The colour of a chip whose person chose none, as the directory's template writes it.
+pub const DEFAULT_COLOUR: &str = "#6b7280";
+
 /// One person as the directory lists them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Person {
@@ -42,7 +45,7 @@ pub fn text(people: &[Person]) -> String {
     out.push_str("    div Person (layout=\"horizontal\") {\r\n");
     out.push_str("        string tag = \"\"\r\n");
     out.push_str("        string name = \"\"\r\n");
-    out.push_str("        string colour = \"#6b7280\"\r\n");
+    out.push_str(&format!("        string colour = {}\r\n", quoted(DEFAULT_COLOUR)));
     out.push_str("        string icon = \"\"\r\n");
     out.push_str("        string shape = \"\"\r\n");
     out.push_str("        bool bot = false\r\n");
