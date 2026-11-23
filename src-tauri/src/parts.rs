@@ -135,6 +135,14 @@ pub fn let_go_of_summary_reads() {
     }
 }
 
+static PARSED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many times a part has been parsed from its file since the process started: what a test
+/// counts to see that an open read no part it had a summary for.
+pub fn parts_parsed() -> usize {
+    PARSED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The text of a part and its nodes, parsed. `None` when it is not there, or does not parse as
 /// a whole: the parser passes over what it cannot read and the document's writer keeps that text,
 /// but a part is written from its entries, and what was passed over would be lost.
@@ -168,6 +176,7 @@ fn read_for(file: &Path, only_summarised: bool) -> Option<(String, Vec<OverseerN
         Some(found) => found,
         None => {
             let text = std::fs::read_to_string(file).ok()?;
+            PARSED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let (rest, nodes) = crate::parser::parse_document(&text).ok()?;
             if !rest.trim().is_empty() || passed_over(&nodes) {
                 return None;
