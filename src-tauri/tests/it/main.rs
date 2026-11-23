@@ -146,6 +146,7 @@ mod a_template_named_like_a_field_type_is_refused;
 mod a_theme_can_load_fonts_kept_beside_it;
 mod a_theme_colour_can_change_in_one_mode_alone;
 mod a_tick_changes_only_what_is_the_viewers;
+mod a_tracker_benches_its_idle_agents;
 mod a_tracker_shared_to_edit_is_worked_beside_a_week_out_of_place;
 mod a_tree_entry_moved_to_another_depth_is_reindented;
 mod a_tree_entry_moves_with_its_branch;

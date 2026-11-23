@@ -536,10 +536,7 @@ impl DocumentRoot {
         event: &str,
     ) -> std::result::Result<EventOutcome, RequestError> {
         // What surrounds the button, or the node itself when it has nothing above it.
-        let reported = match address.rsplit_once('/') {
-            Some((parent, _)) => parent,
-            None => address,
-        };
+        let reported = crate::addressing::parent_address(address).unwrap_or(address);
         let (_, (gone, found)) = self.edit(name, address, |nodes| {
             let path = crate::addressing::name_path(nodes, address).ok_or_else(|| {
                 RequestError::NotFound(format!("nothing at '{}' in '{}'", address, name))
@@ -2515,9 +2512,8 @@ impl DocumentRoot {
         address: &str,
         expect: &std::collections::HashMap<String, OverseerValue>,
     ) -> std::result::Result<WriteOutcome, RequestError> {
-        let parent_address = address
-            .rsplit_once('/')
-            .map(|(head, _)| head.to_string())
+        let parent_address = crate::addressing::parent_address(address)
+            .map(str::to_string)
             .ok_or_else(|| {
                 RequestError::Rejected(format!(
                     "'{}' is a whole document rather than an entry in a list",

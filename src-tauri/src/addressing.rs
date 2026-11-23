@@ -424,6 +424,22 @@ pub fn addresses(nodes: &[OverseerNode]) -> Vec<String> {
     out
 }
 
+/// The address of the node holding the one an address names: all but its last step. A `/` a key
+/// escapes is part of its step, so `List/[a\/b]` is held by `List`. None for a top-level node.
+pub fn parent_address(address: &str) -> Option<&str> {
+    let mut last = None;
+    let mut escaped = false;
+    for (at, c) in address.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '/' => last = Some(at),
+            _ => {}
+        }
+    }
+    last.map(|at| &address[..at])
+}
+
 /// The node at an address, if the document still has one there.
 pub fn find<'a>(nodes: &'a [OverseerNode], address: &str) -> Option<&'a OverseerNode> {
     let mut found = None;

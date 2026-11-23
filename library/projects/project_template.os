@@ -10,6 +10,13 @@ tab project (label=$(name), mutable=true) {
             list People (key="tag") { }
         }
 
+        div Seat {
+            string seat = ""
+            string account = ""
+            timestamp since = "2026-01-01T00:00:00Z"
+        }
+        list Bench (entry=<Seat>, key="seat", mutable=false) { }
+
         div ActivityDay (background-color=$(points == 0 ? "" : points * 4 > busiest_day * 3 ? "#216e39"
                 : points * 2 > busiest_day ? "#30a14e" : points * 4 > busiest_day ? "#40c463" : "#9be9a8")) {
             string day_key (hidden=true) = $(day(date()))
@@ -721,15 +728,35 @@ tab project (label=$(name), mutable=true) {
                 - color = $(muted)
             }
         }
-        div Narrow (layout="horizontal", margin=0, spacing=10, alignment="center", border-style=none) {
-            textbox find (placeholder="find", narrows="/project/Items", by="title, handle, Comments", width=20%) = ""
-            textbox stage (placeholder="stages", vocabulary="/project/Stages", narrows="/project/Items", by="stage") = ""
-            textbox labels (placeholder="tags", vocabulary="/project/Labels", narrows="/project/Items", by="labels") = ""
-            textbox milestones (placeholder="milestones", vocabulary="/project/Milestones", narrows="/project/Items",
-                                by="milestones", shape="slant") = ""
-            textbox flags (placeholder="flags", vocabulary="/project/Flags", narrows="/project/Items", by="flags") = ""
-            textbox branch (placeholder="branch", vocabulary="/project/Items", narrows="/project/Items", by="handle",
-                            branch=true) = ""
+        div (layout="horizontal", margin=0, spacing=10, alignment="center", border-style=none) {
+            div Narrow (layout="horizontal", margin=0, spacing=10, alignment="center", border-style=none) {
+                textbox find (placeholder="find", narrows="/project/Items", by="title, handle, Comments", width=20%) = ""
+                textbox stage (placeholder="stages", vocabulary="/project/Stages", narrows="/project/Items", by="stage") = ""
+                textbox labels (placeholder="tags", vocabulary="/project/Labels", narrows="/project/Items", by="labels") = ""
+                textbox milestones (placeholder="milestones", vocabulary="/project/Milestones", narrows="/project/Items",
+                                    by="milestones", shape="slant") = ""
+                textbox flags (placeholder="flags", vocabulary="/project/Flags", narrows="/project/Items", by="flags") = ""
+                textbox branch (placeholder="branch", vocabulary="/project/Items", narrows="/project/Items", by="handle",
+                                branch=true) = ""
+            }
+            div bench (width=1fr, height=36px, margin=0, padding=0, alignment="far", border-style=none) {
+                context theme {
+                    - backdrop {
+                        - armchair {
+                            - kind = "icon"
+                            - source = "armchair"
+                            - opacity = 0.15
+                            - position = "right center"
+                        }
+                    }
+                }
+                text waiting (markdown=true, mutable=false, vocabulary="/project/people/People", font-size=11px,
+                             alignment="far", margin=0, padding=0, hover-text="Agents waiting for work") =
+                    $(/project/Bench.filter(|x| /project/Bench.filter(|y| y/account == x/account
+                        && (y/since < x/since || (y/since == x/since && y/seat < x/seat))).count() == 0)
+                      .reduce("", |acc, x| acc + (acc == "" ? "" : " ")
+                        + (/project/people/People.filter(|p| p/tag == x/account).count() > 0 ? "<#" + x/account + ">" : x/account)))
+            }
         }
 
         div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none) {
