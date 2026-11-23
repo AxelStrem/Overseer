@@ -246,6 +246,13 @@ impl Unread {
     }
 }
 
+fn byte_at(ctx: ParserInputContext, at: usize) -> Option<u8> {
+    if at >= ctx.len {
+        return None;
+    }
+    unsafe { Some(*((ctx.base_ptr + at) as *const u8)) }
+}
+
 fn slice_from_offsets(ctx: ParserInputContext, start: usize, end: usize) -> String {
     if end <= start || end > ctx.len {
         return String::new();
@@ -375,11 +382,17 @@ fn assign_snapshot(
             Some(indent)
         }
     });
+    // A node read in the middle of a line - after `{ ` or after a sibling's `} ` - has no indent
+    // of its own: the space before it is not one, and taken for one it set the indent the node,
+    // its entries and the whole document were written at to that one space.
+    let trivia_start = leading_span.map(|(ls, _)| ls).unwrap_or(span_start);
+    let begins_its_line = trivia_start == 0 || byte_at(ctx, trivia_start - 1) == Some(b'\n');
     let indent_from_leading = {
-        let tail = leading_trivia
-            .rsplit_once('\n')
-            .map(|(_, tail)| tail)
-            .unwrap_or_else(|| leading_trivia.as_str());
+        let tail = match leading_trivia.rsplit_once('\n') {
+            Some((_, tail)) => tail,
+            None if begins_its_line => leading_trivia.as_str(),
+            None => "",
+        };
         let indent: String = tail
             .chars()
             .take_while(|c| *c == ' ' || *c == '\t')
@@ -1773,6 +1786,26 @@ mod tests {
             child.parameters.get("value"),
             Some(&OverseerValue::String("Card Title".to_string()))
         );
+    }
+
+    #[test]
+    fn a_node_read_in_the_middle_of_a_line_has_no_indent_of_its_own() {
+        let _registry_guard = crate::source_registry::REGISTRY_TEST_MUTEX.lock();
+        let src = "div a {\n    div b { string c = \"\" } string d = \"\"\n    string e = \"\"\n}\n";
+        let (_, nodes) = parse_document(src).expect("document should parse");
+        let indent_of = |node: &OverseerNode| {
+            node.source_snapshot
+                .as_ref()
+                .expect("a snapshot")
+                .indent_unit
+                .clone()
+        };
+        let a = &nodes[0];
+        let b = &a.children[0];
+        assert_eq!(indent_of(b).as_deref(), Some("    "));
+        assert_eq!(indent_of(&b.children[0]), None, "c follows `{{ ` on the line b opens");
+        assert_eq!(indent_of(&a.children[1]), None, "d follows the `}} ` b closes with");
+        assert_eq!(indent_of(&a.children[2]).as_deref(), Some("    "));
     }
 
     #[test]

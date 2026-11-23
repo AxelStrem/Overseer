@@ -252,6 +252,7 @@ impl FileOperations {
         allow: bool,
         indent_level: usize,
         in_list_body: bool,
+        unit: &str,
     ) -> bool {
         if !allow || trivia.is_empty() {
             return false;
@@ -355,6 +356,12 @@ impl FileOperations {
 
         for _ in 0..allowed_prefix {
             output.push('\n');
+        }
+        // The space before a node read in the middle of a line - after `{ ` or a sibling's `} ` -
+        // is no indent. Put on a line of its own, the node stands as deep as it is; given that
+        // space instead, it and everything in it were written one space in.
+        if trivia_is_whitespace && !trivia.contains('\n') && output.ends_with('\n') {
+            rest = unit.repeat(indent_level);
         }
 
         Self::push_trivia(output, &rest);
@@ -849,6 +856,7 @@ impl FileOperations {
                             allow_snapshot_trivia,
                             indent_level,
                             in_list_body,
+                            fallback_indent_unit,
                         );
                     if !emitted {
                         // Its own line, at the indent it was read at, as the trivia would
@@ -896,6 +904,7 @@ impl FileOperations {
                             allow_snapshot_trivia,
                             indent_level,
                             in_list_body,
+                            fallback_indent_unit,
                         );
                     }
                     if snap.full_text.contains('\r') {
@@ -918,6 +927,7 @@ impl FileOperations {
                     allow_snapshot_trivia,
                     indent_level,
                     in_list_body,
+                    fallback_indent_unit,
                 );
             }
             if patched_text.contains('\r') {
@@ -942,6 +952,7 @@ impl FileOperations {
                             allow_snapshot_trivia,
                             indent_level,
                             in_list_body,
+                            fallback_indent_unit,
                         );
                         output.push_str(&Self::at_indent(&snap.full_text.replace("\r\n", "\n"), now));
                         return Ok(());
@@ -953,6 +964,7 @@ impl FileOperations {
                         allow_snapshot_trivia,
                         indent_level,
                         in_list_body,
+                        fallback_indent_unit,
                     );
                     if snap.full_text.contains('\r') {
                         let normalized = snap.full_text.replace("\r\n", "\n");
@@ -974,6 +986,7 @@ impl FileOperations {
                 allow_snapshot_trivia,
                 indent_level,
                 in_list_body,
+                fallback_indent_unit,
             )
             {
                 emitted_leading_trivia = true;
@@ -1837,10 +1850,10 @@ impl FileOperations {
                     }
                     // An empty list has no entry to line up with, and an entry dragged into it
                     // from another depth was otherwise left at its old one. Its entries belong
-                    // one step in from the list's own line, which the text it was read from says.
+                    // one step in from the list's own line: the indent it was read at, or, for a
+                    // list read in the middle of a line, the one it is written at now.
                     if list_indent_hints.is_empty() && matches!(snap.origin, SnapshotOrigin::Parsed) {
-                        let own = snap.indent_unit.clone().unwrap_or_default();
-                        last_list_indent_hint = Some(format!("{}{}", own, fallback_indent_unit));
+                        last_list_indent_hint = Some(format!("{}{}", indent, fallback_indent_unit));
                     }
                 }
             }

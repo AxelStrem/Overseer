@@ -2,6 +2,7 @@
 //! write short examples - is given its new entries like any other. The writer used to copy that
 //! line as it was read, since the list's own text had not changed, and so lost every entry
 //! appended to it, and wrote the parent's closing brace a second time.
+//! Opened up onto lines of their own, the nodes from that line stand as deep as they are.
 
 use crate::common::serialised;
 use overseer::server::DocumentRoot;
@@ -139,4 +140,78 @@ div bench (mutable=true) {\n    list Rows (entry=<Rec>) { }\n}\n";
         assert_eq!(first, document.lines().next().unwrap(), "the file is:\n{}", text);
         assert_eq!(rows_read_afresh(&text), vec!["x".to_string()]);
     });
+}
+
+/// The file after one append of `a = "x"` to `bench/Rows`.
+fn written_after_an_append(tag: &str, document: &str) -> String {
+    serialised(|| {
+        let sandbox = sandbox(tag, &[("r.os", document)]);
+        let documents = DocumentRoot::new(&sandbox.0).unwrap();
+        documents.open("r.os").expect("open");
+        append(&documents, "r.os", "x");
+        std::fs::read_to_string(sandbox.0.join("r.os")).unwrap()
+    })
+}
+
+// A node read in the middle of a line has no indent of its own: the space before it on the line
+// was once taken for one, and the list and its entries were written at that one space.
+
+#[test]
+fn a_list_after_a_siblings_brace_is_written_at_its_parents_depth() {
+    let document = "div bench (mutable=true) {
+    div (hidden=true) { div Rec { string a = \"\" } } list Rows (entry=<Rec>) { }
+}
+";
+    assert_eq!(
+        written_after_an_append("sibling_brace", document),
+        "div bench (mutable=true) {
+    div (hidden=true) { div Rec { string a = \"\" } }
+    list Rows (entry=<Rec>) {
+        - {
+            - a = \"x\"
+        }
+    }
+}
+"
+    );
+}
+
+#[test]
+fn a_one_line_document_opened_up_is_indented_a_unit_a_level() {
+    assert_eq!(
+        written_after_an_append("one_line_indent", ONE_LINE),
+        "div bench (mutable=true) {
+    div (hidden=true) { div Rec { string a = \"\" } }
+    list Rows (entry=<Rec>) {
+        - {
+            - a = \"x\"
+        }
+    }
+}
+"
+    );
+}
+
+#[test]
+fn a_document_indented_by_two_keeps_two_when_a_one_line_block_is_opened_up() {
+    let document = "div (hidden=true) {
+  div Rec { string a = \"\" }
+}
+div bench (mutable=true) { string n = \"\" list Rows (entry=<Rec>) { } }
+";
+    assert_eq!(
+        written_after_an_append("two_spaces", document),
+        "div (hidden=true) {
+  div Rec { string a = \"\" }
+}
+div bench (mutable=true) {
+  string n = \"\"
+  list Rows (entry=<Rec>) {
+    - {
+      - a = \"x\"
+    }
+  }
+}
+"
+    );
 }
