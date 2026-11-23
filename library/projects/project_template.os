@@ -455,6 +455,7 @@ tab project (label=$(name), mutable=true) {
                 $(../after.filter(|h| /project/Items.filter(|x| x/handle == h).count() > 0).count())
             string colour (hidden=true) =
                 $(/project/Stages.filter(|s| s/tag == ../stage).map(|s| s/colour).first())
+            string shape (hidden=true) = "ticket"
             string glow (hidden=true) =
                 $(/project/Stages.filter(|s| s/tag == ../stage).map(|s| s/glow).first())
             bool asked (hidden=true) = $(../flags.filter(|t| t == "asked").count() > 0)
@@ -584,6 +585,7 @@ tab project (label=$(name), mutable=true) {
             }
             string colour (hidden=true) =
                 $(/project/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())
+            string shape (hidden=true) = "ticket"
         }
 
         list Standings (entry=<Label>, key="tag") {

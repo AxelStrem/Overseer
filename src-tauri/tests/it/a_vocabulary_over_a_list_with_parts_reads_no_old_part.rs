@@ -1,5 +1,6 @@
 //! A vocabulary naming a windowed list with parts leaves the list reading only its newest parts:
-//! what its chips are drawn from in the parts not read - each entry's key and title - is read from
+//! what its chips are drawn from in the parts not read - each entry's key, title and shape, the
+//! template's where the entry writes none - is read from
 //! the summaries of those parts and put on the list. A colour worked out from the entry's status
 //! is worked out again for each of them; a title worked out from something else than the fields
 //! beside it still has the list read whole.
@@ -20,6 +21,7 @@ fn host(title: &str) -> String {
             string title {title}
             string status = "done"
             string colour (hidden=true) = $(/log/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())
+            string shape (hidden=true) = "ticket"
             timestamp done_at = "2026-11-02T10:00:00Z"
         }}
         div Status {{
@@ -124,8 +126,8 @@ fn a_vocabulary_is_given_the_entries_of_the_parts_not_read() {
     assert_eq!(
         records,
         serde_json::json!([
-            {"key": "a", "title": "The oldest", "colour": "#15803d"},
-            {"key": "c", "colour": "#9f1239"},
+            {"key": "a", "title": "The oldest", "colour": "#15803d", "shape": "ticket"},
+            {"key": "c", "colour": "#9f1239", "shape": "ticket"},
         ])
     );
 
