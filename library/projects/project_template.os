@@ -22,6 +22,11 @@ tab project (label=$(name), mutable=true) {
             float minutes = $(/project/History.filter(|x| day(x/finished_at) == ../day_key).sum(|x| x/Agents/Work.sum(|r| r/minutes)))
         }
 
+        div StatTile (margin=0, padding=14, alignment="near", border-radius=12, shadow="soft", background-color=$(theme/surface)) { }
+
+        div StatCard (layout="vertical", spacing=4, padding=16, border-radius=12, shadow="soft",
+                      background-color=$(theme/surface)) { }
+
         div Label (layout="vertical", width=360px, margin=0, spacing=0, padding=2, border-radius=8px,
                    background-color=$(colour + "26")) {
             div (layout="horizontal", margin=0, spacing=4, alignment="center") {
@@ -840,24 +845,61 @@ tab project (label=$(name), mutable=true) {
     // reader holds. The clock or a calendar day's date read on the entry's side would have every
     // part read on each open.
     tab (label="Stats", hover-text="The project added up", mutable=false) {
-        div (layout="flow", min-width=150px, spacing=12) {
-            int tasks_total (label="tasks") = $(/project/Items.count() + /project/History.filter(|x| x/status != "cancelled").count())
-            int tasks_open (label="tasks open") = $(/project/Items.count())
-            int tasks_finished (label="tasks finished") = $(/project/History.filter(|x| x/status != "cancelled").count())
-            int points_total (label="points") = $(/project/points_open + /project/points_won)
-            int points_left (label="points outstanding") = $(/project/points_open)
-            int points_finished (label="points finished") = $(/project/points_won)
+        context theme {
+            - chart {
+                - frame = "none"
+            }
         }
 
-        float finished_share (label="finished", view="progress", color="#15803d") =
-            $(points_total == 0 ? 0 : points_finished / points_total)
+        text overview_header (markdown=true) = "### <icon=gauge> Overview"
+        div (layout="flow", min-width=140px, spacing=12) {
+            <StatTile> {
+                int tasks_total (label="tasks", font-size=26px) = $(/project/Items.count() + /project/History.filter(|x| x/status != "cancelled").count())
+            }
+            <StatTile> {
+                int tasks_open (label="tasks open", font-size=26px) = $(/project/Items.count())
+            }
+            <StatTile> {
+                int tasks_finished (label="tasks finished", font-size=26px, font-color=$(theme/success)) = $(/project/History.filter(|x| x/status != "cancelled").count())
+            }
+            <StatTile> {
+                int points_total (label="points", font-size=26px) = $(/project/points_open + /project/points_won)
+            }
+            <StatTile> {
+                int points_left (label="points outstanding", font-size=26px, font-color=$(theme/accent)) = $(/project/points_open)
+            }
+            <StatTile> {
+                int points_finished (label="points finished", font-size=26px, font-color=$(theme/success)) = $(/project/points_won)
+            }
+        }
 
-        string held (label="held up") = $(/project/Items.filter(|x| x/waiting > 0).count() + " waiting on other items, "
+        <StatCard> {
+            float finished_share (label="finished", view="progress", color=$(theme/success)) =
+                $(points_total == 0 ? 0 : points_finished / points_total)
+        }
+
+        string held (hidden=true) = $(/project/Items.filter(|x| x/waiting > 0).count() + " waiting on other items, "
             + /project/Items.filter(|x| x/flags.filter(|f| f == "asked").count() > 0).count() + " asked, "
             + /project/Items.filter(|x| x/stage == "testing").count() + " at testing")
 
+        div (layout="flow", min-width=140px, spacing=12) {
+            <StatTile> {
+                int held_waiting (label="waiting on other items", font-size=26px,
+                                  font-color=$(held_waiting > 0 ? theme/warning : theme/muted)) = $(/project/Items.filter(|x| x/waiting > 0).count())
+            }
+            <StatTile> {
+                int held_asked (label="asked, waiting on a person", font-size=26px,
+                                font-color=$(held_asked > 0 ? theme/danger : theme/muted)) = $(/project/Items.filter(|x| x/flags.filter(|f| f == "asked").count() > 0).count())
+            }
+            <StatTile> {
+                int held_testing (label="at testing, to be confirmed", font-size=26px,
+                                  font-color=$(held_testing > 0 ? theme/accent : theme/muted)) = $(/project/Items.filter(|x| x/stage == "testing").count())
+            }
+        }
+
+        text open_header (markdown=true) = "### <icon=chart-pie> Open work"
         div (layout="flow", min-width=280px, spacing=12) {
-            div (layout="vertical", margin=0, spacing=4) {
+            <StatCard> {
                 text stages_header (markdown=true) = "**Open items by stage**"
                 chart stages (kind="pie", height=180px) {
                     plot filed (label="filed", color=$(/project/Stages.find("filed")/colour),
@@ -875,7 +917,7 @@ tab project (label=$(name), mutable=true) {
                 }
             }
 
-            div (layout="vertical", margin=0, spacing=4) {
+            <StatCard> {
                 text complexities_header (markdown=true) = "**Open items by thinking**"
                 chart complexities (kind="pie", height=180px) {
                     plot unassigned (label="unassigned", color=$(/project/Complexities.find("unassigned")/colour),
@@ -890,10 +932,8 @@ tab project (label=$(name), mutable=true) {
                                amount=$(/project/Items.filter(|x| x/complexity == "high").count()))
                 }
             }
-        }
 
-        div (layout="flow", min-width=280px, spacing=12) {
-            div (layout="vertical", margin=0, spacing=4) {
+            <StatCard> {
                 text owners_header (markdown=true) = "**Open items by owner**"
                 chart owners (kind="pie", height=180px) {
                     plot each (source=$(/project/people/People), label=$(|p| p/name == "" ? p/tag : p/name), color=$(|p| p/colour),
@@ -902,7 +942,7 @@ tab project (label=$(name), mutable=true) {
                 }
             }
 
-            div (layout="vertical", margin=0, spacing=4) {
+            <StatCard> {
                 text last_authors_header (markdown=true) = "**Open items by who wrote last**"
                 chart last_authors (kind="pie", height=180px) {
                     plot each (source=$(/project/people/People), label=$(|p| p/name == "" ? p/tag : p/name), color=$(|p| p/colour),
@@ -937,59 +977,83 @@ tab project (label=$(name), mutable=true) {
                 x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/minutes)))
         }
 
-        div (layout="flow", min-width=280px, spacing=12) {
-            div (layout="vertical", margin=0, spacing=4) {
-                text weeks_header (markdown=true) = "**Points by week, against the best**"
-                chart weeks (kind="bar", height=180px) {
-                    plot w7 (label=$(week(date_add_days(today(), -49))), amount=$(week_7), limit=$(best_week))
-                    plot w6 (label=$(week(date_add_days(today(), -42))), amount=$(week_6), limit=$(best_week))
-                    plot w5 (label=$(week(date_add_days(today(), -35))), amount=$(week_5), limit=$(best_week))
-                    plot w4 (label=$(week(date_add_days(today(), -28))), amount=$(week_4), limit=$(best_week))
-                    plot w3 (label=$(week(date_add_days(today(), -21))), amount=$(week_3), limit=$(best_week))
-                    plot w2 (label=$(week(date_add_days(today(), -14))), amount=$(week_2), limit=$(best_week))
-                    plot w1 (label=$(week(date_add_days(today(), -7))), amount=$(week_1), limit=$(best_week))
-                    plot w0 (label=$(week(today())), amount=$(week_0), limit=$(best_week))
-                }
+        text pace_header (markdown=true) = "### <icon=trending-up> Pace"
+        <StatCard> {
+            text weeks_header (markdown=true) = "**Points by week, against the best**"
+            chart weeks (kind="bar", height=180px) {
+                plot w7 (label=$(week(date_add_days(today(), -49))), amount=$(week_7), limit=$(best_week))
+                plot w6 (label=$(week(date_add_days(today(), -42))), amount=$(week_6), limit=$(best_week))
+                plot w5 (label=$(week(date_add_days(today(), -35))), amount=$(week_5), limit=$(best_week))
+                plot w4 (label=$(week(date_add_days(today(), -28))), amount=$(week_4), limit=$(best_week))
+                plot w3 (label=$(week(date_add_days(today(), -21))), amount=$(week_3), limit=$(best_week))
+                plot w2 (label=$(week(date_add_days(today(), -14))), amount=$(week_2), limit=$(best_week))
+                plot w1 (label=$(week(date_add_days(today(), -7))), amount=$(week_1), limit=$(best_week))
+                plot w0 (label=$(week(today())), amount=$(week_0), limit=$(best_week))
             }
-
         }
 
-        div (layout="vertical", margin=0, spacing=4) {
+        <StatCard> {
             text activity_header (markdown=true) = "**Points by day, the last year**"
             calendar Activity (entry=<ActivityDay>, from=$(date_add_days(today(), -364)), to=$(today()), layout="year") { }
         }
 
-        text work_header (markdown=true) = "**What the agents' work cost**"
-        div (layout="flow", min-width=150px, spacing=12) {
-            int work_sessions (label="sessions") = $(/project/Items.sum(|x| x/Agents/Work.count())
-                + /project/History.sum(|x| x/Agents/Work.count()))
-            float work_cost (label="spent", prefix="$", precision=2) = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/cost))
-                + /project/History.sum(|x| x/Agents/Work.sum(|r| r/cost)))
-            int work_output (label="output", suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/output))
-                + /project/History.sum(|x| x/Agents/Work.sum(|r| r/output)))
-            int work_read (label="read", suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/read))
-                + /project/History.sum(|x| x/Agents/Work.sum(|r| r/read)))
-            int work_written (label="written", suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/written))
-                + /project/History.sum(|x| x/Agents/Work.sum(|r| r/written)))
-            float work_hours (label="time", suffix=" h", precision=1) = $(work_minutes / 60)
+        text work_header (markdown=true) = "### <icon=bot> What the agents' work cost"
+        text work_all_header (markdown=true) = "**All told**"
+        div (layout="flow", min-width=140px, spacing=12) {
+            <StatTile> {
+                int work_sessions (label="sessions", font-size=26px) = $(/project/Items.sum(|x| x/Agents/Work.count())
+                    + /project/History.sum(|x| x/Agents/Work.count()))
+            }
+            <StatTile> {
+                float work_cost (label="spent", font-size=26px, prefix="$", precision=2, font-color=$(theme/accent)) = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/cost))
+                    + /project/History.sum(|x| x/Agents/Work.sum(|r| r/cost)))
+            }
+            <StatTile> {
+                int work_output (label="output", font-size=26px, suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/output))
+                    + /project/History.sum(|x| x/Agents/Work.sum(|r| r/output)))
+            }
+            <StatTile> {
+                int work_read (label="read", font-size=26px, suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/read))
+                    + /project/History.sum(|x| x/Agents/Work.sum(|r| r/read)))
+            }
+            <StatTile> {
+                int work_written (label="written", font-size=26px, suffix="k") = $(/project/Items.sum(|x| x/Agents/Work.sum(|r| r/written))
+                    + /project/History.sum(|x| x/Agents/Work.sum(|r| r/written)))
+            }
+            <StatTile> {
+                float work_hours (label="time", font-size=26px, suffix=" h", precision=1) = $(work_minutes / 60)
+            }
         }
 
         text work_month_header (markdown=true) = "**The last thirty days**"
-        div (layout="flow", min-width=150px, spacing=12) {
-            int work_sessions_month (label="sessions") = $(WorkDays.cells().sum(|d| d/sessions) + /project/Items.sum(|x|
-                x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).count()))
-            float work_cost_month (label="spent", prefix="$", precision=2) = $(WorkDays.cells().sum(|d| d/cost) + /project/Items.sum(|x|
-                x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/cost)))
-            int work_output_month (label="output", suffix="k") = $(WorkDays.cells().sum(|d| d/output) + /project/Items.sum(|x|
-                x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/output)))
-            int work_read_month (label="read", suffix="k") = $(WorkDays.cells().sum(|d| d/read) + /project/Items.sum(|x|
-                x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/read)))
-            int work_written_month (label="written", suffix="k") = $(WorkDays.cells().sum(|d| d/written) + /project/Items.sum(|x|
-                x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/written)))
-            float work_hours_month (label="time", suffix=" h", precision=1) = $(work_minutes_month / 60)
+        div (layout="flow", min-width=140px, spacing=12) {
+            <StatTile> {
+                int work_sessions_month (label="sessions", font-size=26px) = $(WorkDays.cells().sum(|d| d/sessions) + /project/Items.sum(|x|
+                    x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).count()))
+            }
+            <StatTile> {
+                float work_cost_month (label="spent", font-size=26px, prefix="$", precision=2, font-color=$(theme/accent)) = $(WorkDays.cells().sum(|d| d/cost) + /project/Items.sum(|x|
+                    x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/cost)))
+            }
+            <StatTile> {
+                int work_output_month (label="output", font-size=26px, suffix="k") = $(WorkDays.cells().sum(|d| d/output) + /project/Items.sum(|x|
+                    x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/output)))
+            }
+            <StatTile> {
+                int work_read_month (label="read", font-size=26px, suffix="k") = $(WorkDays.cells().sum(|d| d/read) + /project/Items.sum(|x|
+                    x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/read)))
+            }
+            <StatTile> {
+                int work_written_month (label="written", font-size=26px, suffix="k") = $(WorkDays.cells().sum(|d| d/written) + /project/Items.sum(|x|
+                    x/Agents/Work.filter(|r| millis_since_epoch(r/at) >= millis_since_epoch(/project/work_since)).sum(|r| r/written)))
+            }
+            <StatTile> {
+                float work_hours_month (label="time", font-size=26px, suffix=" h", precision=1) = $(work_minutes_month / 60)
+            }
         }
 
-        div (layout="vertical", margin=0, spacing=4) {
+        text tags_section_header (markdown=true) = "### <icon=tags> Tags and milestones"
+        <StatCard> {
             text tags_header (markdown=true) = "**How much of each tag is done**"
             chart tag_progress (kind="bar", height=220px, width=100%) {
                 plot each (source=$(/project/Labels), label=$(|t| t/name == "" ? t/tag : t/name), color=$(|t| t/colour),
@@ -998,7 +1062,7 @@ tab project (label=$(name), mutable=true) {
         }
 
         div (layout="flow", min-width=280px, spacing=12) {
-            div (layout="vertical", margin=0, spacing=4) {
+            <StatCard> {
                 text milestones_progress_header (markdown=true) = "**How far each milestone is**"
                 chart milestone_progress (kind="bar", height=180px) {
                     plot each (source=$(/project/Milestones), label=$(|t| t/name == "" ? t/tag : t/name), color=$(|t| t/colour),
@@ -1006,7 +1070,7 @@ tab project (label=$(name), mutable=true) {
                 }
             }
 
-            div (layout="vertical", margin=0, spacing=4) {
+            <StatCard> {
                 text tags_done_header (markdown=true) = "**Points finished by tag**"
                 chart tag_done (kind="pie", height=180px) {
                     plot each (source=$(/project/Labels), label=$(|t| t/name == "" ? t/tag : t/name), color=$(|t| t/colour),
@@ -1014,7 +1078,7 @@ tab project (label=$(name), mutable=true) {
                 }
             }
 
-            div (layout="vertical", margin=0, spacing=4) {
+            <StatCard> {
                 text tags_cost_header (markdown=true) = "**$ spent by tag**"
                 chart tag_cost (kind="pie", height=180px) {
                     plot each (source=$(/project/Labels), label=$(|t| t/name == "" ? t/tag : t/name), color=$(|t| t/colour),

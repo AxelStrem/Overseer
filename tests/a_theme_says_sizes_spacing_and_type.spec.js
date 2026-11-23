@@ -84,6 +84,7 @@ describe('a theme that says sizes, spacing and type', () => {
           key('cell-padding', '8px'),
           key('detail', 'bar')),
         group('field', key('value-frame', 'none')),
+        group('chart', key('frame', 'none')),
         group('chip', key('remove', 'pointed'), key('add', 'never')),
       ),
     ]
@@ -103,6 +104,8 @@ describe('a theme that says sizes, spacing and type', () => {
     expect(said('--ov-table-cell-padding--start')).toBe('0px')
     expect(said('--ov-table-detail--side')).toMatch(/solid/)
     expect(said('--ov-field-value-frame--pad')).toBe('0px')
+    expect(said('--ov-chart-frame--border')).toBe('none')
+    expect(said('--ov-chart-frame--pad')).toBe('0px')
     expect(said('--ov-chip-remove--rest')).toBe('none')
     expect(said('--ov-chip-add--pointed')).toBe('hidden')
 
@@ -175,6 +178,7 @@ describe('a theme that says sizes, spacing and type', () => {
       ['--ov-size'], ['--ov-leading', '1.6'], ['--ov-numerals--css'],
       ['--ov-field-value-frame--pad', '6px 8px'], ['--ov-field-spacing', '8px'], ['--ov-field-number-align', 'right'],
       ['--ov-table-frame--border', '1px solid var(--ov-line)'], ['--ov-table-heading-size', '11px'],
+      ['--ov-chart-frame--border', '1px solid var(--ov-line)'], ['--ov-chart-frame--pad', '16px'],
       ['--ov-table-heading-weight', '600'], ['--ov-table-heading-case--css', 'none'],
       ['--ov-table-heading-tracking--css', '0.03em'], ['--ov-table-heading-rule--css', '1px'],
       ['--ov-table-row-padding', '8px'], ['--ov-table-row-rule--css', '1px'], ['--ov-table-row-pointed--tint', 'none'],

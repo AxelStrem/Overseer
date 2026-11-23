@@ -1383,6 +1383,8 @@ context week_start = "system"
     dark reads on the button. A button the document colours itself keeps its colours whatever
     the `style`.
   - `tab`: `size` (`14px`), `weight` and `padding` (`8px 16px`) of a tab's label.
+  - `chart`: `frame`, `box` or `none` - the frame and padding around a chart; `none` for charts
+    that stand in a card of the document's own, which frames them.
   - `tree`: `indent` (`18px`), `color`, `thickness`, `style` (`none`: no lines), `elbow` and `stand` (`row` or `column`) of a list drawn as a tree
     (see "Drawing a list as a tree").
   - `hold`: `style`, how a press held on a node with `on hold` is shown while it lasts - `fill`,

@@ -2332,9 +2332,11 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
 /* Charts */
 .overseer-chart {
     background: var(--ov-surface);
-    border: 1px solid var(--ov-line);
+    /* The theme's `chart/frame`: `none` draws no frame or padding around the chart, for one that
+       stands in a card of its own. */
+    border: var(--ov-chart-frame--border, 1px solid var(--ov-line));
     border-radius: var(--ov-radius);
-    padding: 16px;
+    padding: var(--ov-chart-frame--pad, 16px);
     margin-bottom: 16px;
     text-align: center;
     overflow: hidden;
