@@ -3399,33 +3399,48 @@ body.ov-backdrop-moving {
         radial-gradient(circle at 100% 50%, transparent 4px, #000 4.5px) right / 51% 100% no-repeat;
 }
 
-/* Circles side by side along the top and bottom edges and one at each end, the middle filled.
- * The rows are spaced to fit the chip whole (`round`), so no circle is cut at an end. */
+/* A thought bubble: puffs of mixed sizes along the top and bottom edges and two larger ones at each
+ * end, round a body short of every edge. Each row of puffs is several rows of one size, tiled
+ * at widths that share no factor, so the pattern they make together repeats only far beyond any
+ * chip's width; `--chip-phase`, which the page sets from the chip's name, shifts the rows against
+ * each other, so that two chips of the same width do not wear the same outline. The rows keep
+ * inside the ends (`padding-box`), which the end puffs round off. */
 .chip-bubbles,
 .tag-chip.chip-shape-bubbles {
     --chip-radius: 0;
-    --chip-end-left: 2px;
-    --chip-end-right: 2px;
+    --chip-end-left: 3px;
+    --chip-end-right: 3px;
     --chip-mask:
-        radial-gradient(closest-side, #000 92%, transparent) left top / 8px 8px round no-repeat,
-        radial-gradient(closest-side, #000 92%, transparent) left bottom / 8px 8px round no-repeat,
-        radial-gradient(closest-side, #000 92%, transparent) left center / 8px 8px no-repeat,
-        radial-gradient(closest-side, #000 92%, transparent) right center / 8px 8px no-repeat,
-        linear-gradient(#000, #000) center / calc(100% - 8px) calc(100% - 8px) no-repeat;
+        linear-gradient(#000, #000) center / calc(100% - 4px) calc(100% - 7px) no-repeat,
+        radial-gradient(circle 4px at 50% 4.5px, #000 85%, transparent) calc(var(--chip-phase, 0px) * 1) 0 / 17px 9px repeat-x padding-box,
+        radial-gradient(circle 3px at 50% 4.5px, #000 82%, transparent) calc(var(--chip-phase, 0px) * 2 + 6px) 0 / 11px 9px repeat-x padding-box,
+        radial-gradient(circle 2.5px at 50% 4.5px, #000 80%, transparent) calc(var(--chip-phase, 0px) * 3 + 3px) 0 / 7px 9px repeat-x padding-box,
+        radial-gradient(circle 4px at 50% 4.5px, #000 85%, transparent) calc(var(--chip-phase, 0px) * 2 + 9px) 100% / 19px 9px repeat-x padding-box,
+        radial-gradient(circle 3px at 50% 4.5px, #000 82%, transparent) calc(var(--chip-phase, 0px) * 3 + 2px) 100% / 13px 9px repeat-x padding-box,
+        radial-gradient(circle 2.5px at 50% 4.5px, #000 80%, transparent) calc(var(--chip-phase, 0px) * 1 + 5px) 100% / 8px 9px repeat-x padding-box,
+        radial-gradient(closest-side, #000 88%, transparent) 0 1px / 10px 10px no-repeat,
+        radial-gradient(closest-side, #000 88%, transparent) 1px 100% / 9px 9px no-repeat,
+        radial-gradient(closest-side, #000 88%, transparent) 100% 0 / 9px 9px no-repeat,
+        radial-gradient(closest-side, #000 88%, transparent) 100% calc(100% - 1px) / 10px 10px no-repeat;
 }
 
-/* Squares instead of circles: corners that go down in steps, a rounded box drawn in pixels. */
+/* The same outline in squares: blocks of mixed sizes, upright, standing out of the top and bottom
+ * edges and the ends, laid out as `bubbles` lays its puffs. */
 .chip-steps,
 .tag-chip.chip-shape-steps {
     --chip-radius: 0;
-    --chip-end-left: 1px;
-    --chip-end-right: 1px;
-    --chip-clip: polygon(
-        6px 0, calc(100% - 6px) 0, calc(100% - 6px) 3px, calc(100% - 3px) 3px,
-        calc(100% - 3px) 6px, 100% 6px, 100% calc(100% - 6px), calc(100% - 3px) calc(100% - 6px),
-        calc(100% - 3px) calc(100% - 3px), calc(100% - 6px) calc(100% - 3px), calc(100% - 6px) 100%,
-        6px 100%, 6px calc(100% - 3px), 3px calc(100% - 3px), 3px calc(100% - 6px), 0 calc(100% - 6px),
-        0 6px, 3px 6px, 3px 3px, 6px 3px);
+    --chip-end-left: 3px;
+    --chip-end-right: 3px;
+    --chip-mask:
+        linear-gradient(#000, #000) center / calc(100% - 4px) calc(100% - 7px) no-repeat,
+        linear-gradient(90deg, #000 6px, transparent 0) calc(var(--chip-phase, 0px) * 1) 0 / 17px 6px repeat-x padding-box,
+        linear-gradient(90deg, #000 4px, transparent 0) calc(var(--chip-phase, 0px) * 2 + 6px) 1px / 11px 5px repeat-x padding-box,
+        linear-gradient(90deg, #000 3px, transparent 0) calc(var(--chip-phase, 0px) * 3 + 3px) 2px / 7px 4px repeat-x padding-box,
+        linear-gradient(90deg, #000 6px, transparent 0) calc(var(--chip-phase, 0px) * 2 + 9px) 100% / 19px 6px repeat-x padding-box,
+        linear-gradient(90deg, #000 4px, transparent 0) calc(var(--chip-phase, 0px) * 3 + 2px) calc(100% - 1px) / 13px 5px repeat-x padding-box,
+        linear-gradient(90deg, #000 3px, transparent 0) calc(var(--chip-phase, 0px) * 1 + 5px) calc(100% - 2px) / 8px 4px repeat-x padding-box,
+        linear-gradient(#000, #000) 0 4px / 5px 8px no-repeat,
+        linear-gradient(#000, #000) 100% calc(100% - 4px) / 5px 8px no-repeat;
 }
 
 /* The pill with sharp teeth along its top and bottom: a body short of each edge, and a row of

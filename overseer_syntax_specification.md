@@ -2703,8 +2703,8 @@ right, its top edge ahead of its bottom one, for a third kind of label beside th
 project's milestones beside its tags and stages. A textbox that picks chips to narrow a list by
 takes `shape` too. The other shapes are `round`, a circle around an icon alone and an ellipse
 around a name; `tag`, pointed at the right; `notch`, a box with its corners cut off; `hex`,
-pointed at both ends; `ticket`, with a half circle bitten out of each end; `bubbles`, a row of
-circles along each edge; `steps`, corners that go down in steps; `chainsaw`, a pill with teeth
+pointed at both ends; `ticket`, with a half circle bitten out of each end; `bubbles`, a thought
+bubble, its edges puffs of mixed sizes; `steps`, the same outline in upright squares; `chainsaw`, a pill with teeth
 along its top and bottom; and `wave`, with waves along its top and bottom. A vocabulary entry with
 a `shape` of its own is drawn in that one instead.
 

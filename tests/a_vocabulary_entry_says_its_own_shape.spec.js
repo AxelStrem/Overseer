@@ -21,7 +21,7 @@ function setupDOM() {
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { OverseerApp } from '../src/main.js'
-import { CHIP_SHAPES } from '../src/renderer.js'
+import { CHIP_SHAPES, chipPhase } from '../src/renderer.js'
 
 const base = (name, node_type) => ({
   name, node_type, parameters: {}, children: [], is_hierarchy_transparent: false,
@@ -99,5 +99,28 @@ describe('the shapes in the stylesheet', () => {
     const reset = css.indexOf('.tag-chip[class*="chip-shape-"] {')
     expect(reset).toBeGreaterThan(-1)
     expect(reset).toBeLessThan(css.indexOf('.tag-chip.chip-shape-box {'))
+  })
+})
+
+describe('the ragged shapes', () => {
+  it('are shifted on each chip by its own phase, the same for the same tag', () => {
+    setupDOM()
+    const app = new OverseerApp()
+    app.currentDocument = docOf()
+    app._currentText = 'TEXT'
+    app.renderer.renderDocument(app.currentDocument)
+    const phase = (tag) => document.querySelector(`.tags-field .tag-chip[data-tag='${tag}']`)
+      .style.getPropertyValue('--chip-phase')
+    expect(phase('alice')).toBe(`${chipPhase('alice')}px`)
+    expect(chipPhase('alice')).toBe(chipPhase('alice'))
+    expect(new Set(['alice', 'bob', 'carol', 'ui', 'perf'].map(chipPhase)).size).toBeGreaterThan(1)
+  })
+
+  it('draw bubbles and steps from that phase', () => {
+    const css = readFileSync('src/styles.css', 'utf8')
+    for (const shape of ['bubbles', 'steps']) {
+      const start = css.indexOf(`.tag-chip.chip-shape-${shape} {`)
+      expect(css.slice(start, css.indexOf('}', start))).toContain('var(--chip-phase')
+    }
   })
 })

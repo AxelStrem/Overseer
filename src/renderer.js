@@ -309,6 +309,14 @@ export const textWithoutIcons = (s) => {
     return t.replace(ICON_IN_TEXT, ' ').replace(/\s+/g, ' ').trim()
 }
 
+/// How far a chip's ragged edges (`bubbles`, `steps`) are shifted, in pixels: drawn from its tag,
+/// so two chips of the same width are not drawn alike, and one chip is drawn the same every time.
+export function chipPhase(tag) {
+    let hash = 0
+    for (const ch of String(tag)) hash = (hash * 31 + ch.codePointAt(0)) >>> 0
+    return hash % 23
+}
+
 /// The shapes a chip can be drawn in, each a class in the stylesheet: a field's `shape` puts
 /// `chip-<shape>` on its row of chips, and a vocabulary entry's own `shape` puts
 /// `chip-shape-<shape>` on its chip. The server keeps the same list for a person's chip.
@@ -7565,6 +7573,7 @@ export class OverseerRenderer {
         const chip = document.createElement('span')
         chip.className = 'tag-chip'
         chip.dataset.tag = tag
+        chip.style.setProperty('--chip-phase', `${chipPhase(tag)}px`)
         const name = (known && known.name) || tag
         // The name is held in one span, as `setChipName` holds a marked-up one, so that a chip
         // wider than its column can cut the name short with an ellipsis: the text of a flex
