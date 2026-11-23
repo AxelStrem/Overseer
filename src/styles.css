@@ -3596,6 +3596,51 @@ body.ov-backdrop-moving {
     outline-offset: 1px;
 }
 
+/* The entries a chip mark typed in text can name, beside the caret. Fixed, since the editor
+ * around the text clips what overflows it. */
+.mark-complete {
+    position: fixed;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 180px;
+    max-width: 420px;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid var(--ov-line);
+    border-radius: 6px;
+    background-color: var(--ov-surface);
+    box-shadow: var(--shadow);
+}
+
+.mark-complete .mark-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.mark-complete .mark-option .tag-chip {
+    flex: none;
+}
+
+.mark-complete .mark-option-says {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.75;
+    font-size: 0.9em;
+}
+
+.mark-complete .mark-option:hover,
+.mark-complete .mark-option.mark-option-lit {
+    background-color: var(--ov-background);
+}
+
 /* An enum: one chip, pressed to pick another, from the same picker a tag is added from. */
 .tag-chip.enum-choice {
     cursor: pointer;

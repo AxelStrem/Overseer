@@ -892,6 +892,67 @@ export const nameAsText = (name) => {
     return holder.textContent.replace(/\s+/g, ' ').trim()
 }
 
+/// The chip mark being typed where the caret is, as `{ mark, query, start, end }`: a mark at the
+/// start of the text or after whitespace or `(`, with at least one character after it that is
+/// no whitespace, `<` or `>`. `start` is where the mark is and `end` where the word it begins
+/// ends, so a word the caret is in the middle of is taken whole. Null when none is: a heading's
+/// `# `, a lone `@`, and a `<#key>` already written all have none.
+export const chipMarkAtCaret = (text, caret) => {
+    const s = String(text ?? '')
+    const before = /(^|[\s(])([#@$:%~^+])([^\s<>]+)$/.exec(s.slice(0, caret))
+    if (!before) return null
+    const after = /^[^\s<>]*/.exec(s.slice(caret))[0]
+    const start = caret - before[2].length - before[3].length
+    return { mark: before[2], query: before[3], start, end: caret + after.length }
+}
+
+/// The keys of a vocabulary that answer what was typed after a mark, best first: keys that begin
+/// with it, then keys, names and hover texts that hold it anywhere - each group in the
+/// vocabulary's own order, and only entries it offers.
+export const vocabularyMatches = (vocabulary, query, limit = 20) => {
+    const q = String(query ?? '').toLowerCase()
+    const first = []
+    const then = []
+    for (const [key, known] of vocabulary || []) {
+        if (known && known.offered === false) continue
+        const k = String(key).toLowerCase()
+        if (k.startsWith(q)) first.push(key)
+        else if (k.includes(q)
+            || nameAsText(known?.name).toLowerCase().includes(q)
+            || String(known?.hover ?? '').toLowerCase().includes(q)) then.push(key)
+        if (first.length >= limit) break
+    }
+    return [...first, ...then].slice(0, limit)
+}
+
+/// Where the caret of a textarea is, in pixels from the textarea's top left as it is scrolled:
+/// a copy of the textarea's text up to the caret, laid out as the textarea lays it out, and a
+/// marker at its end.
+const caretPlaceIn = (textarea) => {
+    const mirror = document.createElement('div')
+    const style = window.getComputedStyle(textarea)
+    for (const p of ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+        'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'fontFamily',
+        'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'tabSize', 'textTransform',
+        'wordSpacing', 'textIndent']) mirror.style[p] = style[p]
+    Object.assign(mirror.style, {
+        position: 'absolute', visibility: 'hidden', top: '0', left: '-9999px',
+        whiteSpace: 'pre-wrap', overflowWrap: 'break-word', borderStyle: 'solid',
+    })
+    mirror.textContent = textarea.value.slice(0, textarea.selectionStart)
+    const marker = document.createElement('span')
+    marker.textContent = '​'
+    mirror.appendChild(marker)
+    document.body.appendChild(mirror)
+    const place = {
+        left: marker.offsetLeft - textarea.scrollLeft,
+        top: marker.offsetTop - textarea.scrollTop,
+        height: marker.offsetHeight || parseFloat(style.lineHeight) || 16,
+    }
+    mirror.remove()
+    return place
+}
+
 // Import Chart.js for chart visualization
 import {
     Chart,
@@ -13546,6 +13607,123 @@ export class OverseerRenderer {
         }
     }
 
+    /**
+     * A drop-down of the vocabulary a chip mark reads, while one is typed in `textarea`: `#ma`
+     * offers the entries of the `#` lists `node` sees that answer `ma`, and picking one writes
+     * `<#markdown-editor>` in place of what was typed. Arrows move, Enter or Tab or a click
+     * picks, and Escape closes the drop-down alone - the editor's own keys but Ctrl+Enter wait while it
+     * is open.
+     * A mark no vocabulary names lists for offers nothing. Answers what closes it for good.
+     */
+    offerMarksTypedIn(textarea, node) {
+        let menu = null
+        let typed = null
+        let keys = []
+        let lit = 0
+
+        const close = () => {
+            if (menu) menu.remove()
+            menu = null
+            typed = null
+        }
+        const light = (at) => {
+            lit = (at + keys.length) % keys.length
+            menu.querySelectorAll('.mark-option').forEach((row, i) => row.classList.toggle('mark-option-lit', i === lit))
+            menu.children[lit]?.scrollIntoView?.({ block: 'nearest' })
+        }
+        const pick = (key) => {
+            if (!typed) return
+            const written = `<${typed.mark}${key}>`
+            const { start, end } = typed
+            close()
+            textarea.focus()
+            textarea.setSelectionRange(start, end)
+            // Through the browser's own typing where it has it, so that one undo takes the pick
+            // back; it says `input` itself, as the fallback has to.
+            let done = false
+            try { done = typeof document.execCommand === 'function' && document.execCommand('insertText', false, written) } catch (_) { done = false }
+            if (!done || textarea.value.slice(start, start + written.length) !== written) {
+                textarea.setRangeText(written, start, end, 'end')
+                textarea.dispatchEvent(new Event('input', { bubbles: true }))
+            }
+        }
+        const place = () => {
+            const box = textarea.getBoundingClientRect()
+            let left = box.left
+            let top = box.bottom
+            try {
+                const caret = caretPlaceIn(textarea)
+                left = box.left + caret.left
+                top = box.top + Math.min(caret.top + caret.height, box.height)
+            } catch (_) { /* below the textarea */ }
+            menu.style.left = `${Math.max(0, Math.min(left, window.innerWidth - menu.offsetWidth - 4))}px`
+            menu.style.top = `${top + 2}px`
+        }
+        const offer = () => {
+            const found = chipMarkAtCaret(textarea.value, textarea.selectionStart)
+            if (!found || textarea.selectionStart !== textarea.selectionEnd || !this.vocabularyFor(node, found.mark)) return close()
+            const vocabulary = this.tagVocabulary(node, found.mark)
+            const matching = vocabularyMatches(vocabulary, found.query)
+            if (matching.length === 0) return close()
+            typed = found
+            keys = matching
+            if (!menu) {
+                menu = document.createElement('div')
+                menu.className = 'mark-complete'
+                menu.setAttribute('role', 'listbox')
+                // Beside the editor rather than on the body, so that it is drawn in the theme the
+                // text is.
+                const beside = textarea.parentNode?.parentNode || document.body
+                beside.appendChild(menu)
+            }
+            menu.textContent = ''
+            for (const key of keys) {
+                const known = vocabulary.get(key)
+                const row = document.createElement('div')
+                row.className = 'mark-option'
+                row.setAttribute('role', 'option')
+                row.dataset.key = key
+                const chip = this.tagChip(key, known, null)
+                chip.classList.add('inline-chip')
+                chip.dataset.mark = found.mark
+                row.appendChild(chip)
+                // Beside the chip, what tells one entry from another when the chip alone may not:
+                // its title, else its key under a name.
+                const says = known?.hover || (known?.named ? key : '')
+                if (says) {
+                    const aside = document.createElement('span')
+                    aside.className = 'mark-option-says'
+                    this.setTextWithIcons(aside, String(says))
+                    row.appendChild(aside)
+                }
+                // Pressed without taking the focus from the text, which would close the drop-down first.
+                row.addEventListener('mousedown', (e) => { e.preventDefault(); pick(key) })
+                menu.appendChild(row)
+            }
+            light(0)
+            place()
+        }
+
+        textarea.addEventListener('input', offer)
+        textarea.addEventListener('click', offer)
+        textarea.addEventListener('blur', close)
+        textarea.addEventListener('scroll', () => { if (menu) place() })
+        textarea.addEventListener('keydown', (e) => {
+            if (!menu) return
+            const held = () => { e.preventDefault(); e.stopImmediatePropagation() }
+            // Ctrl+Enter still saves: the drop-down only closes.
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) close()
+            else if (e.key === 'ArrowDown') { held(); light(lit + 1) }
+            else if (e.key === 'ArrowUp') { held(); light(lit - 1) }
+            else if (e.key === 'Enter' || e.key === 'Tab') { held(); pick(keys[lit]) }
+            else if (e.key === 'Escape') { held(); close() }
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+                setTimeout(offer, 0)
+            }
+        })
+        return close
+    }
+
     makeMarkdownFieldEditable(element, node) {
         // Get the raw markdown text from the node, not the rendered HTML
         const rawMarkdown = this.getNodeValue(node) || ''
@@ -13585,6 +13763,8 @@ export class OverseerRenderer {
         textarea.rows = 10
         textarea.placeholder = 'Enter markdown text...'
         editorContainer.appendChild(textarea)
+        // Before the editor's own keys, so that Enter and Escape reach the drop-down first.
+        const dropMarks = this.offerMarksTypedIn(textarea, node)
         const dropRecording = this.addRecordButton(toolbar, textarea)
         
         // Create preview div (initially hidden)
@@ -13624,6 +13804,7 @@ export class OverseerRenderer {
         })
         
     const finishEditing = async (save = true) => {
+            dropMarks()
             dropRecording()
             draft.drop()
             if (save) {
