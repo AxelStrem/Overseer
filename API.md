@@ -529,7 +529,9 @@ curl -H "$A" -H "$J" $B/api/save_overseer_image \
 ```
 
 The server picks the file's name, under `images/<document>/`; nothing sent can place it anywhere
-else.
+else. `save_overseer_audio` keeps a sound the same way, under `sounds/<document>/` - `mime` one of
+`audio/mpeg`, `audio/mp4`, `audio/aac`, `audio/ogg`, `audio/opus`, `audio/webm`, `audio/wav` or
+`audio/flac`, parameters such as `;codecs=opus` allowed, and at most 16 MB.
 
 `show_more_of_overseer_list` (`list_path`, the list's path of names) is the page asking a
 windowed list for one window more. It is kept against the session that asked, writes nothing,

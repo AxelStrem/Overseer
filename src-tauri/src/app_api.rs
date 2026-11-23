@@ -3589,12 +3589,49 @@ const IMAGE_TYPES: &[(&str, &str)] = &[
 /// serve it from, and the server's token is a cookie an `<img>` would carry to any route.
 /// Checked exactly as an icon is, with the raster extensions in place of `.svg`.
 pub fn image_beside(document: &std::path::Path, image: &str) -> std::result::Result<serde_json::Value, IconRefused> {
+    media_beside(document, image, IMAGE_TYPES, IMAGE_MOST_BYTES, "an image")
+}
+
+/// The most a document's own sound may weigh: a voice note is far under it, and so is a song of a
+/// few minutes at a high rate. Handed to the page whole, as an image is.
+pub const AUDIO_MOST_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The sounds a document may play, by extension, and the type each is served as. What a browser
+/// records - Opus in WebM or Ogg, AAC in MP4 - is among them, so a recording can be kept.
+const AUDIO_TYPES: &[(&str, &str)] = &[
+    ("mp3", "audio/mpeg"),
+    ("m4a", "audio/mp4"),
+    ("aac", "audio/aac"),
+    ("ogg", "audio/ogg"),
+    ("oga", "audio/ogg"),
+    ("opus", "audio/opus"),
+    ("webm", "audio/webm"),
+    ("wav", "audio/wav"),
+    ("flac", "audio/flac"),
+];
+
+/// A sound a document names by a path relative to its own folder, as in
+/// `audio memo = "sounds/memo.webm"` or `![memo](sounds/memo.webm)`: its type and its bytes in
+/// base64, handed out and checked exactly as an image is.
+pub fn audio_beside(document: &std::path::Path, audio: &str) -> std::result::Result<serde_json::Value, IconRefused> {
+    media_beside(document, audio, AUDIO_TYPES, AUDIO_MOST_BYTES, "a sound")
+}
+
+/// A file of one of `types` beside the document, as its type and its bytes in base64.
+fn media_beside(
+    document: &std::path::Path,
+    name: &str,
+    types: &[(&str, &str)],
+    most: u64,
+    what: &str,
+) -> std::result::Result<serde_json::Value, IconRefused> {
     use base64::Engine as _;
-    let extensions: Vec<&str> = IMAGE_TYPES.iter().map(|(e, _)| *e).collect();
-    let found = file_beside(document, image, &extensions, IMAGE_MOST_BYTES, "an image")?;
+    let extensions: Vec<&str> = types.iter().map(|(e, _)| *e).collect();
+    let found = file_beside(document, name, &extensions, most, what)?;
     let extension = found.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
-    let mime = IMAGE_TYPES.iter().find(|(e, _)| *e == extension).map(|(_, m)| *m).unwrap_or_default();
-    let bytes = std::fs::read(&found).map_err(|_| IconRefused::Missing(format!("no image '{}'", image)))?;
+    let mime = types.iter().find(|(e, _)| *e == extension).map(|(_, m)| *m).unwrap_or_default();
+    let bare = what.strip_prefix("an ").or_else(|| what.strip_prefix("a ")).unwrap_or(what);
+    let bytes = std::fs::read(&found).map_err(|_| IconRefused::Missing(format!("no {} '{}'", bare, name)))?;
     Ok(serde_json::json!({
         "mime": mime,
         "data": base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -3657,45 +3694,63 @@ pub fn save_image_beside(
     mime: &str,
     data: &str,
 ) -> std::result::Result<String, IconRefused> {
+    save_media_beside(document, mime, data, IMAGE_TYPES, IMAGE_MOST_BYTES, "images", "image")
+}
+
+/// Keeps a sound dropped into the document's text, or recorded in its editor, beside it under
+/// `sounds/<document name>/`, as `save_image_beside` keeps a picture. The type may carry
+/// parameters, as a recorder's `audio/webm;codecs=opus` does; the extension is the type's alone.
+pub fn save_audio_beside(
+    document: &std::path::Path,
+    mime: &str,
+    data: &str,
+) -> std::result::Result<String, IconRefused> {
+    save_media_beside(document, mime, data, AUDIO_TYPES, AUDIO_MOST_BYTES, "sounds", "sound")
+}
+
+/// A file of one of `types` kept under `<folder>/<document name>/`, named from the time.
+fn save_media_beside(
+    document: &std::path::Path,
+    mime: &str,
+    data: &str,
+    types: &[(&str, &str)],
+    most: u64,
+    folder_name: &str,
+    what: &str,
+) -> std::result::Result<String, IconRefused> {
     use base64::Engine as _;
     use std::io::Write as _;
-    let extension = IMAGE_TYPES
+    let bare_mime = mime.split(';').next().unwrap_or_default().trim();
+    let extension = types
         .iter()
-        .find(|(_, m)| m.eq_ignore_ascii_case(mime))
+        .find(|(_, m)| m.eq_ignore_ascii_case(bare_mime))
         .map(|(e, _)| *e)
-        .ok_or_else(|| IconRefused::NotAName(format!("'{}' is not an image type that is kept", mime)))?;
+        .ok_or_else(|| IconRefused::NotAName(format!("'{}' is not {} type that is kept", mime, if what == "image" { "an image" } else { "a sound" })))?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.trim())
-        .map_err(|_| IconRefused::NotAName("the image is not valid base64".into()))?;
+        .map_err(|_| IconRefused::NotAName(format!("the {} is not valid base64", what)))?;
     if bytes.is_empty() {
-        return Err(IconRefused::NotAName("the image is empty".into()));
+        return Err(IconRefused::NotAName(format!("the {} is empty", what)));
     }
-    if bytes.len() as u64 > IMAGE_MOST_BYTES {
-        return Err(IconRefused::NotAName("the image is too large to be kept".into()));
+    if bytes.len() as u64 > most {
+        return Err(IconRefused::NotAName(format!("the {} is too large to be kept", what)));
     }
-    let stem = document
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| IconRefused::Missing("no document to keep the image beside".into()))?;
-    let folder = document
-        .parent()
-        .ok_or_else(|| IconRefused::Missing("no document to keep the image beside".into()))?
-        .join("images")
-        .join(stem);
+    let nowhere = || IconRefused::Missing(format!("no document to keep the {} beside", what));
+    let stem = document.file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty()).ok_or_else(nowhere)?;
+    let folder = document.parent().ok_or_else(nowhere)?.join(folder_name).join(stem);
     std::fs::create_dir_all(&folder)
-        .map_err(|e| IconRefused::Missing(format!("cannot make the images folder: {:?}", e.kind())))?;
+        .map_err(|e| IconRefused::Missing(format!("cannot make the {} folder: {:?}", folder_name, e.kind())))?;
     let at = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
     for n in 1u32.. {
         let name = if n == 1 { format!("{}.{}", at, extension) } else { format!("{}-{}.{}", at, n, extension) };
         match std::fs::OpenOptions::new().write(true).create_new(true).open(folder.join(&name)) {
             Ok(mut file) => {
                 file.write_all(&bytes)
-                    .map_err(|e| IconRefused::Missing(format!("cannot write the image: {:?}", e.kind())))?;
-                return Ok(format!("images/{}/{}", stem, name));
+                    .map_err(|e| IconRefused::Missing(format!("cannot write the {}: {:?}", what, e.kind())))?;
+                return Ok(format!("{}/{}/{}", folder_name, stem, name));
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(IconRefused::Missing(format!("cannot write the image: {:?}", e.kind()))),
+            Err(e) => return Err(IconRefused::Missing(format!("cannot write the {}: {:?}", what, e.kind()))),
         }
     }
     unreachable!("a free name is always found")
@@ -3714,7 +3769,7 @@ fn file_beside(
     most: u64,
     what: &str,
 ) -> std::result::Result<std::path::PathBuf, IconRefused> {
-    let missing = || IconRefused::Missing(format!("no {} '{}'", what.trim_start_matches("an "), name));
+    let missing = || IconRefused::Missing(format!("no {} '{}'", what.strip_prefix("an ").or_else(|| what.strip_prefix("a ")).unwrap_or(what), name));
     let folder = document.parent().ok_or_else(missing)?;
     file_in(folder, name, extensions, most, what)
 }

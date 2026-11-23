@@ -53,6 +53,7 @@ mod a_document_keeps_plain_files_beside_it;
 mod a_document_names_the_library_bases_it_inherits;
 mod a_document_past_the_cap_is_not_written;
 mod a_document_settles;
+mod a_document_plays_its_own_sounds;
 mod a_document_shows_its_own_images;
 mod a_document_that_does_not_parse_says_where;
 #[cfg(feature = "server")]

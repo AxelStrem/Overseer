@@ -158,7 +158,7 @@ pub fn find_beside(dir: &Path, path: &str) -> Option<OverseerNode> {
 /// a type before choosing, so the comparison ignores case.
 pub const TYPES: &[&str] = &[
     "tab", "div", "list", "grid", "array", "calendar", "list_item", "string", "textbox", "text", "tags", "enum", "int",
-    "float", "date", "timestamp", "bool", "button", "checkbox", "chart", "image", "mark", "mount",
+    "float", "date", "timestamp", "bool", "button", "checkbox", "chart", "image", "audio", "mark", "mount",
     "context",
 ];
 

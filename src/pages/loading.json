@@ -1296,6 +1296,29 @@
               "String": "horizontal"
             }
           }
+        },
+        {
+          "children": [
+            {
+              "name": "style",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "bar"
+                }
+              }
+            }
+          ],
+          "name": "audio",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
         }
       ],
       "name": "theme",
@@ -2932,6 +2955,29 @@
             }
           ],
           "name": "separator",
+          "node_type": "-",
+          "parameters": {
+            "_label_layout": {
+              "String": "horizontal"
+            }
+          }
+        },
+        {
+          "children": [
+            {
+              "name": "style",
+              "node_type": "-",
+              "parameters": {
+                "_label_layout": {
+                  "String": "horizontal"
+                },
+                "value": {
+                  "String": "bar"
+                }
+              }
+            }
+          ],
+          "name": "audio",
           "node_type": "-",
           "parameters": {
             "_label_layout": {

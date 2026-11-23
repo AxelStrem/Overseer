@@ -14,7 +14,7 @@ type name (param=value, ...) = value { children }
 ```
 
 - **Fields** hold a value: `string`, `text` (markdown), `int`, `float`, `bool`, `date`,
-  `timestamp`, `enum` (one value out of a list), `tags` (several), `image`. `label=` is what the
+  `timestamp`, `enum` (one value out of a list), `tags` (several), `image`, `audio`. `label=` is what the
   page shows beside the value; a field without one shows the value alone.
 - **Containers** group: `div`, and `tab` for a page of a tab bar. A div or tab **without a name is
   layout only** - it is no step of any address, so fields can be regrouped, put in rows

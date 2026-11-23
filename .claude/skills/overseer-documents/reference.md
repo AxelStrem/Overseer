@@ -15,6 +15,7 @@ is right. The section names below are the specification's, for reading further.
 | `enum` | one handle from `vocabulary="/path/List"` ("Enum") |
 | `tags` | several handles, `"perf, ui"`, from a `vocabulary` ("Tags") |
 | `image` | a picture kept beside the document ("Images") |
+| `audio` | a sound kept beside the document, drawn as a player ("Sounds") |
 | `div`, `tab` | containers; unnamed ones are layout only |
 | `list` | entries from `entry=<Template>` or `entry=string`/`int`/...; `key=` names the key field ("Lists") |
 | `grid`, `array`, `calendar` | fixed cells: `columns`/`rows`; `length`; a cell per day ("Grids", "Arrays", "Calendars") |

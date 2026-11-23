@@ -206,6 +206,7 @@ list Priorities (entry=int) {
 - `checkbox`: Boolean toggle with actions
 - `chart`: A line, pie or bar chart of what its `plot`s say (see "Charts")
 - `image`: A picture kept beside the document (see "Images")
+- `audio`: A sound kept beside the document, drawn as a player (see "Sounds")
 - `mark`: Something drawn with no value of its own, such as a grip (see "Marks")
 
 #### Other nodes:
@@ -1348,6 +1349,10 @@ context week_start = "system"
   - `separator`: `style` (`solid`, `dashed`, `dotted`), `thickness` (`1px`), `color` (the theme's
     `line` where it says none) and `length` - `full`, or a size such as `60%` or `12px` for a
     short line in the middle.
+  - `audio`: `style`, `bar` (the default) or `compact` - a player as its button and its time,
+    without the bar. It takes `accent` for the button and the part played, `line` for the rest of
+    the bar, `muted` for the time, `surface` for its ground and `radius` for its corners, round
+    where it says none.
   - `field`: `value-frame` - `box`, each value in a padded frame of its own that shows under the
     pointer, or `none`, the value as text; `spacing`, the space above and below a field (`8px`);
     `number-align`, `start` or `end` (the default), where a number sits in its field.
@@ -1398,7 +1403,7 @@ context week_start = "system"
   container's theme: a `table` key changes the table's heading and rows, not the fields in it -
   unless it holds that kind's keys, as above. The kinds are `button`, `checkbox`, `chip` (tags and
   enums), `tab` (a tab bar and its tabs), `table` (a list drawn as a table), `field`, `chart`,
-  `separator` and `tree`. Each of them changes what its look takes from the theme, and nothing
+  `separator`, `tree` and `audio`. Each of them changes what its look takes from the theme, and nothing
   it draws in a fixed way: a solid button's label is light or dark to read on its colour whatever
   its `text`, and `button/label` says otherwise.
 - **`backdrop` is what is painted over `background`**: layers, each a key of its own, drawn in the
@@ -2490,6 +2495,32 @@ where the caret is. The same types and the same 8 MB hold as for a picture shown
 says `markdown=false`, and a one-line field, take no pictures, since there the reference would
 only be words. Removing the reference from the text leaves the file where it is.
 
+#### Sounds
+
+An `audio` plays a sound the document keeps beside it: its value is the path of an MP3, M4A, AAC,
+Ogg, Opus, WebM, WAV or FLAC file relative to the document's own folder.
+
+```overseer
+audio memo (label="Voice memo") = "sounds/memo.webm"
+```
+
+It is drawn as a small player - a button that plays and pauses, the bar of what has been played,
+which a press moves to that point, and the time - and the theme's `audio` kind says how it looks.
+Its label heads it; without one, its name says what it is to whoever cannot see it. The paths are
+reached and refused as an image's are (see "Images"), with a limit of 16 MB, and a sound is
+fetched only when its player is drawn. One that cannot be reached is a player that does not play.
+Starting one sound stops any other on the page. A press on a player is the player's alone: it
+does not open the text it is in for editing, nor press the entry it belongs to.
+
+A markdown text plays the same sounds, written as a picture is, `![memo](sounds/memo.webm)`: a
+reference whose path ends in a sound's extension is drawn as its player. A sound dropped or pasted
+into the editor of a markdown text is kept as a picture is, in `sounds/<document name>/` under a
+name made from the time, and the text gets `![](sounds/journal/20261123-091500.webm)` where the
+caret is. The editor has a `Record` button too, which records from the microphone until it is
+pressed again, then keeps the recording the same way; closing the editor while it records drops
+the recording. A browser lets a page use the microphone only over HTTPS or on the machine itself,
+and where it cannot the button is not shown.
+
 #### Marks
 
 A `mark` is drawn and nothing more: it is unnamed, holds no value, and, like an unnamed `div`, is
@@ -3079,7 +3110,8 @@ own server; one to anything else is drawn as its words.
 
 An image whose path has no scheme and no leading `/`, `![plate](images/plate.jpg)`, is one beside
 the document, found and refused exactly as an `image` node's is (see "Images"). An image from an
-`http` or `https` address is drawn as it is, and is not told which page asked for it.
+`http` or `https` address is drawn as it is, and is not told which page asked for it. One whose path ends in a sound's extension is a player
+for that sound (see "Sounds"), and one from an `http` or `https` address is a link to it.
 
 ##### Inline Color Syntax (Markdown Extension)
 You can apply color to an inline span of markdown text without assigning a `font-color` parameter to the whole `text` node using the custom angle bracket form:
@@ -3352,7 +3384,7 @@ div Tasks {
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`, `chip`, `clearable`
 - **Tags**: `vocabulary`, `shape`, `chip` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
 - **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`
-- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `calendar`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `mark`, `mount`, `context`
+- **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `calendar`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `audio`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context, and `base=none` or `base=<node>` on an element of an override)
 
 ---

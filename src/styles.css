@@ -1913,6 +1913,125 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     visibility: hidden;
 }
 
+/* A sound's player: a round button, the bar of what has been played, and the time. The theme's
+ * `audio` kind colours it - `accent` the button and the played part, `line` the rest of the bar,
+ * `muted` the time - and `audio/style = compact` leaves the bar out. */
+.ov-audio {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    vertical-align: middle;
+    min-width: 0;
+    max-width: 100%;
+    padding: 4px 10px 4px 4px;
+    border: 1px solid var(--ov-line, #e2e4e7);
+    border-radius: var(--ov-audio-radius, 999px);
+    background: var(--ov-surface, #fff);
+    color: var(--ov-muted, #686e76);
+    user-select: none;
+    -webkit-user-select: none;
+    box-sizing: border-box;
+}
+
+.audio-field .ov-audio,
+.text-content p > .ov-audio:only-child {
+    display: flex;
+    width: 100%;
+    max-width: 420px;
+}
+
+.ov-audio > audio {
+    display: none;
+}
+
+.ov-audio-play {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--ov-accent, #3d5f8a);
+    cursor: pointer;
+    position: relative;
+}
+
+/* A triangle to play, two bars to pause, drawn in the surface colour so that they read on accent. */
+.ov-audio-play::before {
+    content: "";
+    position: absolute;
+    left: 11px;
+    top: 8px;
+    border-style: solid;
+    border-width: 6px 0 6px 9px;
+    border-color: transparent transparent transparent var(--ov-surface, #fff);
+}
+
+.ov-audio.playing .ov-audio-play::before {
+    left: 9px;
+    top: 9px;
+    width: 3px;
+    height: 10px;
+    border: none;
+    border-left: 3px solid var(--ov-surface, #fff);
+    border-right: 3px solid var(--ov-surface, #fff);
+}
+
+.ov-audio-track {
+    display: var(--ov-audio-style--track, block);
+    flex: 1 1 auto;
+    min-width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--ov-line, #e2e4e7);
+    cursor: pointer;
+    position: relative;
+    /* A taller place to press than the bar it draws. */
+    box-sizing: content-box;
+    background-clip: content-box;
+    padding: 6px 0;
+}
+
+.ov-audio-played {
+    display: block;
+    width: 0%;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--ov-accent, #3d5f8a);
+}
+
+.ov-audio-time {
+    flex: none;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.ov-audio.audio-missing {
+    opacity: 0.5;
+}
+
+.ov-audio.audio-missing .ov-audio-play,
+.ov-audio.audio-missing .ov-audio-track {
+    cursor: default;
+}
+
+.ov-audio {
+    --ov-background: var(--ov-audio-background, var(--ov-theme-background)) !important;
+    --ov-surface: var(--ov-audio-surface, var(--ov-theme-surface)) !important;
+    --ov-text: var(--ov-audio-text, var(--ov-theme-text)) !important;
+    --ov-muted: var(--ov-audio-muted, var(--ov-theme-muted)) !important;
+    --ov-line: var(--ov-audio-line, var(--ov-theme-line)) !important;
+    --ov-accent: var(--ov-audio-accent, var(--ov-theme-accent)) !important;
+    --ov-success: var(--ov-audio-success, var(--ov-theme-success)) !important;
+    --ov-warning: var(--ov-audio-warning, var(--ov-theme-warning)) !important;
+    --ov-danger: var(--ov-audio-danger, var(--ov-theme-danger)) !important;
+    --ov-font: var(--ov-audio-font, var(--ov-theme-font)) !important;
+    --ov-mono: var(--ov-audio-mono, var(--ov-theme-mono)) !important;
+    --ov-radius: var(--ov-audio-radius, var(--ov-theme-radius)) !important;
+}
+
 .text-content strong {
     font-weight: 600;
 }
@@ -2942,6 +3061,14 @@ body.ov-backdrop-moving {
     background: var(--ov-accent);
     color: white;
     transform: translateY(-1px);
+}
+
+/* While it records, the record button says so in the theme's danger colour. */
+.markdown-toolbar button.record-btn.recording {
+    background: var(--ov-danger);
+    border-color: var(--ov-danger);
+    color: white;
+    font-variant-numeric: tabular-nums;
 }
 
 .mode-toggle-btn {

@@ -135,6 +135,14 @@ async fn load_overseer_image(path: String, image: String) -> Result<serde_json::
     })
 }
 
+/// A sound the open document names beside it - see `app_api::audio_beside`.
+#[command]
+async fn load_overseer_audio(path: String, audio: String) -> Result<serde_json::Value> {
+    app_api::audio_beside(std::path::Path::new(&path), &audio).map_err(|refused| match refused {
+        app_api::IconRefused::NotAName(m) | app_api::IconRefused::Missing(m) => OverseerError::IoError(m),
+    })
+}
+
 /// A font the theme names, kept in a themes folder - see `app_api::font_in_themes`.
 #[command]
 async fn load_overseer_font(font: String) -> Result<serde_json::Value> {
@@ -148,6 +156,15 @@ async fn load_overseer_font(font: String) -> Result<serde_json::Value> {
 #[command]
 async fn save_overseer_image(path: String, mime: String, data: String) -> Result<String> {
     app_api::save_image_beside(std::path::Path::new(&path), &mime, &data).map_err(|refused| match refused {
+        app_api::IconRefused::NotAName(m) | app_api::IconRefused::Missing(m) => OverseerError::IoError(m),
+    })
+}
+
+/// A sound dropped into the open document's text or recorded in its editor, kept beside it -
+/// see `app_api::save_audio_beside`.
+#[command]
+async fn save_overseer_audio(path: String, mime: String, data: String) -> Result<String> {
+    app_api::save_audio_beside(std::path::Path::new(&path), &mime, &data).map_err(|refused| match refused {
         app_api::IconRefused::NotAName(m) | app_api::IconRefused::Missing(m) => OverseerError::IoError(m),
     })
 }
@@ -607,8 +624,10 @@ fn main() {
             load_overseer_text,
             load_overseer_icon,
             load_overseer_image,
+            load_overseer_audio,
             load_overseer_font,
             save_overseer_image,
+            save_overseer_audio,
             save_overseer_file,
             save_overseer_file_from_text,
             save_overseer_file_with_original,

@@ -44,4 +44,7 @@ context theme {
         - thickness = "1px"
         - length = "full"
     }
+    - audio {
+        - style = "bar"
+    }
 }

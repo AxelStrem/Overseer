@@ -726,9 +726,10 @@ impl DocumentRoot {
         // The hazard a whole-document save brings is that the page may be stale: the bot could
         // have recorded something since it loaded, and this text would quietly replace it. So
         // where the client tells us what it started from, that is checked first.
-        // A pasted image is written beside the document rather than into it, so it is not one
-        // of these saves, whatever its name says; it is answered with the reads below.
-        if cmd.starts_with("save_") && cmd != "save_overseer_image" {
+        // A pasted image or a recorded sound is written beside the document rather than into
+        // it, so it is not one of these saves, whatever its name says; it is answered with the
+        // reads below.
+        if cmd.starts_with("save_") && cmd != "save_overseer_image" && cmd != "save_overseer_audio" {
             return self.save(cmd, args);
         }
 
@@ -791,6 +792,18 @@ impl DocumentRoot {
                     app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
                 })
             }
+            // A sound the document names beside it, checked as an image is.
+            "load_overseer_audio" => {
+                let path = arg_str(args, &["path"])
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                let audio = arg_str(args, &["audio"])
+                    .ok_or_else(|| RequestError::Rejected("'audio' is required".into()))?;
+                let file = self.resolve(&path)?;
+                app_api::audio_beside(&file, &audio).map_err(|refused| match refused {
+                    app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),
+                    app_api::IconRefused::Missing(m) => RequestError::NotFound(m),
+                })
+            }
             // A font the theme names, looked for in the folders themes are kept in - those of
             // this server's settings, not of any one document.
             "load_overseer_font" => {
@@ -812,6 +825,23 @@ impl DocumentRoot {
                     .ok_or_else(|| RequestError::Rejected("'data' is required".into()))?;
                 let file = self.resolve_for(&path, crate::access::Need::Edit)?;
                 app_api::save_image_beside(&file, &mime, &data)
+                    .map(serde_json::Value::String)
+                    .map_err(|refused| match refused {
+                        app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),
+                        app_api::IconRefused::Missing(m) => RequestError::Failed(m),
+                    })
+            }
+            // A sound dropped into the document's text or recorded in its editor, kept beside
+            // it as a pasted image is.
+            "save_overseer_audio" => {
+                let path = arg_str(args, &["path"])
+                    .ok_or_else(|| RequestError::Rejected("'path' is required".into()))?;
+                let mime = arg_str(args, &["mime"])
+                    .ok_or_else(|| RequestError::Rejected("'mime' is required".into()))?;
+                let data = arg_str(args, &["data"])
+                    .ok_or_else(|| RequestError::Rejected("'data' is required".into()))?;
+                let file = self.resolve_for(&path, crate::access::Need::Edit)?;
+                app_api::save_audio_beside(&file, &mime, &data)
                     .map(serde_json::Value::String)
                     .map_err(|refused| match refused {
                         app_api::IconRefused::NotAName(m) => RequestError::Rejected(m),

@@ -236,7 +236,7 @@ const BURST_DOTS = 8
 const BUTTON_STYLES = ['outline', 'plain']
 /// The kinds of element a theme says something about, and those of them that hold others - a
 /// table's `button` keys are how the buttons in a table look.
-const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'tree']
+const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'tree', 'audio']
 const KINDS_HOLDING = { table: '.overseer-list.view-table', tab: '.tab-bar' }
 
 /// A theme key said in words, as the CSS values the stylesheet reads: each is written beside the
@@ -254,6 +254,8 @@ const THEME_WORDS = {
     }),
     // Said, it is the space after a cell's content, and none comes before it.
     'cell-padding': () => ({ start: '0px' }),
+    // `compact` draws a player as its button and its time, without the bar between them.
+    style: (v) => v === 'compact' ? { track: 'none' } : unsaid('track'),
     'value-frame': (v) => v === 'none' ? { pad: '0px', hover: 'transparent' } : unsaid('pad', 'hover'),
     frame: (v) => v === 'none' ? { border: 'none', pad: '0px' } : unsaid('border', 'pad'),
     pointed: (v) => v === 'tint'
@@ -453,6 +455,15 @@ export const imageBeside = (path) => {
         p.split('/').every((part) => part && part !== '.' && part !== '..')
 }
 
+/// Whether a path a document gives for a sound may be asked for: as for an image, with a sound's
+/// extension in place of a picture's.
+const AUDIO_EXTENSION = /\.(mp3|m4a|aac|ogg|oga|opus|webm|wav|flac)$/i
+export const audioBeside = (path) => {
+    const p = String(path ?? '')
+    return AUDIO_EXTENSION.test(p) && !/^\/|[\\:?#]/.test(p) &&
+        p.split('/').every((part) => part && part !== '.' && part !== '..')
+}
+
 /// Whether a node is the one an answer's address names, as the backend steps addresses - see
 /// `addressing::segment_of`: the last step is the node's name, `#n` after it for a later one of
 /// that name, `(name)` for a context's worked-out copy, and `[key]` for an entry of a keyed list,
@@ -509,6 +520,128 @@ const documentImageAddress = (file) => {
 const showDocumentImage = (img, url) => {
     if (url) img.src = url
     else img.classList.add('image-missing')
+}
+
+// A document's own sounds, kept as its images are: the blob address once the bytes have come, null
+// for one refused or missing, or the promise while they are on their way.
+const documentAudio = new Map()
+const documentAudioAddress = (file) => {
+    const app = appDrawing()
+    const doc = (app && app.currentFile) || ''
+    const at = `${doc}\n${file}`
+    const known = documentAudio.get(at)
+    if (typeof known === 'string' || known === null) return known
+    if (!known && doc) {
+        documentAudio.set(at, askFor(app, 'load_overseer_audio', { path: doc, audio: file })
+            .then((got) => {
+                if (!got || typeof got.data !== 'string' || !/^audio\//.test(got.mime || '')) return null
+                const bytes = Uint8Array.from(atob(got.data), (c) => c.charCodeAt(0))
+                return URL.createObjectURL(new Blob([bytes], { type: got.mime }))
+            })
+            .catch(() => null)
+            .then((url) => {
+                documentAudio.set(at, url)
+                for (const player of document.querySelectorAll('.ov-audio[data-audio-file]')) {
+                    if (player.dataset.audioFile === file) showDocumentAudio(player, url)
+                }
+            }))
+    }
+    return undefined
+}
+const showDocumentAudio = (player, url) => {
+    const audio = player.querySelector('audio')
+    if (url && audio) {
+        audio.src = url
+        player.classList.remove('audio-missing')
+    } else {
+        player.classList.add('audio-missing')
+    }
+}
+
+/// A sound's time as the player shows it, `1:05`, or `1:02:05` past an hour.
+export const audioTime = (seconds) => {
+    const whole = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0
+    const h = Math.floor(whole / 3600)
+    const m = Math.floor((whole % 3600) / 60)
+    const sec = String(whole % 60).padStart(2, '0')
+    return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
+}
+
+/// The player a sound beside the document is drawn as - by an `audio` node and by a markdown
+/// reference alike - as HTML, since markdown is drawn as HTML: a play button, the bar of what has
+/// been played, and the time. It is worked by `workAudioPlayers`, once for the whole page, so the
+/// same markup plays wherever it lands. `url` is the sound's blob address, null for one refused or
+/// missing, undefined while it is on its way.
+const audioPlayerHtml = (file, name, url) => {
+    const missing = url === null || !file ? ' audio-missing' : ''
+    const src = url ? ` src="${escapeHtml(url)}"` : ''
+    const said = name ? ` aria-label="${escapeHtml(name)}" title="${escapeHtml(name)}"` : ''
+    workAudioPlayers()
+    return `<span class="ov-audio${missing}" data-audio-file="${escapeHtml(file)}" role="group"${said}>` +
+        '<button type="button" class="ov-audio-play" aria-label="Play"></button>' +
+        '<span class="ov-audio-track"><span class="ov-audio-played"></span></span>' +
+        '<span class="ov-audio-time">0:00</span>' +
+        `<audio preload="metadata"${src}></audio></span>`
+}
+
+/// Plays, pauses and seeks every player on the page, and keeps each one's bar and time up to
+/// date, from listeners on the document: a player drawn inside markdown has no code of its own.
+/// A press on a player is the player's alone - it never reaches the text it sits in, which would
+/// open its editor, nor the entry it belongs to. A media element's events do not bubble, so they
+/// are heard on their way down.
+let audioPlayersWorked = false
+const workAudioPlayers = () => {
+    if (audioPlayersWorked || typeof document === 'undefined') return
+    audioPlayersWorked = true
+    const playerOf = (target) => (target && target.closest ? target.closest('.ov-audio') : null)
+    const press = (e) => {
+        const player = playerOf(e.target)
+        if (!player) return
+        e.stopPropagation()
+        if (e.type !== 'click') return
+        e.preventDefault()
+        const audio = player.querySelector('audio')
+        if (!audio || player.classList.contains('audio-missing') || !audio.getAttribute('src')) return
+        const track = e.target.closest('.ov-audio-track')
+        if (track) {
+            const box = track.getBoundingClientRect()
+            if (box.width > 0 && Number.isFinite(audio.duration)) {
+                audio.currentTime = Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)) * audio.duration
+            }
+            return
+        }
+        if (!e.target.closest('.ov-audio-play')) return
+        if (audio.paused) {
+            // One sound at a time: starting one stops any other.
+            for (const other of document.querySelectorAll('.ov-audio audio')) if (other !== audio && !other.paused) other.pause()
+            const playing = audio.play()
+            if (playing && typeof playing.catch === 'function') playing.catch(() => {})
+        } else {
+            audio.pause()
+        }
+    }
+    for (const type of ['click', 'pointerdown', 'mousedown', 'touchstart', 'dblclick']) {
+        document.addEventListener(type, press, true)
+    }
+    const show = (e) => {
+        const audio = e.target
+        if (!audio || audio.tagName !== 'AUDIO') return
+        const player = playerOf(audio)
+        if (!player) return
+        const total = Number.isFinite(audio.duration) ? audio.duration : 0
+        const played = player.querySelector('.ov-audio-played')
+        if (played) played.style.width = total ? `${Math.min(100, (audio.currentTime / total) * 100)}%` : '0%'
+        const time = player.querySelector('.ov-audio-time')
+        if (time) time.textContent = audio.currentTime > 0 || !audio.paused
+            ? `${audioTime(audio.currentTime)} / ${audioTime(total)}` : audioTime(total)
+        player.classList.toggle('playing', !audio.paused && !audio.ended)
+        const button = player.querySelector('.ov-audio-play')
+        if (button) button.setAttribute('aria-label', !audio.paused && !audio.ended ? 'Pause' : 'Play')
+        if (e.type === 'error') player.classList.add('audio-missing')
+    }
+    for (const type of ['loadedmetadata', 'durationchange', 'timeupdate', 'play', 'pause', 'ended', 'seeked', 'error']) {
+        document.addEventListener(type, show, true)
+    }
 }
 
 /// The attributes an icon's span is drawn with, shared by the element and the markdown's HTML.
@@ -659,6 +792,8 @@ const markdown = new Marked({
             let file = String(href ?? '')
             try { file = decodeURI(file) } catch (_) {}
             if (!/^[^/?#]*:/.test(file) && !file.startsWith('/')) {
+                // A sound is referred to as a picture is, and drawn as a player.
+                if (audioBeside(file)) return audioPlayerHtml(file, text, documentAudioAddress(file))
                 if (!imageBeside(file)) return escapeHtml(text)
                 const url = documentImageAddress(file)
                 const src = url ? ` src="${escapeHtml(url)}"` : ''
@@ -666,6 +801,11 @@ const markdown = new Marked({
                 return `<img data-image-file="${escapeHtml(file)}"${src}${missing} ${titled}>`
             }
             if (!safeUrl(href)) return escapeHtml(text)
+            // A sound from elsewhere is a link to it: a player would tell its server which page
+            // it was opened from, which a media element has no way to keep back.
+            if (AUDIO_EXTENSION.test(String(href ?? '').replace(/[?#].*$/, ''))) {
+                return `<a href="${escapeHtml(href)}" rel="noreferrer">${escapeHtml(text || href)}</a>`
+            }
             // An image from elsewhere tells its server the page was opened; not where from.
             return `<img src="${escapeHtml(href)}" ${titled} referrerpolicy="no-referrer" loading="lazy">`
         },
@@ -3112,6 +3252,8 @@ export class OverseerRenderer {
                 return this.createChartElement(node)
             case 'image':
                 return this.createImageElement(node)
+            case 'audio':
+                return this.createAudioElement(node)
             case 'mark':
                 return this.createMarkElement(node)
             case 'mount':
@@ -8074,6 +8216,27 @@ export class OverseerRenderer {
         this.applyLayoutStyles(element, node)
         this.applyNodeStyles(element, node)
         return element
+    }
+
+    /// `audio memo (label="Voice memo") = "sounds/memo.webm"`: a sound beside the document, drawn
+    /// as a small player. Its label heads it; one refused or missing is a player that cannot play.
+    createAudioElement(node) {
+        const container = document.createElement('div')
+        container.className = 'overseer-field audio-field'
+        const labelText = this.getParameterValue(node, 'label')
+        if (labelText) {
+            const label = document.createElement('label')
+            this.setTextWithIcons(label, labelText, node)
+            container.appendChild(label)
+        }
+        const file = String(this.getNodeValue(node) ?? '').trim()
+        const beside = audioBeside(file)
+        const url = beside ? this.drawingHere(() => documentAudioAddress(file)) : null
+        const name = labelText ? textWithoutIcons(labelText) : (node.name || '')
+        container.insertAdjacentHTML('beforeend', audioPlayerHtml(beside ? file : '', name, url))
+        this.applyLayoutStyles(container, node)
+        this.applyNodeStyles(container, node)
+        return container
     }
 
     /// `image photo (width=50%) = "images/plate.jpg"`: a raster image beside the document, drawn
@@ -13186,51 +13349,137 @@ export class OverseerRenderer {
         } catch (_) { return null }
     }
 
-    /// An image pasted or dropped into a markdown editor is kept beside the document - the
-    /// server or the app picks its name under `images/<document name>/` - and the editor gets
-    /// `![](that path)` where the caret is when the answer comes. Only a markdown text takes them,
-    /// since only there is the reference drawn as the picture. Anything that is not an image is
-    /// left to the browser, so pasting text is as it always was.
-    takeImagesInto(textarea) {
-        const imagesOf = (files) => Array.from(files || []).filter((f) => f && /^image\//.test(f.type || ''))
-        const keep = async (images) => {
-            const doc = (this.app && this.app.currentFile) || ''
-            if (!doc) return
-            for (const image of images) {
-                let path
-                try {
-                    const data = await new Promise((resolve, reject) => {
-                        const reader = new FileReader()
-                        reader.onload = () => resolve(String(reader.result || '').replace(/^data:[^,]*,/, ''))
-                        reader.onerror = () => reject(reader.error)
-                        reader.readAsDataURL(image)
-                    })
-                    path = await this.ask('save_overseer_image', { path: doc, mime: image.type, data })
-                } catch (e) {
-                    this.sayRefused(textarea, `The image was not kept: ${e && e.message ? e.message : e}`)
-                    continue
-                }
-                if (typeof path !== 'string' || !textarea.isConnected) continue
-                this.sayRefused(null, null)
-                textarea.setRangeText(`![](${path})`, textarea.selectionStart, textarea.selectionEnd, 'end')
-                textarea.dispatchEvent(new Event('input', { bubbles: true }))
-            }
-        }
+    /// An image or a sound pasted or dropped into a markdown editor is kept beside the document -
+    /// the server or the app picks its name, under `images/<document name>/` or
+    /// `sounds/<document name>/` - and the editor gets `![](that path)` where the caret is when
+    /// the answer comes. Only a markdown text takes them, since only there is the reference drawn
+    /// as the picture or the player. Anything else is left to the browser, so pasting text is as
+    /// it always was.
+    takeFilesInto(textarea) {
+        const kept = (files) => Array.from(files || []).filter((f) => f && /^(image|audio)\//.test(f.type || ''))
+        const take = (files) => { for (const file of files) this.keepFileInto(textarea, file) }
         textarea.addEventListener('paste', (e) => {
-            const images = imagesOf(e.clipboardData && e.clipboardData.files)
-            if (images.length === 0) return
+            const files = kept(e.clipboardData && e.clipboardData.files)
+            if (files.length === 0) return
             e.preventDefault()
-            keep(images)
+            take(files)
         })
         textarea.addEventListener('dragover', (e) => {
             if (e.dataTransfer && Array.from(e.dataTransfer.items || []).some((i) => i.kind === 'file')) e.preventDefault()
         })
         textarea.addEventListener('drop', (e) => {
-            const images = imagesOf(e.dataTransfer && e.dataTransfer.files)
-            if (images.length === 0) return
+            const files = kept(e.dataTransfer && e.dataTransfer.files)
+            if (files.length === 0) return
             e.preventDefault()
-            keep(images)
+            take(files)
         })
+    }
+
+    /// Keeps one image or sound beside the document and puts its reference at the caret. Files
+    /// are kept one after another, in the order given, so their references land in that order.
+    keepFileInto(textarea, file) {
+        const previous = this._keeping || Promise.resolve()
+        const keeping = previous.then(async () => {
+            const doc = (this.app && this.app.currentFile) || ''
+            if (!doc) return
+            const sound = /^audio\//.test(file.type || '')
+            let path
+            try {
+                const data = await new Promise((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.onload = () => resolve(String(reader.result || '').replace(/^data:[^,]*,/, ''))
+                    reader.onerror = () => reject(reader.error)
+                    reader.readAsDataURL(file)
+                })
+                path = await this.ask(sound ? 'save_overseer_audio' : 'save_overseer_image', { path: doc, mime: file.type, data })
+            } catch (e) {
+                this.sayRefused(textarea, `The ${sound ? 'sound' : 'image'} was not kept: ${e && e.message ? e.message : e}`)
+                return
+            }
+            if (typeof path !== 'string' || !textarea.isConnected) return
+            this.sayRefused(null, null)
+            textarea.setRangeText(`![](${path})`, textarea.selectionStart, textarea.selectionEnd, 'end')
+            textarea.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        this._keeping = keeping.catch(() => {})
+        return keeping
+    }
+
+    /// The `Record` button of a markdown editor: it records from the microphone until pressed
+    /// again, then keeps the recording beside the document as a dropped sound is kept. It is not
+    /// drawn where the page cannot record - a browser allows the microphone only over HTTPS or on
+    /// the machine itself. The microphone is let go whenever the recording ends, and an editor
+    /// closed while recording drops what it had.
+    addRecordButton(toolbar, textarea) {
+        const canRecord = typeof window !== 'undefined' && typeof window.MediaRecorder === 'function' &&
+            typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function'
+        if (!canRecord) return () => {}
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'record-btn'
+        button.textContent = 'Record'
+        toolbar.appendChild(button)
+        let recording = null
+        const letGo = (r) => {
+            if (r.timer) clearInterval(r.timer)
+            for (const track of r.stream.getTracks()) track.stop()
+            button.classList.remove('recording')
+            button.textContent = 'Record'
+        }
+        const start = async () => {
+            let stream
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            } catch (e) {
+                this.sayRefused(textarea, `The microphone could not be used: ${e && e.name ? e.name : e}`)
+                return
+            }
+            if (!textarea.isConnected) {
+                for (const track of stream.getTracks()) track.stop()
+                return
+            }
+            const types = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm']
+            const type = types.find((t) => typeof MediaRecorder.isTypeSupported !== 'function' || MediaRecorder.isTypeSupported(t))
+            let recorder
+            try {
+                recorder = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream)
+            } catch (e) {
+                for (const track of stream.getTracks()) track.stop()
+                this.sayRefused(textarea, `The sound could not be recorded: ${e && e.name ? e.name : e}`)
+                return
+            }
+            const r = { stream, recorder, chunks: [], dropped: false, began: Date.now(), timer: null }
+            recording = r
+            recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size) r.chunks.push(e.data) })
+            recorder.addEventListener('stop', () => {
+                letGo(r)
+                if (recording === r) recording = null
+                if (r.dropped || !r.chunks.length || !textarea.isConnected) return
+                const mime = (recorder.mimeType || type || r.chunks[0].type || 'audio/webm')
+                this.keepFileInto(textarea, new Blob(r.chunks, { type: mime }))
+            })
+            this.sayRefused(null, null)
+            recorder.start()
+            button.classList.add('recording')
+            button.textContent = 'Stop 0:00'
+            r.timer = setInterval(() => { button.textContent = `Stop ${audioTime((Date.now() - r.began) / 1000)}` }, 250)
+        }
+        button.addEventListener('click', (e) => {
+            e.preventDefault()
+            if (recording) {
+                if (recording.recorder.state !== 'inactive') recording.recorder.stop()
+                return
+            }
+            start()
+        })
+        // What the editor calls as it closes.
+        return () => {
+            if (!recording) return
+            recording.dropped = true
+            if (recording.recorder.state !== 'inactive') recording.recorder.stop()
+            else letGo(recording)
+            recording = null
+        }
     }
 
     makeMarkdownFieldEditable(element, node) {
@@ -13272,6 +13521,7 @@ export class OverseerRenderer {
         textarea.rows = 10
         textarea.placeholder = 'Enter markdown text...'
         editorContainer.appendChild(textarea)
+        const dropRecording = this.addRecordButton(toolbar, textarea)
         
         // Create preview div (initially hidden)
         const preview = document.createElement('div')
@@ -13286,7 +13536,7 @@ export class OverseerRenderer {
     element.parentNode.insertBefore(editorContainer, element.nextSibling)
         textarea.focus()
         const draft = this.keepDraftOf(element, node, textarea, rawMarkdown)
-        this.takeImagesInto(textarea)
+        this.takeFilesInto(textarea)
 
         let isPreviewMode = false
         
@@ -13310,6 +13560,7 @@ export class OverseerRenderer {
         })
         
     const finishEditing = async (save = true) => {
+            dropRecording()
             draft.drop()
             if (save) {
                 const newValue = textarea.value

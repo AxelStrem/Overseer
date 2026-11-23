@@ -25,7 +25,7 @@ type name (param=value, ...) = value { children }
 - **Fields** hold a value: `string`, `text` (several lines; markdown with `markdown=true`),
   `textbox`, `int`, `float`, `bool`, `date` (`"2026-10-18"`), `timestamp`
   (`"2026-10-18T09:30:00+04:00"`), `enum` (one handle out of a vocabulary), `tags` (several,
-  comma-separated in one string), `image`. `label=` is what the
+  comma-separated in one string), `image`, `audio`. `label=` is what the
   page shows beside the value.
 - **Containers**: `div`, and `tab` (one page of a tab bar). **A div or tab without a name is
   layout only**: it is no step of any address. Wrap fields in unnamed divs
