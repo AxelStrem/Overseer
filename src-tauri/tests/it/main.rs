@@ -153,6 +153,7 @@ mod a_tree_entry_moves_with_its_branch;
 mod a_tree_window_keeps_branches_whole;
 mod a_viewers_press_starts_from_what_they_last_saw;
 mod a_viewers_write_into_a_grid_cell_leaves_the_file_alone;
+mod a_vocabulary_is_layered_by_the_elements_of_its_block;
 mod a_vocabulary_over_a_list_with_parts_reads_no_old_part;
 mod a_week_starts_on_the_week_start;
 mod a_whole_entry_is_pressable;

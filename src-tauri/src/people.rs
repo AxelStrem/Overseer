@@ -148,7 +148,7 @@ pub fn name_of(root: &Path, username: &str) -> Option<String> {
 }
 
 /// A name with its markup taken out, as the page shows it in plain text: `<color=... | x>` and
-/// `<motion=... | x>` are `x`, a `<#key>` its key, an icon nothing, and the marks of bold, italic,
+/// `<motion=... | x>` are `x`, a chip - `<#key>`, `<@key>` or any of `crate::contexts::CHIP_MARKS` - its key, an icon nothing, and the marks of bold, italic,
 /// strikethrough and code go - an underscore only where it opens or closes, since inside a word
 /// markdown reads it as a letter.
 pub fn plain(name: &str) -> String {
@@ -171,7 +171,9 @@ pub fn plain(name: &str) -> String {
                 let taken = if let Some(inner) = tag.strip_prefix("color=").or_else(|| tag.strip_prefix("motion=")) {
                     inner.find('|').map(|bar| plain(&inner[bar + 1..]))
                 } else {
-                    tag.strip_prefix('#').map(String::from)
+                    tag.strip_prefix(|m| crate::contexts::CHIP_MARKS.contains(&m))
+                        .filter(|key| !key.is_empty() && !key.contains(char::is_whitespace))
+                        .map(String::from)
                 };
                 if let Some(taken) = taken {
                     out.push_str(&taken);
@@ -281,6 +283,8 @@ mod tests {
         assert_eq!(plain("*agent* ~~old~~ `code`"), "agent old code");
         assert_eq!(plain("agent_ap31 and _this_"), "agent_ap31 and this");
         assert_eq!(plain("a \\* star, and <#ap31>"), "a * star, and ap31");
+        assert_eq!(plain("<@ap31> asked <%docs> and <~x>"), "ap31 asked docs and x");
+        assert_eq!(plain("a <@ b> is no chip"), "a <@ b> is no chip");
         assert_eq!(plain("1 < 2 > 0"), "1 < 2 > 0");
         assert_eq!(plain("<color=red | <icon=bot> Bot>"), "Bot");
         assert_eq!(plain("<motion=wave color=red | Bot>"), "Bot");

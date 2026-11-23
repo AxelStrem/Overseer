@@ -11,9 +11,13 @@ use overseer::types::*;
 use std::path::PathBuf;
 
 fn host(title: &str) -> String {
+    host_with(title, r#"context vocabulary = "/log/Items, /log/History""#)
+}
+
+fn host_with(title: &str, vocabulary: &str) -> String {
     format!(
         r##"tab log (label="Log", mutable=true) {{
-    context vocabulary = "/log/Items, /log/History"
+    {vocabulary}
 
     div (hidden=true) {{
         div Done (layout="horizontal") {{
@@ -166,4 +170,27 @@ fn a_formula_beside_a_written_title_reads_no_old_part() {
     };
     let records: serde_json::Value = serde_json::from_str(&records).unwrap();
     assert_eq!(records[0]["title"], serde_json::json!("The oldest"));
+}
+
+#[test]
+fn a_marked_element_of_a_vocabulary_block_names_its_list_too() {
+    let _guard = serial();
+    let block = "context vocabulary {\n        - items = \"/log/Items\"\n        - done = \"%/log/History\"\n    }";
+    let (_sandbox, documents) = sandbox("block", &host_with("= \"\"", block));
+    let nodes = documents.open("log.os").expect("open");
+    assert_eq!(held(&nodes), 1, "only this week is read");
+    let Some(OverseerValue::String(records)) = said(&nodes, "_parts_vocabulary") else {
+        panic!("no vocabulary on the list: {:?}", said(&nodes, "_parts_vocabulary"));
+    };
+    let records: serde_json::Value = serde_json::from_str(&records).unwrap();
+    assert_eq!(records[0]["key"], serde_json::json!("a"));
+}
+
+#[test]
+fn a_formula_title_named_by_a_vocabulary_block_reads_the_list_whole() {
+    let _guard = serial();
+    let block = "context vocabulary {\n        - done = \"%/log/History\"\n    }";
+    let (_sandbox, documents) = sandbox("blockformula", &host_with("= $(handle)", block));
+    let nodes = documents.open("log.os").expect("open");
+    assert_eq!(held(&nodes), 3, "every part is read");
 }

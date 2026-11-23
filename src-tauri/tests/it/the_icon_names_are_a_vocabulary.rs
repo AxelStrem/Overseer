@@ -26,6 +26,14 @@ const MENTIONS: &str = r#"tab notes (mutable=true) {
 }
 "#;
 
+const MARKED: &str = r#"tab notes (mutable=true) {
+    context vocabulary {
+        - icons = ":/host/icons"
+    }
+    tags marks = ""
+}
+"#;
+
 const PLAIN: &str = "tab notes (mutable=true) {\n    string kind = $(host/kind)\n}\n";
 
 fn names() -> Vec<String> {
@@ -40,6 +48,7 @@ fn served(test: &str) -> (DocumentRoot, PathBuf) {
     std::fs::write(root.join("notes.os"), PLAIN).unwrap();
     std::fs::write(root.join("picks.os"), PICKS_ONLY).unwrap();
     std::fs::write(root.join("mentions.os"), MENTIONS).unwrap();
+    std::fs::write(root.join("marked.os"), MARKED).unwrap();
     // The names are the process's, as the server sets them from the page it serves when it starts.
     overseer::environment::set_icons(names());
     (DocumentRoot::new(&root).unwrap(), root)
@@ -95,7 +104,7 @@ fn records(icons: &OverseerNode) -> serde_json::Value {
 fn a_document_that_picks_from_them_is_sent_their_names_and_no_entries() {
     let _serial = serial();
     let (documents, _) = served("picks");
-    for name in ["picks.os", "mentions.os"] {
+    for name in ["picks.os", "mentions.os", "marked.os"] {
         let nodes = documents.open(name).unwrap();
         let icons = host(&nodes).children.iter().find(|n| n.name == "icons").expect("host/icons");
         assert!(icons.children.is_empty(), "{}: {} entries", name, icons.children.len());

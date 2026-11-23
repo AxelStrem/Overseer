@@ -81,7 +81,7 @@ fn the_bench_shows_each_waiting_account_once() {
     let _serial = serial();
     let root = folder("seated", SEATED);
     let service = DocumentRoot::new(&root).unwrap();
-    assert_eq!(value(&service, "project/bench/waiting"), Some(OverseerValue::String("<#bot> helper".into())));
+    assert_eq!(value(&service, "project/bench/waiting"), Some(OverseerValue::String("<@bot> helper".into())));
 }
 
 #[test]

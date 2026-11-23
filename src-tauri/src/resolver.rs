@@ -299,6 +299,14 @@ fn names_the_list(
             if let Some(template) = &node.template {
                 bases.push(template.clone());
             }
+            // The elements of a `context vocabulary`'s block name lists as its value does.
+            if crate::contexts::is_context(node) && node.name == crate::contexts::VOCABULARY {
+                for text in crate::contexts::vocabulary_texts(node) {
+                    if says(text) {
+                        vocabulary.get_or_insert(format!("vocabulary \"{}\"", text));
+                    }
+                }
+            }
             // What the engine notes on a node is no formula of the document's: a list's own parts
             // folder names it.
             for (key, value) in node.parameters.iter() {
@@ -1634,13 +1642,9 @@ pub const UNREAD_VOCABULARY: &str = "_parts_vocabulary";
 fn name_unread_entries(nodes: &mut Vec<OverseerNode>) {
     fn said(nodes: &[OverseerNode], names: &mut std::collections::HashSet<String>) {
         for node in nodes {
-            let text = if node.node_type == "context" && node.name == "vocabulary" {
-                node.parameters.get("_computed_value").or_else(|| node.parameters.get("value"))
-            } else {
-                node.parameters.get("vocabulary")
-            };
-            if let Some(OverseerValue::String(text)) = text {
+            for text in crate::contexts::vocabulary_texts(node) {
                 for path in text.split(',') {
+                    let path = crate::contexts::unmarked(path);
                     if let Some(last) = path.split('/').map(str::trim).filter(|s| !s.is_empty()).last() {
                         names.insert(last.to_string());
                     }

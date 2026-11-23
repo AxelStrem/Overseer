@@ -234,6 +234,12 @@ pub enum IconsRead {
 /// a formula. Its thousands of entries would cost every other document its work-out and its size
 /// on the way to the page, so `host` carries them only for one that reads them - see `with_icons`.
 pub fn reads_icons(nodes: &[OverseerNode]) -> IconsRead {
+    icons_read_in(nodes, false)
+}
+
+/// `reads_icons`, for nodes that are elements of a `context vocabulary`'s block when
+/// `in_vocabulary` - each element's value a vocabulary's lists, as the context's own value is.
+fn icons_read_in(nodes: &[OverseerNode], in_vocabulary: bool) -> IconsRead {
     let mut read = IconsRead::Not;
     for node in nodes {
         for (key, value) in node.parameters.iter() {
@@ -246,13 +252,15 @@ pub fn reads_icons(nodes: &[OverseerNode]) -> IconsRead {
             }
             let as_vocabulary = matches!(value, OverseerValue::String(_))
                 && (key == "vocabulary"
+                    || (in_vocabulary && key == "value")
                     || (node.node_type == "context" && node.name == "vocabulary" && key == "value"));
             if !as_vocabulary {
                 return IconsRead::Whole;
             }
             read = IconsRead::AsVocabulary;
         }
-        match reads_icons(&node.children) {
+        let elements = in_vocabulary || (node.node_type == "context" && node.name == "vocabulary");
+        match icons_read_in(&node.children, elements) {
             IconsRead::Whole => return IconsRead::Whole,
             below => read = read.max(below),
         }

@@ -45,6 +45,58 @@ pub const CONTEXT: &str = "context";
 /// The parameter marking a worked-out copy, which the writer leaves out of the file.
 pub const CONTEXT_COPY: &str = "_context_copy";
 
+/// The marks a chip in text can be written with, `<#key>`, `<@key>` and the rest: each reads the
+/// lists of a vocabulary that names them with that mark in front of their paths, and a path with
+/// none answers `#`. They are the ones markdown leaves as text, escaped, rather than taking them
+/// for HTML or an address.
+pub const CHIP_MARKS: &[char] = &['#', '@', '$', ':', '%', '~', '^', '+'];
+
+/// The name of the context the page draws chips from, and of the parameter a field names its own
+/// vocabulary with.
+pub const VOCABULARY: &str = "vocabulary";
+
+/// The texts a node names a vocabulary's lists in: a field's own `vocabulary`, or a
+/// `context vocabulary`'s value and the value of each element of its block - which is how layers
+/// written on one container each add their own lists, merged as any block context is. Each is a
+/// comma-separated list of paths, any of them with a mark in front (see `CHIP_MARKS`).
+pub fn vocabulary_texts(node: &OverseerNode) -> Vec<&str> {
+    fn text<'a>(node: &'a OverseerNode, key: &str) -> Option<&'a str> {
+        let said = if key == "value" {
+            node.parameters.get("_computed_value").or_else(|| node.parameters.get("value"))
+        } else {
+            node.parameters.get(key)
+        };
+        match said {
+            Some(OverseerValue::String(text)) => Some(text.as_str()),
+            _ => None,
+        }
+    }
+    if is_context(node) && node.name == VOCABULARY {
+        let mut texts: Vec<&str> = text(node, "value").into_iter().collect();
+        fn elements<'a>(nodes: &'a [OverseerNode], out: &mut Vec<&'a OverseerNode>) {
+            for node in nodes {
+                if crate::addressing::is_wrapper(node) {
+                    elements(&node.children, out);
+                } else {
+                    out.push(node);
+                }
+            }
+        }
+        let mut found = Vec::new();
+        elements(&node.children, &mut found);
+        texts.extend(found.into_iter().filter_map(|element| text(element, "value")));
+        texts
+    } else {
+        text(node, VOCABULARY).into_iter().collect()
+    }
+}
+
+/// The path of a list as a vocabulary writes it, without the mark in front.
+pub fn unmarked(path: &str) -> &str {
+    let path = path.trim();
+    path.strip_prefix(|m| CHIP_MARKS.contains(&m)).map(str::trim).unwrap_or(path)
+}
+
 /// Whether a node is a context: a declaration as written, or a copy worked out from them.
 pub fn is_context(node: &OverseerNode) -> bool {
     node.node_type == CONTEXT

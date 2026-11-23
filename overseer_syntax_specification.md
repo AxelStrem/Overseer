@@ -472,7 +472,7 @@ reads the clock, `.map(|h| minutes_since(h/done_at)).min()`, is the usual case: 
 everything (the preview lists that among its problems, and `OVERSEER_PROFILE` prints it). A field of
 the entry that a formula works out, read by the chain, has every part read too.
 
-A `vocabulary` naming the list, its own or a `context vocabulary`, does not have its parts read
+A `vocabulary` naming the list, its own or a `context vocabulary` (its value, or an element of its block), does not have its parts read
 either. What a chip is drawn from - each entry's key, `name`, `title`, `colour`, `icon` and `shape` - is
 summarised the same way for the parts not read, so a `<#key>` naming an old entry draws as it would
 with every part read. That entry is not in the page, so its chip shows nothing when pressed. A
@@ -1583,14 +1583,14 @@ A document names people by username and shows them by name through the server's 
 server writes it from its accounts, everyone may read it, and nobody changes it through a document
 - a person changes their own name, chip colour, chip icon, chip shape and whether the account is a bot in their profile. The name is markdown, as any
 vocabulary entry's is (see "Tags"), and `me/name` is it as plain text. Mounted, it is a vocabulary like any other, so
-a field holding `ap31` and a `<#ap31>` in any text draw that person's chip with the name they have
+a field holding `ap31` and a `<@ap31>` in any text draw that person's chip with the name they have
 now; renamed, they are shown by the new name everywhere, and no document is written for it:
 
 ```overseer
 mount people (source="../people.os/People", lazy=false, hidden=true, mutable=false) { }
 
 tab notes (mutable=true) {
-    context vocabulary = "/people/People"
+    context vocabulary = "@/people/People"
     enum author (vocabulary="/people/People") = ""
     string by = $(/people/People.find(author)/name)
 
@@ -2469,6 +2469,50 @@ tab project (label="Project") {
 A key no vocabulary holds is drawn as a plain chip of the word. As with icons, the text is kept as
 written - in the file, in formulas, in the editor - and a box that narrows a list matches the key inside it. Inside
 markdown code, `` `<#key>` `` stays text, and so does `` `<icon=name>` ``.
+
+`#` is one of eight marks, `# @ $ : % ~ ^ +`, and each names entries of its own lists: those a
+vocabulary writes with that mark in front of their path. A path with no mark is `#`'s, so text can
+name a task as `<#parser>` and a person as `<@ap31>` side by side:
+
+```overseer
+tab project (label="Project") {
+    context vocabulary = "/project/Items, /project/History, @/people/People"
+    ...
+    text body (markdown=true) = "<@ap31> asks whether <#parser> is done."
+}
+```
+
+Each mark is looked up on its own: the field's own `vocabulary` if it names a list for that mark,
+else the nearest `context vocabulary` that does. A container that says only
+`context vocabulary = "@/guests/People"` changes who `<@...>` names inside it and leaves `<#...>` as
+it was above. A field picks from its unmarked lists; the other marks are for text.
+
+A `context vocabulary` can also be a block whose elements each name lists, marks and all. It merges
+as any context does (see "Contexts"), so each layer of a document - a template, an instance made
+from it, a mounted document, a container inside - adds its own element with `+` or replaces one by
+name, and keeps what the others said. A value, which a value written on the same container
+replaces, cannot do that:
+
+```overseer
+div (hidden=true) {
+    tab Project {
+        context vocabulary {
+            - items = "/project/Items, /project/History"
+            - people = "@/project/people/People"
+        }
+        ...
+    }
+}
+
+<Project> project {
+    context vocabulary {
+        + docs = "%/project/Docs"
+        - people = "@/team/People"
+    }
+}
+```
+
+The lists of a mark are those of the nearest value naming any for it, then those its elements name.
 
 Pressing a chip that stands for an entry - in text, in a `tags` field, or an `enum` with nothing to
 pick - shows the entry: the folds and tabs around it open, it is scrolled into view and marked for

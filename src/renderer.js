@@ -64,9 +64,26 @@ const INLINE_COLOR = new RegExp(`^<span class="md-inline-color" style="color:${C
 /// `<icon=name>` inside any text the page draws. The name is checked when it is drawn.
 const ICON_IN_TEXT = /<icon=([^<>]*)>/g
 /// `<#key>` inside any text the page draws: a chip for the entry the nearest vocabulary knows by
-/// that key. In markdown it reaches the HTML escaped, as any `<` that opens no tag does.
-const CHIP_IN_TEXT = /<#([^<>\s]+)>/g
-const CHIP_IN_HTML = /&lt;#([^<>&\s]+)&gt;/g
+/// that key. In markdown it reaches the HTML escaped, as any `<` that opens no tag does. Each of
+/// `CHIP_MARKS` reads its own lists - `<@ap31>` a person, say, beside `<#parser>` an item - the ones
+/// a vocabulary names with that mark in front of their paths; a path with none answers `#`. They
+/// are the marks markdown leaves as text: `<!x>` and `<?x>` it takes for HTML, `<&x>` it escapes
+/// twice.
+export const CHIP_MARKS = '#@$:%~^+'
+const CHIP_IN_TEXT = /<([#@$:%~^+])([^<>\s]+)>/g
+const CHIP_IN_HTML = /&lt;([#@$:%~^+])([^<>&\s]+)&gt;/g
+/// Whether a text may hold a chip at all, before it is looked through for one.
+const MAY_HOLD_A_CHIP = /<[#@$:%~^+][^<>\s]/
+
+/// The lists a vocabulary's text names for one mark, without the mark, as a vocabulary of `#`
+/// always wrote them: `"/p/Items, @/p/People"` names `/p/Items` for `#` and `/p/People` for `@`.
+/// Empty when it names none for it.
+export const listsMarked = (text, mark = '#') => String(text ?? '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+    .map(path => CHIP_MARKS.includes(path[0]) ? [path[0], path.slice(1).trim()] : ['#', path])
+    .filter(([m, path]) => m === mark && path)
+    .map(([, path]) => path)
+    .join(', ')
 /// How many chips a picker offers before it opens with a box to find one in.
 const PICKER_FINDS_FROM = 12
 /// How many chips a picker with a find box draws at once: the rest are found by typing. Every
@@ -287,7 +304,7 @@ export const millisecondsSaid = (said) => {
 /// window's title, a search over names. A chip says its key.
 export const textWithoutIcons = (s) => {
     let t = String(s ?? '')
-    if (t.indexOf('<#') !== -1) t = t.replace(CHIP_IN_TEXT, '$1')
+    if (MAY_HOLD_A_CHIP.test(t)) t = t.replace(CHIP_IN_TEXT, '$2')
     if (t.indexOf('<icon=') === -1) return t
     return t.replace(ICON_IN_TEXT, ' ').replace(/\s+/g, ' ').trim()
 }
@@ -871,7 +888,7 @@ export const nameAsText = (name) => {
     const s = String(name ?? '')
     if (!NAME_MARKUP.test(s)) return textWithoutIcons(s)
     const holder = document.createElement('span')
-    holder.innerHTML = nameHtml(s.replace(CHIP_IN_TEXT, '$1'))
+    holder.innerHTML = nameHtml(s.replace(CHIP_IN_TEXT, '$2'))
     return holder.textContent.replace(/\s+/g, ' ').trim()
 }
 
@@ -7243,8 +7260,8 @@ export class OverseerRenderer {
      * once for each vocabulary while the page draws: a project's hundreds of comments all reach
      * the same one, and its lists do not change in the middle of a drawing.
      */
-    tagVocabulary(node) {
-        const where = this.vocabularyFor(node)
+    tagVocabulary(node, mark = '#') {
+        const where = this.vocabularyFor(node, mark)
         if (!where) return new Map()
         if (!this._vocabularies) {
             this._vocabularies = new Map()
@@ -7259,12 +7276,42 @@ export class OverseerRenderer {
      * `context vocabulary`. Said once on a container, it is meant for everything inside it - a
      * project names its items once, and every comment within can mention one while a field
      * naming a list of its own keeps that one.
+     *
+     * Each mark is looked for on its own (see `CHIP_MARKS`): `<@ap31>` reads the lists named with
+     * `@`, from the nearest vocabulary that names any, so a container saying only where its people
+     * are leaves the items above it as they were. A field's picks are `#`'s.
      */
-    vocabularyFor(node) {
+    vocabularyFor(node, mark = '#') {
         const own = this.getParameterValue(node, 'vocabulary')
-        if (own) return String(own)
-        const given = this.contextAt(node, 'vocabulary')
-        return given ? String(given) : null
+        const lists = own ? listsMarked(own, mark) : ''
+        if (lists) return lists
+        return this.vocabularyInContexts(node, mark) || null
+    }
+
+    /**
+     * The lists the `context vocabulary` a node sees names for a mark. Its value, the nearest that
+     * names any for the mark; and the elements of its block, merged by name as the contexts were -
+     * a template's `- items`, an instance's `+ people`, a container's `- people` put in place of
+     * the one above. A copy holds only the elements its container changed, so they are gathered
+     * from every copy up to the top, the nearer one's element in place of the one above.
+     */
+    vocabularyInContexts(node, mark) {
+        const copies = this.contextsAt(node, 'vocabulary')
+        let value = ''
+        for (const copy of copies) {
+            const said = this.contextSays(copy)
+            value = said ? listsMarked(said, mark) : ''
+            if (value) break
+        }
+        const elements = new Map()
+        for (const copy of copies.slice().reverse()) {
+            for (const element of copy.children || []) {
+                if (!element || !element.name) continue
+                elements.set(element.name, this.getParameterValue(element, 'value'))
+            }
+        }
+        const lists = [value, ...[...elements.values()].map(text => listsMarked(text, mark))]
+        return lists.filter(Boolean).join(', ')
     }
 
     /**
@@ -7286,6 +7333,21 @@ export class OverseerRenderer {
         const found = this.leadingContext(top, name)
             || this.leadingContext(top.slice().reverse(), name)
         return found ? this.contextSays(found) : undefined
+    }
+
+    /// Every copy of a context of this name a node is inside, nearest first - see `contextAt`.
+    contextsAt(node, name) {
+        const copies = []
+        for (let at = this.parentOf(node); at; at = this.parentOf(at)) {
+            const found = this.leadingContext(at.children, name)
+            if (found) copies.push(found)
+        }
+        const doc = this.app && this.app.currentDocument
+        const top = Array.isArray(doc) ? doc : []
+        for (const found of [this.leadingContext(top, name), this.leadingContext(top.slice().reverse(), name)]) {
+            if (found && !copies.includes(found)) copies.push(found)
+        }
+        return copies
     }
 
     leadingContext(children, name) {
@@ -7547,15 +7609,17 @@ export class OverseerRenderer {
     }
 
     /**
-     * A `<#key>` in text: the chip the vocabulary `node` reaches draws for that key - its name,
+     * A `<#key>` in text - or `<@key>`, or another of `CHIP_MARKS`, which `mark` says: the chip
+     * the vocabulary `node` reaches for that mark draws for that key - its name,
      * its colour, its title on hover - exactly as a tags field would draw it. A key the
      * vocabulary does not hold is a plain chip of the word, not marked as a stray the way a tags
      * field marks one: text never claimed to pick from the list.
      */
-    inlineChip(key, node) {
-        const known = node ? this.tagVocabulary(node).get(key) : undefined
+    inlineChip(key, node, mark = '#') {
+        const known = node ? this.tagVocabulary(node, mark).get(key) : undefined
         const chip = this.tagChip(key, known, null)
         chip.classList.add('inline-chip')
+        chip.dataset.mark = mark
         if (!known) {
             chip.classList.remove('tag-unknown')
             chip.removeAttribute('title')
@@ -8640,7 +8704,7 @@ export class OverseerRenderer {
      */
     setTextWithIcons(el, text, node = null) {
         const s = text == null ? '' : String(text)
-        if (s.indexOf('<icon=') === -1 && s.indexOf('<#') === -1) {
+        if (s.indexOf('<icon=') === -1 && !MAY_HOLD_A_CHIP.test(s)) {
             el.textContent = s
             if (el.dataset && el.dataset.text !== undefined) delete el.dataset.text
             return el
@@ -8651,7 +8715,7 @@ export class OverseerRenderer {
         for (const m of marks) {
             if (m.index < last) continue
             if (m.index > last) el.appendChild(document.createTextNode(s.slice(last, m.index)))
-            el.appendChild(m[0].startsWith('<#') ? this.inlineChip(m[1], node) : this.createIconElement(m[1]))
+            el.appendChild(m[0].startsWith('<icon=') ? this.createIconElement(m[1]) : this.inlineChip(m[2], node, m[1]))
             last = m.index + m[0].length
         }
         if (last < s.length) el.appendChild(document.createTextNode(s.slice(last)))
@@ -10310,7 +10374,7 @@ export class OverseerRenderer {
             // chip: then that text is about it, and the chip's own comes under it.
             const own = chip && chip.dataset.ownHover !== undefined
                 ? (chip.getAttribute('title') || chip.dataset.ownHover) : ''
-            const named = Boolean(chip && text && text.includes(`<#${chip.dataset.tag}>`))
+            const named = Boolean(chip && text && [...CHIP_MARKS].some(mark => text.includes(`<${mark}${chip.dataset.tag}>`)))
             const lines = own && !named ? [own] : [text, own].filter(Boolean)
             if (lines.length === 0 && !full) return
             const popup = this.theHoverPopup()
@@ -14322,14 +14386,14 @@ export class OverseerRenderer {
 
     renderMarkdown(text, node = null) {
         const html = this.drawingHere(() => this._renderMarkdownAlone(text))
-        return typeof text === 'string' && text.indexOf('<#') !== -1 ? this.drawChipsInHtml(html, node) : html
+        return typeof text === 'string' && MAY_HOLD_A_CHIP.test(text) ? this.drawChipsInHtml(html, node) : html
     }
 
     /// The `<#key>`s of drawn markdown, as chips - outside code, where `<#key>` is how the
     /// marker itself is written about. See `inlineChip`.
     drawChipsInHtml(html, node) {
         return html.split(/(<code[\s\S]*?<\/code>)/).map((part, i) => i % 2 === 1 ? part
-            : part.replace(CHIP_IN_HTML, (_, key) => this.inlineChip(key, node).outerHTML)).join('')
+            : part.replace(CHIP_IN_HTML, (_, mark, key) => this.inlineChip(key, node, mark).outerHTML)).join('')
     }
 
     _renderMarkdownAlone(text) {
