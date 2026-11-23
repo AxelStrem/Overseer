@@ -3519,7 +3519,8 @@ impl ActionExecutor {
         let key = std::fs::canonicalize(path).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| path.to_string());
 
         // Entries a host reached past a window of this file's - see `resolver::resolve_document`.
-        // Those of lists it has not are the host's own, or another file's.
+        // Those of lists it has not are the host's own, or another file's. A calendar holds the
+        // days it keeps as written as a windowed list holds the entries it leaves out.
         let mut wanted = crate::resolver::held_now();
         let mut held_before: Vec<(String, String)> = Vec::new();
         if let Some(stamp) = stamp {
@@ -3527,7 +3528,8 @@ impl ActionExecutor {
                 if let Some(held) = cache.get(&key) {
                     if held.current(stamp) {
                         wanted.retain(|(list, _)| {
-                            crate::addressing::find(&held.nodes, list).is_some_and(crate::resolver::is_windowed)
+                            crate::addressing::find(&held.nodes, list)
+                                .is_some_and(|n| crate::resolver::is_windowed(n) || n.node_type == "calendar")
                         });
                         if wanted.iter().all(|entry| held.held.contains(entry)) {
                             return Ok(held.nodes.as_ref().clone());

@@ -1127,6 +1127,19 @@ impl FormulaEvaluator {
                 .filter(|b| steps.len() >= b.at.len() && steps[..b.at.len()] == b.at[..])
                 .max_by_key(|b| b.at.len())
             else {
+                // A mounted calendar's days are made while its own file is worked out, so a day
+                // it keeps as written is marked with the calendar's place in that file, not the
+                // host's. Such an entry is already named as its file names it; the file is read
+                // again holding it all the same.
+                let own_file = boundaries
+                    .iter()
+                    .filter(|b| steps.len() >= b.source.len() && steps[..b.source.len()] == b.source[..])
+                    .max_by_key(|b| b.source.len());
+                if let Some(boundary) = own_file {
+                    if !files.contains(&boundary.file) {
+                        files.push(boundary.file.clone());
+                    }
+                }
                 continue;
             };
             let mut own = boundary.source.clone();
