@@ -6,6 +6,10 @@ tab project (label=$(name), mutable=true) {
     text description (markdown=true, font-size=14px, hidden=$(../description == "")) = ""
 
     div (hidden=true) {
+        div people {
+            list People (key="tag") { }
+        }
+
         div ActivityDay (background-color=$(points == 0 ? "" : points * 4 > busiest_day * 3 ? "#216e39"
                 : points * 2 > busiest_day ? "#30a14e" : points * 4 > busiest_day ? "#40c463" : "#9be9a8")) {
             string day_key (hidden=true) = $(day(date()))
