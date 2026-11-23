@@ -5143,7 +5143,15 @@ pub(crate) fn merge_node(template: &mut OverseerNode, overrides: &[OverseerNode]
         match path {
             Some(path) => {
                 if let Some(template_field) = get_child_mut_by_path(template, &path) {
-                    merge_into_field(template_field, override_field, root);
+                    // A mount holds what its file brings in, so there is nothing of the template's
+                    // node to merge it into: it takes the node's place whole, a template's empty
+                    // default for a mount an instance may give. Merged, it kept the template's type
+                    // and was never brought in as a mount.
+                    if override_field.node_type == "mount" {
+                        *template_field = override_field.clone();
+                    } else {
+                        merge_into_field(template_field, override_field, root);
+                    }
                     mark_written_unless_marked(template_field, override_field, position, path.len() - 1);
                 }
                 cursor = after(&path);

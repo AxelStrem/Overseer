@@ -982,6 +982,9 @@ What an instance writes is matched onto the copy:
   own block, if it writes one, is all it holds. `- parts (base=none)` empties `parts` and keeps the
   rest of the instance as the template has it. **`base=<node>`** starts it from that node's block
   instead, found as a template is, and its own block is matched onto that.
+- A **`mount`** that finds the node of its name takes its place whole: what it holds is its file's, so nothing of
+  the template's node is kept. A template can hold an empty `div people { list People { } }` for
+  documents that mount no directory, and one that writes `mount people (...)` reads its own.
 
 ```overseer
 div (hidden=true) {
@@ -3281,6 +3284,9 @@ string name = $(FOODS.filter(|f| f/handle == ../food).map(|f| f/name).first())
 | `hidden` | mount it without drawing it, which is usual for a catalogue |
 
 `source` is relative to the document that declares the mount, not to the working directory.
+A mount an instance writes over a node of the same name in its template takes that node's place
+(see "How an instance is matched onto its template"), so a template can give an empty default for
+a mount its documents may write.
 
 What a mount holds is addressed under the mount's name and then the node `source` names:
 `FOODS/Catalog/[apple]/kcal`. A write that lands there - a press, a field edited in the page, an
