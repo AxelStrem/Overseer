@@ -1659,6 +1659,9 @@ impl FileOperations {
             };
             let mut inline_consumed_children: usize = 0;
             let mut open_fragment_needs_multiline = false;
+            // The line after `{` copied as it was read holds the node's own `}` when the block
+            // closes on that line, and the closing brace is then not written a second time.
+            let mut close_written_inline = false;
             let trim_trailing_whitespace = |buffer: &mut String| {
                 while buffer.ends_with(' ') || buffer.ends_with('\t') {
                     buffer.pop();
@@ -1714,6 +1717,9 @@ impl FileOperations {
                                     let inline_start_abs = snap.span.0 + open_end;
                                     let inline_end_abs = (inline_start_abs + newline_idx + 1)
                                         .min(snap.span.0 + snap.full_text.len());
+                                    let close_on_line = snap.body.child_envelope.close.as_ref().is_some_and(
+                                        |close| close.span.0 >= inline_start_abs && close.span.0 < inline_end_abs,
+                                    );
 
                                     let mut inline_child_records: Vec<(usize, std::sync::Arc<NodeSourceSnapshot>)> = Vec::new();
                                     for (idx, child) in node.children.iter().enumerate() {
@@ -1750,13 +1756,21 @@ impl FileOperations {
                                             if !output.ends_with('\n') {
                                                 output.push('\n');
                                             }
+                                            close_written_inline = close_on_line;
                                         } else {
                                             open_fragment_needs_multiline = true;
                                         }
                                     } else {
+                                        // A child counts as changed when anything under it did: a
+                                        // list given an entry keeps its own fingerprint, and copying
+                                        // the line as it was read lost the entry.
                                         let any_changed = inline_child_records.iter().any(|(idx, child_snap)| {
-                                            match node.children[*idx].source_fingerprint {
-                                                Some(fp) => fp != child_snap.fingerprint,
+                                            let child = &node.children[*idx];
+                                            match child.source_fingerprint {
+                                                Some(fp) => {
+                                                    fp != child_snap.fingerprint
+                                                        || !Self::children_match_snapshots(child)
+                                                }
                                                 None => true,
                                             }
                                         });
@@ -1786,6 +1800,7 @@ impl FileOperations {
                                                 output.push('\n');
                                             }
                                             inline_consumed_children = inline_child_records.len();
+                                            close_written_inline = close_on_line;
                                         }
                                     }
                                 }
@@ -2072,10 +2087,12 @@ impl FileOperations {
                 .next()
                 .map(|c| !c.is_whitespace())
                 .unwrap_or(false);
-            if output.ends_with('\n') && close_needs_indent {
-                output.push_str(&indent);
+            if !close_written_inline {
+                if output.ends_with('\n') && close_needs_indent {
+                    output.push_str(&indent);
+                }
+                output.push_str(&close_fragment);
             }
-            output.push_str(&close_fragment);
             if !output.ends_with('\n') {
                 output.push('\n');
             }
