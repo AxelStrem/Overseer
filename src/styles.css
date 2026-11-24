@@ -2008,6 +2008,29 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     white-space: nowrap;
 }
 
+/* Shown only where the theme's `audio/request` asks for it - see `THEME_WORDS`. */
+.ov-audio-request {
+    display: var(--ov-audio-request--box, none);
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    padding-left: 8px;
+    border-left: 1px solid var(--ov-line, #e2e4e7);
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.ov-audio-request input {
+    margin: 0;
+    cursor: inherit;
+}
+
+.ov-audio-request.done {
+    color: var(--ov-success, #2f7d4f);
+    cursor: default;
+}
+
 .ov-audio.audio-missing {
     opacity: 0.5;
 }

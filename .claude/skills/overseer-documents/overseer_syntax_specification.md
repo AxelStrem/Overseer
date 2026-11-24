@@ -1356,6 +1356,8 @@ context week_start = "system"
     without the bar. It takes `accent` for the button and the part played, `line` for the rest of
     the bar, `muted` for the time, `surface` for its ground and `radius` for its corners, round
     where it says none.
+    `request`, `transcription` to show a box on each sound in a markdown text asking for it to be
+    transcribed (see "Sounds"); a project tracker's comments say it.
   - `field`: `value-frame` - `box`, each value in a padded frame of its own that shows under the
     pointer, or `none`, the value as text; `spacing`, the space above and below a field (`8px`);
     `number-align`, `start` or `end` (the default), where a number sits in its field.
@@ -2569,6 +2571,16 @@ caret is. The editor has a `Record` button too, which records from the microphon
 pressed again, then keeps the recording the same way; closing the editor while it records drops
 the recording. A browser lets a page use the microphone only over HTTPS or on the machine itself,
 and where it cannot the button is not shown.
+
+Where the theme's `audio/request` is `transcription`, a sound in a markdown text has a box beside
+its time asking for it to be transcribed, and the box is kept in the sound's alt text:
+`![transcribe](...)` asks for a transcription, `![transcribed](...)` says one was made - its box
+is drawn ticked and cannot be changed - and any other alt text asks for nothing. Ticking or
+unticking the box rewrites that one reference, to `transcribe` or to nothing, and writes the text
+as an edit of it would be - only a text that may be changed and holds what is drawn, not a
+formula's result. A sound recorded with the editor's `Record` button there is written ticked, and
+one dropped or pasted in unticked. Nothing in Overseer transcribes: the mark is for whoever reads
+the document, such as an agent loop working a tracker.
 
 #### Marks
 

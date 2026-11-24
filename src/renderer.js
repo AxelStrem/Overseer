@@ -273,6 +273,8 @@ const THEME_WORDS = {
     'cell-padding': () => ({ start: '0px' }),
     // `compact` draws a player as its button and its time, without the bar between them.
     style: (v) => v === 'compact' ? { track: 'none' } : unsaid('track'),
+    // `transcription` shows the box on a sound in a text that asks for it to be transcribed.
+    request: (v) => v === 'transcription' ? { box: 'inline-flex' } : unsaid('box'),
     'value-frame': (v) => v === 'none' ? { pad: '0px', hover: 'transparent' } : unsaid('pad', 'hover'),
     frame: (v) => v === 'none' ? { border: 'none', pad: '0px' } : unsaid('border', 'pad'),
     pointed: (v) => v === 'tint'
@@ -597,16 +599,86 @@ export const audioTime = (seconds) => {
 /// been played, and the time. It is worked by `workAudioPlayers`, once for the whole page, so the
 /// same markup plays wherever it lands. `url` is the sound's blob address, null for one refused or
 /// missing, undefined while it is on its way.
-const audioPlayerHtml = (file, name, url) => {
+///
+/// A sound in a text is given `reference`: which sound of the text it is, counted from 0, and the
+/// alt text it is written with. Its player then carries a box asking for it to be transcribed,
+/// which the theme's `audio/request` shows (see `THEME_WORDS`). The alt text is the box's state:
+/// see `SOUND_REQUESTED`.
+const audioPlayerHtml = (file, name, url, reference = null) => {
     const missing = url === null || !file ? ' audio-missing' : ''
     const src = url ? ` src="${escapeHtml(url)}"` : ''
     const said = name ? ` aria-label="${escapeHtml(name)}" title="${escapeHtml(name)}"` : ''
+    let numbered = ''
+    let box = ''
+    if (reference) {
+        const state = String(reference.alt ?? '').trim()
+        const done = state === SOUND_TRANSCRIBED
+        numbered = ` data-audio-index="${reference.index}"`
+        box = `<span class="ov-audio-request${done ? ' done' : ''}" data-requested="${done || state === SOUND_REQUESTED}" title="${done ? 'Transcribed' : 'Ask for a transcription'}">` +
+            `<input type="checkbox" aria-label="Transcribe"${done || state === SOUND_REQUESTED ? ' checked' : ''}${done ? ' disabled' : ''}>` +
+            `<span>${done ? 'Transcribed' : 'Transcribe'}</span></span>`
+    }
     workAudioPlayers()
-    return `<span class="ov-audio${missing}" data-audio-file="${escapeHtml(file)}" role="group"${said}>` +
+    return `<span class="ov-audio${missing}" data-audio-file="${escapeHtml(file)}"${numbered} role="group"${said}>` +
         '<button type="button" class="ov-audio-play" aria-label="Play"></button>' +
         '<span class="ov-audio-track"><span class="ov-audio-played"></span></span>' +
-        '<span class="ov-audio-time">0:00</span>' +
+        '<span class="ov-audio-time">0:00</span>' + box +
         `<audio preload="metadata"${src}></audio></span>`
+}
+
+/// The alt texts that say what is asked of a sound in a text: `![transcribe](...)` asks for a
+/// transcription, and `![transcribed](...)` says it was made - the transcript is quoted under it
+/// by whoever made it. Any other alt asks for nothing.
+const SOUND_REQUESTED = 'transcribe'
+const SOUND_TRANSCRIBED = 'transcribed'
+
+/// A markdown reference that is a sound beside the document - the same test the `image` hook
+/// draws a player by.
+const soundReference = (href) => {
+    let file = String(href ?? '')
+    try { file = decodeURI(file) } catch (_) {}
+    return !/^[^/?#]*:/.test(file) && !file.startsWith('/') && audioBeside(file) ? file : null
+}
+
+/// How many sounds the text being drawn has drawn so far - see `audioPlayerHtml`.
+let soundsDrawn = 0
+
+/// `text` with its `index`-th sound (counted from 0, as they are drawn) written with the alt text
+/// `alt`, and nothing else changed - or null if it has no such sound, or the sound there is not
+/// `file`. The sounds are found as markdown finds them, so one written in code is never counted.
+export const withSoundAlt = (text, index, alt, file = null) => {
+    const source = String(text ?? '')
+    const sounds = []
+    try {
+        markdown.walkTokens(markdown.lexer(source), (token) => {
+            if (token.type === 'image' && soundReference(token.href) !== null) sounds.push(token)
+        })
+    } catch (_) { return null }
+    const token = sounds[index]
+    if (!token || (file !== null && soundReference(token.href) !== file)) return null
+    // Where each reference is written: the next place its text is found after the one before.
+    let from = 0
+    let at = -1
+    for (let i = 0; i <= index; i++) {
+        at = source.indexOf(sounds[i].raw, from)
+        if (at < 0) return null
+        from = at + sounds[i].raw.length
+    }
+    // The alt text ends at the `]` that closes the `![`, past any brackets inside it.
+    const raw = token.raw
+    let depth = 0
+    let end = -1
+    for (let i = 2; i < raw.length; i++) {
+        const c = raw[i]
+        if (c === '\\') { i++; continue }
+        if (c === '[') depth++
+        else if (c === ']') {
+            if (depth === 0) { end = i; break }
+            depth--
+        }
+    }
+    if (!raw.startsWith('![') || end < 0) return null
+    return source.slice(0, at) + `![${alt}` + source.slice(at + end)
 }
 
 /// Plays, pauses and seeks every player on the page, and keeps each one's bar and time up to
@@ -625,6 +697,17 @@ const workAudioPlayers = () => {
         e.stopPropagation()
         if (e.type !== 'click') return
         e.preventDefault()
+        // The box asking for a transcription does not tick itself: the text it sits in is
+        // rewritten, and drawn again from what it then says. See `askForTranscription`.
+        const box = e.target.closest('.ov-audio-request')
+        if (box) {
+            const input = box.querySelector('input')
+            if (!input || input.disabled) return
+            player.dispatchEvent(new CustomEvent('ov-audio-request', {
+                bubbles: true, detail: { wanted: box.dataset.requested !== 'true' },
+            }))
+            return
+        }
         const audio = player.querySelector('audio')
         if (!audio || player.classList.contains('audio-missing') || !audio.getAttribute('src')) return
         const track = e.target.closest('.ov-audio-track')
@@ -818,7 +901,9 @@ const markdown = new Marked({
             try { file = decodeURI(file) } catch (_) {}
             if (!/^[^/?#]*:/.test(file) && !file.startsWith('/')) {
                 // A sound is referred to as a picture is, and drawn as a player.
-                if (audioBeside(file)) return audioPlayerHtml(file, text, documentAudioAddress(file))
+                if (audioBeside(file)) {
+                    return audioPlayerHtml(file, text, documentAudioAddress(file), { index: soundsDrawn++, alt: text })
+                }
                 if (!imageBeside(file)) return escapeHtml(text)
                 const url = documentImageAddress(file)
                 const src = url ? ` src="${escapeHtml(url)}"` : ''
@@ -8295,6 +8380,11 @@ export class OverseerRenderer {
             value.style.whiteSpace = 'pre-wrap'
         }
         
+        value.addEventListener('ov-audio-request', (e) => {
+            const player = e.target && e.target.closest ? e.target.closest('.ov-audio[data-audio-index]') : null
+            if (player) this.askForTranscription(value, node, player, Boolean(e.detail && e.detail.wanted))
+        })
+
         // Make it editable on double-click (respect mutable)
         value.addEventListener('dblclick', () => {
             const mode = this.getEffectiveMutableMode(node, value)
@@ -13511,7 +13601,9 @@ export class OverseerRenderer {
 
     /// Keeps one image or sound beside the document and puts its reference at the caret. Files
     /// are kept one after another, in the order given, so their references land in that order.
-    keepFileInto(textarea, file) {
+    /// A sound `recorded` on the page, where the theme shows the box asking for a transcription,
+    /// is referred to with it ticked: what is recorded here is usually said for someone to read.
+    keepFileInto(textarea, file, { recorded = false } = {}) {
         const previous = this._keeping || Promise.resolve()
         const keeping = previous.then(async () => {
             const doc = (this.app && this.app.currentFile) || ''
@@ -13532,7 +13624,8 @@ export class OverseerRenderer {
             }
             if (typeof path !== 'string' || !textarea.isConnected) return
             this.sayRefused(null, null)
-            textarea.setRangeText(`![](${path})`, textarea.selectionStart, textarea.selectionEnd, 'end')
+            const alt = sound && recorded && this.themeAbove(textarea, 'audio-request') === 'transcription' ? SOUND_REQUESTED : ''
+            textarea.setRangeText(`![${alt}](${path})`, textarea.selectionStart, textarea.selectionEnd, 'end')
             textarea.dispatchEvent(new Event('input', { bubbles: true }))
         })
         this._keeping = keeping.catch(() => {})
@@ -13590,7 +13683,7 @@ export class OverseerRenderer {
                 if (recording === r) recording = null
                 if (r.dropped || !r.chunks.length || !textarea.isConnected) return
                 const mime = (recorder.mimeType || type || r.chunks[0].type || 'audio/webm')
-                this.keepFileInto(textarea, new Blob(r.chunks, { type: mime }))
+                this.keepFileInto(textarea, new Blob(r.chunks, { type: mime }), { recorded: true })
             })
             this.sayRefused(null, null)
             recorder.start()
@@ -13821,95 +13914,10 @@ export class OverseerRenderer {
                 // Update the element with rendered markdown
                 element.innerHTML = this.renderMarkdown(newValue, node)
                 
-                // Compute field path for selective updates and guarded marking
-                let fieldPath = null
-                try { fieldPath = this.buildNodePath(element).join('/') } catch(_) {}
-                // Snapshot any pre-existing explicit value to support guarded restore on save
-                let preExistingValueSnapshot = undefined
-                let targetNode = null
-                try {
-                    if (fieldPath && this.app && this.app.currentDocument) {
-                        targetNode = this.findNodeByPath(this.app.currentDocument, String(fieldPath).split('/'))
-                        if (targetNode && targetNode.parameters && targetNode.parameters.value !== undefined) {
-                            try { preExistingValueSnapshot = JSON.parse(JSON.stringify(targetNode.parameters.value)) } catch(_) { preExistingValueSnapshot = targetNode.parameters.value }
-                        }
-                    }
-                } catch(_) { /* best-effort */ }
-                
-                // What it said before, read before it is overwritten - see the call below.
-                let was = null
-                try { was = this.getNodeValue(targetNode || node) } catch(_) {}
-
-                // Update the node value in the document structure (prefer resolved target by path)
-                try {
-                    if (targetNode) this.updateNodeValue(targetNode, newValue)
-                    else this.updateNodeValue(node, newValue)
-                } catch(_) { this.updateNodeValue(node, newValue) }
-                if (DEBUG_MODE) console.log('Markdown field updated:', node.name, newValue)
-
-                // If this was a guarded edit, mark flags so serializer can drop/revert
-                try {
-                    const wasGuarded = element && element.getAttribute && element.getAttribute('data-guarded-edit') === '1'
-                    if (wasGuarded && (targetNode || fieldPath)) {
-                        const tgt = targetNode || (this.findNodeByPath(this.app.currentDocument, String(fieldPath).split('/')))
-                        if (tgt) {
-                            if (!tgt.parameters) tgt.parameters = {}
-                            tgt.parameters._guarded_edit = { Boolean: true }
-                            if (preExistingValueSnapshot === undefined) {
-                                tgt.parameters._guarded_was_new_override = { Boolean: true }
-                            } else {
-                                try { tgt.parameters._guarded_original_value = JSON.parse(JSON.stringify(preExistingValueSnapshot)) } catch(_) { tgt.parameters._guarded_original_value = preExistingValueSnapshot }
-                            }
-                        }
-                        try { element.removeAttribute('data-guarded-edit') } catch(_) {}
-                    }
-                } catch(_) { /* best-effort */ }
-
-                // With an `on change` and a file, the text travels with the handler and the two
-                // are written as one change, as an enum's pick is. Written first and the handler
-                // asked for after, the handler's write landed before the text's did, and the
-                // text was lost: a comment edited in a project tracker came back empty.
-                if (this.declaresEvent(node, 'change') && this.app && this.app.currentFile) {
+                await this.writeMarkdownText(element, node, newValue, () => {
                     element.style.display = displayBefore
                     editorContainer.remove()
-                    try { await this.emitEvent(node, element, 'change', { String: newValue }) } catch(_) {}
-                    return
-                }
-
-                // Mark document as modified
-                if (this.app && this.app.markDocumentModified) {
-                    this.app.markDocumentModified()
-                }
-                // Trigger reevaluation so formulas/computed params refresh
-                if (this.app && this.app.reevaluateDocumentSelective) {
-                    // Try to determine field path for selective update
-                    try {
-                        const fp = fieldPath || this.buildNodePath(element).join('/')
-                        // With the value - see the note in `createTagsElement`, which had the
-                        // same fault. Naming only the path says "this changed, work out what
-                        // follows from it" and leaves the change itself to the save, so the
-                        // document went up as text and was written over the file. Every other
-                        // field already passes the value; this one did not, so editing a
-                        // markdown field was the one edit that still sent the document.
-                        this.app.reevaluateDocumentSelective(
-                            [fp], [{ path: fp, oldValue: was, newValue }]
-                        )
-                    } catch (e) {
-                        if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
-                        this.app.reevaluateDocumentSelective([])
-                    }
-                }
-        // Emit change event for actions
-        try { await this.emitEvent(node, element, 'change') } catch(_) {}
-        // Also bubble a change event to the nearest link-proxy container (if any),
-        // so containers can react (e.g., ensure_in_list for phantom links)
-        try {
-            let p = element
-            while (p && p !== document.body && !p.hasAttribute?.('data-link-proxy')) { p = p.parentElement }
-            if (p && p.dataset && p.dataset.path) {
-                await this.emitEvent(node, p, 'change')
-            }
-        } catch(_) {}
+                })
             }
             
             // Clean up
@@ -13930,6 +13938,121 @@ export class OverseerRenderer {
                 finishEditing(true)
             }
         })
+    }
+
+    /// A tick or an untick of the box on a sound in a text, `element`: that one reference's alt
+    /// text is rewritten, to `transcribe` or to nothing, and the text is written as an edit of it
+    /// would be. Only where the theme shows the box, and only into a text that may be changed and
+    /// holds what is drawn - not a formula's result, nor a `shown` text; anywhere else the box
+    /// stays as it was drawn.
+    askForTranscription(element, node, player, wanted) {
+        if (this.themeAt(player, 'audio-request') !== 'transcription') return null
+        const doc = this.app && this.app.currentDocument
+        const target = (doc && this.findNodeByPath(doc, this.buildNodePath(element))) || node
+        if (!target || this.getEffectiveMutableMode(target, element) !== 'true') return null
+        if (this.shownText(target) !== null) return null
+        const raw = target.parameters && target.parameters.value
+        if (raw && typeof raw === 'object' && raw.Formula !== undefined) return null
+        const was = String(this.getNodeValue(target) ?? '')
+        const now = withSoundAlt(was, Number(player.dataset.audioIndex), wanted ? SOUND_REQUESTED : '', player.dataset.audioFile)
+        if (now === null || now === was) return null
+        element.innerHTML = this.renderMarkdown(now, target)
+        return this.writeMarkdownText(element, target, now)
+    }
+
+    /// Writes a markdown text's new value: into the document, and then through its `on change`
+    /// when it has one, which carries the text with it as one change, else as an edit of the
+    /// field. The markdown editor's Save and a sound's transcription box both write through it.
+    /// `beforeHandler` runs just before the handler is asked, for what has to leave the page first.
+    async writeMarkdownText(element, node, newValue, beforeHandler = () => {}) {
+        // Compute field path for selective updates and guarded marking
+        let fieldPath = null
+        try { fieldPath = this.buildNodePath(element).join('/') } catch(_) {}
+        // Snapshot any pre-existing explicit value to support guarded restore on save
+        let preExistingValueSnapshot = undefined
+        let targetNode = null
+        try {
+            if (fieldPath && this.app && this.app.currentDocument) {
+                targetNode = this.findNodeByPath(this.app.currentDocument, String(fieldPath).split('/'))
+                if (targetNode && targetNode.parameters && targetNode.parameters.value !== undefined) {
+                    try { preExistingValueSnapshot = JSON.parse(JSON.stringify(targetNode.parameters.value)) } catch(_) { preExistingValueSnapshot = targetNode.parameters.value }
+                }
+            }
+        } catch(_) { /* best-effort */ }
+        
+        // What it said before, read before it is overwritten - see the call below.
+        let was = null
+        try { was = this.getNodeValue(targetNode || node) } catch(_) {}
+
+        // Update the node value in the document structure (prefer resolved target by path)
+        try {
+            if (targetNode) this.updateNodeValue(targetNode, newValue)
+            else this.updateNodeValue(node, newValue)
+        } catch(_) { this.updateNodeValue(node, newValue) }
+        if (DEBUG_MODE) console.log('Markdown field updated:', node.name, newValue)
+
+        // If this was a guarded edit, mark flags so serializer can drop/revert
+        try {
+            const wasGuarded = element && element.getAttribute && element.getAttribute('data-guarded-edit') === '1'
+            if (wasGuarded && (targetNode || fieldPath)) {
+                const tgt = targetNode || (this.findNodeByPath(this.app.currentDocument, String(fieldPath).split('/')))
+                if (tgt) {
+                    if (!tgt.parameters) tgt.parameters = {}
+                    tgt.parameters._guarded_edit = { Boolean: true }
+                    if (preExistingValueSnapshot === undefined) {
+                        tgt.parameters._guarded_was_new_override = { Boolean: true }
+                    } else {
+                        try { tgt.parameters._guarded_original_value = JSON.parse(JSON.stringify(preExistingValueSnapshot)) } catch(_) { tgt.parameters._guarded_original_value = preExistingValueSnapshot }
+                    }
+                }
+                try { element.removeAttribute('data-guarded-edit') } catch(_) {}
+            }
+        } catch(_) { /* best-effort */ }
+
+        // With an `on change` and a file, the text travels with the handler and the two
+        // are written as one change, as an enum's pick is. Written first and the handler
+        // asked for after, the handler's write landed before the text's did, and the
+        // text was lost: a comment edited in a project tracker came back empty.
+        if (this.declaresEvent(node, 'change') && this.app && this.app.currentFile) {
+            beforeHandler()
+            try { await this.emitEvent(node, element, 'change', { String: newValue }) } catch(_) {}
+            return
+        }
+
+        // Mark document as modified
+        if (this.app && this.app.markDocumentModified) {
+            this.app.markDocumentModified()
+        }
+        // Trigger reevaluation so formulas/computed params refresh
+        if (this.app && this.app.reevaluateDocumentSelective) {
+            // Try to determine field path for selective update
+            try {
+                const fp = fieldPath || this.buildNodePath(element).join('/')
+                // With the value - see the note in `createTagsElement`, which had the
+                // same fault. Naming only the path says "this changed, work out what
+                // follows from it" and leaves the change itself to the save, so the
+                // document went up as text and was written over the file. Every other
+                // field already passes the value; this one did not, so editing a
+                // markdown field was the one edit that still sent the document.
+                this.app.reevaluateDocumentSelective(
+                    [fp], [{ path: fp, oldValue: was, newValue }]
+                )
+            } catch (e) {
+                if (DEBUG_MODE) console.warn('Failed to build field path, falling back to full update:', e)
+                this.app.reevaluateDocumentSelective([])
+            }
+        }
+// Emit change event for actions
+try { await this.emitEvent(node, element, 'change') } catch(_) {}
+// Also bubble a change event to the nearest link-proxy container (if any),
+// so containers can react (e.g., ensure_in_list for phantom links)
+try {
+    let p = element
+    while (p && p !== document.body && !p.hasAttribute?.('data-link-proxy')) { p = p.parentElement }
+    if (p && p.dataset && p.dataset.path) {
+        await this.emitEvent(node, p, 'change')
+    }
+} catch(_) {}
     }
 
     // Emit an event to the backend action executor for a given node
@@ -14587,6 +14710,7 @@ export class OverseerRenderer {
     }
 
     _renderMarkdownAlone(text) {
+        soundsDrawn = 0
         try {
             const withIcons = typeof text === 'string' && text.indexOf('<icon=') !== -1 ? markIcons(text) : text
             return drawColourMarks(drawIconMarks(markdown.parse(markColourTags(withIcons))));

@@ -230,6 +230,9 @@ tab project (label=$(name), mutable=true) {
                         - position = "right 16px top 8px"
                     }
                 }
+                - audio {
+                    - request = "transcription"
+                }
             }
             div (layout="horizontal", margin=0, spacing=8, alignment="center") {
                 timestamp at (format="datetime", precision="minutes", font-size=11px, font-color="#9ca3af", margin=0) =
