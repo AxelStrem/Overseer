@@ -150,7 +150,8 @@ describe('a sound in the markdown editor', () => {
     const sound = new File([new Uint8Array([0x4f, 0x67, 0x67, 0x53])], 'memo.webm', { type: 'audio/webm' })
     const picture = new File([new Uint8Array([0x89, 0x50])], 'shot.png', { type: 'image/png' })
     expect(drop(textarea, [sound, picture])).toBe(false)
-    await settle()
+    await vi.waitFor(() => expect(saved).toHaveLength(2))
+    await vi.waitFor(() => expect(textarea.value).toContain('images/t/'))
     expect(saved.map((s) => [s.cmd, s.mime])).toEqual([['save_overseer_audio', 'audio/webm'], ['save_overseer_image', 'image/png']])
     expect(saved[0].data).toBe('T2dnUw==')
     expect(textarea.value).toBe('See: ![](sounds/t/20261123-091500.webm)![](images/t/20261123-091500.png)here')
@@ -189,11 +190,11 @@ describe('a sound in the markdown editor', () => {
       const record = document.querySelector('.markdown-toolbar .record-btn')
       expect(record.textContent).toBe('Record')
       record.click()
-      await settle()
-      expect(record.classList.contains('recording')).toBe(true)
+      await vi.waitFor(() => expect(record.classList.contains('recording')).toBe(true))
       expect(record.textContent).toMatch(/^Stop \d:\d\d$/)
       record.click()
-      await settle()
+      await vi.waitFor(() => expect(saved).toHaveLength(1))
+      await vi.waitFor(() => expect(textarea.value).toContain('sounds/t/'))
       expect(stopped).toEqual(['track'])
       expect(record.textContent).toBe('Record')
       expect(saved).toEqual([{ cmd: 'save_overseer_audio', path: 'notes/t.os', mime: 'audio/ogg;codecs=opus', data: 'AQID' }])
@@ -201,10 +202,10 @@ describe('a sound in the markdown editor', () => {
 
       // Closed while it records, the editor drops the recording and still lets the microphone go.
       record.click()
-      await settle()
+      await vi.waitFor(() => expect(record.classList.contains('recording')).toBe(true))
       document.querySelector('.markdown-toolbar .cancel-btn').click()
+      await vi.waitFor(() => expect(stopped).toEqual(['track', 'track']))
       await settle()
-      expect(stopped).toEqual(['track', 'track'])
       expect(saved).toHaveLength(1)
     } finally {
       delete window.MediaRecorder
