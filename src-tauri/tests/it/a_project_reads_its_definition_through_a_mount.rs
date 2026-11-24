@@ -190,6 +190,23 @@ fn whoever_may_not_read_the_definition_finds_the_mount_missing_and_the_tracker_w
 }
 
 #[test]
+fn a_definition_wrapped_in_a_tab_for_its_own_page_is_read_through_the_tracker() {
+    let _serial = serial();
+    let (sandbox, documents) = anns_project("wrapped", SHARED_BOTH);
+    let indented: String = DEFINITION.lines().map(|line| format!("    {}\n", line)).collect();
+    std::fs::write(sandbox.0.join("ann/projects/p.project.os"), format!("tab (label=\"P\") {{\n{}}}\n", indented)).unwrap();
+    let ann = Asker::Person("ann".to_string());
+    assert_eq!(
+        value_at(&documents, ann.clone(), "ann/projects/p.os", DESCRIPTION),
+        Some(OverseerValue::String("What P is.".into()))
+    );
+    assert_eq!(
+        value_at(&documents, ann, "ann/projects/p.os", "project/definition/definition/Repos/[p]/about"),
+        Some(OverseerValue::String("Where P is built".into()))
+    );
+}
+
+#[test]
 fn a_tracker_without_a_definition_reads_as_it_did() {
     let _serial = serial();
     let (sandbox, documents) = anns_project("none", SHARED_BOTH);

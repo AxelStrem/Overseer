@@ -125,6 +125,22 @@ fn an_append_through_a_mutable_mount_reaches_the_mounted_file() {
 }
 
 #[test]
+fn an_append_through_a_mount_lands_inside_a_layout_wrapper_of_the_mounted_file() {
+    serialised(|| {
+        let wrap = |text: &str| {
+            let indented: String = text.lines().map(|line| if line.is_empty() { "\n".to_string() } else { format!("    {}\n", line) }).collect();
+            format!("tab (label=\"Side\") {{\n{}}}\n", indented)
+        };
+        let (sandbox, documents) = sandbox("wrapped", ", mutable=true");
+        std::fs::write(sandbox.0.join("side.os"), wrap(SIDE)).unwrap();
+        let read = documents.open("host.os").expect("open");
+        assert!(overseer::addressing::find(&read, "t/CATALOG/Things/[a]").is_some(), "read through the wrapper");
+        documents.append_at("host.os", "t/CATALOG/Things", &a_thing("b", 5)).expect("the append");
+        assert_eq!(on_disk(&sandbox.0, "side.os"), wrap(WITH_B), "written inside the wrapper, which stays");
+    });
+}
+
+#[test]
 fn a_set_through_a_mount_is_refused_unless_it_says_mutable() {
     serialised(|| {
         for (tag, mutable) in [("unsaid", ""), ("fixed", ", mutable=false")] {

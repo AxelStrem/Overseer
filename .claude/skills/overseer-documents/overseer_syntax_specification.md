@@ -3340,6 +3340,8 @@ string name = $(FOODS.filter(|f| f/handle == ../food).map(|f| f/name).first())
 | `hidden` | mount it without drawing it, which is usual for a catalogue |
 
 `source` is relative to the document that declares the mount, not to the working directory.
+Its path is followed as an address is, through unnamed divs and tabs, so a file can wrap what it
+holds in a tab for its own page and still be mounted by the same `source`.
 A mount an instance writes over a node of the same name in its template takes that node's place
 (see "How an instance is matched onto its template"), so a template can give an empty default for
 a mount its documents may write.

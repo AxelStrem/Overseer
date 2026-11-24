@@ -309,27 +309,43 @@ fn same_as_written(a: &OverseerNode, b: &OverseerNode) -> bool {
         && a.children.iter().zip(&b.children).all(|(x, y)| same_as_written(x, y))
 }
 
-fn node_at_names_ref<'a>(nodes: &'a [OverseerNode], names: &[String]) -> Option<&'a OverseerNode> {
-    let Some((first, rest)) = names.split_first() else {
-        return nodes.first();
-    };
-    let mut here = nodes.iter().find(|n| &n.name == first)?;
-    for name in rest {
-        here = here.children.iter().find(|c| &c.name == name)?;
+/// Where a mount's path leads inside its file, as indices from the file's roots. An unnamed or
+/// transparent container is no step of an address, so the path is looked for through it too: a
+/// file may wrap what it holds in a tab for its own page without changing what mounts it read.
+/// No path leads to the file's first node.
+fn trail_at_names(nodes: &[OverseerNode], names: &[String]) -> Option<Vec<usize>> {
+    fn walk(nodes: &[OverseerNode], names: &[String], trail: &mut Vec<usize>) -> bool {
+        let Some((first, rest)) = names.split_first() else { return true };
+        for (at, node) in nodes.iter().enumerate() {
+            trail.push(at);
+            if &node.name == first && walk(&node.children, rest, trail) {
+                return true;
+            }
+            if (node.name.is_empty() || node.is_hierarchy_transparent) && walk(&node.children, names, trail) {
+                return true;
+            }
+            trail.pop();
+        }
+        false
     }
-    Some(here)
+    if names.is_empty() {
+        return (!nodes.is_empty()).then(|| vec![0]);
+    }
+    let mut trail = Vec::new();
+    walk(nodes, names, &mut trail).then_some(trail)
+}
+
+fn node_at_names_ref<'a>(nodes: &'a [OverseerNode], names: &[String]) -> Option<&'a OverseerNode> {
+    let trail = trail_at_names(nodes, names)?;
+    let (first, rest) = trail.split_first()?;
+    rest.iter().try_fold(nodes.get(*first)?, |here, at| here.children.get(*at))
 }
 
 /// The node a mount's path names inside its file, found as loading the mount finds it.
 fn node_at_names<'a>(nodes: &'a mut [OverseerNode], names: &[String]) -> Option<&'a mut OverseerNode> {
-    let Some((first, rest)) = names.split_first() else {
-        return nodes.first_mut();
-    };
-    let mut here = nodes.iter_mut().find(|n| &n.name == first)?;
-    for name in rest {
-        here = here.children.iter_mut().find(|c| &c.name == name)?;
-    }
-    Some(here)
+    let trail = trail_at_names(nodes, names)?;
+    let (first, rest) = trail.split_first()?;
+    rest.iter().try_fold(nodes.get_mut(*first)?, |here, at| here.children.get_mut(*at))
 }
 
 /// What an action touched.
@@ -3685,61 +3701,11 @@ impl ActionExecutor {
         } else {
             nodes.clone()
         };
-        // Find internal path target and handle missing segments as errors
-        let target_node_opt = if internal_path.is_empty() {
-            loaded_roots.first().cloned()
-        } else if loaded_roots.is_empty() {
-            None
-        } else {
-            let mut cur_opt: Option<OverseerNode> = None;
-            for n in &loaded_roots {
-                if n.name == internal_path[0] {
-                    cur_opt = Some(n.clone());
-                    break;
-                }
-            }
-            let mut cur = match cur_opt {
-                Some(n) => n,
-                None => {
-                    if load_error.is_none() {
-                        load_error = Some("mount internal path root not found".to_string());
-                    }
-                    OverseerNode {
-                        name: String::new(),
-                        node_type: String::new(),
-                        template: None,
-                        parameters: Default::default(),
-                        children: Vec::new(),
-                        is_hierarchy_transparent: false,
-                        param_order: Vec::new(),
-                        raw_value_literal: None,
-                        authored_dash: false,
-                        authored_plus: false,
-                        child_original_index: None,
-                        leading_blank_lines: 0,
-                        source_snapshot: None,
-                        source_id: None,
-                        source_fingerprint: None,
-                    }
-                }
-            };
-            if load_error.is_none() && !cur.name.is_empty() {
-                for seg in internal_path.iter().skip(1) {
-                    if let Some(next) = cur.children.iter().find(|c| &c.name == seg) {
-                        cur = next.clone();
-                    } else {
-                        load_error =
-                            Some(format!("mount internal path segment not found: {}", seg));
-                        break;
-                    }
-                }
-            }
-            if load_error.is_none() && !cur.name.is_empty() {
-                Some(cur)
-            } else {
-                None
-            }
-        };
+        // Found as a write back into the file finds it - see `node_at_names`.
+        let target_node_opt = node_at_names_ref(&loaded_roots, &internal_path).cloned();
+        if target_node_opt.is_none() && load_error.is_none() && !loaded_roots.is_empty() {
+            load_error = Some(format!("mount internal path not found: {}", internal_path.join("/")));
+        }
         // Mutate the mount node and set status
         let mount_node =
             Self::get_node_mut_by_indices(nodes, &target_indices).ok_or_else(|| {
@@ -6681,7 +6647,7 @@ div Ext {
         );
         let err = m.parameters.get("_mount_error");
         assert!(
-            matches!(err, Some(OverseerValue::String(s)) if s.contains("segment not found") || s.contains("root not found"))
+            matches!(err, Some(OverseerValue::String(s)) if s.contains("path not found: A/NOPE"))
         );
         let _ = std::fs::remove_file(&file_path);
     }
