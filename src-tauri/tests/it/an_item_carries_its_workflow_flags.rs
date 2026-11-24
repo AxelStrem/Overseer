@@ -1,9 +1,10 @@
 //! An item carries workflow flags beside its tags.
 //!
 //! A project's tags are its own - what kind of work an item is - while its flags are the same in
-//! every project, like the stages: manual, auto, first, asked, discuss. They say how an item is to
-//! be worked rather than what it is - who it waits on, whether an agent may take it - so they
-//! stay with it wherever it goes: onto the record when it is closed, and back when it is reopened.
+//! every project, like the stages: manual, auto, first, asked, discuss, trusted. They say how an
+//! item is to be worked rather than what it is - who it waits on, whether an agent may take it -
+//! so they stay with it wherever it goes: onto the record when it is closed, and back when it is
+//! reopened.
 //! Checked against the example project, made from the template every project is.
 
 use crate::common::{serial, shared};
@@ -97,7 +98,7 @@ fn every_project_offers_the_same_flags_in_order() {
             _ => None,
         })
         .collect();
-    assert_eq!(tags, ["manual", "auto", "discuss", "first", "asked"]);
+    assert_eq!(tags, ["manual", "auto", "discuss", "first", "asked", "trusted"]);
 }
 
 #[test]
