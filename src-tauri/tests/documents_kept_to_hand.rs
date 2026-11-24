@@ -231,7 +231,10 @@ fn a_tracker_the_new_tracker_skill_starts_is_called_by_the_projects_name() {
     // drawer call it by its tab's label, and the template's own is only "Project".
     serialised(|| {
         let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let skill = std::fs::read_to_string(repository.join(".claude/skills/overseer-new-tracker/SKILL.md")).unwrap();
+        // A checkout may turn the skill's line endings into CRLF; the block is read the same either way.
+        let skill = std::fs::read_to_string(repository.join(".claude/skills/overseer-new-tracker/SKILL.md"))
+            .unwrap()
+            .replace("\r\n", "\n");
         let section = &skill[skill.find("## 5.").expect("the skill has a section 5")..];
         let start = section.find("```overseer\n").expect("section 5 shows the tracker") + "```overseer\n".len();
         let block = &section[start..start + section[start..].find("```").unwrap()];
