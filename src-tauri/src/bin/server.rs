@@ -1886,8 +1886,45 @@ async fn serve() {
     println!("listening on http://{}", addr);
     report_memory_regularly();
     let_go_when_idle();
-    if let Err(e) = axum::serve(listener, app).await {
+    if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(asked_to_stop()).await {
         eprintln!("server stopped: {}", e);
         std::process::exit(1);
     }
+}
+
+/// How long the requests under way have to finish once the server is asked to stop. A watch never
+/// finishes on its own, and Docker kills what is still running after ten seconds.
+const STOPPING_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Resolves on Ctrl-C or SIGTERM. Run as a container's first process the server is given no
+/// default for SIGTERM, so without this `docker stop` kills it and the connections browsers keep
+/// open are never closed, leaving their tabs waiting on them after a restart.
+async fn asked_to_stop() {
+    #[cfg(unix)]
+    {
+        let mut terminate = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(signal) => signal,
+            Err(e) => {
+                eprintln!("cannot listen for SIGTERM: {}", e);
+                let _ = tokio::signal::ctrl_c().await;
+                return stopping();
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
+    stopping();
+}
+
+fn stopping() {
+    println!("stopping: closing connections, {} s for the requests under way", STOPPING_GRACE.as_secs());
+    std::thread::spawn(|| {
+        std::thread::sleep(STOPPING_GRACE);
+        println!("stopped with requests still under way");
+        std::process::exit(0);
+    });
 }
