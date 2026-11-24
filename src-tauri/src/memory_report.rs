@@ -1,5 +1,6 @@
-//! One line saying where the server's memory is: what the process holds, what the container it
-//! runs in holds and who else in it holds that, and what each of the server's caches is keeping.
+//! One line saying where the server's memory is: what the process holds and how much of that its
+//! own allocations hold (`crate::heap`), what the container it runs in holds and who else in it
+//! holds that, and what each of the server's caches is keeping.
 //!
 //! A host's memory graph is one number for the whole container - the server, the bot beside it,
 //! git, and on some hosts the file cache as well - and that number alone cannot say which of them
@@ -169,11 +170,65 @@ fn caches() -> String {
     .join(", ")
 }
 
-/// The whole line, without a prefix.
-pub fn line() -> String {
-    let mut parts: Vec<String> = [own(), container(), others()].into_iter().flatten().collect();
+/// What the server's allocations hold, and the most they held since the last periodic line and
+/// since start - see `crate::heap`. Unlike `rss`, it leaves out what the allocator keeps free.
+fn heap_part(heap: crate::heap::Heap) -> String {
+    format!(
+        "heap {} MB (peak {} since the last line, {} since start)",
+        megabytes(heap.held),
+        megabytes(heap.peak_since_line),
+        megabytes(heap.peak_since_start)
+    )
+}
+
+fn line_with(new_line: bool) -> String {
+    let heap = crate::heap::heap(new_line).map(heap_part);
+    let mut parts: Vec<String> = [own(), heap, container(), others()].into_iter().flatten().collect();
     parts.push(caches());
     parts.join(" | ")
+}
+
+/// The whole line, without a prefix.
+pub fn line() -> String {
+    line_with(false)
+}
+
+/// The line printed every so often: as `line`, and the heap's peak since the last line starts
+/// again from here, so that each periodic line covers the time since the one before.
+pub fn periodic_line() -> String {
+    line_with(true)
+}
+
+/// What starts the line printed after a request: how long it took, how far the heap rose above
+/// what it held when the request began, and the other requests that ran meanwhile - their
+/// allocations are in the figure too, since the heap is one for all of them.
+pub fn after_request(grown: &crate::heap::Grown) -> String {
+    let mut said = format!("memory after {} took {:.1} s", grown.path, grown.took.as_secs_f64());
+    if crate::heap::installed() {
+        said.push_str(&format!(
+            ", grew {} MB (heap {} -> {}",
+            megabytes(grown.grew()),
+            megabytes(grown.held_at_start),
+            megabytes(grown.peak)
+        ));
+        if !grown.alongside.is_empty() {
+            said.push_str(&format!(", alongside {}", grown.alongside.join(", ")));
+        }
+        said.push(')');
+    }
+    said.push(':');
+    said
+}
+
+/// How far a request may grow the heap before the line is printed after it however quickly it
+/// ran, from `OVERSEER_MEMORY_GROWTH_MB` - `0` for after every request - or 200 MB.
+pub fn growth_worth_a_line() -> usize {
+    std::env::var("OVERSEER_MEMORY_GROWTH_MB")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(200)
+        * 1024
+        * 1024
 }
 
 /// How often the line is printed, from `OVERSEER_MEMORY_LOG` in minutes - `0` for never - or
@@ -239,6 +294,12 @@ slab_unreclaimable 1184912\nslab 132016504\n";
         let stat = format!("anon 0\nfile {}\nkernel 0\ninactive_file {}\nactive_file {}\nfile_dirty {}\nfile_writeback {}\nshmem {}\n", 100 * MB, 40 * MB, 60 * MB, 3 * MB, 2 * MB, 20 * MB);
         let line = container_line(&(100 * MB).to_string(), &stat, true).unwrap();
         assert_eq!(line, "container 100 MB (anon 0, file 100 [inactive 40, active 60, dirty 5, shmem 20])");
+    }
+
+    #[test]
+    fn the_heap_is_told_with_both_its_peaks() {
+        let heap = crate::heap::Heap { held: 300 * MB, peak_since_line: 410 * MB, peak_since_start: 1178 * MB };
+        assert_eq!(heap_part(heap), "heap 300 MB (peak 410 since the last line, 1178 since start)");
     }
 
     #[test]

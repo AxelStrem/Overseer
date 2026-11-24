@@ -16,6 +16,7 @@ pub mod delta;
 pub mod docmgr;
 pub mod file_ops;
 pub mod formula_evaluator;
+pub mod heap;
 pub mod memory_report;
 pub mod menu;
 pub mod mutability;

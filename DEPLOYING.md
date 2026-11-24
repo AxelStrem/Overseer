@@ -134,9 +134,12 @@ these are the settings to turn:
 
 The server also hands free memory back to the system after every request.
 
-To see where the memory goes, read the server's log. Every 15 minutes, and after a request that
-took more than five seconds, it prints a `memory` line:
-- what the server holds now and the most it has held;
+To see where the memory goes, read the server's log. Every 15 minutes, it prints a `memory` line:
+- what the server holds now and the most it has held (`rss`);
+- what of that its own allocations hold (`heap`), with the most they held since the last line
+  and since start. `rss` is larger by what the allocator keeps free for later and by the
+  program itself; a spike on the host's graph shows as the peak since the last line in the
+  first line printed after it;
 - on Linux, what the container holds in all, and what that is made of:
   - `anon`, the programs' own memory;
   - `file`, the file cache, with how much of it the kernel takes back first when it needs the
@@ -151,7 +154,22 @@ took more than five seconds, it prints a `memory` line:
 - what the other processes in the container hold, by name;
 - what each of the server's caches is keeping.
 
-`OVERSEER_MEMORY_LOG` sets how many minutes apart the lines are, and `0` stops them.
+The same line is printed after a request that took more than five seconds (once a minute at
+most), and after one that grew the heap by more than 200 MB however quickly it ran, starting with
+what the request did:
+
+```
+memory after /v1/event took 5.2 s, grew 840 MB (heap 300 -> 1140, alongside /doc/tasks): rss ...
+```
+
+`grew` is how far the heap rose above what it held when the request began: the most the server
+held at any moment while it ran, less what it held at the start. The heap is one for all
+requests, so when others ran at the same time their allocations are in the figure too, and
+`alongside` names them; with nothing alongside, the figure is the request's own.
+
+`OVERSEER_MEMORY_LOG` sets how many minutes apart the lines are, and `0` stops them all.
+`OVERSEER_MEMORY_GROWTH_MB` sets how much a request has to grow the heap to be printed, and `0`
+prints the line after every request.
 
 Stopping the whole service when nobody uses it - Railway's serverless mode, Fly's auto-stop,
 Render's free tier - is a setting of the host, not of Overseer, and it is safe to turn on: the
@@ -179,6 +197,7 @@ A flag wins over its variable.
 | | `OVERSEER_DISK_CACHE_MB` | `512` | see above |
 | | `OVERSEER_IDLE_MINUTES` | `30` | see above |
 | | `OVERSEER_MEMORY_LOG` | `15` | minutes between the `memory` lines in the log; `0` for none |
+| | `OVERSEER_MEMORY_GROWTH_MB` | `200` | how far a request grows the heap to have a `memory` line printed after it; `0` for every request |
 | | `OVERSEER_DEPENDENCY_GRAPH` | on | `0` stops recording what each value was worked out from: a first open is a little quicker, every later one much slower |
 | | `TZ` | `UTC` | the time zone a document's dates are read in |
 | | `PUID`, `PGID` | the image's own user | in the image: the user and group the server runs as, and its folders are given to; never `0` |

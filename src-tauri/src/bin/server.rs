@@ -1451,10 +1451,12 @@ fn let_go_when_idle() {
     });
 }
 
-/// Print where the memory is after a request that took long enough to have needed a lot of it -
-/// see `overseer::memory_report`. Once a minute at most, so a run of slow writes is not a flood,
-/// and on a thread of its own, since measuring the caches walks the trees they hold.
-fn report_after_slow(path: &str, took: std::time::Duration) {
+/// Print where the memory is after a request that took long enough to have needed a lot of it,
+/// or that grew the heap by more than `OVERSEER_MEMORY_GROWTH_MB` however quickly it ran - see
+/// `overseer::memory_report`. A slow request prints once a minute at most, so a run of slow writes
+/// is not a flood; one that grew the heap that much always does, each being a spike worth putting
+/// a name to. On a thread of its own, since measuring the caches walks the trees they hold.
+fn report_after(grown: overseer::heap::Grown) {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
@@ -1462,19 +1464,22 @@ fn report_after_slow(path: &str, took: std::time::Duration) {
     const NOT_MORE_OFTEN_THAN: Duration = Duration::from_secs(60);
     static LAST: Mutex<Option<Instant>> = Mutex::new(None);
 
-    if took < SLOW || overseer::memory_report::every().is_none() {
+    if overseer::memory_report::every().is_none() {
         return;
     }
-    if let Ok(mut last) = LAST.lock() {
+    let grew_a_lot = overseer::heap::installed() && grown.grew() >= overseer::memory_report::growth_worth_a_line();
+    if !grew_a_lot {
+        if grown.took < SLOW {
+            return;
+        }
+        let Ok(mut last) = LAST.lock() else { return };
         let now = Instant::now();
         if last.is_some_and(|then| now.duration_since(then) < NOT_MORE_OFTEN_THAN) {
             return;
         }
         *last = Some(now);
-    } else {
-        return;
     }
-    let said = format!("memory after {} took {:.1} s:", path, took.as_secs_f64());
+    let said = overseer::memory_report::after_request(&grown);
     std::thread::spawn(move || eprintln!("{} {}", said, overseer::memory_report::line()));
 }
 
@@ -1484,7 +1489,7 @@ fn report_memory_regularly() {
     let Some(every) = overseer::memory_report::every() else { return };
     std::thread::spawn(move || loop {
         std::thread::sleep(every);
-        eprintln!("memory: {}", overseer::memory_report::line());
+        eprintln!("memory: {}", overseer::memory_report::periodic_line());
     });
 }
 
@@ -1493,15 +1498,20 @@ async fn give_back_memory(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let path = request.uri().path().to_string();
-    let started = std::time::Instant::now();
+    let watch = overseer::heap::begin(request.uri().path());
     let response = next.run(request).await;
+    let grown = watch.end();
     // Should a request have worked a document out without handing it to the document cache.
     overseer::parts::let_go_of_summary_reads();
     release_free_memory();
-    report_after_slow(&path, started.elapsed());
+    report_after(grown);
     response
 }
+
+// Counted, so the memory lines can say what the heap held over a stretch of time and how much each
+// request made it grow - see `overseer::heap`.
+#[global_allocator]
+static ALLOCATOR: overseer::heap::Counting<std::alloc::System> = overseer::heap::Counting(std::alloc::System);
 
 fn main() {
     // Tokio's blocking pool is five hundred threads by default, and every document operation
@@ -1518,6 +1528,9 @@ fn main() {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .max_blocking_threads(2)
+        // Each thread counts what it allocates on its own before passing it on - see
+        // `overseer::heap` - so what a thread has not passed on is passed on before it goes.
+        .on_thread_stop(overseer::heap::flush_this_thread)
         .build()
     {
         Ok(runtime) => runtime,
