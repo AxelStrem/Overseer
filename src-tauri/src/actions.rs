@@ -2894,7 +2894,7 @@ impl ActionExecutor {
         Some(node)
     }
 
-    fn find_indices_by_name_path(nodes: &Vec<OverseerNode>, path: &[String]) -> Option<Vec<usize>> {
+    pub(crate) fn find_indices_by_name_path(nodes: &Vec<OverseerNode>, path: &[String]) -> Option<Vec<usize>> {
         if path.is_empty() {
             return None;
         }
@@ -3389,7 +3389,7 @@ impl ActionExecutor {
     /// worked out. It is worked out here, as the resolver works it out for the entries it draws -
     /// see `resolver::as_a_template` - or a copy into it found none of the fields it inherits, and
     /// a list kept by one of them refused the entry for having no key.
-    fn template_for(document: &Vec<OverseerNode>, indices: &[usize], name: &str) -> Option<OverseerNode> {
+    pub(crate) fn template_for(document: &Vec<OverseerNode>, indices: &[usize], name: &str) -> Option<OverseerNode> {
         let mut level: &[OverseerNode] = document;
         let mut mounted_from = None;
         for &at in indices {

@@ -147,3 +147,76 @@ fn every_appendable_list_has_a_template_to_check_against() {
     let outcome = documents.append_at("free.os", "t/things", &fields(&[("whatever", "1")]));
     assert!(outcome.is_err(), "a list with no template accepted an entry");
 }
+
+const BASE: &str = r#"tab project (label="P", mutable=true) {
+    div (hidden=true) {
+        div Base {
+            string tag = ""
+            string name = ""
+            div About {
+                text about = ""
+            }
+        }
+        div Extra {
+            string colour = ""
+        }
+        <Base> Entry {
+            string shown = $(tag + "!")
+        }
+        <Base, Extra> Both {
+            string shown = $(tag + "!")
+        }
+    }
+
+    list Things (entry=<Entry>, key="tag") { }
+    list Pairs (entry=<Both>, key="tag") { }
+}
+"#;
+
+/// The templates live in a file the document is made from, which is read without being worked
+/// out: `<Base> Entry` is found as only what it writes.
+fn made_from_a_base(tag: &str) -> (Sandbox, DocumentRoot) {
+    let (dir, _) = sandbox(tag, "base.os", BASE);
+    std::fs::write(dir.root.join("p.os"), "<base.os/project> project { }\n").expect("write");
+    let documents = DocumentRoot::new(&dir.root).expect("root");
+    (dir, documents)
+}
+
+#[test]
+fn a_template_made_from_another_has_the_fields_of_the_other() {
+    let _shared = shared();
+    const TAG: &str = "a_template_made_from_another_has_the_fields_of_the_other";
+    let (_dir, documents) = made_from_a_base(TAG);
+    documents
+        .append_at("p.os", "project/Things",
+                   &fields(&[("tag", "a"), ("name", "A"), ("About/about", "words")]))
+        .expect("a field only the base has was refused");
+}
+
+#[test]
+fn an_unknown_field_of_a_stacked_template_is_refused_with_the_real_ones() {
+    let _shared = shared();
+    const TAG: &str = "an_unknown_field_of_a_stacked_template_is_refused_with_the_real_ones";
+    let (_dir, documents) = made_from_a_base(TAG);
+    match documents.append_at("p.os", "project/Things", &fields(&[("tag", "a"), ("bogus", "1")])) {
+        Err(RequestError::Rejected(said)) => {
+            assert!(said.contains("bogus"), "it did not name the wrong field: {said}");
+            for real in ["tag", "name", "about"] {
+                assert!(said.contains(real), "it did not list '{real}': {said}");
+            }
+        }
+        Err(other) => panic!("refused, but not for the right reason: {other:?}"),
+        Ok(_) => panic!("an unknown field was accepted"),
+    }
+}
+
+#[test]
+fn a_template_made_from_several_has_the_fields_of_each() {
+    let _shared = shared();
+    const TAG: &str = "a_template_made_from_several_has_the_fields_of_each";
+    let (_dir, documents) = made_from_a_base(TAG);
+    documents
+        .append_at("p.os", "project/Pairs",
+                   &fields(&[("tag", "a"), ("About/about", "words"), ("colour", "red")]))
+        .expect("a field only the second base has was refused");
+}

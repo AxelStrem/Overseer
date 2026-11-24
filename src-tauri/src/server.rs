@@ -2420,7 +2420,10 @@ impl DocumentRoot {
                     _ => None,
                 })
             {
-                if let Some(template) = crate::bases::find(nodes, &template_name) {
+                // Found as the entry is made from it - a template itself made from others, and
+                // one a mount brought in, included - or its fields would be only what it writes.
+                let indices = ActionExecutor::find_indices_by_name_path(nodes, &path).unwrap_or_default();
+                if let Some(template) = ActionExecutor::template_for(nodes, &indices, &template_name) {
                     if stack.is_empty() {
                         reject_unknown_fields(&template, fields)?;
                     } else {
