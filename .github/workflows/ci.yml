@@ -37,11 +37,16 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.152
+
       - run: npm ci
 
+      # Each test in a process of its own, so the ones that need the process alone run side by side.
       - name: Rust tests
         working-directory: src-tauri
-        run: cargo test --features server --no-fail-fast
+        run: cargo nextest run --features server --no-fail-fast
 
       - name: Page tests
         run: npx vitest run -c tests/vitest.config.mjs

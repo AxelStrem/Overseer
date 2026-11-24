@@ -19,18 +19,23 @@ so the suite once stayed green while the app would not link.
 ```bash
 npm test              # both suites
 npm run test:js       # Vitest only
-npm run test:rust     # cargo test only
+npm run test:rust     # the Rust suite, with cargo-nextest
 npm run test:rust:watch
-npm run test:verbose  # cargo test with stdout captured
+npm run test:verbose  # the Rust suite with each test's output shown
 
-cd src-tauri && cargo test <name>            # single Rust test
-cd src-tauri && cargo test --test it <file>::  # one file of the integration tests
+cd src-tauri && cargo nextest run --features server <name>        # Rust tests whose name contains <name>
+cd src-tauri && cargo nextest run --features server -E 'binary(it)' <file>::  # one file of the integration tests
 npx vitest run -c tests/vitest.config.mjs <file>   # single spec
 ```
 
+The Rust suite runs under [cargo-nextest](https://nexte.st) (`brew install cargo-nextest`, or
+`cargo install cargo-nextest --locked`): every test in a process of its own, so nothing a test
+leaves in the process reaches another, and the tests that need the process alone run side by
+side. `cargo test` still runs the same tests, a binary at a time.
+
 VS Code: Command Palette → "Tasks: Run Task" → "Test: Run All Tests".
 
-The modules of `it` run on threads of one process, and share what the crate keeps for the
+Under `cargo test` the modules of `it` run on threads of one process, and share what the crate keeps for the
 whole process: the snapshots of every parse, the documents it holds worked out, the view state,
 the folder of the current document, the overrides of its caches. Every test holds
 `common::PROCESS`: alone, with `common::serial()`, when it sets or resets any of that or relies on
@@ -112,7 +117,7 @@ with `scripts/preview.mjs` (see "Seeing a document" in `DEVELOPMENT.md`).
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push to `master` and every pull request. It runs both suites
-on Windows, macOS and Linux - `cargo test --features server --no-fail-fast` in `src-tauri`, then
+on Windows, macOS and Linux - `cargo nextest run --features server --no-fail-fast` in `src-tauri`, then
 the page's specs - and checks that the desktop app still compiles on macOS and Linux. Windows is
 left out of that check because its build needs the WebView2 runtime, which isn't in the repository.
 The checkout keeps line endings as committed (`core.autocrlf false`), because the serializer

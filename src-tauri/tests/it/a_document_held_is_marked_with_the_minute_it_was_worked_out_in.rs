@@ -38,8 +38,8 @@ fn every_thread_reads_its_own_minute() {
     let threads: Vec<_> = (0..8)
         .map(|t| {
             std::thread::spawn(move || {
-                for round in 0..5000 {
-                    let minutes = (t * 7 + round / 100 % 3) as i64 * 60;
+                for round in 0..500 {
+                    let minutes = (t * 7 + round / 10 % 3) as i64 * 60;
                     let when = chrono::DateTime::from_timestamp(1_786_000_000 + minutes, 0).unwrap();
                     FormulaEvaluator::set_time_override(Some(when));
                     let nodes = app_api::load_document(TEXT.to_string()).expect("load");

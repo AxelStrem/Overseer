@@ -45,20 +45,16 @@ function run(cmd, args, options = {}) {
     jsFailed = failed
   } catch {}
 
-  // Run cargo tests
-  const cargo = await run(process.platform === 'win32' ? 'cmd.exe' : 'sh', process.platform === 'win32' ? ['/d', '/s', '/c', 'cd src-tauri && cargo test'] : ['-lc', 'cd src-tauri && cargo test'])
-  // Parse cargo summary line
+  // The Rust suite as CI runs it: each test in a process of its own - see TESTING.md.
+  const nextest = 'cd src-tauri && cargo nextest run --features server --no-fail-fast'
+  const cargo = await run(process.platform === 'win32' ? 'cmd.exe' : 'sh', process.platform === 'win32' ? ['/d', '/s', '/c', nextest] : ['-lc', nextest])
+  // nextest prints its summary to stderr: "1717 tests run: 1716 passed, 1 failed, 3 skipped".
   let rsPassed = 0, rsFailed = 0
-  try {
-    const lines = cargo.out.split(/\r?\n/)
-    const last = lines.reverse().find(l => /test result:/.test(l)) || ''
-    let mp = last.match(/test result: ok\. (\d+) passed; (\d+) failed/)
-    if (!mp) mp = last.match(/test result: ok\. (\d+) passed;/)
-    if (mp) {
-      rsPassed = parseInt(mp[1], 10) || 0
-      rsFailed = mp[2] ? (parseInt(mp[2], 10) || 0) : 0
-    }
-  } catch {}
+  const summary = (cargo.err + cargo.out).replace(/\x1b\[[0-9;]*m/g, '').match(/(\d+) tests? run: (\d+) passed(?:[^,\n]*, (\d+) failed)?/)
+  if (summary) {
+    rsPassed = parseInt(summary[2], 10) || 0
+    rsFailed = parseInt(summary[3] || '0', 10) || 0
+  }
 
   // Build the desktop app, which `cargo test` does not.
   //
