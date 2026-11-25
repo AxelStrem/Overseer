@@ -227,6 +227,13 @@ everyone. Nobody signed in has no list.
 a calendar day that only a `layout="year"` draws, marked `_drawn_by_style`, comes without its
 children, which a read of it by address gives. The routes below work on one part of it.
 
+A link to the page can name a node of the document after `#`, by its address as below:
+`/doc/ap31/projects/overseer.os#project/Items/[scan]`. The page opens the document and shows that
+node the way pressing a chip that stands for it does: it opens the folds and tabs around it,
+scrolls to it and marks it for a moment. When the node can't be shown, the status line says why:
+it isn't in the document, the filter hides it, or the page doesn't draw it. The part after `#`
+never reaches the server.
+
 A node is named by its **address**: the names from the document's top node down, joined by `/`.
 It is the logical path of [the specification](overseer_syntax_specification.md#5-path-references):
 a `div` with no name is no step of it, and moving fields between rows changes no address. Two

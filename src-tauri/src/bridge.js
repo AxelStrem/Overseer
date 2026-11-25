@@ -147,12 +147,25 @@
             if (!window.app || typeof window.app.loadFile !== 'function') {
                 return setTimeout(open, 20)
             }
-            window.app.loadFile(documentName).then(() => listen(documentName, () => window.app)).catch((e) => {
+            window.app.loadFile(documentName).then(() => {
+                listen(documentName, () => window.app)
+                revealFromLink()
+            }).catch((e) => {
                 console.error('could not open', documentName, e)
             })
         }
         open()
     })
+
+    // A link may name a node after `#`, by its address as the API writes it -
+    // /doc/ap31/projects/overseer.os#project/Items/[scan] - to show it as a press on its chip does.
+    // The part after `#` never reaches the server, so the server has nothing to do for it.
+    const revealFromLink = () => {
+        let address = ''
+        try { address = decodeURIComponent((window.location.hash || '').slice(1)) } catch (_) { return }
+        if (address && window.app && typeof window.app.revealAddress === 'function') window.app.revealAddress(address)
+    }
+    window.addEventListener('hashchange', revealFromLink)
 
     // Told each time the document's file changes - the bot writing to it, most of the day - so
     // the page catches up without a reload: see `heardTheFile`. The browser reconnects by itself

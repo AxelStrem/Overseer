@@ -7557,6 +7557,48 @@ export class OverseerRenderer {
         return this._parents.get(node) || null
     }
 
+    /// The value of an entry's field: one of its own, or of a layout div within it that names nothing.
+    entryValue(entry, name) {
+        const seek = (holder) => {
+            for (const child of (holder && holder.children) || []) {
+                if (child && child.name === name) return child
+            }
+            for (const child of (holder && holder.children) || []) {
+                if (child && child.is_hierarchy_transparent && (child.node_type || child.type) === 'div') {
+                    const inside = seek(child)
+                    if (inside) return inside
+                }
+            }
+            return null
+        }
+        const child = seek(entry)
+        return child ? this.getParameterValue(child, 'value') : null
+    }
+
+    /// The path `revealEntry` takes for an address as the API writes it - `project/Items/[scan]` -
+    /// or null when the document holds nothing there. A `[key]` step is the entry of that list
+    /// whose key field holds the key; `\` escapes a `/`, `[` or `]` within a step.
+    pathOfAddress(address) {
+        const doc = this.app && this.app.currentDocument
+        if (!doc || typeof address !== 'string' || !address) return null
+        const unescaped = (s) => s.replace(/\\(.)/g, '$1')
+        const path = []
+        for (const step of address.split(/(?<!\\)\//)) {
+            if (step.startsWith('[') && step.endsWith(']')) {
+                const list = this.findNodeByPath(doc, path)
+                if (!list || list.node_type !== 'list') return null
+                const field = String(this.getParameterValue(list, 'key') || '')
+                const key = unescaped(step.slice(1, -1))
+                const entry = field && (list.children || []).find((e) => String(this.entryValue(e, field) ?? '') === key)
+                if (!entry) return null
+                path.push(entry.name)
+            } else {
+                path.push(unescaped(step))
+            }
+        }
+        return this.findNodeByPath(doc, path) ? path : null
+    }
+
     /// The entries of the lists a vocabulary names, by key - see `tagVocabulary`.
     readVocabulary(where) {
         const found = new Map()
@@ -7567,23 +7609,7 @@ export class OverseerRenderer {
                 const list = this.findNodeByPath(this.app.currentDocument, segments)
                 const key = String((list && this.getParameterValue(list, 'key')) || 'tag')
                 for (const entry of (list && list.children) || []) {
-                    // A field of the entry, or of a layout div within it that names nothing.
-                    const seek = (holder, name) => {
-                        for (const child of (holder && holder.children) || []) {
-                            if (child && child.name === name) return child
-                        }
-                        for (const child of (holder && holder.children) || []) {
-                            if (child && child.is_hierarchy_transparent && (child.node_type || child.type) === 'div') {
-                                const inside = seek(child, name)
-                                if (inside) return inside
-                            }
-                        }
-                        return null
-                    }
-                    const field = (name) => {
-                        const child = seek(entry, name)
-                        return child ? this.getParameterValue(child, 'value') : null
-                    }
+                    const field = (name) => this.entryValue(entry, name)
                     const tag = field(key)
                     if (tag === null || tag === undefined || tag === '' || found.has(String(tag))) continue
                     const name = field('name')
