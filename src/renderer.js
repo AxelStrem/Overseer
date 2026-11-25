@@ -632,6 +632,17 @@ const audioPlayerHtml = (file, name, url, reference = null) => {
 const SOUND_REQUESTED = 'transcribe'
 const SOUND_TRANSCRIBED = 'transcribed'
 
+/// The most a recording may weigh, as the server's `AUDIO_MOST_BYTES` says: the recorder stops by
+/// itself a little before it, so that what was said is kept rather than refused as too large.
+const SOUND_MOST_BYTES = 16 * 1024 * 1024
+const SOUND_STOPS_AT = SOUND_MOST_BYTES - 512 * 1024
+/// Plenty for a voice in Opus, and about a quarter of what a browser records by default: an hour
+/// of talking stays under `SOUND_MOST_BYTES`.
+const SOUND_BITS_PER_SECOND = 32000
+
+/// A size for a sentence a person reads.
+const megabytes = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+
 /// A markdown reference that is a sound beside the document - the same test the `image` hook
 /// draws a player by.
 const soundReference = (href) => {
@@ -12462,6 +12473,9 @@ export class OverseerRenderer {
                 } catch (_) { /* kept for this page only, in the editor itself */ }
             }
             for (const kind of ['input', 'keyup', 'mouseup', 'select']) editor.addEventListener(kind, keep)
+            // Which field it edits, so that what arrives for an editor taken off the page - a
+            // recording kept meanwhile - finds the one opened again in its place.
+            editor.dataset.draftOf = JSON.stringify({ path: at, key })
             // Watched while it is open: a drawing that takes it off the page - its div folded,
             // its tab drawn again - is followed by `reopenDraftIfDrawn`.
             this._draftEditor = editor
@@ -13629,12 +13643,33 @@ export class OverseerRenderer {
     /// are kept one after another, in the order given, so their references land in that order.
     /// A sound `recorded` on the page, where the theme shows the box asking for a transcription,
     /// is referred to with it ticked: what is recorded here is usually said for someone to read.
-    keepFileInto(textarea, file, { recorded = false } = {}) {
+    ///
+    /// A recording exists nowhere else, so it is never let go without a word: kept but with its
+    /// editor gone, it lands in the editor opened again on the same field, or its reference is
+    /// shown to be put in by hand; refused, the reason is shown with a way to try again and a way
+    /// to download it. `doc` is the document it was recorded in, which the page may have left.
+    keepFileInto(textarea, file, { recorded = false, doc = null } = {}) {
         const previous = this._keeping || Promise.resolve()
+        this._keepsUnderWay = (this._keepsUnderWay || 0) + 1
         const keeping = previous.then(async () => {
-            const doc = (this.app && this.app.currentFile) || ''
-            if (!doc) return
+            const into = doc || (this.app && this.app.currentFile) || ''
             const sound = /^audio\//.test(file.type || '')
+            const what = sound ? 'sound' : 'image'
+            const refused = (reason) => {
+                const sentence = `The ${what} was not kept (${megabytes(file.size || 0)}): ${reason}`
+                if (recorded) {
+                    this.sayAboutRecording(sentence, {
+                        file,
+                        retry: () => this.keepFileInto(textarea, file, { recorded, doc: into }),
+                    })
+                } else {
+                    this.sayRefused(textarea, sentence)
+                }
+            }
+            if (!into) {
+                refused('no document is open to keep it beside')
+                return
+            }
             let path
             try {
                 const data = await new Promise((resolve, reject) => {
@@ -13643,30 +13678,104 @@ export class OverseerRenderer {
                     reader.onerror = () => reject(reader.error)
                     reader.readAsDataURL(file)
                 })
-                path = await this.ask(sound ? 'save_overseer_audio' : 'save_overseer_image', { path: doc, mime: file.type, data })
+                path = await this.ask(sound ? 'save_overseer_audio' : 'save_overseer_image', { path: into, mime: file.type, data })
             } catch (e) {
-                this.sayRefused(textarea, `The ${sound ? 'sound' : 'image'} was not kept: ${e && e.message ? e.message : e}`)
+                refused(e && e.message ? e.message : String(e))
                 return
             }
-            if (typeof path !== 'string' || !textarea.isConnected) return
-            this.sayRefused(null, null)
+            if (typeof path !== 'string') return
             const alt = sound && recorded && this.themeAbove(textarea, 'audio-request') === 'transcription' ? SOUND_REQUESTED : ''
-            textarea.setRangeText(`![${alt}](${path})`, textarea.selectionStart, textarea.selectionEnd, 'end')
-            textarea.dispatchEvent(new Event('input', { bubbles: true }))
-        })
+            const reference = `![${alt}](${path})`
+            const editor = this.editorFor(textarea, into)
+            if (!editor) {
+                this.sayAboutRecording(`The ${what} was kept, but its editor had closed: put ${reference} into the text where it belongs`)
+                return
+            }
+            this.sayRefused(null, null)
+            this.dropRecordingNote()
+            editor.setRangeText(reference, editor.selectionStart, editor.selectionEnd, 'end')
+            editor.dispatchEvent(new Event('input', { bubbles: true }))
+        }).finally(() => { this._keepsUnderWay-- })
         this._keeping = keeping.catch(() => {})
         return keeping
+    }
+
+    /// The editor a reference kept for `textarea` goes into: that one while it is on the page,
+    /// else the one opened again on the same field of the same document after a drawing took it
+    /// away - see `keepDraftOf` - else none.
+    editorFor(textarea, doc) {
+        if (textarea && textarea.isConnected) return textarea
+        const reopened = this._draftEditor
+        if (!reopened || !reopened.isConnected || !textarea || !textarea.dataset.draftOf) return null
+        if (doc && this.app && this.app.currentFile !== doc) return null
+        return reopened.dataset.draftOf === textarea.dataset.draftOf ? reopened : null
+    }
+
+    /// A word about a recording that did not reach its text, kept on the page until it is
+    /// dismissed: a drawing of the document, another refusal, the editor closing - none of them
+    /// takes it away, so what was recorded is never lost with it. With `file`, it offers to
+    /// download the recording, and with `retry`, to send it again. One at a time.
+    sayAboutRecording(sentence, { file = null, retry = null } = {}) {
+        this.dropRecordingNote()
+        if (typeof document === 'undefined') return
+        const note = document.createElement('div')
+        note.className = 'overseer-recording-note'
+        note.setAttribute('role', 'alert')
+        const text = document.createElement('span')
+        text.textContent = sentence
+        note.appendChild(text)
+        let url = null
+        const add = (control) => { note.appendChild(document.createTextNode(' ')); note.appendChild(control) }
+        if (retry) {
+            const again = document.createElement('button')
+            again.type = 'button'
+            again.textContent = 'Try again'
+            again.addEventListener('click', (e) => { e.preventDefault(); this.dropRecordingNote(); retry() })
+            add(again)
+        }
+        if (file && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+            url = URL.createObjectURL(file)
+            const download = document.createElement('a')
+            download.href = url
+            const extension = (/^audio\/([a-z0-9]+)/i.exec(file.type || '') || [])[1] || 'webm'
+            download.download = `recording-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension === 'mpeg' ? 'mp3' : extension}`
+            download.textContent = 'Download'
+            add(download)
+        }
+        const dismiss = document.createElement('button')
+        dismiss.type = 'button'
+        dismiss.textContent = 'Dismiss'
+        dismiss.addEventListener('click', (e) => { e.preventDefault(); this.dropRecordingNote() })
+        add(dismiss)
+        note.letGo = () => { if (url) URL.revokeObjectURL(url) }
+        // At the foot of the page rather than beside the editor, where a drawing of the
+        // document would take it away.
+        document.body.appendChild(note)
+        this._recordingNote = note
+    }
+
+    dropRecordingNote() {
+        const note = this._recordingNote
+        if (!note) return
+        this._recordingNote = null
+        if (note.letGo) note.letGo()
+        note.remove()
     }
 
     /// The `Record` button of a markdown editor: it records from the microphone until pressed
     /// again, then keeps the recording beside the document as a dropped sound is kept. It is not
     /// drawn where the page cannot record - a browser allows the microphone only over HTTPS or on
-    /// the machine itself. The microphone is let go whenever the recording ends, and an editor
-    /// closed while recording drops what it had.
+    /// the machine itself. The microphone is let go whenever the recording ends.
+    ///
+    /// It records at a voice's rate, and stops and keeps the recording by itself as it nears the
+    /// most a sound may weigh. A drawing that takes the button off the page stops and keeps it as
+    /// well. Answers what the editor calls as it closes: `{ keep: true }`, on Save, stops and keeps
+    /// what is being recorded and answers a promise of its keeping, or null when nothing was being
+    /// recorded; without, on Cancel, drops it and says so.
     addRecordButton(toolbar, textarea) {
         const canRecord = typeof window !== 'undefined' && typeof window.MediaRecorder === 'function' &&
             typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function'
-        if (!canRecord) return () => {}
+        if (!canRecord) return () => null
         const button = document.createElement('button')
         button.type = 'button'
         button.className = 'record-btn'
@@ -13678,6 +13787,10 @@ export class OverseerRenderer {
             for (const track of r.stream.getTracks()) track.stop()
             button.classList.remove('recording')
             button.textContent = 'Record'
+        }
+        const stop = (r) => {
+            if (r.recorder.state !== 'inactive') r.recorder.stop()
+            else { letGo(r); r.finish() }
         }
         const start = async () => {
             let stream
@@ -13695,43 +13808,73 @@ export class OverseerRenderer {
             const type = types.find((t) => typeof MediaRecorder.isTypeSupported !== 'function' || MediaRecorder.isTypeSupported(t))
             let recorder
             try {
-                recorder = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream)
+                const options = { audioBitsPerSecond: SOUND_BITS_PER_SECOND }
+                if (type) options.mimeType = type
+                recorder = new MediaRecorder(stream, options)
             } catch (e) {
                 for (const track of stream.getTracks()) track.stop()
                 this.sayRefused(textarea, `The sound could not be recorded: ${e && e.name ? e.name : e}`)
                 return
             }
-            const r = { stream, recorder, chunks: [], dropped: false, began: Date.now(), timer: null }
+            const r = {
+                stream, recorder, chunks: [], size: 0, dropped: false, full: false, began: Date.now(), timer: null,
+                doc: (this.app && this.app.currentFile) || '',
+            }
+            r.done = new Promise((resolve) => { r.finish = resolve })
             recording = r
-            recorder.addEventListener('dataavailable', (e) => { if (e.data && e.data.size) r.chunks.push(e.data) })
+            recorder.addEventListener('dataavailable', (e) => {
+                if (!e.data || !e.data.size) return
+                r.chunks.push(e.data)
+                r.size += e.data.size
+                if (r.size >= SOUND_STOPS_AT && !r.full) {
+                    r.full = true
+                    stop(r)
+                }
+            })
             recorder.addEventListener('stop', () => {
                 letGo(r)
                 if (recording === r) recording = null
-                if (r.dropped || !r.chunks.length || !textarea.isConnected) return
+                if (r.dropped || !r.chunks.length) { r.finish(); return }
                 const mime = (recorder.mimeType || type || r.chunks[0].type || 'audio/webm')
-                this.keepFileInto(textarea, new Blob(r.chunks, { type: mime }), { recorded: true })
+                const kept = this.keepFileInto(textarea, new Blob(r.chunks, { type: mime }), { recorded: true, doc: r.doc })
+                if (r.full) {
+                    kept.then(() => {
+                        if (!this._recordingNote) {
+                            this.sayRefused(this.editorFor(textarea, r.doc), 'The recording reached the longest a sound may be, and was stopped and kept')
+                        }
+                    })
+                }
+                r.finish(kept)
             })
             this.sayRefused(null, null)
-            recorder.start()
+            // In slices, so that its size is known as it goes.
+            recorder.start(1000)
             button.classList.add('recording')
             button.textContent = 'Stop 0:00'
-            r.timer = setInterval(() => { button.textContent = `Stop ${audioTime((Date.now() - r.began) / 1000)}` }, 250)
+            r.timer = setInterval(() => {
+                // Taken off the page by a drawing: nothing is left to stop it with.
+                if (!button.isConnected) { stop(r); return }
+                button.textContent = `Stop ${audioTime((Date.now() - r.began) / 1000)}`
+            }, 250)
         }
         button.addEventListener('click', (e) => {
             e.preventDefault()
             if (recording) {
-                if (recording.recorder.state !== 'inactive') recording.recorder.stop()
+                stop(recording)
                 return
             }
             start()
         })
-        // What the editor calls as it closes.
-        return () => {
-            if (!recording) return
-            recording.dropped = true
-            if (recording.recorder.state !== 'inactive') recording.recorder.stop()
-            else letGo(recording)
+        return ({ keep = false } = {}) => {
+            const r = recording
+            if (!r) return null
             recording = null
+            if (!keep) {
+                r.dropped = true
+                try { this.app && this.app.setStatus && this.app.setStatus('The recording was dropped with the edit', '', 'warning') } catch (_) { /* no status bar */ }
+            }
+            stop(r)
+            return keep ? r.done : null
         }
     }
 
@@ -13931,7 +14074,20 @@ export class OverseerRenderer {
             }
         })
         
+    let finishing = false
     const finishEditing = async (save = true) => {
+            if (finishing) return
+            finishing = true
+            // A recording under way is part of the edit being saved: it is stopped and kept, and
+            // the text waits for its reference - as for any sound or image still on its way.
+            if (save) {
+                const recorded = dropRecording({ keep: true })
+                if (recorded || this._keepsUnderWay > 0) {
+                    saveBtn.disabled = true
+                    await recorded
+                    await this._keeping
+                }
+            }
             dropMarks()
             dropRecording()
             draft.drop()

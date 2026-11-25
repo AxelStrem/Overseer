@@ -361,3 +361,36 @@ fn a_file_over_the_cap_is_neither_kept_nor_handed_out() {
     assert_eq!(read(port, &ap31, "p.project.os", "big.bin").body.len(), most);
     assert_eq!(read(port, &ap31, "p.project.os", "missing.bin").status, 404);
 }
+
+/// A sound is sent to `save_overseer_audio` in base64 inside the command's JSON, so the body the
+/// page commands take is sized for the largest sound, not only the largest image: a recording of
+/// several minutes from a markdown editor is kept, and one over the sound cap is refused with its
+/// sentence rather than the bare 413 of a body too large to read.
+#[test]
+fn a_sound_larger_than_any_image_is_taken_by_the_page_commands() {
+    use base64::Engine as _;
+    let _shared = shared();
+    let server = start(4895, "sound");
+    let port = server.port;
+    let (ap31, _) = ap31_and_bob(&server);
+    let save = |bytes: &[u8]| {
+        let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let body = format!(
+            r#"{{"document":"p.project.os","args":{{"path":"p.project.os","mime":"audio/webm;codecs=opus","data":"{}"}}}}"#,
+            data
+        );
+        ask(port, "POST", "/api/save_overseer_audio", &[cookie(&ap31)], Some(("application/json", body.as_bytes())))
+    };
+
+    let long = vec![7u8; overseer::app_api::IMAGE_MOST_BYTES as usize + 1024 * 1024];
+    let kept = save(&long);
+    assert_eq!(kept.status, 200, "{}", kept.text());
+    let path = kept.text().split("\"result\":\"").nth(1).unwrap().split('"').next().unwrap().to_string();
+    assert!(path.starts_with("sounds/p.project/"), "{}", path);
+    assert_eq!(std::fs::read(server.root.join("ap31").join(&path)).unwrap().len(), long.len());
+
+    let most = overseer::app_api::AUDIO_MOST_BYTES as usize;
+    let over = save(&vec![7u8; most + 1]);
+    assert_ne!(over.status, 413, "{}", over.text());
+    assert!(over.text().contains("too large to be kept"), "{}", over.text());
+}

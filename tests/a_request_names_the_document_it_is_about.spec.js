@@ -52,6 +52,15 @@ describe('a request through the bridge', () => {
     expect(sent().open).toBe('Заметки/дом.os')
   })
 
+  it('says what was wrong with a body refused before it was read, or a server not reached', async () => {
+    fetched.mockImplementationOnce(async () => ({ ok: false, status: 413, json: async () => { throw new Error('not JSON') } }))
+    await expect(window.__TAURI_INTERNALS__.invoke('save_overseer_audio', {})).rejects.toThrow('it is too large for the server to take')
+    fetched.mockImplementationOnce(async () => { throw new TypeError('Failed to fetch') })
+    await expect(window.__TAURI_INTERNALS__.invoke('save_overseer_audio', {})).rejects.toThrow('the server could not be reached')
+    fetched.mockImplementationOnce(async () => ({ ok: false, status: 400, json: async () => ({ error: 'the sound is too large to be kept' }) }))
+    await expect(window.__TAURI_INTERNALS__.invoke('save_overseer_audio', {})).rejects.toThrow('the sound is too large to be kept')
+  })
+
   it('reads the names from headers given as Headers too', async () => {
     await window.__TAURI_INTERNALS__.invoke('catch_up_overseer_document', {},
       { headers: new Headers({ 'Overseer-Document': 'drawer.os' }) })

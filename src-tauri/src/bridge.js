@@ -90,11 +90,16 @@
         const asked = { document: said(options, OF) ?? documentName, session, scheme: scheme(), week_start: weekStart(), args: args || {} }
         const open = said(options, BESIDE)
         if (open) asked.open = open
-        const response = await fetch(`${base}/api/${encodeURIComponent(cmd)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(asked),
-        })
+        let response
+        try {
+            response = await fetch(`${base}/api/${encodeURIComponent(cmd)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(asked),
+            })
+        } catch (_) {
+            throw new Error('the server could not be reached')
+        }
         const body = await response.json().catch(() => null)
         // A session that ran out while the page was open: the way back in, and back here after,
         // rather than a page whose every call now fails.
@@ -103,7 +108,11 @@
             window.location.assign('/signin?next=' + encodeURIComponent(here))
         }
         if (!response.ok) {
-            const error = new Error((body && body.error) || `${cmd} failed (${response.status})`)
+            // A body refused before it was read - by the server's own limit or a proxy's in front
+            // of it - answers with no sentence of its own; the person is told what was wrong.
+            const said = (body && body.error) ||
+                (response.status === 413 ? 'it is too large for the server to take' : `${cmd} failed (${response.status})`)
+            const error = new Error(said)
             // A press the document refused, with its sentence for whoever pressed.
             if (body && typeof body.refused === 'string') error.refused = body.refused
             throw error

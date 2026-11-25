@@ -3708,6 +3708,11 @@ pub fn save_audio_beside(
     save_media_beside(document, mime, data, AUDIO_TYPES, AUDIO_MOST_BYTES, "sounds", "sound")
 }
 
+/// A size in megabytes, to one decimal, for a sentence a person reads.
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1}", bytes as f64 / (1024.0 * 1024.0))
+}
+
 /// A file of one of `types` kept under `<folder>/<document name>/`, named from the time.
 fn save_media_beside(
     document: &std::path::Path,
@@ -3733,7 +3738,12 @@ fn save_media_beside(
         return Err(IconRefused::NotAName(format!("the {} is empty", what)));
     }
     if bytes.len() as u64 > most {
-        return Err(IconRefused::NotAName(format!("the {} is too large to be kept", what)));
+        return Err(IconRefused::NotAName(format!(
+            "the {} is too large to be kept: {} MB, and at most {} MB is",
+            what,
+            megabytes(bytes.len() as u64),
+            megabytes(most)
+        )));
     }
     let nowhere = || IconRefused::Missing(format!("no document to keep the {} beside", what));
     let stem = document.file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty()).ok_or_else(nowhere)?;

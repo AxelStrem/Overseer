@@ -92,9 +92,15 @@ fn sign_in_first() -> (StatusCode, Json<serde_json::Value>) {
 /// What lets the frontend run against this server rather than the desktop app.
 const BRIDGE: &str = include_str!("../bridge.js");
 
-/// The most a command's body may weigh: room for the largest image kept, in base64, and the
-/// JSON around it.
-const API_MOST_BYTES: usize = (overseer::app_api::IMAGE_MOST_BYTES as usize) / 3 * 4 + 1024 * 1024;
+/// The most a command's body may weigh: room for the largest image or sound kept, in base64, and
+/// the JSON around it. A sound is the larger - a long recording from a markdown editor - and a
+/// body sized for images alone refused one of a few minutes before its own cap was ever asked.
+const API_MOST_BYTES: usize = {
+    let image = overseer::app_api::IMAGE_MOST_BYTES as usize;
+    let sound = overseer::app_api::AUDIO_MOST_BYTES as usize;
+    let largest = if image > sound { image } else { sound };
+    largest.div_ceil(3) * 4 + 1024 * 1024
+};
 
 #[derive(serde::Deserialize)]
 struct CommandBody {

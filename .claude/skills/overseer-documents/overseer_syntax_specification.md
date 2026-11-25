@@ -2568,8 +2568,12 @@ reference whose path ends in a sound's extension is drawn as its player. A sound
 into the editor of a markdown text is kept as a picture is, in `sounds/<document name>/` under a
 name made from the time, and the text gets `![](sounds/journal/20261123-091500.webm)` where the
 caret is. The editor has a `Record` button too, which records from the microphone until it is
-pressed again, then keeps the recording the same way; closing the editor while it records drops
-the recording. A browser lets a page use the microphone only over HTTPS or on the machine itself,
+pressed again, then keeps the recording the same way. It records at a rate meant for a voice, so
+an hour fits in the limit, and stops and keeps the recording by itself as it nears it. Saving the
+editor while it records keeps the recording and saves the text with it; cancelling drops the
+recording, and the status bar says so. A recording that cannot reach its text is never let go
+silently: refused, a note at the foot of the page says why and offers to send it again or to
+download it; kept after its editor closed, the note gives its reference to put in by hand. A browser lets a page use the microphone only over HTTPS or on the machine itself,
 and where it cannot the button is not shown.
 
 Where the theme's `audio/request` is `transcription`, a sound in a markdown text has a box beside
