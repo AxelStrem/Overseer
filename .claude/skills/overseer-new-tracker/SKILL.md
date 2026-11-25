@@ -17,6 +17,18 @@ AgentLoop reads exactly this pair: the tracker's address, and the definition thr
 files write only what is the project's own. For the language beyond what is here, the
 `overseer-documents` skill, if it is installed.
 
+**Made from the templates, never copied.** Each file's first line names its template, and the
+server finds that template in its library. The file then writes only what differs from it.
+- Never fetch `project_template.os` or `project_definition.os` and write it, whole or in part,
+  into the person's folder.
+- Never restate what the template already holds: stages, flags, complexities, the tabs, the
+  item's fields.
+
+A copy does worse than add bulk. A file named `projects/project_template.os` beside the tracker,
+or in a library of the person's own, is used before the shipped one. The tracker would then stay
+on that copy's version while the server, and AgentLoop with it, move on. A newer AgentLoop would
+refuse it as an old template version.
+
 ## 1. What to ask
 
 - **The server's address**, e.g. `https://overseer.example.org` or `http://tower:4747`. Ask; never
@@ -89,6 +101,7 @@ URL without any credentials in it; an SSH remote stays as it is.
     - definition (source="<name>.project.os/definition", lazy=false)
     - name = "<Name as people say it>"
     - description = "<one sentence>"
+    mount people (source="../../people.os/People", hidden=true, lazy=false, mutable=false) { }
     - Items {
         - {
             - added = "2026-11-21T14:05:00+01:00"
@@ -101,6 +114,20 @@ URL without any credentials in it; an SSH remote stays as it is.
     - History { }
 }
 ```
+
+- **`name` is the tracker's title.** The template labels its tab `label=$(name)`, so the name
+  is what the drawer lists and what a browser tab shows (`<Name> - Overseer`). Write it the way
+  people say it. Don't add a `label=` of your own on the root: it would stop following the name.
+  Leave `name` out and the tab reads "Untitled project".
+- **`mount people`** brings in the server's directory of accounts, `people.os` at its root. The
+  path climbs two folders because the tracker is in `<username>/projects/`. The template keeps an
+  empty `people` for this mount to fill. Without the mount:
+  - the "by" and "for" columns and `<@name>` mentions show bare usernames, not people's chips;
+  - AgentLoop can't route an item to an account by mentioning it, because it reads the people
+    from `project/people/People`.
+
+  On a server without accounts there is no `people.os`; the mount loads as missing and the rest
+  of the tracker works.
 
 **Always write `- Items`, `- Labels` and `- History`**, as `- Items { }` when there is nothing to
 carry over. AgentLoop's `tracker.py` reads the tracker's own text, not what the template fills in,
@@ -166,15 +193,27 @@ curl -sS -H "$A" -G $B/v1/node --data-urlencode document=projects/<name>.os \
      --data-urlencode address=project/definition/definition     # the definition, through the mount
 curl -sS -H "$A" -G $B/v1/node --data-urlencode document=projects/<name>.os \
      --data-urlencode address=project/Items                     # child_addresses: one per item
+curl -sS -H "$A" -G $B/v1/node --data-urlencode document=projects/<name>.os \
+     --data-urlencode address=project/people/People             # child_addresses: one per account
 ```
 
-Both must answer `200`, and `Items` must have as many entries as were carried over. The text as
-pushed must hold the lines `- Items {` (or `- Items { }`), `- Labels { }` and `- History { }`.
+All three must answer `200`.
+- `Items` must have as many entries as were carried over.
+- `People` must list at least the person, on a server with accounts.
+- The text as pushed must hold the lines `- Items {` (or `- Items { }`), `- Labels { }` and
+  `- History { }`.
+
 Then tell the person:
 
 - the tracker's page, `<B>/doc/<their username>/projects/<name>.os`, which is also the address an
   AgentLoop loop takes;
 - what was carried over, and from which file. The local file is left as it was: whether to retire
   it is theirs to decide;
-- that a loop's account reaches the tracker only once it is shared with it, an entry in their
-  `sharing.os` with `edit`.
+- that a loop's account reaches the tracker only once it's shared with that account, in their
+  `sharing.os`. It needs two entries:
+  - `projects/<name>.os`, `can = "edit"`;
+  - `projects/<name>.project.os`, with `read` or `edit`.
+
+  Without the definition the tracker draws, but the loop finds no repositories. Add any trackers
+  the project files into (`tracker.py file ... --into <other>`). The `overseer-new-server` skill
+  covers the agents' account itself.

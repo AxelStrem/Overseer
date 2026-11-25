@@ -88,6 +88,7 @@ reformats itself on the first button press is a diff nobody can review.
 - [AGENTS.md](AGENTS.md) — a short guide to the language for agents, and how to see a document
 - [.claude/skills/overseer-documents](.claude/skills/overseer-documents) — the same as a Claude skill, with a quick reference and the specification, to copy wherever `.os` files are worked on
 - [.claude/skills/overseer-new-tracker](.claude/skills/overseer-new-tracker) — a Claude skill that starts a project tracker for a repository on an Overseer server
+- [.claude/skills/overseer-new-server](.claude/skills/overseer-new-server) — a Claude skill that stands up a server for people and AgentLoop, and checks one already running
 - [overseer_syntax_specification.md](overseer_syntax_specification.md) — the DSL, node by node
 - [technical_architecture.md](technical_architecture.md) — how a document becomes a screen
 - [API.md](API.md) — reading and writing documents over the server

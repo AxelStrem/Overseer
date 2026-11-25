@@ -115,6 +115,10 @@ specification's "Entries of a list" says which form each tool takes.
   that starts a project tracker for a repository on a remote server: it writes the definition and
   the tracker AgentLoop reads, carries over a local `docs/todo.md`, and pushes both with
   `PUT /v1/source` and the person's key (`~/.overseer/key` by default). Copied the same way.
+- [`.claude/skills/overseer-new-server`](.claude/skills/overseer-new-server) - a Claude skill
+  that stands up a server ready for people and AgentLoop: its settings, the admin and agents'
+  accounts, keys and sharing, and what the server keeps by itself. It ends with a checklist for
+  servers already running. Copied the same way.
 
 ## Seeing a document
 
