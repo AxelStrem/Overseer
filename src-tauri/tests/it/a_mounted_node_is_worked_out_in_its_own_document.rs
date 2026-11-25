@@ -206,3 +206,44 @@ fn an_entry_a_mounted_window_leaves_out_is_worked_out_in_its_own_document_when_r
     assert_eq!(number_at(&host, "weight/first"), Some(20.0));
     assert_eq!(number_at(&host, "weight/last"), Some(60.0));
 }
+
+const REACHING_HOST: &str = r#"tab weight (label="Weight") {
+    mount CAL (lazy=false, mutable=false, hidden=true, source="side.os/s/History") { }
+    float further = $(CAL/History.find(CAL/History.find("2026-01-02")/next)/kcal)
+}
+"#;
+
+const REACHING_SIDE: &str = r#"div (hidden=true) {
+    div Day {
+        timestamp day (precision="day") = "2026-01-01"
+        timestamp next (precision="day") = $(date_add_days(day, 1))
+        float grams = 0
+        float kcal = $(grams * /s/per_gram)
+    }
+}
+tab s (label="S") {
+    float per_gram = 2
+    list History (entry=<Day>, key="day", keyPrecision="day", window=1) {
+        - {
+            - day = "2026-01-01"
+            - grams = 10
+        }
+        - {
+            - day = "2026-01-02"
+            - grams = 20
+        }
+        - {
+            - day = "2026-01-03"
+            - grams = 30
+        }
+    }
+}
+"#;
+
+#[test]
+fn an_entry_a_mounted_window_leaves_out_is_found_through_another_it_leaves_out() {
+    let _serial = serial();
+    let (_sandbox, documents) = sandbox("reaching", &[("host.os", REACHING_HOST), ("side.os", REACHING_SIDE)]);
+    let host = documents.open("host.os").expect("open");
+    assert_eq!(number_at(&host, "weight/further"), Some(60.0));
+}

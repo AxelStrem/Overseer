@@ -3543,10 +3543,22 @@ impl ActionExecutor {
             if let Ok(mut cache) = cache.lock() {
                 if let Some(held) = cache.get(&key) {
                     if held.current(stamp) {
-                        wanted.retain(|(list, _)| {
-                            crate::addressing::find(&held.nodes, list)
-                                .is_some_and(|n| crate::resolver::is_windowed(n) || n.node_type == "calendar")
-                        });
+                        // One walk of the file for all of them. The entries name a list or two, and
+                        // a walk of the whole file for each one grew with every round: for a host
+                        // reaching fifty days it was a quarter of the time the file took to read.
+                        let lists: std::collections::HashSet<&str> =
+                            wanted.iter().map(|(list, _)| list.as_str()).collect();
+                        // The first node at each address, as `addressing::find` would take.
+                        let mut found: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+                        if !lists.is_empty() {
+                            crate::addressing::walk(&held.nodes, &mut |address, n| {
+                                if lists.contains(address) && !found.contains_key(address) {
+                                    let windowed = crate::resolver::is_windowed(n) || n.node_type == "calendar";
+                                    found.insert(address.to_string(), windowed);
+                                }
+                            });
+                        }
+                        wanted.retain(|(list, _)| found.get(list).copied().unwrap_or(false));
                         if wanted.iter().all(|entry| held.held.contains(entry)) {
                             return Ok(held.nodes.as_ref().clone());
                         }

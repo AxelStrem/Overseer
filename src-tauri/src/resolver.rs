@@ -1580,11 +1580,24 @@ pub fn resolve_document(nodes: &mut Vec<OverseerNode>) {
         let mut reached = reached;
         reached.extend(theirs);
         held.push(holding(reached));
+        let t = std::time::Instant::now();
         if !files.is_empty() {
             crate::actions::ActionExecutor::read_mounts_again(&mut before, &files);
         }
+        let read_again = t.elapsed();
+        let t = std::time::Instant::now();
         *nodes = before.clone();
+        let copied = t.elapsed();
+        let t = std::time::Instant::now();
         resolve_document_once(nodes);
+        if profile_enabled() {
+            eprintln!(
+                "[ROUND]   mounts read again {:.1} ms, copied {:.1} ms, worked out {:.1} ms",
+                read_again.as_secs_f64() * 1000.0,
+                copied.as_secs_f64() * 1000.0,
+                t.elapsed().as_secs_f64() * 1000.0
+            );
+        }
     }
 }
 
