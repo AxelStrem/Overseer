@@ -1,7 +1,8 @@
 //! A project tracker keeps a bench: `project/Bench`, the loops waiting for work, each entry a
 //! `seat` (one loop), the `account` it signs in as and `since` when it sat down. The loops write
 //! it through the server, appending a seat and removing it by its key, and the bench beside the
-//! filter bar shows each waiting account once, as its chip where the tracker knows the person.
+//! filter bar shows each waiting account once: `waiting` holds the ones the tracker knows, drawn
+//! as their people's icon chips, and `strangers` names the rest as plain text.
 //! A seat holds a `/`, so its address escapes it: `project/Bench/[bot@one\/main]`.
 
 use crate::common::serial;
@@ -73,7 +74,8 @@ fn a_tracker_that_never_names_the_bench_has_it_empty() {
     let root = folder("bare", BARE);
     let service = DocumentRoot::new(&root).unwrap();
     assert_eq!(seats(&service), 0);
-    assert_eq!(value(&service, "project/bench/waiting"), Some(OverseerValue::String(String::new())));
+    assert_eq!(value(&service, "project/bench/strangers"), Some(OverseerValue::String(String::new())));
+    assert_eq!(value(&service, "project/bench/strangers"), Some(OverseerValue::String(String::new())));
 }
 
 #[test]
@@ -81,7 +83,8 @@ fn the_bench_shows_each_waiting_account_once() {
     let _serial = serial();
     let root = folder("seated", SEATED);
     let service = DocumentRoot::new(&root).unwrap();
-    assert_eq!(value(&service, "project/bench/waiting"), Some(OverseerValue::String("<@bot> helper".into())));
+    assert_eq!(value(&service, "project/bench/waiting"), Some(OverseerValue::String("bot".into())));
+    assert_eq!(value(&service, "project/bench/strangers"), Some(OverseerValue::String("helper".into())));
 }
 
 #[test]
@@ -93,7 +96,8 @@ fn a_loop_sits_down_and_leaves_by_its_seat() {
     service.append_at("p.os", "project/Bench", &a_seat("bot@one/main", "bot")).expect("the sit was refused");
     service.append_at("p.os", "project/Bench", &a_seat("bot@two/main", "bot")).expect("the second sit was refused");
     assert_eq!(seats(&service), 2);
-    assert_eq!(value(&service, "project/bench/waiting"), Some(OverseerValue::String("bot".into())));
+    assert_eq!(value(&service, "project/bench/waiting"), Some(OverseerValue::String(String::new())));
+    assert_eq!(value(&service, "project/bench/strangers"), Some(OverseerValue::String("bot".into())));
 
     service.remove_at("p.os", r"project/Bench/[bot@one\/main]", &HashMap::new()).expect("the leave was refused");
     let text = std::fs::read_to_string(root.join("p.os")).unwrap();
@@ -103,5 +107,5 @@ fn a_loop_sits_down_and_leaves_by_its_seat() {
 
     service.remove_at("p.os", r"project/Bench/[bot@two\/main]", &HashMap::new()).expect("the last leave was refused");
     assert_eq!(seats(&service), 0);
-    assert_eq!(value(&service, "project/bench/waiting"), Some(OverseerValue::String(String::new())));
+    assert_eq!(value(&service, "project/bench/strangers"), Some(OverseerValue::String(String::new())));
 }

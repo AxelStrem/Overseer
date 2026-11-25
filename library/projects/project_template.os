@@ -761,12 +761,21 @@ tab project (label=$(name), mutable=true) {
                         }
                     }
                 }
-                text waiting (markdown=true, mutable=false, font-size=11px,
-                             alignment="far", margin=0, padding=0, hover-text="Agents waiting for work") =
-                    $(/project/Bench.filter(|x| /project/Bench.filter(|y| y/account == x/account
-                        && (y/since < x/since || (y/since == x/since && y/seat < x/seat))).count() == 0)
-                      .reduce("", |acc, x| acc + (acc == "" ? "" : " ")
-                        + (/project/people/People.filter(|p| p/tag == x/account).count() > 0 ? "<@" + x/account + ">" : x/account)))
+                div (layout="horizontal", width=fit-content, height=1fr, margin=0, padding=0, spacing=4, alignment="center",
+                     border-style=none) {
+                    tags waiting (vocabulary="/project/people/People", chip="icon", shape="box", mutable=false, font-size=11px, margin=0, padding=0,
+                                  hover-text="Agents waiting for work") =
+                        $(/project/Bench.filter(|x| /project/Bench.filter(|y| y/account == x/account
+                            && (y/since < x/since || (y/since == x/since && y/seat < x/seat))).count() == 0
+                            && /project/people/People.filter(|p| p/tag == x/account).count() > 0)
+                          .reduce("", |acc, x| acc + (acc == "" ? "" : ", ") + x/account))
+                    text strangers (mutable=false, font-size=11px, alignment="far", margin=0, padding=0,
+                                    hover-text="Agents waiting for work") =
+                        $(/project/Bench.filter(|x| /project/Bench.filter(|y| y/account == x/account
+                            && (y/since < x/since || (y/since == x/since && y/seat < x/seat))).count() == 0
+                            && /project/people/People.filter(|p| p/tag == x/account).count() == 0)
+                          .reduce("", |acc, x| acc + (acc == "" ? "" : " ") + x/account))
+                }
             }
         }
 
