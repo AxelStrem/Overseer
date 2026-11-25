@@ -44,7 +44,8 @@ else
         | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable
 fi
 
-# Node: the system's when it is new enough, as in AgentLoop's image; else the official build.
+# Node: the system's when it is new enough - in AgentLoop's container, the one the Brewfile
+# installs before this script runs, since its image carries no Node; else the official build.
 node_major() { "$1" -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null || echo 0; }
 node_path=""
 if [ -x "$ENV_DIR/node/bin/node" ]; then

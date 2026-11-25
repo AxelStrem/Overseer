@@ -63,7 +63,10 @@ Without root, it installs these into the folder AgentLoop gives it, `AGENTLOOP_P
 It then writes `session-env.txt` there, so every session gets them on its `PATH`, and `CHROME`
 points `preview.mjs` at the browser. It skips whatever an earlier run installed. System packages
 are not its to install: a C compiler and linker, `curl`, `tar`, and on Linux the libraries Chrome
-loads. AgentLoop's image has them all, and the script stops and names any that are missing. Where
+loads. AgentLoop's image has them all, and the script stops and names any that are missing.
+AgentLoop's image has no Node, though: there it comes from the repository's `Brewfile` -
+`node@22`, and `cargo-nextest` for the Rust suite - which AgentLoop installs before the script
+runs, so the script finds Node on the system and leaves it be. Where
 the container allows no unprivileged user namespaces, Chrome finds no sandbox and stops at once;
 `preview.mjs` then starts it again with `--no-sandbox`. By hand:
 
