@@ -286,6 +286,50 @@ impl SourceRegistry {
         scopes.get(&scope)?.snapshots.get(&node).cloned()
     }
 
+    /// How many parses' snapshots are held, and roughly how many bytes they hold - for the
+    /// server's memory report. Counted as `document_cache::footprint` counts a tree's snapshots,
+    /// each snapshot and each text it is a view of once, so a tree still held and the registry
+    /// name the same bytes; what the registry holds alone is the trees already let go of.
+    pub fn held() -> (usize, usize) {
+        let Ok(scopes) = SCOPES.read() else {
+            return (0, 0);
+        };
+        let mut texts = HashSet::new();
+        let mut bytes = 0;
+        for data in scopes.values() {
+            bytes += data.trailing.capacity();
+            for snapshot in data.snapshots.values() {
+                bytes += std::mem::size_of::<NodeSourceSnapshot>()
+                    + snapshot.leading_trivia.capacity()
+                    + snapshot.trailing_trivia.capacity();
+                if let Some((at, len)) = snapshot.full_text.backing() {
+                    if texts.insert(at) {
+                        bytes += len;
+                    }
+                }
+            }
+        }
+        (scopes.len(), bytes)
+    }
+
+    /// Forget every parse's snapshots that no parse is using now. For measuring what they hold.
+    pub fn forget_all_unused() {
+        let Ok(mut order) = SCOPE_ORDER.write() else {
+            return;
+        };
+        let Ok(active) = ACTIVE_SCOPES.read() else {
+            return;
+        };
+        let Ok(mut scopes) = SCOPES.write() else {
+            return;
+        };
+        scopes.retain(|id, _| active.contains(id));
+        order.retain(|id| active.contains(id));
+        if let Ok(mut by_text) = SCOPE_BY_TEXT.write() {
+            by_text.retain(|_, scope| active.contains(scope));
+        }
+    }
+
     /// Number of snapshots retained across all scopes. Mostly useful for tests.
     pub fn len() -> usize {
         SCOPES

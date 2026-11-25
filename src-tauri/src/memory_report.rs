@@ -164,6 +164,8 @@ fn caches() -> String {
         format!("{} (each of the next three up to {} MB)", part("parts", crate::parts::read_parts_held()), side),
         part("mounted", crate::actions::mounted_held()),
         part("bases", crate::bases::parsed_held()),
+        part("frames", crate::formula_evaluator::FormulaEvaluator::frames_held()),
+        part("snapshots", crate::source_registry::SourceRegistry::held()),
         part("superseded", crate::document_cache::superseded_held()),
         part("handed out", crate::app_api::handed_out_held()),
     ]

@@ -134,8 +134,10 @@ struct Boundary {
     stamp: String,
     /// The contexts the host has at the mount, the nearest of each name.
     copies: Vec<OverseerNode>,
-    /// The frame, once a formula has asked for it - or `None` within, when there is none.
-    frame: Option<Option<&'static [OverseerNode]>>,
+    /// The frame, once a formula has asked for it - or `None` within, when there is none. Held
+    /// here as well as in `FRAMES`, so it lives as long as the pass that reads it, whatever
+    /// `FRAMES` lets go of meanwhile.
+    frame: Option<Option<std::sync::Arc<Vec<OverseerNode>>>>,
 }
 
 /// A mounted file's document as worked out on its own, and after its top the contexts its host
@@ -145,14 +147,30 @@ struct Frame {
     stamp: String,
     copies: Vec<OverseerNode>,
     roots: std::sync::Arc<Vec<OverseerNode>>,
+    /// About how many bytes it holds, for the server's memory report: worked out when the report
+    /// first asks rather than as the frame is made, which is in the middle of a pass.
+    bytes: std::sync::OnceLock<usize>,
 }
+
+/// Every frame made, kept while the reading of the mounted file it was made from is held - see
+/// `FormulaEvaluator::frame`.
+///
+/// One for the whole process. Each thread kept its own, until its file changed: a frame is a copy
+/// of the whole mounted document, so every thread of the server's pool that had worked out a host
+/// went on holding its copies of what the host mounted - 112 MB a thread for the body weight
+/// tracker, which mounts the food tracker's days - named by no figure of the memory line.
+static FRAMES: std::sync::Mutex<Vec<Frame>> = std::sync::Mutex::new(Vec::new());
+
+// Several threads' passes read the same frame at once, through references the lock does not
+// cover - which is sound only while a node has no interior mutability.
+const _: fn() = || {
+    fn shared_between_threads<T: Sync>() {}
+    shared_between_threads::<OverseerNode>();
+};
 
 thread_local! {
     /// See `FormulaEvaluator::with_pass_root`.
     static PASS_ROOT: RefCell<Option<PassRoot>> = const { RefCell::new(None) };
-    /// Every frame made, kept until its file changes: a reference into one may be held by any
-    /// context made while a pass runs, so none is let go of then - see `FormulaEvaluator::frame`.
-    static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The name an entry of a part not read is bound to while a field's formula is worked out for it
@@ -949,7 +967,7 @@ impl FormulaEvaluator {
                 boundaries: None,
             })
         });
-        Self::let_go_of_stale_frames();
+        Self::let_go_of_stale_frames(false);
     }
 
     /// Work out `read` with `root` as the document a node reached without its path is found in,
@@ -1003,12 +1021,17 @@ impl FormulaEvaluator {
                 .iter_mut()
                 .filter(|b| path.len() >= b.at.len() && path[..b.at.len()] == b.at[..])
                 .max_by_key(|b| b.at.len())?;
-            let frame = *boundary
+            let frame = boundary
                 .frame
-                .get_or_insert_with(|| Self::frame(&boundary.file, &boundary.stamp, boundary.copies.clone()));
+                .get_or_insert_with(|| Self::frame(&boundary.file, &boundary.stamp, boundary.copies.clone()))
+                .as_ref()?;
+            // SAFETY: the frame is held by the boundary, which the pass root holds, and the pass
+            // root is only let go of as a pass ends or the next begins - when no context made
+            // while it was set is left.
+            let frame: &'static [OverseerNode] = unsafe { std::slice::from_raw_parts(frame.as_ptr(), frame.len()) };
             let mut own = boundary.source.clone();
             own.extend_from_slice(&path[boundary.at.len()..]);
-            Some((frame?, own))
+            Some((frame, own))
         })?
     }
 
@@ -1153,56 +1176,82 @@ impl FormulaEvaluator {
     }
 
     /// The frame of a mounted file as the mount read it, with these contexts of the host's - made
-    /// the first time it is asked for, and kept. `None` when the file is no longer held as it was
-    /// read, as when it changed since: the formula is worked out in the host then, as it always
-    /// was, and the next reading of the host reads the file again.
-    fn frame(file: &str, stamp: &str, copies: Vec<OverseerNode>) -> Option<&'static [OverseerNode]> {
-        let held = FRAMES.with(|frames| {
+    /// the first time any thread asks for it, and kept. `None` when the file is no longer held as
+    /// it was read, as when it changed since: the formula is worked out in the host then, as it
+    /// always was, and the next reading of the host reads the file again.
+    fn frame(file: &str, stamp: &str, copies: Vec<OverseerNode>) -> Option<std::sync::Arc<Vec<OverseerNode>>> {
+        let found = |frames: &[Frame]| {
             frames
-                .borrow()
                 .iter()
                 .find(|f| f.file == file && f.stamp == stamp && f.copies == copies)
                 .map(|f| f.roots.clone())
-        });
-        let roots = match held {
-            Some(roots) => roots,
-            None => {
-                let (reading, own) = crate::actions::ActionExecutor::mounted_reading(file)?;
-                // Made from the reading the mount was made from, or not at all.
-                if stamp.rsplit('|').next() != Some(reading.to_string().as_str()) {
-                    return None;
-                }
-                let mut roots = own.as_ref().clone();
-                // After the file's own top, so a context it declares there is found first.
-                roots.extend(copies.iter().cloned());
-                let roots = std::sync::Arc::new(roots);
-                FRAMES.with(|frames| {
-                    frames.borrow_mut().push(Frame {
-                        file: file.to_string(),
-                        stamp: stamp.to_string(),
-                        copies,
-                        roots: roots.clone(),
-                    })
-                });
-                roots
-            }
         };
-        // SAFETY: the document is held in `FRAMES`, behind an `Arc` that is only let go of by
-        // `let_go_of_stale_frames`, which runs as a pass begins - when no context made during a
-        // pass is left - and never for a frame whose file still stands as it was read.
-        let roots: &'static [OverseerNode] = unsafe { std::slice::from_raw_parts(roots.as_ptr(), roots.len()) };
+        if let Some(roots) = found(&FRAMES.lock().unwrap_or_else(|e| e.into_inner())) {
+            return Some(roots);
+        }
+        let (reading, own) = crate::actions::ActionExecutor::mounted_reading(file)?;
+        // Made from the reading the mount was made from, or not at all.
+        if stamp.rsplit('|').next() != Some(reading.to_string().as_str()) {
+            return None;
+        }
+        // Made outside the lock: copying a large mounted document takes a while, and other
+        // threads' passes look for their frames meanwhile.
+        let mut roots = own.as_ref().clone();
+        // After the file's own top, so a context it declares there is found first.
+        roots.extend(copies.iter().cloned());
+        let roots = std::sync::Arc::new(roots);
+        let mut frames = FRAMES.lock().unwrap_or_else(|e| e.into_inner());
+        // Another thread may have made the same one meanwhile, and one copy is enough.
+        if let Some(theirs) = found(&frames) {
+            return Some(theirs);
+        }
+        frames.push(Frame { file: file.to_string(), stamp: stamp.to_string(), copies, roots: roots.clone(), bytes: Default::default() });
         Some(roots)
     }
 
-    /// Lets go of the frames of files that have changed since they were read, which nothing will
-    /// ask for again.
-    fn let_go_of_stale_frames() {
-        FRAMES.with(|frames| {
-            frames.borrow_mut().retain(|f| {
-                let own = f.stamp.split('|').next().unwrap_or_default();
-                crate::actions::mount_stamp(&f.file) == own
+    /// Lets go of the frames nothing will ask for again: those of files that have changed since
+    /// they were read, and those of an older reading of a mounted file than the one held now, from
+    /// which the next frame of it would be made. A pass that is reading one keeps it - see
+    /// `Boundary::frame`.
+    ///
+    /// With `unheld`, also those of a file the mounted files' cache no longer holds at all. Not as
+    /// a pass begins: such a frame still serves the passes of the host being worked out, which
+    /// read the file before the cache let it go. When the cache lets go of what nobody has used for
+    /// a while, its frames go with it - see `document_cache::let_go_idle_everywhere`.
+    pub fn let_go_of_stale_frames(unheld: bool) {
+        let files: Vec<String> = {
+            let frames = FRAMES.lock().unwrap_or_else(|e| e.into_inner());
+            let mut files: Vec<String> = frames.iter().map(|f| f.file.clone()).collect();
+            files.sort();
+            files.dedup();
+            files
+        };
+        // Read before the lock is taken again, so the mounted files' lock is never taken inside it.
+        let standing: Vec<(String, String, Option<String>)> = files
+            .into_iter()
+            .map(|file| {
+                let stamp = crate::actions::mount_stamp(&file);
+                let reading = crate::actions::ActionExecutor::mounted_reading(&file).map(|(r, _)| r.to_string());
+                (file, stamp, reading)
             })
+            .collect();
+        FRAMES.lock().unwrap_or_else(|e| e.into_inner()).retain(|f| {
+            let Some((_, stamp, reading)) = standing.iter().find(|(file, _, _)| *file == f.file) else {
+                return true;
+            };
+            let own = f.stamp.split('|').next().unwrap_or_default();
+            let current = match reading {
+                Some(r) => f.stamp.rsplit('|').next() == Some(r.as_str()),
+                None => !unheld,
+            };
+            own == stamp && current
         });
+    }
+
+    /// How many frames are held, and about how many bytes - for the server's memory report.
+    pub fn frames_held() -> (usize, usize) {
+        let frames = FRAMES.lock().unwrap_or_else(|e| e.into_inner());
+        (frames.len(), frames.iter().map(|f| *f.bytes.get_or_init(|| crate::document_cache::footprint(&f.roots))).sum())
     }
 
     /// Where a node of the pass's document is, named as the resolver names it.

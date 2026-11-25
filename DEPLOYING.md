@@ -152,7 +152,16 @@ To see where the memory goes, read the server's log. Every 15 minutes, it prints
   a part under 4 MB is left out. Where the container's cgroup is the older kind (v1), the line
   says only `anon` and `file`;
 - what the other processes in the container hold, by name;
-- what each of the server's caches is keeping.
+- what each of the server's caches is keeping. Beside the documents, parts, mounted files and
+  bases there are two more:
+  - `frames`: the copies of mounted files that a host works its mounted nodes' formulas out in.
+    A frame is held once for the whole server, and goes when the mounted file it was made from
+    goes.
+  - `snapshots`: the source text of the last parses (up to 32 documents), which a save uses to
+    give back the bytes it was given. It is counted in the documents' figure as well, while a
+    document is held.
+
+  Each figure is an estimate that errs high, by a quarter or more.
 
 The same line is printed after a request that took more than five seconds (once a minute at
 most), and after one that grew the heap by more than 200 MB however quickly it ran, starting with

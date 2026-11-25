@@ -1017,12 +1017,12 @@ pub fn let_go_idle(limit: std::time::Duration) -> usize {
 
 /// The same for every cache a document leaves behind it: the document and the trees kept for
 /// pages to catch up from, and the parts, mounted files and bases it read, each of which went
-/// unread within `limit`. Says how many things went.
+/// unread within `limit` - and with the mounted files, the frames made from them. Says how many
+/// things went.
 pub fn let_go_idle_everywhere(limit: std::time::Duration) -> usize {
-    let_go_idle(limit)
-        + crate::parts::let_go_of_idle_parts(limit)
-        + crate::actions::let_go_of_idle_mounts(limit)
-        + crate::bases::let_go_of_idle_bases(limit)
+    let mounts = crate::actions::let_go_of_idle_mounts(limit);
+    crate::formula_evaluator::FormulaEvaluator::let_go_of_stale_frames(true);
+    let_go_idle(limit) + crate::parts::let_go_of_idle_parts(limit) + mounts + crate::bases::let_go_of_idle_bases(limit)
 }
 
 /// What the cache is holding: how many documents, and how many bytes it believes they are.
