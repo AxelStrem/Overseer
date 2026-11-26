@@ -2,8 +2,9 @@
 //! template without the tracker writing anything for it. The tab is unnamed, inside `project`, so
 //! the list is `project/Discussion` beside `project/Items`.
 //!
-//! A topic's id comes from the same pool as the items', so a chip naming one is never ambiguous:
-//! the add rows of both tabs refuse an id the other list holds.
+//! Text names a topic with a mark of its own, `<:naming>`, beside `<#editor>` for an item, so the
+//! mark says which list a chip reads. Their ids still come from one pool: the add rows of both
+//! tabs refuse an id the other list holds.
 
 use crate::common::serial;
 use overseer::app_api;
@@ -115,5 +116,32 @@ fn dropping_a_topic_removes_it() {
         let text = on_disk(&file);
         assert!(!text.contains("- handle = \"naming\""), "the topic is still there");
         assert!(text.contains("- handle = \"editor\""), "an item went with it");
+    });
+}
+
+#[test]
+fn text_names_a_topic_by_the_colon_mark_and_an_item_by_the_hash() {
+    serialised(|| {
+        let (_root, file) = a_project("marks", EXAMPLE);
+        let nodes = app_api::load_document(on_disk(&file)).expect("open");
+        let project = overseer::addressing::find(&nodes, "project").expect("no project");
+        let vocabulary = project
+            .children
+            .iter()
+            .find(|child| overseer::contexts::is_copy(child) && child.name == "vocabulary")
+            .expect("the project holds no copy of the vocabulary");
+        let said: Vec<String> = vocabulary
+            .children
+            .iter()
+            .map(|element| match element.parameters.get("_computed_value").or_else(|| element.parameters.get("value")) {
+                Some(OverseerValue::String(s)) => s.clone(),
+                other => format!("{:?}", other),
+            })
+            .collect();
+        assert!(said.iter().any(|s| s == ":/project/Discussion"), "no list for `:` names the topics: {:?}", said);
+        for s in said.iter().filter(|s| !s.starts_with(|c: char| "@$:%~^+".contains(c))) {
+            assert!(!s.contains("/project/Discussion"), "`#` still names the topics: {}", s);
+            assert!(s.contains("/project/Items"), "`#` names no items: {}", s);
+        }
     });
 }

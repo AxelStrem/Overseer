@@ -60,6 +60,15 @@
             - title = "Write the guide"
             - labels = "docs"
             - points = 2
+            div Talk {
+                list Comments {
+                    - {
+                        - at = "2026-09-04T12:00:00+04:00"
+                        - author = "owner"
+                        - body = "waits on what we settle in <:naming>"
+                    }
+                }
+            }
         }
         - {
             - added = "2026-09-04T16:00:00+04:00"

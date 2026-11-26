@@ -1,6 +1,7 @@
 tab project (label=$(name), mutable=true) {
     context vocabulary {
-        - items = "/project/Items, /project/History, /project/Discussion, /project/Features"
+        - items = "/project/Items, /project/History, /project/Features"
+        - topics = ":/project/Discussion"
         - people = "@/project/people/People"
     }
     // Raised whenever Stages, Complexities, Flags or the fields of an item change, so a program that reads projects can tell it was written against another.
@@ -526,13 +527,14 @@ tab project (label=$(name), mutable=true) {
 
             mark (type="grip")
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
-            string handle (label="id", font-size=11px, width=14%) = ""
+            string handle (label="id", font-size=11px, width=8%) = ""
+            string shape (hidden=true) = "bubbles"
             mark (type="separator")
             enum owner (label="by", vocabulary="/project/people/People", chip="icon", placeholder="", font-size=11px, width=32px,
                         alignment="center",
                         hover-text=$(../owner == "" ? "Nobody started this topic" : "This topic was started by <@" + ../owner + ">")) = ""
             mark (type="separator")
-            string title (label="title", font-size=14px, width=60%,
+            string title (label="title", font-size=14px, width=87%,
                           hover-text="What the topic is about") = ""
             bool pinned (hidden=true) = false
 
@@ -891,8 +893,8 @@ tab project (label=$(name), mutable=true) {
         list History (entry=<Finished>, key="handle", window=20, parts=$(|x| week(x/finished_at)), layout="vertical", spacing=1, view="table", header=true, sticky=true, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) { }
     }
 
-    // A tracker writes `- Discussion { ... }` beside `- Items` once it holds any topic. Its ids
-    // are taken from the same pool as the items', so a chip naming one is never ambiguous.
+    // A tracker writes `- Discussion { ... }` beside `- Items` once it holds any topic. Text names
+    // a topic as `<:id>`; its ids still come from the items' pool, so one id is one thing anywhere.
     tab (label="Discussion", hover-text="Anything to talk over that is not an item or a feature") {
         context theme {
             - table {
@@ -910,7 +912,7 @@ tab project (label=$(name), mutable=true) {
         }
 
         div NewTopic (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none) {
-            textbox handle (label="", placeholder="id", width=14%) = $(fresh_key(/project/Items, /project/History, /project/Discussion))
+            textbox handle (label="", placeholder="id", width=10%) = $(fresh_key(/project/Items, /project/History, /project/Discussion))
             textbox title (label="", placeholder="what to talk over", width=56%) = ""
             button add (label="+ topic", margin=0, width=12%) {
                 on click {
