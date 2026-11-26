@@ -429,10 +429,12 @@ document need names of their own: two of one name are not written to their parts
 list in a mounted document is read without its parts.
 
 A list with parts and a `window` reads its parts from the newest back, as many as its window needs,
-and an older one only when "more" reaches it: a part nothing reaches is never read, and nothing in
+and an older one only when "more" reaches it: a part nothing reaches is never read into the list, and nothing in
 its entries is worked out. So the window is taken from the last parts by name, which is the newest
 when the parts are periods (`week`, `month`) and `sort_by` puts the newest first. The note under the
-list says how many parts it left. Whatever reads the list as a whole still sees all of it:
+list says how many entries are left out in all: those of the parts it left are counted from what the
+server keeps of each part, made once and again only when the part changes, so a part counted is not
+read on the next open. Whatever reads the list as a whole still sees all of it:
 
 - a formula anywhere in the document, or in a template it is made from, that names the list -
   a `find` in it, a `reduce` over it, a `link` or a `context` naming it - has every part read,

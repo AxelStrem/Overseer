@@ -1,5 +1,5 @@
 //! An open of a list with parts sends the page what it draws - how many parts were left unread,
-//! and what a vocabulary takes of them - and none of what the server keeps to read and write its
+//! how many entries they hold, and what a vocabulary takes of them - and none of what the server keeps to read and write its
 //! parts: the folder they are in, and every part's file with its stamp. Those are paths on the
 //! server's disk, which no one opening the document needs to be told.
 //!
@@ -108,7 +108,7 @@ fn an_open_carries_none_of_the_parts_bookkeeping() {
     let list = params_at(&answer, &["log", "History"]);
     let kept: Vec<&String> = list
         .keys()
-        .filter(|k| k.starts_with("_parts_") && *k != "_parts_left_unread" && *k != "_parts_vocabulary")
+        .filter(|k| k.starts_with("_parts_") && *k != "_parts_left_unread" && *k != "_parts_entries_unread" && *k != "_parts_vocabulary")
         .collect();
     assert!(kept.is_empty(), "the list carried the server's bookkeeping: {:?}", kept);
 }
@@ -120,6 +120,7 @@ fn an_open_still_carries_what_the_page_draws_of_the_parts() {
     let answer = answered(&documents);
     let list = params_at(&answer, &["log", "History"]);
     assert_eq!(list.get("_parts_left_unread"), Some(&serde_json::json!({ "Integer": 1 })), "the note under the list");
+    assert_eq!(list.get("_parts_entries_unread"), Some(&serde_json::json!({ "Integer": 1 })), "the entries in it");
     let vocabulary = list.get("_parts_vocabulary").map(Value::to_string).unwrap_or_default();
     assert!(vocabulary.contains("The oldest"), "the chips of the part not read: {}", vocabulary);
 }

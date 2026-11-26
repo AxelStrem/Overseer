@@ -265,10 +265,12 @@ fn only_for_writing_back(key: &str) -> bool {
 /// every part's file and stamp, what could not be had - which the page never reads.
 ///
 /// Most of them are paths on the server's disk, which no one opening the document is to be told.
-/// The page draws two: how many parts were left unread, and the chips of the entries in them.
+/// The page draws three: how many parts were left unread, how many entries they hold, and the
+/// chips of the entries in them.
 fn only_for_the_parts(key: &str) -> bool {
     key.starts_with("_parts_")
         && key != crate::parts::UNREAD_COUNT
+        && key != crate::parts::UNREAD_ENTRIES
         && key != crate::resolver::UNREAD_VOCABULARY
 }
 

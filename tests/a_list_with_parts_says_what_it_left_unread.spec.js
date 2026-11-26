@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// A list kept in parts reads only its newest parts. How many entries the older ones hold is not
-// known without reading them, so the note says how many parts it left, and still offers one window
-// more.
+// A list kept in parts reads only its newest parts. The server counts the entries the older ones
+// hold from what it keeps of each, so the note says how many entries are left in all; without that
+// count it says how many parts it left. Either way it offers one window more.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -46,7 +46,7 @@ const outOfView = (n) => Object.assign(base(`Day__${n}`, '-'), {
   ],
 })
 
-const docOf = (children, left, parts) => ([Object.assign(base('t', 'tab'), {
+const docOf = (children, left, parts, entries) => ([Object.assign(base('t', 'tab'), {
   children: [
     Object.assign(base('Days', 'list'), {
       parameters: {
@@ -54,6 +54,7 @@ const docOf = (children, left, parts) => ([Object.assign(base('t', 'tab'), {
         window: { Integer: 3 },
         ...(left ? { _left_out_of_view: { Integer: left } } : {}),
         ...(parts ? { _parts_left_unread: { Integer: parts } } : {}),
+        ...(entries !== undefined ? { _parts_entries_unread: { Integer: entries } } : {}),
       },
       children,
     }),
@@ -91,6 +92,18 @@ describe('a list with parts it has not read says so', () => {
     render(docOf([inView(1), inView(2), inView(3), outOfView(4)], 1, 1))
     expect(said()).toBe('1 earlier entry not shown, and 1 older part')
     expect(ask().textContent).toBe('show 3 more')
+  })
+
+  it('counts the entries of the parts left with those out of view', () => {
+    render(docOf([inView(1), inView(2), inView(3), outOfView(4)], 17, 11, 383))
+    expect(said()).toBe('400 earlier entries not shown')
+    expect(ask().textContent).toBe('show 3 more')
+  })
+
+  it('counts the entries of the parts left with nothing out of view', () => {
+    render(docOf([inView(1), inView(2), inView(3)], 0, 2, 1))
+    expect(said()).toBe('1 earlier entry not shown')
+    expect(ask().textContent).toBe('show 1 more')
   })
 
   it('says nothing once every part is read', () => {

@@ -1937,9 +1937,11 @@ export class OverseerRenderer {
     ///
     /// And offer one window more of them, for this reader alone - see `showMoreOf`.
     ///
-    /// A list kept in parts reads only its newest parts, and how many entries the older ones hold
-    /// is not known without reading them: the note says how many parts were left, and asking for
-    /// more reads them one window at a time.
+    /// A list kept in parts reads only its newest parts, and the server counts the entries the
+    /// older ones hold from what it keeps of each part, without reading them: the note says how
+    /// many entries are left in all, and asking for more reads them one window at a time. Without
+    /// that count - a part that could not be read, or a tree, whose window counts branches - it
+    /// says how many parts were left.
     drawEntriesLeftOut(element, node, path) {
         try {
             element.querySelector(':scope > .overseer-entries-left-out')?.remove()
@@ -1948,15 +1950,20 @@ export class OverseerRenderer {
                 const said = Number((raw && typeof raw === 'object') ? (raw.Integer ?? raw.Float) : raw)
                 return Number.isFinite(said) && said > 0 ? said : 0
             }
-            const count = number('_left_out_of_view')
-            const parts = number('_parts_left_unread')
+            let count = number('_left_out_of_view')
+            let parts = number('_parts_left_unread')
+            const tree = this.treeOf(node)
+            if (parts > 0 && !tree && node?.parameters?._parts_entries_unread !== undefined) {
+                count += number('_parts_entries_unread')
+                parts = 0
+            }
             if (count <= 0 && parts <= 0) return
             const note = document.createElement('div')
             note.className = 'overseer-entries-left-out'
             const said = document.createElement('span')
             said.className = 'overseer-entries-left-out-count'
             // A tree's window counts its top-level branches, each with all that is under it.
-            const what = this.treeOf(node) ? ['branch', 'branches'] : ['entry', 'entries']
+            const what = tree ? ['branch', 'branches'] : ['entry', 'entries']
             const older = parts === 1 ? '1 older part' : `${parts} older parts`
             if (count <= 0) said.textContent = `${older} not shown`
             else {

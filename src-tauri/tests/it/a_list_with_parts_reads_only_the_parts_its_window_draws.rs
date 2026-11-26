@@ -3,7 +3,8 @@
 //! whole, or reaches an entry it has not read.
 //!
 //! A history in weekly parts is most of a project's document, and what is drawn of it is the last
-//! few entries. A part nothing reaches is never parsed, so nothing in its entries is worked out.
+//! few entries. A part nothing reaches is never read into the list, so nothing in its entries is
+//! worked out; it is parsed once only to count its entries, for the note under the list.
 
 use crate::common::serialised;
 use overseer::app_api;
@@ -346,5 +347,41 @@ fn a_window_on_a_list_a_template_gives_leaves_the_rest_unworked() {
         assert_eq!(list.parameters.get("_left_out_of_view"), Some(&OverseerValue::Integer(2)));
         let worked: Vec<bool> = list.children.iter().map(|e| !e.parameters.contains_key("_not_worked_out")).collect();
         assert_eq!(worked, vec![true, false, false]);
+    });
+}
+
+fn entries_unread(nodes: &[OverseerNode], list: &str) -> Option<i64> {
+    match overseer::addressing::find(nodes, list)?.parameters.get("_parts_entries_unread") {
+        Some(OverseerValue::Integer(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_list_says_how_many_entries_the_parts_it_left_hold_counting_each_part_once() {
+    serialised(|| {
+        let (sandbox, documents) = sandbox("counted", &host(""));
+        let two = "list History {\n    - {\n        - handle = \"d\"\n        - done_at = \"2026-10-21T08:00:00Z\"\n    }\n    - {\n        - handle = \"a\"\n        - done_at = \"2026-10-20T08:00:00Z\"\n    }\n}\n";
+        std::fs::write(sandbox.0.join("log.parts/History/2026-W43.os"), two).unwrap();
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(held(&nodes, "log/History"), vec!["b"], "only this week is read");
+        assert_eq!(entries_unread(&nodes, "log/History"), Some(3), "the two parts left hold three entries");
+        let made = overseer::partsums::summaries_made();
+        let parsed = overseer::parts::parts_parsed();
+        let again = documents.open("log.os").expect("open again");
+        assert_eq!(entries_unread(&again, "log/History"), Some(3));
+        assert_eq!(overseer::partsums::summaries_made(), made, "no part is counted again");
+        assert_eq!(overseer::parts::parts_parsed(), parsed, "nor parsed again");
+    });
+}
+
+#[test]
+fn a_list_whose_left_part_cannot_be_read_says_no_entry_count() {
+    serialised(|| {
+        let (sandbox, documents) = sandbox("uncounted", &host(""));
+        std::fs::write(sandbox.0.join("log.parts/History/2026-W43.os"), "list History {\n    - {\n").unwrap();
+        let nodes = documents.open("log.os").expect("open");
+        assert_eq!(unread(&nodes, "log/History"), 2, "the parts are still said");
+        assert_eq!(entries_unread(&nodes, "log/History"), None, "but not a count missing one of them");
     });
 }

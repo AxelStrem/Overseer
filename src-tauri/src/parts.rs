@@ -38,6 +38,16 @@ pub const UNREAD: &str = "_parts_unread";
 /// On a list with parts: how many parts it has not read, for the page's note under the list.
 pub const UNREAD_COUNT: &str = "_parts_left_unread";
 
+/// On a list with parts not read: how many entries those parts hold, for the page's note under
+/// the list. Counted from each part's summary, kept as the part stands - see `partsums::summary` -
+/// so a part is read for it once and not again until it changes. Not said when a part cannot be
+/// read.
+pub const UNREAD_ENTRIES: &str = "_parts_entries_unread";
+
+/// The name a part's count of entries is kept under among its summaries: no chain's, which is a
+/// template's key, a bar and the chain.
+const ENTRY_COUNT: &str = "entries in the part";
+
 /// On a list with parts not read: its address, as what reaches past it names it.
 pub const ADDRESS: &str = "_parts_address";
 
@@ -393,7 +403,7 @@ pub fn leaves_parts_unread(list: &OverseerNode) -> bool {
 
 fn set_unread(list: &mut OverseerNode, address: &str, keys: &[String], stamps: &[String]) {
     if keys.is_empty() {
-        for said in [UNREAD, UNREAD_COUNT, ADDRESS, UNREAD_STAMPS] {
+        for said in [UNREAD, UNREAD_COUNT, UNREAD_ENTRIES, ADDRESS, UNREAD_STAMPS] {
             list.parameters.remove(said);
         }
         return;
@@ -402,6 +412,26 @@ fn set_unread(list: &mut OverseerNode, address: &str, keys: &[String], stamps: &
     list.parameters.insert(UNREAD_COUNT.to_string(), OverseerValue::Integer(keys.len() as i64));
     list.parameters.insert(ADDRESS.to_string(), OverseerValue::String(address.to_string()));
     list.parameters.insert(UNREAD_STAMPS.to_string(), OverseerValue::String(stamps.join("\n")));
+    match entries_in_all(stamps) {
+        Some(count) => list.parameters.insert(UNREAD_ENTRIES.to_string(), OverseerValue::Integer(count)),
+        None => list.parameters.remove(UNREAD_ENTRIES),
+    };
+}
+
+/// How many entries the parts hold, each given as a line of `READ`; `None` when one cannot be read.
+fn entries_in_all(stamps: &[String]) -> Option<i64> {
+    let mut count = 0;
+    for (file, stamp) in stamps.iter().filter_map(|line| line.split_once('\t')) {
+        let summary = crate::partsums::summary(ENTRY_COUNT, file, stamp, |entries| crate::partsums::Summary {
+            values: vec![OverseerValue::Integer(entries.iter().filter(|e| is_an_entry(e)).count() as i64)],
+            ..Default::default()
+        })?;
+        match summary.values.first() {
+            Some(OverseerValue::Integer(n)) => count += n,
+            _ => return None,
+        }
+    }
+    Some(count)
 }
 
 /// The parts of a list not read yet, oldest first, each as its file and how it stood when the
