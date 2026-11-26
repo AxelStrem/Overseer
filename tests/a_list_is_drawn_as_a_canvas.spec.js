@@ -155,6 +155,25 @@ describe('a list drawn as a canvas', () => {
     expect(invoke.mock.calls.some(([cmd]) => cmd === 'move_overseer_entry')).toBe(false)
   })
 
+  it('draws a placed card being dragged under the pointer, held where it was grabbed', () => {
+    render()
+    layOut()
+    // Placed at (120, 40) on the area, so its corner is at (130, 140) on the screen.
+    const from = entryAt('placed')
+    pointer(from, 'pointerdown', 132, 142)
+    pointer(window, 'pointermove', 132, 152)
+    pointer(window, 'pointermove', 250, 200)
+    const shell = document.querySelector('.overseer-drag-shell')
+    const ghost = shell.querySelector('.overseer-drag-ghost')
+    const { left, top } = ghost.style
+    pointer(window, 'pointerup', 250, 200)
+    expect(shell.style.left).toBe('248px')
+    expect(shell.style.top).toBe('198px')
+    // The card's own place on the area would push the copy that much further from the pointer.
+    expect(left).toBe('')
+    expect(top).toBe('')
+  })
+
   it('gives an entry from the strip a place once it is dragged onto the area', async () => {
     render()
     layOut()
@@ -221,6 +240,17 @@ describe('a list drawn as a canvas', () => {
     expect(zIndexOf('.canvas-area > [data-uid].canvas-front')).toBeGreaterThan(0)
     expect(zIndexOf('.canvas-area > [data-uid]:hover')).toBeGreaterThan(zIndexOf('.canvas-area > [data-uid].canvas-front'))
     expect(zIndexOf('.canvas-area > [data-uid]:focus-within')).toBeGreaterThan(zIndexOf('.canvas-area > [data-uid].canvas-front'))
+  })
+
+  it('draws a placed card at its place, whatever margin the card is given inline', () => {
+    const styles = readFileSync('src/styles.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const bodyOf = (selector) => [...styles.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .filter(([, selectors]) => selectors.split(',').some((s) => s.trim() === selector))
+      .map(([, , body]) => body)
+      .join(';')
+    // A field's default margin is written inline, which only an important rule outweighs: kept, it
+    // would draw the card that far below the place it was let go at, and every drag would creep.
+    expect(bodyOf('.canvas-area > [data-uid]')).toMatch(/margin:\s*0(px)?\s*!important/)
   })
 
   it('keeps the strip to one row that scrolls sideways, its cards at their own width', () => {

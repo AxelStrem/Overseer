@@ -948,7 +948,9 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
    see-through looks as it does on the bare canvas and still hides what it is drawn over. */
 .canvas-area > [data-uid] {
     position: absolute;
-    margin: 0;
+    /* A card stands where its fields say; the default margin a node is given inline would draw
+       it below that place, and each drag would carry it further. */
+    margin: 0 !important;
     z-index: 1;
 }
 

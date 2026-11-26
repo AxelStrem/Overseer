@@ -6173,6 +6173,10 @@ export class OverseerRenderer {
         }
         ghost.style.width = `${rect.width}px`
         ghost.style.margin = '0'
+        // A canvas card carries its place on the area inline; the shell already stands at the
+        // pointer, so the copy kept there would stand that place further from it.
+        ghost.style.left = ''
+        ghost.style.top = ''
         const shell = this.dragShellFor(drag.entry, rect)
         shell.classList.toggle('is-copy', !!drag.copy)
         document.body.classList.toggle('overseer-copying', !!drag.copy)
