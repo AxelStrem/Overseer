@@ -7851,12 +7851,14 @@ export class OverseerRenderer {
                         hover: field('title') || null,
                         offered: at === 0,
                         at: [...segments, entry.name],
+                        reach: { list: segments, key: String(tag) },
                         // Kept for a picker's find box, which can be told to look in any of its fields.
                         entry,
                     })
                 }
                 // A list with parts not read holds only its newest entries; the server says what
-                // the rest give a chip. They are not in the page, so their chips reveal nothing.
+                // the rest give a chip. They are not in the page: a press on their chip reads the
+                // list back as far as the entry first - see `readBackTo`.
                 for (const record of this.unreadVocabularyOf(list)) {
                     const tag = record.key
                     if (!tag || found.has(String(tag))) continue
@@ -7870,6 +7872,7 @@ export class OverseerRenderer {
                         hover: record.title || null,
                         offered: at === 0,
                         at: null,
+                        reach: { list: segments, key: String(tag) },
                     })
                 }
             } catch (_) { /* a field with no readable vocabulary just has no colours */ }
@@ -8039,8 +8042,9 @@ export class OverseerRenderer {
     /// Lets a chip show the entry it stands for when pressed - see `revealEntry`. Only chips with
     /// nothing else to do on a press are given it: a narrowing box's chip or a picker's has.
     letChipReveal(chip, known) {
-        if (!known || !Array.isArray(known.at)) return
-        chip.dataset.at = JSON.stringify(known.at)
+        if (!known || (!Array.isArray(known.at) && !known.reach)) return
+        if (Array.isArray(known.at)) chip.dataset.at = JSON.stringify(known.at)
+        if (known.reach) chip.dataset.reach = JSON.stringify(known.reach)
         chip.classList.add('chip-reveals')
     }
 
@@ -8114,24 +8118,74 @@ export class OverseerRenderer {
     watchForChipPresses(within) {
         if (!within || within.dataset.chipPressesWatched === '1') return
         within.dataset.chipPressesWatched = '1'
-        const at = (chip) => { try { return JSON.parse(chip.dataset.at) } catch (_) { return null } }
+        const read = (said) => { try { return said ? JSON.parse(said) : null } catch (_) { return null } }
         within.addEventListener('click', (event) => {
             const chip = event.target?.closest?.('.chip-reveals')
             if (!chip || event.target.closest('.tag-remove')) return
-            const path = at(chip)
-            if (!path) return
+            const path = read(chip.dataset.at)
+            const reach = read(chip.dataset.reach)
+            if (!path && !reach) return
             event.stopPropagation()
-            const why = this.revealEntry(path)
-            if (why) this.sayWhyNotRevealed(chip, why)
+            const why = path ? this.whyNotRevealed(path) : 'not read'
+            if (this.wantsReadingBack(why) && this.canReadBackTo(reach)) {
+                this.sayWhyNotRevealed(chip, 'reading back to it')
+                this.readBackTo(reach).then((left) => {
+                    // The page was drawn again, and this chip with it: what stood in the way is
+                    // said where the press was answered, on the status line.
+                    if (left) this.app?.setStatus?.(`${reach.key}: ${left}`, '', 'warning')
+                })
+                return
+            }
+            const still = path ? this.revealEntry(path) : 'not in this document'
+            if (still) this.sayWhyNotRevealed(chip, still)
         })
         // Said before it is pressed, where the mouse rests: the chip's own title with the reason
         // after it, worked out as it is asked for, since the filter changes under it.
         within.addEventListener('mouseover', (event) => {
             const chip = event.target?.closest?.('.chip-reveals')
             if (!chip) return
-            const path = at(chip)
-            if (path) this.sayWhyNotRevealed(chip, this.whyNotRevealed(path))
+            const path = read(chip.dataset.at)
+            const why = path ? this.whyNotRevealed(path) : 'not read'
+            this.sayWhyNotRevealed(chip, this.wantsReadingBack(why) && this.canReadBackTo(read(chip.dataset.reach)) ? null : why)
         })
+    }
+
+    /// Whether what keeps an entry from being shown is only that the page has not drawn it: one a
+    /// list leaves out of view, or has not read. The filter is somebody's choice, and stays.
+    wantsReadingBack(why) {
+        return why === 'not read' || why === 'not shown on this page'
+    }
+
+    /// Whether the entry a chip names can be had by reading its list further back: the list
+    /// leaves entries past its window, or parts it has not read - see `drawEntriesLeftOut`.
+    canReadBackTo(reach) {
+        if (!reach || !Array.isArray(reach.list) || !this.app || typeof this.app.showMoreOf !== 'function') return false
+        const list = this.findNodeByPath(this.app.currentDocument, reach.list)
+        if (!list) return false
+        const number = (name) => {
+            const raw = list.parameters?.[name]
+            const said = Number((raw && typeof raw === 'object') ? (raw.Integer ?? raw.Float) : raw)
+            return Number.isFinite(said) ? said : 0
+        }
+        return number('_left_out_of_view') > 0 || number('_parts_left_unread') > 0
+    }
+
+    /// Read a list back as far as the entry with this key - one answer, however many windows
+    /// that is - and show it. Answers what still kept it from being shown, or null.
+    async readBackTo(reach) {
+        const doc = () => this.app.currentDocument
+        const list = this.findNodeByPath(doc(), reach.list)
+        const listPath = Array.isArray(list?.__overseer_path) && list.__overseer_path.length ? list.__overseer_path : reach.list
+        try {
+            if (!await this.app.showMoreOf(listPath, reach.key)) return 'could not read further back'
+        } catch (_) {
+            return 'could not read further back'
+        }
+        const now = this.findNodeByPath(doc(), reach.list)
+        const field = String((now && this.getParameterValue(now, 'key')) || 'tag')
+        const entry = (now?.children || []).find((e) => String(this.entryValue(e, field) ?? '') === reach.key)
+        if (!entry) return 'not found in the list'
+        return this.revealEntry([...reach.list, entry.name])
     }
 
     sayWhyNotRevealed(chip, why) {

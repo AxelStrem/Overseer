@@ -2262,12 +2262,19 @@ tab Main {
     /// Nothing is written: how far back somebody reads is kept against their session, so the
     /// file, the bot and every other page still see the window the document states. The answer is
     /// the whole document, worked out with the wider window.
-    async showMoreOf(listPath) {
+    ///
+    /// With `until`, a key of the list: as many windows more as it takes to draw that entry,
+    /// answered once - what a chip naming an entry not drawn asks for. Says whether the document
+    /// was drawn again.
+    async showMoreOf(listPath, until = null) {
         const file = this.currentFile
-        if (!file) return
-        const update = await this.ask('show_more_of_overseer_list', { path: file, listPath })
-        if (!update || file !== this.currentFile || !Array.isArray(update.nodes)) return
+        if (!file) return false
+        const args = { path: file, listPath }
+        if (until !== null && until !== undefined) args.until = String(until)
+        const update = await this.ask('show_more_of_overseer_list', args)
+        if (!update || file !== this.currentFile || !Array.isArray(update.nodes)) return false
         this.showWhole(update)
+        return true
     }
 
     /// The text of the document as this page has it, fetched by its version if an answer only

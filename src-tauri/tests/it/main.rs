@@ -92,6 +92,7 @@ mod a_list_on_its_parents_line_takes_an_append;
 mod a_list_shows_part_of_itself;
 mod a_large_tracker_reads_no_old_part_for_its_stats;
 mod a_list_with_parts_answers_totals_from_summaries;
+mod a_list_reads_back_as_far_as_the_entry_asked_for;
 mod a_list_with_parts_reads_only_the_parts_its_window_draws;
 mod a_mark_is_kept_and_not_addressed;
 mod a_minus_before_a_value_negates_it;

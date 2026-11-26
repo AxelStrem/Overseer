@@ -475,7 +475,8 @@ the entry that a formula works out, read by the chain, has every part read too.
 A `vocabulary` naming the list, its own or a `context vocabulary` (its value, or an element of its block), does not have its parts read
 either. What a chip is drawn from - each entry's key, `name`, `title`, `colour`, `icon` and `shape` - is
 summarised the same way for the parts not read, so a `<#key>` naming an old entry draws as it would
-with every part read. That entry is not in the page, so its chip shows nothing when pressed. A
+with every part read. That entry is not in the page until its chip is pressed, which reads the list
+back as far as it and then shows it. A
 field the template works out by a formula is worked out again for each of those entries when the
 formula reads only the fields beside it (`../status`) and what it names from the document's top -
 a closed item's chip in its status's colour,
@@ -2577,8 +2578,9 @@ The lists of a mark are those of the nearest value naming any for it, then those
 
 Pressing a chip that stands for an entry - in text, in a `tags` field, or an `enum` with nothing to
 pick - shows the entry: the folds and tabs around it open, it is scrolled into view and marked for
-a moment. An entry a narrowing box hides, or one in a list the page does not draw, is not shown, and
-the chip says why on hover.
+a moment. An entry past its list's `window`, or in a part the list has not read, is read in first,
+for this reader alone, as "show more" would. An entry a narrowing box hides, or one in a list the
+page does not draw, is not shown, and the chip says why on hover.
 
 #### Images
 

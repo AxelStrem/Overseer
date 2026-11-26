@@ -1121,12 +1121,15 @@ impl DocumentRoot {
                 if list.is_empty() {
                     return Err(RequestError::Rejected("'list_path' is required".into()));
                 }
+                // A key to read back as far as: the entry a pressed chip names.
+                let until = arg_str(args, &["until"]);
                 as_json(
                     app_api::for_the_page(app_api::show_more_at(
                         at.to_string_lossy().as_ref(),
                         named,
                         list,
                         session,
+                        until.as_deref(),
                     )
                     .map_err(|e| RequestError::Failed(format!("could not show more: {:?}", e)))?),
                 )

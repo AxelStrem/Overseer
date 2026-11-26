@@ -315,9 +315,10 @@ async fn show_more_of_overseer_list(
     request: tauri::ipc::Request<'_>,
     path: String,
     list_path: Vec<String>,
+    until: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
     beside(&request, || {
-        app_api::show_more_at(&path, &path, list_path, THE_WINDOW).map(app_api::for_the_page).map(ForThePage)
+        app_api::show_more_at(&path, &path, list_path, THE_WINDOW, until.as_deref()).map(app_api::for_the_page).map(ForThePage)
     })
 }
 
