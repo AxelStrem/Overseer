@@ -1451,6 +1451,8 @@ context week_start = "system"
   (`1`), `size` how high, of the box's height (`100%`; larger, and the box crops it), and
   `position` where, as CSS places a background (`center`; `right -10% center` puts it partly past
   the right edge; `left calc(14% - 24px) center`, a little before a point). A `source` there is no icon of draws nothing.
+  An icon is as wide as it is high; `width` stretches it to another width, of the box's width or
+  a length (`"64px"`), so an armchair can be drawn out into a bench.
 
   ```overseer
   - mark {

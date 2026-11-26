@@ -163,11 +163,13 @@ const SPARKLE_SOURCES = 32
  * Where the middle of a backdrop's icon is, as a `transform-origin` of its layer's box, so that an
  * icon that turns turns on itself rather than about the middle of the box. `position` is the
  * layer's, as CSS places a background, and `size` how high the icon is: a library icon is square,
- * so it is as wide, and a share of the box's height is one of the holder's (`cqh`). Null for a
+ * so it is as wide, and a share of the box's height is one of the holder's (`cqh`); `width`, where
+ * the layer stretches it, is how wide instead, a share of the box's width (`cqw`). Null for a
  * place it cannot read, which then turns about the middle.
  */
-export function iconTurnOrigin(position, size) {
-    const side = /%$/.test(size) ? `${parseFloat(size)}cqh` : size
+export function iconTurnOrigin(position, size, width = null) {
+    const high = /%$/.test(size) ? `${parseFloat(size)}cqh` : size
+    const wide = width === null ? high : /%$/.test(width) ? `${parseFloat(width)}cqw` : width
     const tokens = String(position || 'center').match(/calc\([^)]*\)|\S+/g) || []
     const isEdge = (t) => ['left', 'right', 'top', 'bottom', 'center'].includes(t)
     // Each axis as an edge it is measured from and how far: the forms CSS takes, of one to four
@@ -210,14 +212,14 @@ export function iconTurnOrigin(position, size) {
             if (!place(axis, edge, offset)) return null
         }
     }
-    const origin = ({ edge, offset }) => {
+    const origin = ({ edge, offset }, side) => {
         if (edge === 'center') return '50%'
         const fromEnd = edge === 'right' || edge === 'bottom'
         // A share in a background's place is one of the room the icon leaves, not of the box.
         const along = offset.replace(/^calc/, '').replace(/(-?\d+(?:\.\d+)?)%/g, (_, n) => `((100% - ${side}) * ${parseFloat(n) / 100})`)
         return fromEnd ? `calc(100% - ${along} - ${side} / 2)` : `calc(${along} + ${side} / 2)`
     }
-    return `${origin(axes.x || { edge: 'center' })} ${origin(axes.y || { edge: 'center' })}`
+    return `${origin(axes.x || { edge: 'center' }, wide)} ${origin(axes.y || { edge: 'center' }, high)}`
 }
 /// The motions a node's `motion=` can name, each a class in the stylesheet: those played once, as
 /// the value changes to them, and `pulse`, which runs for as long as the value says it.
@@ -11074,14 +11076,21 @@ export class OverseerRenderer {
                 const said = String(this.contextValue(key('position')) ?? '').trim()
                 return /^[a-z0-9.%\s()+*/-]+$/i.test(said) && !/url/i.test(said) ? said : 'center'
             }
-            const paint = (svg, size) => {
+            // How wide an icon is stretched, as `size` is read but a share of the box's width; null
+            // where it says none, or nothing the page reads, and the icon keeps its shape.
+            const widthOf = () => {
+                const said = String(this.contextValue(key('width')) ?? '').trim()
+                return /^\d+(\.\d+)?$/.test(said) ? `${said}%`
+                    : /^\d+(\.\d+)?(%|px|em|rem|vh|vw|vmin|vmax)$/.test(said) ? said : null
+            }
+            const paint = (svg, size, width = null) => {
                 const position = placeOf()
                 lists.image.push(`url("data:image/svg+xml,${encodeURIComponent(svg)}")`)
-                lists.size.push(`auto ${size}`)
+                lists.size.push(`${width ?? 'auto'} ${size}`)
                 lists.position.push(position)
                 lists.repeat.push('no-repeat')
                 drawn()
-                if (motion === 'turn') layers.at(-1).origin = iconTurnOrigin(position, size)
+                if (motion === 'turn') layers.at(-1).origin = iconTurnOrigin(position, size, width)
             }
             if (kind === 'text') {
                 // Words have no copies to scatter, so a sparkle draws nothing, as it does still.
@@ -11131,9 +11140,10 @@ export class OverseerRenderer {
                     continue
                 }
                 if (!text) continue
-                const svg = this.backdropIconSvg(text, colourOf(parts), opacity)
+                const width = widthOf()
+                const svg = this.backdropIconSvg(text, colourOf(parts), opacity, width !== null)
                 if (!svg) continue
-                paint(svg, sizeOf('100%'))
+                paint(svg, sizeOf('100%'), width)
             }
         }
         if (!lists.image.length) return { image: 'none', size: 'auto', position: '0% 0%', repeat: 'repeat', layers, waiting }
@@ -11287,10 +11297,11 @@ export class OverseerRenderer {
 
     /**
      * An icon's SVG as a backdrop draws it: what it paints in `currentColor` in `colour` - an
-     * image has no text colour of its own - and the whole at `opacity`. Null for text that is no
-     * SVG, or a colour the page does not accept.
+     * image has no text colour of its own - and the whole at `opacity`; `stretched`, made to fill
+     * whatever box it is drawn in rather than keep its shape. Null for text that is no SVG, or a
+     * colour the page does not accept.
      */
-    backdropIconSvg(text, colour, opacity) {
+    backdropIconSvg(text, colour, opacity, stretched = false) {
         const paint = colour === null || colour === undefined ? null : String(colour).trim()
         if (paint !== null && !new RegExp(`^${COLOR_VALUE}$`).test(paint)) return null
         if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') return null
@@ -11305,6 +11316,14 @@ export class OverseerRenderer {
             }
         }
         if (opacity < 1) svg.setAttribute('opacity', String(opacity))
+        if (stretched) {
+            svg.setAttribute('preserveAspectRatio', 'none')
+            // Drawn out one way only, a line icon's strokes would thicken along that way; they
+            // keep one width instead, so a stretched icon still looks drawn with one pen.
+            for (const el of svg.querySelectorAll('path, line, polyline, polygon, rect, circle, ellipse')) {
+                el.setAttribute('vector-effect', 'non-scaling-stroke')
+            }
+        }
         return new XMLSerializer().serializeToString(svg)
     }
 

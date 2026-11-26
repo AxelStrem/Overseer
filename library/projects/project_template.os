@@ -756,13 +756,15 @@ tab project (label=$(name), mutable=true) {
                         - armchair {
                             - kind = "icon"
                             - source = "armchair"
-                            - opacity = 0.15
-                            - position = "right center"
+                            - opacity = 0.35
+                            - size = "32px"
+                            - width = "96px"
+                            - position = "right top 8px"
                         }
                     }
                 }
-                div (layout="horizontal", width=fit-content, height=1fr, margin=0, padding=0, spacing=4, alignment="center",
-                     border-style=none) {
+                div (layout="horizontal", width=fit-content, height=1fr, margin=0, margin-right=6px, padding=0, spacing=4,
+                     alignment="center", border-style=none) {
                     tags waiting (vocabulary="/project/people/People", chip="icon", shape="box", mutable=false, font-size=11px, margin=0, padding=0,
                                   hover-text="Agents waiting for work") =
                         $(/project/Bench.filter(|x| /project/Bench.filter(|y| y/account == x/account
