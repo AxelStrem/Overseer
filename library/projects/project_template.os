@@ -296,9 +296,9 @@ tab project (label=$(name), mutable=true) {
                         - kind = $(working ? "icon" : "none")
                         - source = "cog"
                         - colour = "#22c55e"
-                        - opacity = 0.6
+                        - opacity = 0.85
                         - size = "20px"
-                        - position = $("left calc(14% - " + (24 + depth() * 16) + "px) " + (kids > 0 ? "top calc(50% - 6px)" : "center"))
+                        - position = $("left calc(14% - " + (34 + depth() * 16) + "px) top " + (worker_by != "" ? 33 : 12) + "px")
                         - motion = "turn"
                         - period = "3s"
                     }
@@ -312,18 +312,41 @@ tab project (label=$(name), mutable=true) {
                     - asked_mark {
                         - kind = $(asked && !working ? "icon" : "none")
                         - source = "message-circle-question"
-                        - colour = "#facc15"
-                        - opacity = 0.45
+                        - colour = "#fcd34d"
                         - size = "20px"
-                        - position = $("left calc(14% - " + (24 + depth() * 16) + "px) " + (kids > 0 ? "top calc(50% - 6px)" : "center"))
+                        - position = $("left calc(14% - " + (34 + depth() * 16) + "px) top 12px")
+                        - motion = "breathe"
+                        - period = "2.4s"
                     }
                     - asked_corner {
                         - kind = $(asked ? "gradient" : "none")
-                        - from = "#facc15cc"
+                        - from = "#f59e0b"
                         - to = "transparent"
                         - angle = 225
-                        - center = "1.2%"
                         - sharpness = "100%"
+                        - size = "18px"
+                        - position = "right top"
+                    }
+                    - asked_edge {
+                        - kind = $(asked ? "gradient" : "none")
+                        - from = "#fcd34d"
+                        - to = "transparent"
+                        - angle = 225
+                        - sharpness = "100%"
+                        - size = "20px"
+                        - position = "right top"
+                    }
+                    - asked_glow {
+                        - kind = $(asked ? "gradient" : "none")
+                        - from = "#f59e0b77"
+                        - to = "transparent"
+                        - angle = 225
+                        - center = "20%"
+                        - sharpness = "60%"
+                        - size = "72px"
+                        - position = "right top"
+                        - motion = "breathe"
+                        - period = "2.4s"
                     }
                 }
             }

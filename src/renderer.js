@@ -11277,25 +11277,7 @@ export class OverseerRenderer {
                 image: lists.image.at(-1), size: lists.size.at(-1),
                 position: lists.position.at(-1), repeat: lists.repeat.at(-1),
             })
-            if (kind === 'gradient') {
-                const from = this.contextValue(key('from'))
-                const to = this.contextValue(key('to'))
-                if (from === null || to === null) continue
-                const gradient = {
-                    from, to,
-                    angle: number(key('angle'), 180),
-                    center: number(key('center'), 50),
-                    width: 100 - Math.max(0, Math.min(100, number(key('sharpness'), 0))),
-                }
-                lists.image.push(this.gradientImage(gradient))
-                lists.size.push('auto')
-                lists.position.push('0% 0%')
-                lists.repeat.push('repeat')
-                drawn()
-                layers.at(-1).gradient = gradient
-                continue
-            }
-            if (kind !== 'icon' && kind !== 'text') continue
+            if (kind !== 'gradient' && kind !== 'icon' && kind !== 'text') continue
             const opacitySaid = String(this.contextValue(key('opacity')) ?? '').trim()
             let opacity = parseFloat(opacitySaid)
             if (opacitySaid.endsWith('%')) opacity /= 100
@@ -11319,6 +11301,35 @@ export class OverseerRenderer {
                 const said = String(this.contextValue(key('width')) ?? '').trim()
                 return /^\d+(\.\d+)?$/.test(said) ? `${said}%`
                     : /^\d+(\.\d+)?(%|px|em|rem|vh|vw|vmin|vmax)$/.test(said) ? said : null
+            }
+            if (kind === 'gradient') {
+                const from = this.contextValue(key('from'))
+                const to = this.contextValue(key('to'))
+                if (from === null || to === null) continue
+                const gradient = {
+                    from, to,
+                    angle: number(key('angle'), 180),
+                    center: number(key('center'), 50),
+                    width: 100 - Math.max(0, Math.min(100, number(key('sharpness'), 0))),
+                }
+                lists.image.push(this.gradientImage(gradient))
+                // Given a `size`, the gradient fills a box that high (and `width` wide, or as
+                // wide as high) at `position`, and keeps that size whatever the box it is
+                // painted on grows to; without one it fills the whole box.
+                const size = key('size') ? sizeOf(null) : null
+                if (size) {
+                    lists.size.push(`${widthOf() ?? size} ${size}`)
+                    lists.position.push(placeOf())
+                    lists.repeat.push('no-repeat')
+                } else {
+                    lists.size.push('auto')
+                    lists.position.push('0% 0%')
+                    lists.repeat.push('repeat')
+                }
+                drawn()
+                layers.at(-1).gradient = gradient
+                layers.at(-1).sized = Boolean(size)
+                continue
             }
             const paint = (svg, size, width = null) => {
                 const position = placeOf()
@@ -11470,7 +11481,7 @@ export class OverseerRenderer {
                 if (holder.children[index] !== box) holder.insertBefore(box, holder.children[index] || null)
                 return
             }
-            const square = layer.gradient && (layer.motion === 'turn' || layer.motion === 'drift')
+            const square = layer.gradient && !layer.sized && (layer.motion === 'turn' || layer.motion === 'drift')
             const scale = layer.motion === 'drift' ? 1.5 : 1
             const className = ['ov-backdrop-layer', square ? 'ov-backdrop-square' : '',
                 layer.motion ? `ov-backdrop-${layer.motion}` : ''].filter(Boolean).join(' ')

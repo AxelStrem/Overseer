@@ -1463,7 +1463,10 @@ context week_start = "system"
   bottom, where it says none). `center` is where along that line the middle of the blend falls
   (`50%`), and `sharpness` how short the blend is: `0%` across the whole length, `100%` a hard edge
   between the two colours. A layer's colours are formulas like any of the theme's, so they follow
-  `mode`.
+  `mode`. A gradient fills the whole box unless it is given a `size`: then it fills a square that
+  high (`width` makes it wider, as an icon's does) at `position`, and keeps that size however
+  large the box grows - a corner of a card that stays a corner when the card unfolds,
+  `- size = "18px"`, `- position = "right top"`, `- angle = 225`, `- sharpness = "100%"`.
 
   An `icon` draws one icon over the box: `source` is what `<icon=...>` takes - a library icon's
   name, or an SVG beside the document - and a formula like any key, so each entry of a list can
